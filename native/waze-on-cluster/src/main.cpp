@@ -426,6 +426,7 @@ void define_keys(Config *cfg)
 
 int main(int argc, char **argv)
 {
+    cld::log_name = "waze-on-cluster";
     Config cfg;
     define_keys(&cfg);
     std::string err;
