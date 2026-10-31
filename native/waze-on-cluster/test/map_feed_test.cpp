@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Robert Nisipeanu
+/* Host test of the map feed (map_feed.h) against the shared cluster renderer
+ * (cluster-render, the CR tree) on fake display backends, over its socket:
+ * - the map is a contending content layer on the map target, covering the
+ *   1088x480 slot; before a frame the app sees idle, with the first frames
+ *   the slot is asked for (starting) and the map shown with the frames as
+ *   they were decoded;
+ * - the stock map taking the slot shows as starting with that reason, and
+ *   the contending map is back after the 2 s retry;
+ * - a control start moves it to the whole panel, centred at 416,120, and an
+ *   unknown target is refused;
+ * - frames stopping: idle after stall_ms, the slot released;
+ * - the renderer restarting: starting while it is gone, an error once it
+ *   stays gone 15 s, then the map again with the next frames;
+ * - a lowered shared upload cap shows on the status line, with its reason in
+ *   the status, and leaves the line once it is back at the ceiling;
+ * - frames offered faster than they can be written are newest-wins. */
+#include <poll.h>
+#include <signal.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <vector>
+
+/* cluster-render's service and fakes, from its tree (-I$(CR)) */
+#include "src/service.h"
+#include "test/fake_graph.h"
+#include "test/fake_port.h"
+#include "../src/map_feed.h"
+
+using namespace woc;
+
+static int failures;
+
+static void ok(const char *name, bool cond)
+{
+    std::printf("%-4s %s\n", cond ? "ok" : "FAIL", name);
+    if (!cond) failures++;
+}
+
+struct Rig {
+    std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + ".sock";
+    crs::FakeGpu gpu;
+    crs::FakePort port;
+    crs::ServiceConfig sc;
+    std::unique_ptr<crs::Service> svc;
+    std::unique_ptr<MapFeed> feed;
+    int64_t now = 200000;
+    std::vector<uint8_t> spare;   /* the buffer handed to the feed, as the producer's */
+
+    Rig()
+    {
+        crs::TargetSpec m, p;
+        m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
+        p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
+        sc.targets = {m, p};
+        sc.socket_path = path;
+        sc.backend = "fake";
+        start();
+        FeedConfig fc;
+        fc.socket = path;
+        fc.video.level_bits = 0;
+        feed.reset(new MapFeed(fc));
+    }
+    void start()
+    {
+        svc.reset(new crs::Service(&gpu, &port, sc));
+        port.m = &svc->slots();
+        port.pending.clear();
+        std::string err;
+        if (!svc->start(&err))
+            std::printf("start: %s\n", err.c_str());
+    }
+    /* Simulated time; each step runs the socket exchange until idle. */
+    void pump(int64_t ms, const std::vector<uint8_t> *frame = nullptr, int64_t frame_every = 65)
+    {
+        for (int64_t t = 0; t < ms; t += 5) {
+            now += 5;
+            if (frame && t % frame_every == 0) {
+                spare.assign(frame->begin(), frame->end());
+                feed->offer(&spare, (uint64_t)now, now);
+            }
+            for (int round = 0; round < 400; round++) {
+                std::vector<pollfd> fds;
+                size_t first = 0;
+                if (svc)
+                    first = svc->poll_fds(&fds);
+                const int n = ::poll(fds.data(), fds.size(), 0);
+                if (svc) {
+                    port.tick(now);
+                    svc->after_poll(fds, first, now);
+                }
+                const bool pending = feed->wants_write();
+                feed->poll(now);
+                if (round > 0 && n <= 0 && !pending)
+                    break;
+            }
+        }
+    }
+    FeedStatus st() { return feed->status("decode"); }
+    const crs::Layer *map_layer()
+    {
+        for (const crs::Layer *l : svc->compositor().layers())
+            return l;
+        return nullptr;
+    }
+};
+
+static std::vector<uint8_t> atlas(int seed)
+{
+    std::vector<uint8_t> f(1088 * 720);
+    for (size_t i = 0; i < f.size(); i++)
+        f[i] = (uint8_t)(i < 1088 * 480 ? (i / 5 + seed * 17) & 0xff : 128);
+    return f;
+}
+
+int main()
+{
+    signal(SIGPIPE, SIG_IGN);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    Rig r;
+    r.pump(100);
+    const crs::Layer *l = r.map_layer();
+    ok("connected: one contending content layer on the map target, covering the 1088x480 slot",
+       l && l->target() == 0 && l->params.contend && l->params.klass == crs::Klass::Content && l->params.rect.x == 0 &&
+           l->params.rect.y == 0 && l->params.rect.w == 1088 && l->params.rect.h == 480);
+    ok("no frame yet: idle, and the slot is not asked for", r.st().state == "idle" && r.port.requests == 0);
+
+    const std::vector<uint8_t> f1 = atlas(1);
+    r.pump(20, &f1);
+    ok("the first frame asks for the slot: starting", r.st().state == "starting" && r.port.requests == 1);
+    r.pump(1100, &f1);
+    crs::FakeGraph *g = r.gpu.graph("map");
+    bool drawn = false;
+    if (g)
+        for (const auto &kv : g->shown.buffers)
+            drawn = drawn || (kv.second.f == crs::TexFormat::R8 && kv.second.px == f1);
+    ok("granted: showing, with the decoded frame in the slot's scene",
+       r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
+    ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
+
+    r.port.steal(r.sc.targets[0]);
+    r.pump(20, &f1);
+    ok("the stock map takes the slot: starting, with that reason",
+       r.st().state == "starting" && r.st().reason == "the stock map holds the slot");
+    r.pump(2200, &f1);
+    ok("the map contends: shown again after the 2 s retry", r.st().state == "showing" && r.port.requests == 2);
+
+    /* Many frames between two writes: only the newest is drawn. */
+    const std::vector<uint8_t> f2 = atlas(2), f3 = atlas(3);
+    std::vector<uint8_t> b2 = f2, b3 = f3;
+    r.feed->offer(&b2, 2, r.now);
+    r.feed->offer(&b3, 3, r.now);
+    ok("a frame is taken without a copy: a same-size buffer comes back for each",
+       b2.size() == f2.size() && b3.size() == f3.size() && b3 == f2);
+    r.pump(200);
+    g = r.gpu.graph("map");
+    bool newest = false, stale = false;
+    for (const auto &kv : g->shown.buffers)
+        if (kv.second.f == crs::TexFormat::R8) {
+            newest = newest || kv.second.px == f3;
+            stale = stale || kv.second.px == f2;
+        }
+    ok("frames faster than the writes: the newest is drawn", newest && !stale);
+
+    ok("an unknown target is refused", !r.feed->set_target("cockpit"));
+    ok("a control start moves the map to the whole panel", r.feed->set_target("panel"));
+    r.pump(1200, &f3);
+    l = r.map_layer();
+    ok("centred in the 1920x720 panel at 416,120, showing",
+       l && l->target() == 1 && l->params.rect.x == 416 && l->params.rect.y == 120 && l->params.rect.w == 1088 &&
+           r.st().state == "showing" && r.st().target == "panel");
+    r.pump(1600);
+    ok("the map target, no longer wanted, is released after its linger", r.port.releases >= 1 && !r.gpu.graph("map"));
+    r.feed->set_target("sail");
+    r.pump(1200, &f3);
+    ok("sail is the map slot", r.map_layer() && r.map_layer()->target() == 0 && r.st().state == "showing");
+
+    const int releases = r.port.releases;
+    r.pump(6100);
+    ok("frames stop: idle after stall_ms", r.st().state == "idle");
+    r.pump(1600);
+    ok("and the slot is released after the linger", r.port.releases > releases && !r.gpu.graph("map"));
+
+    r.svc.reset();
+    r.pump(100);
+    ok("the renderer gone: starting while it may be starting", r.st().state == "starting" &&
+                                                               r.st().reason == "waiting for the cluster renderer");
+    r.pump(15000);
+    ok("still gone 15 s on: an error the app shows", r.st().state == "error" &&
+                                                     r.st().reason == "cluster renderer not reachable");
+    r.start();
+    r.pump(3000, &f1);
+    ok("it comes back: the map layer made again, showing with the next frames",
+       r.map_layer() && r.st().state == "showing");
+
+    /* the governor counts evidence seen while writes go */
+    for (int i = 0; i < 2; i++) {
+        r.svc->compositor().governor().activity(r.now);
+        r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
+    }
+    r.pump(100, &f1);
+    ok("a lowered shared upload cap shows on the status line",
+       r.st().page.find("upload cap 5500 KB/s") != std::string::npos);
+    ok("the status carries the cap and why",
+       r.st().upload_cap_kb == 5500 && r.st().upload_reason.find("lowered from 6000 KB/s") == 0 &&
+           r.st().upload_reason.find("scene removed") != std::string::npos);
+    /* A minute of healthy upload raises it back to the ceiling, which the
+     * status line leaves out. */
+    for (int s = 0; s < 62; s++) {
+        r.svc->compositor().governor().activity(r.now);
+        r.pump(1000, &f1);
+    }
+    ok("back at the ceiling after healthy upload: the cap leaves the status line, its reason stays",
+       r.st().upload_cap_kb == 6000 && r.st().page.find("upload cap") == std::string::npos &&
+           r.st().upload_reason.find("raised from 5500 KB/s") == 0);
+    std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
+    return failures ? 1 : 0;
+}

@@ -1,0 +1,104 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026 Robert Nisipeanu */
+/* The iDrive 7 display port: the KOMBI's Dcsm2 service
+ * (../dcsm/DCSM.md), for any number of targets at once.
+ *
+ * A request is a fetch of the target's scene and, once FETCHED, a map into
+ * its slot with its content class; MAPPED_FOREGROUND or MAPPED_BACKGROUND
+ * (the under-the-gauges layer) is shown. A release is an unmap, when a map
+ * was asked for and not refused, then an unfetch. The KOMBI names only the
+ * scene id in its events, and its replies name nothing: each reply is the
+ * answer to the oldest request of its kind still unanswered (SOME/IP over
+ * TCP answers in order), so the scenes asked for are queued per kind while
+ * Dcsm2 is available (vsomeip drops requests while it is not).
+ *
+ * Seen from the slot manager (slots.h):
+ * - a refused fetch or map, or FETCH FAILED, is a refusal: PRIOTOOLOW and
+ *   ALREADYMAPPED say the slot is busy, an unknown slot, scene or client is
+ *   the configuration, the rest (no valid reply, the fetch removed before
+ *   it showed) is transient;
+ * - a shown scene the KOMBI unmaps, maps invisible or whose fetch it
+ *   removes is lost (the stock map re-mapping over ours removes our fetch
+ *   with no map transition, seen on the car);
+ * - Dcsm2 going away loses every scene at once;
+ * - the REMOVED that answers our own unfetch is not a loss, even when the
+ *   same scene id was asked for again since (panel and HUD share one).
+ *
+ * All of it runs on the render thread: Dcsm2Link queues what vsomeip's
+ * thread receives and hands it over in order (dcsm2_link.h). */
+#ifndef CRS_DCSM2_PORT_H
+#define CRS_DCSM2_PORT_H
+
+#include <deque>
+#include <functional>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "slots.h"
+
+namespace crs {
+
+/* The requests, as Dcsm2Link sends them. */
+class Dcsm2Wire {
+public:
+    virtual ~Dcsm2Wire() {}
+    virtual void fetch(uint64_t scene) = 0;
+    virtual void map(uint64_t scene, uint32_t content_class, uint64_t slot) = 0;
+    virtual void unmap(uint64_t scene) = 0;
+    virtual void unfetch(uint64_t scene) = 0;
+    virtual void slots() = 0;
+};
+
+class Dcsm2Port : public Port {
+public:
+    explicit Dcsm2Port(Dcsm2Wire *wire) : wire_(wire) {}
+    void set_manager(SlotManager *m) { manager_ = m; }
+
+    bool available() const override { return up_; }
+    void request(const TargetSpec &t) override;
+    void release(const TargetSpec &t) override;
+    void refresh_slots() override { wire_->slots(); }
+
+    /* What the KOMBI says, in the order it said it (render thread). */
+    void on_availability(bool up, int64_t now_ms);
+    /* method: 1 fetch, 2 map, 3 unfetch, 4 unmap; ok false: no valid reply;
+     * status_text: the status's catalogue name. */
+    void on_reply(uint16_t method, bool ok, uint32_t status, const std::string &status_text, int64_t now_ms);
+    void on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms);
+    void on_map_status(uint64_t scene, uint32_t initial, uint32_t final_, int64_t now_ms);
+    void on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms);
+    /* Heartbeat replies stopped (silent) or came back. */
+    void on_heartbeat(bool silent, int64_t now_ms)
+    {
+        if (on_link)
+            on_link(silent, now_ms);
+    }
+    std::function<void(bool silent, int64_t now_ms)> on_link;
+
+private:
+    enum class Phase { Fetching, Mapping, Mapped, Refused, Lost };
+    struct Content {
+        TargetSpec spec;
+        Phase phase = Phase::Fetching;
+        bool map_asked = false;   /* a map went out and was not refused */
+    };
+
+    uint64_t take(std::deque<uint64_t> *q);
+    void refuse(uint64_t scene, Content &c, Refusal r, const std::string &why, int64_t now_ms);
+
+    Dcsm2Wire *wire_;
+    SlotManager *manager_ = nullptr;
+    bool up_ = false;
+    std::map<uint64_t, Content> contents_;   /* by scene id */
+    /* Unfetches sent per scene id whose REMOVED may still come. The KOMBI
+     * answers in order, so they come before the FETCHED of a later fetch
+     * of the same id, which clears the count. */
+    std::map<uint64_t, int> unfetched_;
+    std::deque<uint64_t> fetches_, maps_;    /* awaiting a reply, oldest first */
+    std::map<uint64_t, SlotInfo> slots_;     /* as last logged */
+};
+
+}  // namespace crs
+
+#endif

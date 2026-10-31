@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Robert Nisipeanu
+/* VideoProducer: the CarPlay cluster stream from capture to decoded frames.
+ * It owns the AVB, UDP and FIFO sources, the RTP depacketiser (rtp_h264.h)
+ * and the MSDK/VAAPI decoder (decoder_msdk.h), and keeps the newest decoded
+ * frame as a 4:2:0 atlas (yuv_atlas.h) with its levels rounded, for the map
+ * feed (map_feed.h) to hand to the shared cluster renderer. Only the newest
+ * frame waits: each decoded frame replaces one not yet taken.
+ *
+ * Decoder lifecycle (warm decoder). The phone sends SPS, PPS and an IDR only
+ * when its stream starts (twice in the first second: the opening keyframe and
+ * the one requestStream forces), then non-IDR slices only (VERIFIED on the
+ * car: none in the following 60 s). A decoder started after the stream began
+ * would never sync. So the sources listen from service start (a failed join
+ * or open is retried every second, retry_sources), the decoder comes up at
+ * the stream's first SPS (a raw Annex-B feed: at its first bytes), decodes
+ * from then on whether or not the map is shown, and stays up for the service
+ * lifetime; a later stream resyncs at its own SPS. */
+#ifndef WOC_VIDEO_PRODUCER_H
+#define WOC_VIDEO_PRODUCER_H
+
+#include <atomic>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "avb_source.h"
+#include "decoder_msdk.h"
+#include "frame_clock.h"
+#include "framing_probe.h"
+#include "h264_source.h"
+#include "keyframe_wait.h"
+#include "rtp_h264.h"
+#include "udp_source.h"
+
+namespace woc {
+
+using crk::Spread;
+
+struct VideoConfig {
+    std::string fifo_path;          /* the H.264 FIFO the sink patch points at (file:// mode) */
+    std::string carplay_group;      /* group that may write the FIFO (carplay's) */
+    uint16_t udp_port = 0;          /* local UDP sink port (udp:// mode); 0 disables */
+    std::string avb_stream;         /* media-bus stream to join (avb mode); empty disables */
+    std::string drm_device;         /* MSDK VAAPI device, e.g. /dev/dri/renderD128 */
+    uint32_t tex_width = 1088;      /* decode target: the map area's size, which the patch */
+    uint32_t tex_height = 480;      /* advertises to the phone */
+    /* Low bits of each Y, U and V level rounded away (round_levels,
+     * yuv_atlas.h): at 2 a byte is at most 2 levels off and 0, 128 and 255
+     * stay exact. 0: exact. */
+    uint32_t tex_level_bits = 2;
+    /* A frame decoded within this long is live. */
+    int stall_ms = 6000;
+};
+
+class VideoProducer {
+public:
+    explicit VideoProducer(const VideoConfig &cfg);
+    ~VideoProducer();
+
+    /* The newest decoded frame not yet taken, swapped into *frame (its
+     * buffer comes back for the next one); false when there is none. */
+    bool take(std::vector<uint8_t> *frame, uint64_t *id);
+    /* Readable once a frame waits to be taken. */
+    int ready_fd() const { return ready_[0]; }
+    size_t frame_bytes() const { return atlas_bytes_; }
+
+    /* Joins the media bus and opens the FIFO again if either failed, at most
+     * once a second: at boot the AVB bridge can come up after this service,
+     * and the stream's keyframes are only at its start. Main thread. */
+    void retry_sources(int64_t now_ms);
+
+    /* The sources' states, the depacketiser and decoder, and what the 2nd
+     * stream looks like on the wire, for the diagnostics. */
+    std::string probe_report() const;
+    /* The capture and decode part of the status line. */
+    std::string decode_status() const;
+
+    /* The keyframe wait (keyframe_wait.h), sampled by track_keyframe_wait
+     * about once a second from the main loop; patchd reads it (stream.json)
+     * to resync. */
+    int64_t keyframe_wait_ms(int64_t now_ms) const { return keyframe_wait_.wait_ms(now_ms); }
+    void track_keyframe_wait(int64_t now_ms);
+
+private:
+    /* Each sets its source's status line; a failure is logged when its
+     * reason changes. Main thread. */
+    void join_avb();
+    void open_fifo();
+    /* One datagram (a UDP packet or a media-bus packet, the same RTP on the
+     * wire): an RTP packet goes through the depacketiser, anything else is
+     * taken as raw Annex-B. Recorded for the framing probe either way. Runs
+     * on the source's thread. */
+    void feed_datagram(const uint8_t *data, size_t len);
+    /* One FIFO read (raw Annex-B), on the FIFO thread. */
+    void feed_fifo(const uint8_t *data, size_t len);
+    /* Depacketiser output: one NAL unit, or an access unit end. Brings the
+     * decoder up at an SPS. Under decode_mutex_. */
+    void on_nal(const uint8_t *data, size_t len, bool end_of_au);
+    /* Under decode_mutex_. */
+    bool start_decoder(std::string *err);
+    void decode(const uint8_t *data, size_t len, bool end_of_au);
+    /* Decoder callback: rounds the decoder's atlas in place, then swaps it
+     * with back_ under lock. Runs on the source thread inside decode(). */
+    void on_frame(const VideoFrame &f);
+
+    VideoConfig cfg_;
+    size_t atlas_bytes_;
+
+    Decoder decoder_;
+    H264Source source_;
+    UdpSource udp_source_;
+    AvbSource avb_source_;
+    FramingProbe probe_;
+    RtpH264 rtp_;
+    RtpH264::Sink rtp_sink_;   /* built once, so a packet allocates nothing */
+    /* Serialises the sources' feeds: guards decoder_, decoder_up_, rtp_ and
+     * raw_retry_ms_. */
+    mutable std::mutex decode_mutex_;
+    bool decoder_up_ = false, fifo_up_ = false, udp_up_ = false, avb_up_ = false;
+    int64_t raw_retry_ms_ = 0;       /* a raw feed's next decoder start attempt */
+    int64_t source_retry_ms_ = 0;    /* retry_sources' next attempt */
+
+    /* The newest decoded frame, produced on the source thread, taken on the
+     * main thread (frame_mutex_). */
+    mutable std::mutex frame_mutex_;
+    std::vector<uint8_t> back_;
+    bool back_dirty_ = false;
+    int ready_[2] = {-1, -1};        /* a byte written when back_ gets a frame not yet taken */
+    uint32_t back_w_ = 0, back_h_ = 0;
+    uint64_t back_id_ = 0;           /* its number in the decoder's lifetime */
+    Spread round_us_;                /* rounding's cost on the source thread (frame_mutex_) */
+    std::string last_err_;           /* last decode error, for the status line (frame_mutex_) */
+    uint32_t decode_errs_ = 0;
+
+    std::atomic<uint64_t> decoded_total_{0};
+    KeyframeWait keyframe_wait_;            /* main thread */
+    std::string udp_status_, avb_status_, fifo_status_;   /* each source's state, for the probe report */
+};
+
+}  // namespace woc
+
+#endif

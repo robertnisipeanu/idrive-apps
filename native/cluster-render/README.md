@@ -1,0 +1,455 @@
+# cluster-render
+
+The one renderer every app on a BMW iDrive 7 head unit (MGU) draws through
+on the instrument cluster and the HUD: maps and video, widgets, overlays,
+2D and 3D, and whole-cluster content. Apps and native producers are its
+clients ([PROTOCOL.md](PROTOCOL.md)); it is the head unit's one custom
+RAMSES participant and Dcsm2 client, shares the display slots between its
+clients, and spends one upload budget for all of them. `kit/` is the pixel
+path it shares with producers that prepare frames.
+
+Labels: **VERIFIED** (seen in the unit's binaries or configuration, or
+observed running), **INFERRED** (reasoned from verified facts),
+**CAR-ONLY** (needs the vehicle).
+
+## Why a service
+
+The display path has three things only one process can hold:
+
+- **The RAMSES identity.** The KOMBI's renderer reaches one unused head-unit
+  participant, 801 ([abi/ABI.md](abi/ABI.md)); two processes cannot both
+  be it.
+- **The Dcsm2 client.** Each client handle has its own 10 s KOMBI watchdog
+  and its own view of the slots ([dcsm/DCSM.md](dcsm/DCSM.md)); a client
+  per app would have every app fighting every other over the same slots.
+- **The link to the KOMBI.** About 11.5 MB/s of TCP for every head-unit
+  participant together, the HMI's own content included; above about 8 MB/s
+  of texture writes the KOMBI dropped scenes. Per-app budgets add up past
+  it.
+
+So the shape is a hybrid:
+
+| Part | What | Who links it |
+|---|---|---|
+| `kit/` | the proven pixel path: 4:2:0 atlas, dirty tiles, packed blocks, SIMD conversion and rounding, pacer, frame clock, map geometry | the service, and any producer that prepares frames |
+| `src/` | the service: slot arbitration, the layer stack, layers, the upload governor, the iDrive 7 backends, the socket | — (one process, `hmi_5000`) |
+| `include/`, `client/` | the C++ client and protocol, `libcluster_render_client.a` on the unit | native producers |
+| `js/cluster_render_client.js` | the Node 8 client | OAP apps |
+| `dcsm/`, `abi/`, `tools/`, `docker/` | the Dcsm2 client, the unit's RAMSES 19 and vsomeip ABI, the ABI checks and the unit's toolchain | the service's build |
+
+What it costs:
+- frames cross a socket. A whole 1088x480 frame is 783 KB, so 30 a second
+  is about 47 MB/s of kernel copies, and Waze's 16 a second about half that;
+- an app's content cannot use arbitrary RAMSES objects, only the layer
+  kinds and assets below.
+
+What it gives:
+- no two apps fight over a slot, and clients come and go without unmapping
+  anything;
+- one budget, steered by what the link shows;
+- clients that need no `hmi_5000`;
+- a renderer crash in one app takes nothing else down;
+- one place to port to iDrive 8.
+
+```
+ app / producer                     cluster-render (hmi_5000)                      KOMBI / HUD
+ ----------------                   ------------------------------------------     -----------
+ js client / C++ client --J/F/M-->  server ── compositor ── layers (video, image,   renderer draws
+   layers, frames, meshes             │         │  effect, mesh), assets: a scene   the scene in
+                         <--events--  │         └─ governor ── pacer (one budget)   its slot
+                                      └─ slot manager ── Dcsm2 port/link ──Dcsm2──>  slots
+                                                         RAMSES 19 graph ──scene──>
+```
+
+## Arbitration
+
+A **target** is one slot with one scene: `map` (0x100, the central map
+area under the gauges, 1088x480), `panel` (0x203, the whole cluster over
+the gauges, 1920x720), `hud` (0x323, 800x480). Every client's layers on a
+target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
+
+- **Layered stack.** Every layer is drawn at once, bottom to top by class
+  (ambient, content, overlay, alert), then the client's `z`, then the newest
+  on top. A layer marked `exclusive` hides the layers below it while it is
+  drawn. They are suspended, not removed, and come back in the flush it
+  goes. A change of the stack is one flush: no display traffic, so a client
+  replacing another is instant.
+- **Refcounted slots.** A target is requested while at least one visible
+  layer has content (or is `prewarm`) and is released only when none has for
+  `<target>_linger_ms`. While it lingers the scene stays mapped, empty and
+  transparent, so a client that comes back within it is shown at once. The
+  map's linger is 0: it is unmapped as soon as its video stops.
+- **The stock HMI and other apps.** The KOMBI's slot table tells who holds
+  a slot. Content of an app that does not use this service is always
+  yielded to: the slot is asked for again only once the table says it is
+  free. The stock HMI's (scene ids 0x0100xxxx that are not ours) is yielded
+  to the same way, unless a wanting layer has `contend`. A contending
+  layer, such as the Waze map in 0x100, retries after 2, 5, 10, 20, then
+  every 30 s, and the ladder starts over after 30 s shown. Without a
+  contending layer, a slot the table names as held is not asked for, even
+  when a retry is due.
+- **Refusals and no answer** (5 s) retry on the same ladder; they are not
+  upload evidence. Requests to a slot are at least 1 s apart, with one
+  outstanding.
+- **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
+  KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
+  and `hud`) are never up at once.
+- **Our own id in the slot.** A target can be lost while the table still
+  names its scene id. That is a report from before the loss, or the stock
+  HMI's content with the same id (0x01000400 is also the speech dialog). The
+  next report after our unfetch decides: still named, it is the stock HMI's;
+  other content, its holder's; free, or no report within 1 s, the loss was
+  ours. The ladder counts from the loss either way.
+- **Recovery.** Dcsm2 going away takes every target down. When it comes
+  back, the targets still wanted are asked for again after 1 s. A scene the
+  display removes is asked for again on the ladder, starting from what each
+  layer last showed: the video's newest frame, written whole and exact as
+  soon as the budget allows, its bytes charged to the budget as debt.
+
+## Upload budget
+
+Every layer of every client writes within one budget (`src/governor.h`,
+`kit/upload_pacer.h`). Its ceiling, `upload_kb_per_s`, is 6000 KB/s: the
+rate waze-on-cluster ran stably on the car. At 8000 KB/s the cluster
+flashed black. The cap follows what the link shows while writes go (64 KB
+or more written within the last second, whether or not the flush went);
+evidence at other times is logged, not counted:
+
+| Evidence in the last 30 s | Points |
+|---|---|
+| a shown scene removed by the display, with no other content in its slot | 5 |
+| heartbeat replies silent after replies came (the link stalled) | 3 |
+| a flush or a setData refused | 2 |
+| a flush that took `slow_flush_ms` (150) or longer | 1 |
+
+- At 6 points the cap steps down 500 KB/s, to the 2000 KB/s floor at most,
+  and the window starts empty. No single event reaches 6, so one transient
+  error never lowers it.
+- Another step down waits 15 s.
+- The stock HMI or another app taking a slot, a refused request or one not
+  answered is arbitration, not evidence.
+- The cap steps back up 500 KB/s after each minute of healthy upload (at
+  least 64 KB a second written, nothing in the window), to the ceiling
+  `upload_kb_per_s` (6000). Idle time neither counts nor resets that minute.
+- A step down within a minute of a step up doubles the minute (up to
+  10 min); 10 min without a step down restores it.
+
+Down is quick and up is slow, so the cap does not oscillate. Within the cap,
+the top layers write first, and in a video layer a
+frame whose exact write the budget cannot cover goes packed, the exact atlas
+comes back when the budget allows, and only the newest frame waits.
+
+The cap and why it is what it is are in the status
+(`cluster-render status`, `/run/cluster-render/status.txt`: `upload: cap
+5500 KB/s (ceiling 6000, floor 2000): lowered from 6000 KB/s: in 30 s, 2 x
+scene removed`). Every client also gets a `budget` event when it changes.
+
+## Layers
+
+| Kind | What the client sends | What the service does |
+|---|---|---|
+| video | 4:2:0 atlases (`w*h*3/2` bytes) | `src/video_layer.h`: one persistent R8 buffer and sampler; dirty 64x64 tiles over a noise filter, settled after `settle_ms`; packed 4x4 blocks in two persistent RGBA8 buffers for motion the budget cannot cover; exact return; the frame clock; newest-frame-only; checked `setData` and flush |
+| image | RGBA rectangles that changed | one persistent RGBA8 buffer, written in those rectangles at most `fps` a second |
+| effect | a GLSL ES 1.00 fragment shader, uniforms (arrays too), binds to assets | a quad drawn by it; uniforms in the next flush; `u_time` at `time_fps`, or from the renderer's own clock |
+| mesh | parts: shaders, geometry (`M`), transforms, uniforms, binds to assets | a render pass of its own over its rect at its place in the stack, with its own perspective or orthographic camera (`src/mesh_layer.h`); each part's geometry immutable resources, replaced at most once a second within the budget; depth cleared, never colour |
+
+Beside the layers:
+- **Assets** (`src/asset.h`): RGBA8 or R8 textures a client uploads once
+  and its effect layers and mesh parts on the same target sample, such as a
+  glyph atlas or sprites. Not drawn, so they never make a target wanted;
+  kept on the CPU, written whole into each new scene and in place as they
+  change, before the layers, within the budget. A layer sampling one is
+  drawn only while its buffer holds it whole.
+- **Turns**: video, image and effect quads rotate and scale about a pivot
+  (a needle), each under two group nodes in the scene.
+- **Animations**: keys the renderer plays by itself (one real-time
+  animation system per scene) on a quad's rotation, offset and scale, a
+  part's pose, a mesh camera, or a uniform; nothing is sent per frame. Kept
+  and started again in a new scene.
+
+Each target's assets and layers are staged, assets first and then layers
+top first, and flushed once a tick, so a tick's changes reach the display
+together. A `setData` a layer cannot finish holds that tick's flush back.
+A video layer or an exclusive image whose buffer that left half written
+then holds the target: nothing else is staged or flushed until its whole
+rewrite goes, as soon as the budget allows, so the cluster keeps showing
+the last frame and never a half-written one. Any other image layer is
+hidden until it is written whole again. A video layer's first frame in a
+scene goes whole and exact even when the budget's allowance cannot cover
+it, its bytes charged as debt.
+
+Quads and mesh layers share one draw order. In RAMSES 19 each mesh layer is
+a render pass with its own camera, so the quads between two mesh layers
+share a 2D pass, and the passes' render order follows the stack exactly
+(`plan_passes` in `src/graph.h`). Without mesh layers a scene is one pass.
+
+## Lifecycle
+
+- `cluster-render.socket` listens from boot; the first client starts the
+  service. Clients reconnect by themselves (0.25, 0.5, 1, then every 2 s).
+  They make their assets and layers again with their last settings:
+  uniforms, mesh parts with their geometry and transforms, binds and
+  animations; and send their images and assets whole.
+- A client's layers go with its connection, then its assets. A video layer whose frames stop
+  for `stall_ms` stops wanting its slot, which is released after the
+  linger.
+- On SIGTERM every target is unmapped and unfetched. If the service dies,
+  the KOMBI's watchdog drops its content within about 10 s and systemd
+  starts it again.
+
+## Identity and packaging
+
+`hmi_5000` (the one uid allowed Dcsm2 and the RAMSES offers), participant
+801, vsomeip application `cluster-demo` and clientID `"\0cluster"`: the
+identity proven on the car. A standalone renderer with the same identity
+(`cluster-demo.service`) cannot run beside it, so the service conflicts
+with it (`Conflicts=`).
+`component.json` makes it a Store tool for iDrive 7 (`mguHmi: ["ID7"]`),
+with the Node client shipped beside it for apps
+(`/var/opt/cluster-render/current/cluster_render_client.js`).
+
+## Install
+
+From the Store ([robertnisipeanu/mgu-store](https://github.com/robertnisipeanu/mgu-store))
+on the head unit: add the GitHub source `robertnisipeanu/idrive-apps`
+(a private repository also needs a GitHub token the Store holds). The Store
+reads the `catalog` release's `catalog.json` and installs the newest
+version as a root tool, after the deploy tool it requires: the binary, its
+settings and the Node client in `/var/opt/cluster-render/`,
+`cluster-render.socket` enabled. The first client starts the service. The
+Store can remove it again.
+
+For development, the deploy tool of mgu-store installs a kit built from the
+working tree over SSH (from the repository's root):
+
+```sh
+node release/tool_artifact.js native/cluster-render --out /tmp/kit   # runs make target, writes /tmp/kit/cluster-render@<version>.tgz
+<mgu-store>/deploy/hu install --artifact /tmp/kit/cluster-render@<version>.tgz
+```
+
+## Configure
+
+[`cluster-render.conf`](cluster-render.conf) lists every setting with its
+built-in default: the identity, the targets (slot, content class, scene id,
+size, linger), the upload budget and the tick. A unit's own settings go in
+`/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
+each key there replaces the shipped value. `-s key=value` on the command
+line overrides both. `cluster-render status` prints the targets, every
+client's layers and the upload cap.
+
+## iDrive 8
+
+iDrive 8 draws its cluster and HUD with RAMSES 27 (`.so.27.0`). That
+library has DCSM built in over RemoteContentManager (0xB0A3): the head unit
+offers content in a category, and the cluster decides when to show it. On
+iDrive 8, uid 5000 has no Dcsm2 and no RAMSES 19 services. Participant 801
+has no counterpart there. Nothing on the unit links the RAMSES 19 library
+it also ships.
+
+So iDrive 8 needs two implementations:
+- a RAMSES 27 `Gpu`/`Graph` (`src/graph.h`: its texture buffers take
+  `updateData`, its flush takes only a tag);
+- a `Port` on its `DcsmProvider` (`src/slots.h`): request is
+  `offerContent`, release is `requestStopOfferContent`, shown and lost come
+  from the consumer's content states.
+
+Everything above them stays the same. Detecting the generation: the `Hmi8`
+process or `/usr/lib/oap-mainapp21` (as mgu-store's deploy tool does).
+`component.json` declares iDrive 7 only, so the Store does not install it
+on iDrive 8.
+
+CAR-ONLY on iDrive 8:
+- the cluster and HUD categories and content ids;
+- which communication user and uid are admitted;
+- whether RemoteContentManager has a watchdog;
+- the R8 upload limits.
+
+## Clients
+
+- **Native producers** link `libcluster_render_client.a` and include
+  `include/cluster_render/client.h`.
+- **OAP apps** copy `js/cluster_render_client.js` into their sources (Node 8,
+  only the `net` and `events` builtins).
+- Any other language speaks [PROTOCOL.md](PROTOCOL.md) over the socket.
+
+A client needs only the socket's group, `tm_oap_app`, which every OAP app
+has: no participant, no Dcsm2 client and no `hmi_5000`.
+
+- **waze-on-cluster** ([native/waze-on-cluster](../waze-on-cluster))
+  draws the CarPlay map: its map feed hands each decoded atlas to a
+  `cr::Client` video layer on `map` with `contend`. It needs only the
+  `video`, `mgu_ufipc` and `tm_oap_app` groups, holds no participant or
+  Dcsm2 client, and requires cluster-render through its `component.json`
+  `requires`.
+- **`js/showcase.js`** shows every layer kind on a target: a 3D cube in a
+  mesh layer the renderer turns, plasma in an effect, labels in effects
+  over a glyph-atlas asset, a needle, an alert and a video.
+
+## Building and testing
+
+In `native/cluster-render`:
+
+```sh
+make test                       # every host test (below)
+make test-x86                   # the C++ tests with the unit's gcc 7.5 in Docker (SSE2 paths)
+make target                     # build/target/cluster-render and libcluster_render_client.a,
+                                # every import checked against the unit's libraries
+make test-ramses ROOTFS=…       # every layer kind on the unit's own libramses
+```
+
+The host tests need a C++14 compiler and Node; the rest need Docker
+(linux/amd64, the image `cluster-render-build` from `docker/Dockerfile`).
+`ROOTFS` is a copy of the unit's root filesystem, which is not part of this
+repository.
+
+In an emulator of the unit whose stand-in KOMBI has no slot 0x100, run the
+binary as `hmi_5000` with `-s map_slot=0x201`.
+`js/showcase.js` puts content of every layer kind on a target through
+the service and prints every event: `node showcase.js [--socket PATH]
+[all|cube|text|needle|plasma|alert|video] [--target panel|map|hud]`.
+
+The host tests:
+- `slots_test`: arbitration;
+- `governor_test`: the budget's steps, cooldown, recovery and probation;
+- `compositor_test`: layers on a fake renderer that keeps pending and
+  flushed state apart. It covers dirty, packed and exact writes, failure
+  parking, the stack and the closed budget loop: slow flushes lower the cap
+  and the bytes written follow it. Also assets (written before the layers
+  sampling them, charged to the budget, bound again, refused as a drop
+  while sampled), mesh parts and their looks, geometry paced and replaced
+  at most once a second, passes following the stack with an exclusive
+  layer, turns, uniform arrays, animations, and a scene published again
+  rebuilding all of it;
+- `dcsm2_port_test`: the Dcsm2 request sequence, reply matching and refusal
+  kinds;
+- `service_test`: the whole service over its socket with the C++ client,
+  including a restart under the client that makes assets, binds, uniform
+  arrays, mesh parts, geometry and animations again, and malformed or
+  oversized mesh messages and bad keys refused;
+- `js/test/client_test.js`: the Node client against `host_service`,
+  assets and a mesh layer included.
+
+## Verified, and open
+
+Verified off the car:
+- **The kit.** waze-on-cluster built from the kit gives a binary whose
+  loaded sections are byte-identical to its 0.4.24 release.
+- **Host tests.** Every one above passes on the host and with the unit's
+  gcc 7.5 (`make test-x86`).
+- **The unit's own libramses 19.0.14** (`make test-ramses`) took everything
+  the service does with no error logged:
+  - every layer kind, and the effect shaders compiled by its glslang;
+  - whole, partial and packed video writes and the return to exact;
+  - draw-order changes, an exclusive layer and removals;
+  - a scene published again;
+  - perspective and orthographic views between quads in five passes, one
+    reaching past the target's edge and one moved off it, reordered into
+    three;
+  - parts with every attribute and every uniform semantic (`u_normal` as a
+    mat4), depth, culling and blending, geometry made and replaced;
+  - R8 and RGBA8 buffers, repeating and clamped, sampled by one effect with
+    a vec4 array, and mat4, vec3 and float uniforms;
+  - turned and scaled quads;
+  - animations of every property, linear and step, on quads, parts and
+    cameras, uniforms included, stopped and dropped with their objects;
+  - through the compositor, a lit cube turning in a mesh layer, labels over
+    a glyph-atlas asset, a needle sweeping and plasma on the renderer's
+    clock, all back after the panel was taken and published again.
+- **The target binary** links against the unit's libraries within its
+  glibc 2.27 and libstdc++ limits.
+
+Verified in an emulator of the unit: its stand-in KOMBI renderer and Dcsm2
+provider (not the KOMBI), with the map on 0x201 and clients using the Node
+client under the guest's Node 8.
+- **Startup and drawing.** The service joined as participant 801, found
+  Dcsm2, and drew on both targets at once: a 15 fps video with an overlay
+  image on `map`, and a uniform-driven effect on `panel`.
+- **Requests.** Each target took one fetch, one map, one unmap and one
+  unfetch.
+- **A client leaving.** Its panel lingered 3.0 s and was released; the map
+  sent nothing.
+- **An exclusive alert.** It suspended the video, which was back within
+  2 ms of the alert going, with no Dcsm2 traffic.
+- **Frames stopping.** The video stalled after 6 s and the map was released
+  after its linger.
+- **Shutdown.** SIGTERM shut down cleanly.
+- **3D and the rest** (`js/showcase.js` on `panel` and `map`, and one-off
+  check clients for depth, the cut view, angles and mat4 order, checked on
+  screenshots):
+  - **Meshes.** A lit cube turned by the renderer draws with depth: a
+    smaller cube behind it is hidden. Its pass leaves the colour below it
+    and stays under a label drawn over it. An exclusive alert hides it, and
+    a view cut at the target's edge draws pixel for pixel as the uncut part.
+  - **Turns** go clockwise on screen for video, image and effect quads.
+    Mesh and camera angles are right-handed, posed or animated.
+  - **Text and needle.** Glyph-atlas text with a sprite updates once a
+    second, and the needle sweeps about its pivot.
+  - **Clock.** `u_time` runs on the renderer's clock: with only animations
+    running, no flush is sent for 14 s.
+  - **Matrices.** A mat4 uniform is read in column order.
+  - **Restart.** Everything is back after the service restarts under the
+    client.
+
+Not verified, needs the car:
+  - how the KOMBI's renderer draws the same: the extra passes and their
+    depth clear, render order, the cut view, and mat4 order on its GPU;
+  - animations against the KOMBI's clock;
+  - slot 0x100, and the map and the panel shown at once, from one
+    participant;
+  - yielding to and contending with the stock HMI: the emulated HMI never
+    takes a cluster slot;
+  - heartbeat replies: the emulator does not answer heartbeat requests;
+  - 0x01000400 on the panel while the HMI's speech dialog exists;
+  - how a flush's duration and the heartbeat replies behave as the link
+    fills, which sets `slow_flush_ms`;
+  - the governor's steps on a real drive;
+  - the Waze map and other clients through the service at once.
+
+## Releases
+
+A version is `component.json` `version` (`x.y.z`), published once: a
+changed tool needs a higher version before it can be published again. The
+repository's release tooling (`release/`, its README) builds, checks and
+publishes cluster-render with the repository's other components, from the
+repository's root:
+
+```sh
+node release/release.js check cluster-render              # build twice, compare the artifacts byte for byte
+node release/release.js publish cluster-render --dry-run  # what publish would do
+```
+
+Builds run on a `git archive` export of HEAD, never the working tree, with
+`SOURCE_DATE_EPOCH` the time of the last commit that touched what ships
+(everything but `test/` and the notes). `release/tool_artifact.js` runs
+`make target` and packs the tool kit `cluster-render@<version>.tgz` in the
+deploy tool's format (mgu-store's `deploy/hu artifact` packs the same
+bytes): its `component.json` (each file's sha256, `mguHmi`), `files/` and
+`units/`, sorted, owned 0:0, one mtime, gzip without a name or time.
+Node's bundled zlib is the one outside input, so CI pins Node 22.12.0.
+
+The repository's catalog (schema 2) lists cluster-render with `requires`,
+`uninstallable` and `mguHmi` from `component.json`:
+
+```json
+{ "id": "cluster-render", "kind": "tool", "title": "Cluster renderer", "description": "…", "version": "0.1.0",
+  "artifact": { "name": "cluster-render@0.1.0.tgz", "size": 2242698, "sha256": "…",
+                "url": "https://api.github.com/repos/robertnisipeanu/idrive-apps/releases/assets/<id>" },
+  "requires": { "mgu-deploy": "0.4.0" }, "uninstallable": true, "mguHmi": ["ID7"] }
+```
+
+mgu-deploy checks the kit's `mguHmi` from 0.3.0 and, from 0.4.0, applies
+an update's changed socket unit: at once while the service is stopped,
+else with the next boot.
+
+## License
+
+The service is GPL-3.0-or-later ([LICENSE](LICENSE)). What apps compile in
+or copy, `include/`, `client/`, `kit/`, `js/cluster_render_client.js` and
+[PROTOCOL.md](PROTOCOL.md), is MPL-2.0
+([LICENSES/MPL-2.0.txt](LICENSES/MPL-2.0.txt)), so apps under any license
+can use them; they reach the service over a socket. `abi/include/ramses19/`
+declares the API of RAMSES (BMW Car IT, MPL-2.0) and the symbol lists name
+the exports of RAMSES and vsomeip, so they are MPL-2.0 too;
+`dcsm/third_party/vsomeip/` is COVESA's vsomeip, MPL-2.0, with its own
+notices. Source, script and build files name their license in an SPDX
+header; the rest is GPL-3.0-or-later.

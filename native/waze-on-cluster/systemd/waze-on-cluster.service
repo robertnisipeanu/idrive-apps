@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+[Unit]
+Description=waze-on-cluster: the captured CarPlay map, decoded for the cluster renderer
+RequiresMountsFor=/var/opt
+Requires=waze-on-cluster.socket
+# The shared cluster renderer draws the map; its socket starts it at the first
+# connection.
+Wants=cluster-render.socket
+After=local-fs.target waze-on-cluster.socket cluster-render.socket
+
+[Service]
+# hmi_5000 is in the video group, so this process can open
+# /dev/dri/renderD128 for MSDK/VAAPI decode (VERIFIED: /etc/group).
+User=hmi_5000
+Group=hmi_5000
+# The AVB bridge uses the UFIPC shared-memory channel, whose files are
+# sin_ufipc:mgu_ufipc mode 0660, which hmi_5000 is not in by default (VERIFIED
+# on the car: root could join media_transport.avb_streaming.15, hmi_5000
+# could not). tm_oap_app opens the cluster renderer's socket.
+SupplementaryGroups=mgu_ufipc tm_oap_app
+RuntimeDirectory=waze-on-cluster
+# World-traversable so the carplay uid can reach the FIFO (file group-restricted)
+# and the diagnostics uid can read status.json; the files set their own modes.
+RuntimeDirectoryMode=0755
+ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf
+Restart=on-failure
+# At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of
+# systemd's start limit (5 starts in 10 s), which would also stop the socket.
+RestartSec=5
+
+[Install]
+# Runs from boot, so it is listening when the phone's stream starts (its only
+# keyframes are at that start) and the map comes up with CarPlay.
+WantedBy=multi-user.target

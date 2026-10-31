@@ -1,0 +1,23 @@
+{
+  "id": "cluster-render",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "Cluster renderer",
+  "description": "Draws every app's layers on the instrument cluster and the HUD, sharing the display slots and one upload budget",
+  "mguHmi": ["ID7"],
+  "requires": { "mgu-deploy": "0.4.0" },
+  "uninstallable": true,
+  "build": ["make", "target"],
+  "files": [
+    { "path": "cluster-render", "from": "build/target/cluster-render", "mode": "0755" },
+    { "path": "cluster-render.conf", "from": "cluster-render.conf", "mode": "0644" },
+    { "path": "cluster_render_client.js", "from": "js/cluster_render_client.js", "mode": "0644" }
+  ],
+  "units": [
+    { "name": "cluster-render.socket", "from": "systemd/cluster-render.socket" },
+    { "name": "cluster-render.service", "from": "systemd/cluster-render.service" }
+  ],
+  "enable": [{ "unit": "cluster-render.socket", "target": "sockets.target" }],
+  "recmgr": ["cluster-render"],
+  "restart": ["cluster-render.service"]
+}

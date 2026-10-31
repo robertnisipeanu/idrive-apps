@@ -1,0 +1,70 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026 Robert Nisipeanu */
+/* One pass of the render loop, the same for the unit's binary (main.cpp) and
+ * the host harness (test/host_service.cpp); only the backends differ.
+ *
+ * Each pass, after poll():
+ *   1. the display's reports reach the slot manager (the caller drains them),
+ *   2. clients' messages and frames are taken (server),
+ *   3. each target's layers are arranged and its demand is set (compositor),
+ *   4. targets are published, requested, kept or released (slot manager),
+ *   5. each published target's layers are staged and flushed once,
+ *   6. changed states go to the clients, and once a second to the status
+ *      file. */
+#ifndef CRS_SERVICE_H
+#define CRS_SERVICE_H
+
+#include <poll.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "compositor.h"
+#include "governor.h"
+#include "server.h"
+#include "slots.h"
+
+namespace crs {
+
+struct ServiceConfig {
+    std::vector<TargetSpec> targets;
+    GovernorConfig budget;   /* ceiling 6000, floor 2000, step 500 KB/s */
+    int upload_burst_ms = 250;
+    int slow_flush_ms = 150;
+    int fps = 30;                /* the loop's tick while a target is up */
+    std::string socket_path = "/dev/shm/cluster-render/render.sock";
+    unsigned socket_mode = 0660;
+    std::string socket_group;
+    std::string status_path;     /* empty: none */
+    std::string backend = "id7";
+};
+
+class Service {
+public:
+    Service(Gpu *gpu, Port *port, const ServiceConfig &cfg);
+    bool start(std::string *err);
+
+    SlotManager &slots() { return slots_; }
+    Compositor &compositor() { return *comp_; }
+    Server &server() { return *server_; }
+
+    /* The server's poll entries, appended to fds; returns where they start. */
+    size_t poll_fds(std::vector<pollfd> *fds) const;
+    int timeout_ms(int64_t now_ms) const;
+    /* Steps 2-6 (README.md "The render loop"). */
+    void after_poll(const std::vector<pollfd> &fds, size_t first, int64_t now_ms);
+    /* Takes everything off the display, for a clean exit. */
+    void shutdown(int64_t now_ms);
+
+private:
+    ServiceConfig cfg_;
+    SlotManager slots_;
+    std::unique_ptr<Compositor> comp_;
+    std::unique_ptr<Server> server_;
+    int64_t status_ms_ = 0;
+};
+
+}  // namespace crs
+
+#endif

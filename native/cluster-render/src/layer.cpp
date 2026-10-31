@@ -1,0 +1,477 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026 Robert Nisipeanu */
+#include "layer.h"
+
+#include <cstdio>
+#include <cstring>
+
+#include "log.h"
+
+namespace crs {
+
+Turn LayerParams::turn() const
+{
+    Turn t;
+    t.rotate = rotate;
+    t.sx = sx;
+    t.sy = sy;
+    t.px = pivot_x ? px : (float)rect.w / 2.0f;
+    t.py = pivot_y ? py : (float)rect.h / 2.0f;
+    return t;
+}
+
+/* ---- uniforms ------------------------------------------------------------- */
+
+bool Uniforms::set(const std::string &name, const float *v, int n)
+{
+    auto it = values_.find(name);
+    const size_t old = it == values_.end() ? 0 : it->second.v.size();
+    if ((it == values_.end() && values_.size() >= kMaxNames) || floats_ - old + (size_t)n > kMaxFloats)
+        return false;
+    Value &u = values_[name];
+    floats_ = floats_ - old + (size_t)n;
+    u.v.assign(v, v + n);
+    u.n = n;
+    u.dirty = true;
+    return true;
+}
+
+bool Uniforms::set(const std::string &name, UniformType t, const float *v, uint32_t elements)
+{
+    const size_t n = (size_t)elements * uniform_width(t);
+    auto it = values_.find(name);
+    const size_t old = it == values_.end() ? 0 : it->second.v.size();
+    if ((it == values_.end() && values_.size() >= kMaxNames) || floats_ - old + n > kMaxFloats)
+        return false;
+    Value &u = values_[name];
+    floats_ = floats_ - old + n;
+    u.v.assign(v, v + n);
+    u.n = 0;
+    u.type = t;
+    u.elements = elements;
+    u.dirty = true;
+    return true;
+}
+
+void Uniforms::dirty_all()
+{
+    for (auto &kv : values_)
+        kv.second.dirty = true;
+}
+
+void Uniforms::dirty(const std::string &name)
+{
+    auto it = values_.find(name);
+    if (it != values_.end())
+        it->second.dirty = true;
+}
+
+bool Uniforms::stage(Graph *g, int drawable)
+{
+    bool any = false;
+    for (auto &kv : values_) {
+        Value &u = kv.second;
+        if (!u.dirty)
+            continue;
+        const bool went = u.n ? g->uniform(drawable, kv.first.c_str(), u.v.data(), u.n)
+                              : g->uniform_array(drawable, kv.first.c_str(), u.type, u.v.data(), u.elements);
+        if (!went)
+            u.dirty = false;
+        else
+            any = true;
+    }
+    return any;
+}
+
+void Uniforms::committed()
+{
+    for (auto &kv : values_)
+        kv.second.dirty = false;
+}
+
+/* ---- animations ----------------------------------------------------------- */
+
+const char *quad_animation_error(uint32_t part, const Animation &a)
+{
+    if (part)
+        return "image and effect layers have no parts";
+    switch (a.property) {
+    case Animated::Rotate:
+        return a.width == 1 ? nullptr : "a quad's rotate takes 1 value (degrees clockwise)";
+    case Animated::Translate:
+    case Animated::Scale:
+        return a.width == 3 ? nullptr : "translate and scale take 3 values";
+    default:
+        return a.width == 1 || a.width == 3 || a.width == 4 ? nullptr : "a uniform takes 1, 3 or 4 values";
+    }
+}
+
+bool Layer::animate(uint32_t anim, uint32_t part, const Animation &a, std::string *err)
+{
+    if (!played_.count(anim) && played_.size() - played_.count(0) >= kMaxAnimations) {
+        *err = "at most " + std::to_string(kMaxAnimations) + " animations a layer";
+        return false;
+    }
+    return play(anim, part, a, err);
+}
+
+bool Layer::play(uint32_t anim, uint32_t part, const Animation &a, std::string *err)
+{
+    if (const char *e = animation_error(part, a)) {
+        *err = e;
+        return false;
+    }
+    stop(anim);
+    Played p;
+    p.part = part;
+    p.a = a;
+    if (g_) {
+        const int node = animated(part);
+        p.handle = node ? g_->animate(node, a) : 0;
+        if (!p.handle) {
+            *err = "the renderer refused the animation";
+            return false;
+        }
+    }
+    played_[anim] = p;
+    return true;
+}
+
+bool Layer::stop(uint32_t anim)
+{
+    auto it = played_.find(anim);
+    if (it == played_.end())
+        return false;
+    if (g_ && it->second.handle) {
+        g_->stop(it->second.handle);
+        restore(it->second.part, it->second.a);
+    }
+    played_.erase(it);
+    return true;
+}
+
+void Layer::start_animations()
+{
+    for (auto &kv : played_) {
+        const int node = animated(kv.second.part);
+        kv.second.handle = node ? g_->animate(node, kv.second.a) : 0;
+        if (!kv.second.handle)
+            log_warn("layer %u: animation %u refused by the renderer", id_, kv.first);
+    }
+}
+
+void Layer::forget_animations(bool drop)
+{
+    for (auto &kv : played_) {
+        if (drop && g_ && kv.second.handle)
+            g_->stop(kv.second.handle);
+        kv.second.handle = 0;
+    }
+}
+
+/* ---- image ---------------------------------------------------------------- */
+
+ImageLayer::ImageLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect, uint32_t w,
+                       uint32_t h, uint32_t fps, Sampling sampling, int64_t now_ms)
+    : Layer(id, target, seq, pacer), effect_(effect), w_(w), h_(h), sampling_(sampling),
+      px_((size_t)w * h * 4, 0)
+{
+    clock_.configure(fps);
+    clock_.reset(now_ms);
+}
+
+const char *ImageLayer::size_error(uint32_t w, uint32_t h)
+{
+    if (w < 1 || h < 1)
+        return "image size must be at least 1x1";
+    if (w > 1920 || h > 720)
+        return "image larger than 1920x720";
+    return nullptr;
+}
+
+bool ImageLayer::update(const std::vector<crk::PixelRect> &rects, const uint8_t *data, size_t n, std::string *err)
+{
+    if (rects.empty()) {
+        if (n != px_.size()) {
+            *err = "a whole image is " + std::to_string(px_.size()) + " bytes";
+            return false;
+        }
+        std::memcpy(px_.data(), data, n);
+        whole_ = true;
+        dirty_.clear();
+        have_ = true;
+        return true;
+    }
+    size_t need = 0;
+    for (const crk::PixelRect &r : rects) {
+        if (r.w == 0 || r.h == 0 || r.x + r.w > w_ || r.y + r.h > h_ || r.x + r.w < r.x || r.y + r.h < r.y) {
+            *err = "rectangle outside the image";
+            return false;
+        }
+        need += (size_t)r.w * r.h * 4;
+    }
+    if (n != need) {
+        *err = "rectangles need " + std::to_string(need) + " bytes";
+        return false;
+    }
+    for (const crk::PixelRect &r : rects) {
+        for (uint32_t y = 0; y < r.h; y++)
+            std::memcpy(&px_[((size_t)(r.y + y) * w_ + r.x) * 4], data + (size_t)y * r.w * 4, (size_t)r.w * 4);
+        data += (size_t)r.w * r.h * 4;
+        if (!whole_) {
+            if (dirty_.size() >= kMaxRects) {
+                whole_ = true;
+                dirty_.clear();
+            } else {
+                dirty_.push_back(r);
+            }
+        }
+    }
+    have_ = true;
+    return true;
+}
+
+bool ImageLayer::attach(Graph *g, int64_t, std::string *err)
+{
+    g_ = g;
+    buf_ = g->buffer(TexFormat::RGBA8, w_, h_, sampling_);
+    quad_ = buf_ ? g->quad(effect_, params.rect) : 0;
+    const float op = params.opacity;
+    if (!quad_ || !g->texture(quad_, "u_image", buf_) || !g->uniform(quad_, "u_opacity", &op, 1) ||
+        !g->turn(quad_, params.turn()) || !g->show(quad_, false) || !g->order(quad_, order_)) {
+        *err = "image buffer or quad refused";
+        detach(true);
+        return false;
+    }
+    drawn_ = false;
+    whole_ = true;   /* a new buffer holds nothing yet */
+    start_animations();
+    return true;
+}
+
+void ImageLayer::detach(bool drop)
+{
+    forget_animations(drop);
+    if (g_ && drop) {
+        if (quad_)
+            g_->drop_quad(quad_);
+        if (buf_)
+            g_->drop_buffer(buf_);
+    }
+    g_ = nullptr;
+    buf_ = quad_ = 0;
+    drawn_ = parked_ = hold_ = false;
+    whole_ = true;
+}
+
+void ImageLayer::arrange(bool drawn, int32_t order)
+{
+    order_ = order;
+    if (!g_)
+        return;
+    if (drawn != drawn_)
+        g_->show(quad_, drawn && (!parked_ || hold_));
+    g_->order(quad_, order);
+    drawn_ = drawn;
+}
+
+void ImageLayer::place()
+{
+    if (!g_)
+        return;
+    const float op = params.opacity;
+    g_->place(quad_, params.rect);
+    g_->turn(quad_, params.turn());
+    g_->uniform(quad_, "u_opacity", &op, 1);
+}
+
+void ImageLayer::restore(uint32_t, const Animation &)
+{
+    place();
+}
+
+Stage ImageLayer::stage(int64_t now_ms)
+{
+    staged_ = 0;
+    if (!g_ || !drawn_ || !have_ || (!whole_ && dirty_.empty()))
+        return Stage::Idle;
+    if ((!clock_.due(now_ms) && !holding()) || !pacer_.ready(now_ms))
+        return Stage::Idle;
+    const std::vector<crk::PixelRect> all{crk::PixelRect{0, 0, w_, h_}};
+    bool written = true;
+    staged_ = crk::write_rects(
+        px_.data(), w_, 4, whole_ ? all : dirty_, &scratch_,
+        [this](const uint8_t *px, const crk::PixelRect &r) { return g_->write(buf_, r.x, r.y, r.w, r.h, px); },
+        &written);
+    if (written && parked_) {
+        parked_ = false;   /* whole_ was set with it: this write is whole */
+        g_->show(quad_, true);
+    }
+    return written ? Stage::Wrote : Stage::Failed;
+}
+
+void ImageLayer::committed(bool ok, int64_t now_ms)
+{
+    pacer_.spend(staged_);
+    clock_.sent(now_ms);
+    if (ok) {
+        writes_++;
+        bytes_ += staged_;
+        whole_ = false;
+    } else {
+        /* The buffer may hold part of it unflushed: write it all again. An
+         * exclusive image holds the target until then (the layers below it
+         * are suspended, so hiding it would show nothing); any other is
+         * hidden until then, so no other layer's flush shows it half
+         * written. */
+        failed_++;
+        whole_ = true;
+        parked_ = true;
+        hold_ = params.exclusive;
+        if (g_ && !hold_)
+            g_->show(quad_, false);
+    }
+    dirty_.clear();
+    staged_ = 0;
+}
+
+int64_t ImageLayer::wake_in_ms(int64_t now_ms) const
+{
+    if (!g_ || !drawn_ || !have_ || (!whole_ && dirty_.empty()))
+        return -1;
+    const int64_t w = clock_.ms_until_due(now_ms);
+    return w > 0 ? w : -1;
+}
+
+std::string ImageLayer::stats() const
+{
+    char b[96];
+    std::snprintf(b, sizeof b, "%llu writes, %llu KB, %llu failed", (unsigned long long)writes_,
+                  (unsigned long long)(bytes_ / 1024), (unsigned long long)failed_);
+    return b;
+}
+
+/* ---- effect --------------------------------------------------------------- */
+
+EffectLayer::EffectLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect,
+                         uint32_t time_fps, int64_t now_ms)
+    : Layer(id, target, seq, pacer), effect_(effect), time_fps_(time_fps), born_ms_(now_ms)
+{
+    time_clock_.configure(time_fps);
+    time_clock_.reset(now_ms);
+    if (time_fps_) {
+        const float zero = 0.0f;
+        set_uniform("u_time", &zero, 1);
+    }
+}
+
+bool EffectLayer::set_uniform(const std::string &name, const float *v, int n)
+{
+    return uniforms_.set(name, v, n);
+}
+
+bool EffectLayer::set_uniform(const std::string &name, UniformType t, const float *v, uint32_t elements)
+{
+    return uniforms_.set(name, t, v, elements);
+}
+
+void EffectLayer::cluster_time()
+{
+    /* An hour of seconds, then again: the value stays small enough for a
+     * shader's highp float to keep millisecond steps. */
+    Animation a;
+    a.property = Animated::Uniform;
+    a.uniform = "u_time";
+    a.width = 1;
+    a.loop = true;
+    a.t = {0, 3600000};
+    a.v = {0.0f, 3600.0f};
+    std::string err;
+    if (!play(0, 0, a, &err))
+        log_warn("layer %u: u_time: %s", id_, err.c_str());
+}
+
+bool EffectLayer::attach(Graph *g, int64_t, std::string *err)
+{
+    g_ = g;
+    quad_ = g->quad(effect_, params.rect);
+    if (!quad_ || !g->turn(quad_, params.turn()) || !g->show(quad_, false) || !g->order(quad_, order_)) {
+        *err = "effect quad refused";
+        detach(true);
+        return false;
+    }
+    drawn_ = false;
+    uniforms_.dirty_all();
+    start_animations();
+    return true;
+}
+
+void EffectLayer::detach(bool drop)
+{
+    forget_animations(drop);
+    if (g_ && drop && quad_)
+        g_->drop_quad(quad_);
+    g_ = nullptr;
+    quad_ = 0;
+    drawn_ = false;
+}
+
+void EffectLayer::arrange(bool drawn, int32_t order)
+{
+    order_ = order;
+    if (!g_)
+        return;
+    if (drawn != drawn_)
+        g_->show(quad_, drawn);
+    g_->order(quad_, order);
+    drawn_ = drawn;
+}
+
+void EffectLayer::place()
+{
+    if (!g_)
+        return;
+    g_->place(quad_, params.rect);
+    g_->turn(quad_, params.turn());
+}
+
+void EffectLayer::restore(uint32_t, const Animation &a)
+{
+    if (a.property == Animated::Uniform)
+        uniforms_.dirty(a.uniform);
+    else
+        place();
+}
+
+Stage EffectLayer::stage(int64_t now_ms)
+{
+    staged_ = false;
+    if (!g_ || !drawn_)
+        return Stage::Idle;
+    if (time_fps_ && time_clock_.due(now_ms)) {
+        const float t = (float)(now_ms - born_ms_) / 1000.0f;
+        set_uniform("u_time", &t, 1);
+    }
+    staged_ = uniforms_.stage(g_, quad_);
+    return staged_ ? Stage::Wrote : Stage::Idle;
+}
+
+void EffectLayer::committed(bool ok, int64_t now_ms)
+{
+    if (!ok)
+        return;   /* still dirty: sent again with the next flush */
+    uniforms_.committed();
+    if (time_fps_ && time_clock_.due(now_ms))
+        time_clock_.sent(now_ms);
+    staged_ = false;
+}
+
+int64_t EffectLayer::wake_in_ms(int64_t now_ms) const
+{
+    if (!g_ || !drawn_ || !time_fps_)
+        return -1;
+    const int64_t w = time_clock_.ms_until_due(now_ms);
+    return w > 0 ? w : -1;
+}
+
+}  // namespace crs

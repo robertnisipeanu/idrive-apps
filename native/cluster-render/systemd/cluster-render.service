@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+[Unit]
+Description=cluster-render: every app's layers on the instrument cluster and the HUD
+RequiresMountsFor=/var/opt
+Requires=cluster-render.socket
+After=local-fs.target cluster-render.socket
+# cluster-demo's standalone renderer holds the same RAMSES participant and
+# vsomeip identity (README.md "Identity and packaging"); only one of them
+# can run.
+Conflicts=cluster-demo.service
+
+[Service]
+# uid 5000 is the only uid the unit's vsomeip security allows to request
+# Dcsm2 and offer the RAMSES distributedrendering services
+# (README.md "Identity and packaging").
+User=hmi_5000
+Group=hmi_5000
+RuntimeDirectory=cluster-render
+RuntimeDirectoryMode=0755
+ExecStart=/var/opt/cluster-render/current/cluster-render -c /var/opt/cluster-render/current/cluster-render.conf
+Restart=on-failure
+# At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of
+# systemd's start limit (5 starts in 10 s), which would also stop the socket.
+RestartSec=5

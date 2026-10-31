@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+[Unit]
+Description=waze-on-cluster boot recovery: restore the original carplay if the map patch makes it crash-loop
+RequiresMountsFor=/var/opt
+After=local-fs.target
+
+[Service]
+# Root, like patchd: it remounts / read-write only to run the vetted,
+# reversible carplay_patch.js revert (verified backup, SHA gate), then read-only
+# again. It never kills, restarts or reboots anything; it only replaces the
+# on-disk binary, which the next carplay start picks up. Long-running: it checks
+# at boot, then watches carplay so a healthy start clears the counter and a
+# clean shutdown (SIGTERM) exempts the boot.
+ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js
+Restart=always
+RestartSec=5
+# On stop, signal only the daemon (not its mount/revert children) and give an
+# in-progress restore time to finish, so / is never left writable.
+KillMode=mixed
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

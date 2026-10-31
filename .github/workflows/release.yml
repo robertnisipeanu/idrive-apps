@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+# Publishes new versions of the components to this repository's GitHub
+# Releases, with the catalog.json the Store reads (release/README.md). Push a
+# v* tag, or run it by hand with the component ids to publish (empty: all).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      components:
+        description: Component ids to publish, space-separated (empty publishes every component)
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Actions are pinned to commits: each runs in the job that holds the
+# contents: write token.
+jobs:
+  publish:
+    # main and v* tags only: work-in-progress branches do not publish
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SOURCE_DATE_EPOCH comes from each component's last commit
+          fetch-depth: 0
+          # publishing talks to the API through GH_TOKEN, not git
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+
+      # the tools' builds run make target: Docker, preinstalled on the runner
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MGU_PUBLISH: github:${{ github.repository }}
+          MGU_PUBLISH_VISIBILITY: any
+          COMPONENTS: ${{ inputs.components }}
+        run: node release/release.js publish $COMPONENTS
+
+      - name: Published catalog
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MGU_PUBLISH: github:${{ github.repository }}
+        run: node release/release.js list

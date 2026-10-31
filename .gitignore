@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+
+# builds: native/*/build/, the app's packages, release.js output
+native/*/build/
+*.tgz
+release/out/
+release/published/
