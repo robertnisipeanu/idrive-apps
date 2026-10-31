@@ -76,24 +76,74 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   replacing another is instant.
 - **Refcounted slots.** A target is requested while at least one visible
   layer has content (or is `prewarm`) and is released only when none has for
-  `<target>_linger_ms`. While it lingers the scene stays mapped, empty and
-  transparent, so a client that comes back within it is shown at once. The
-  map's linger is 0: it is unmapped as soon as its video stops.
-- **The stock HMI and other apps.** The KOMBI's slot table tells who holds
-  a slot. Content of an app that does not use this service is always
-  yielded to: the slot is asked for again only once the table says it is
-  free. The stock HMI's (scene ids 0x0100xxxx that are not ours) is yielded
-  to the same way, unless a wanting layer has `contend`. A contending
-  layer, such as the Waze map in 0x100, retries after 2, 5, 10, 20, then
-  every 30 s, and the ladder starts over after 30 s shown. A slot the
-  table reports disabled or with another content mapped, and then free
-  again (a door-open warning come and gone), is asked for at once,
-  whatever step the ladder is on.
-  Without a contending layer, a slot the table names as held is not asked
-  for, even when a retry is due.
-- **Refusals and no answer** (5 s) retry on the same ladder; they are not
-  upload evidence. Requests to a slot are at least 1 s apart, with one
-  outstanding.
+  `<target>_linger_ms`, after the fade-out below. While it lingers the scene
+  stays mapped, empty and transparent, so a client that comes back within
+  it is shown at once. The map's linger is 0: it is unmapped as soon as its
+  video has stopped and faded out.
+- **The KOMBI's queue** (VERIFIED on the car, slot 0x100, class 0,
+  [dcsm/DCSM.md](dcsm/DCSM.md)):
+  - The KOMBI never takes a slot from the content it shows. The first
+    content mapped into a slot is shown (map status 1). A later map is
+    accepted (`E_DCSM_OK`) and parked, invisible (map status 3). When the
+    shown content is unmapped, the oldest parked one is shown within about
+    0.5 s. The class does not change this for 0x100. Class 1 was parked
+    even with the slot free, so the map's class is 0.
+  - The slot table has one row per mapping: slot, content, class and map
+    status, with the slot's status in every row. The row with map status 1
+    or 2 is the one shown, and so the holder. Rows stay listed, unmapped,
+    until their content is unfetched.
+  - The stock map is content 0x01000300, class 0. In Map view the HMI maps
+    it into 0x100.
+  - A phone reconnecting or a door-open warning locks 0x100 (status 0), and
+    the KOMBI unmaps every mapping in it, ours and the stock map's. Once it
+    is free again, the first to ask is shown.
+- **Parked.** A target the KOMBI parks stays mapped and fetched, with no
+  timeout, and is `parked` (behind the holder the table names) until the
+  KOMBI shows it. A parked target stages and flushes nothing. Nobody
+  wanting it, it is released at once, with no linger.
+- **Take-over.** A target with `<target>_take_over_stock` (the map's
+  default) takes the slot from the stock HMI, as long as a wanting layer
+  has `contend`, such as the Waze map:
+  - When the target is parked and the row shown in its own slot is the
+    stock HMI's content, the service unmaps that content once with the
+    HMI's client handle (`dcsm_hmi_client_handle`, 1). VERIFIED on the
+    car: the KOMBI then shows ours, and the HMI maps its map again at once,
+    parked behind ours. When ours is unmapped, the stock map is shown again
+    within 1 s.
+  - Take-overs are at least 3 s apart, then 10 s, then 30 s while the stock
+    content keeps coming back on top. The count starts over after 60 s
+    shown.
+  - Never content of anything other than the stock HMI, never without a
+    contending layer, never in any other slot. Each one is logged with
+    what was unmapped, and so is the KOMBI's reply. Unmap replies are
+    matched in a queue of their own, so they never answer a fetch or a map.
+- **The stock HMI and other apps** without a parked mapping (not asked yet,
+  or a target that does not take over): content of an app that does not
+  use this service is always yielded to: the slot is asked for again only
+  once the table says it is free. The stock HMI's (scene ids 0x0100xxxx
+  that are not ours) is yielded to the same way, unless a wanting layer has
+  `contend`. A contending layer whose request was refused or whose scene
+  was lost retries after 2, 5, 10, 20, then every 30 s, and the ladder
+  starts over after 30 s shown. A slot the table reports disabled or with
+  another content mapped, and then free again (a door-open warning come and
+  gone), is asked for at once, whatever step the ladder is on. Without a
+  contending layer, a slot the table names as held is not asked for, even
+  when a retry is due.
+- **Refusals, failed fetches and no answer** (neither shown nor parked
+  within 5 s) retry on the same ladder; they are not upload evidence. A
+  shown target whose scene the display removes with nobody else in the slot
+  asks again on the ladder too. Requests to a slot are at least 1 s apart,
+  with one outstanding.
+- **Fades.** A target's video and image layers are drawn at their own
+  opacity times the target's fade. The fade is 0 until the target is shown
+  and rises to 1 over `fade_ms` (250) once it is. When nothing wants the
+  target any more, the layers last drawn stay drawn and fall to 0 over
+  `fade_ms`, and only then does the linger start. A fade steps at most
+  every 50 ms, in the target's ordinary flush, with no pixel writes. Effect
+  and mesh layers have no opacity and do not fade; a target with only those
+  is released without one. A layer a client drops, or whose client goes,
+  goes at once. A slot the display takes is gone without a fade, and so is
+  everything on SIGTERM.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
   and `hud`) are never up at once.
@@ -194,8 +244,8 @@ share a 2D pass, and the passes' render order follows the stack exactly
   uniforms, mesh parts with their geometry and transforms, binds and
   animations; and send their images and assets whole.
 - A client's layers go with its connection, then its assets. A video layer whose frames stop
-  for `stall_ms` stops wanting its slot, which is released after the
-  linger.
+  for `stall_ms` stops wanting its slot, which is released after it fades
+  out and the linger.
 - On SIGTERM every target is unmapped and unfetched. If the service dies,
   the KOMBI's watchdog drops its content within about 10 s and systemd
   starts it again.
@@ -254,7 +304,8 @@ So iDrive 8 needs two implementations:
   `updateData`, its flush takes only a tag);
 - a `Port` on its `DcsmProvider` (`src/slots.h`): request is
   `offerContent`, release is `requestStopOfferContent`, shown and lost come
-  from the consumer's content states.
+  from the consumer's content states. Parked and the take-over are
+  iDrive 7's Dcsm2 and have no counterpart known there.
 
 Everything above them stays the same. Detecting the generation: the `Hmi8`
 process or `/usr/lib/oap-mainapp21` (as mgu-store's deploy tool does).
@@ -312,7 +363,8 @@ the service and prints every event: `node showcase.js [--socket PATH]
 [all|cube|text|needle|plasma|alert|video] [--target panel|map|hud]`.
 
 The host tests:
-- `slots_test`: arbitration;
+- `slots_test`: arbitration, on slot tables of one row per mapping as the
+  car reports them: parked targets, take-overs and their spacing, locks;
 - `governor_test`: the budget's steps, cooldown, recovery and probation;
 - `compositor_test`: layers on a fake renderer that keeps pending and
   flushed state apart. It covers dirty, packed and exact writes, failure
@@ -322,10 +374,13 @@ The host tests:
   while sampled), mesh parts and their looks, geometry paced and replaced
   at most once a second, passes following the stack with an exclusive
   layer, turns, uniform arrays, animations, and a scene published again
-  rebuilding all of it;
-- `dcsm2_port_test`: the Dcsm2 request sequence, reply matching and refusal
-  kinds;
+  rebuilding all of it; fades in and out and their timing, and a parked
+  target staging nothing;
+- `dcsm2_port_test`: the Dcsm2 request sequence, parked and promoted
+  mappings, take-overs, reply matching and refusal kinds;
 - `service_test`: the whole service over its socket with the C++ client,
+  on a fake KOMBI that parks and promotes as the car's does (the map taking
+  over from the stock map and falling back to it),
   including a restart under the client that makes assets, binds, uniform
   arrays, mesh parts, geometry and animations again, and malformed or
   oversized mesh messages and bad keys refused;
@@ -399,8 +454,11 @@ Not verified, needs the car:
   - animations against the KOMBI's clock;
   - slot 0x100, and the map and the panel shown at once, from one
     participant;
-  - yielding to and contending with the stock HMI: the emulated HMI never
-    takes a cluster slot;
+  - the service's take-over, parked state and fades on the KOMBI. The
+    take-over itself was VERIFIED on the car with a one-shot unmap as the
+    HMI; the emulated HMI never takes a cluster slot;
+  - what the HMI does after several take-overs in a row, and in views other
+    than Map view;
   - heartbeat replies: the emulator does not answer heartbeat requests;
   - 0x01000400 on the panel while the HMI's speech dialog exists;
   - how a flush's duration and the heartbeat replies behave as the link
