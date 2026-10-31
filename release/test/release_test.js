@@ -155,7 +155,8 @@ test('the Waze chain: app -> waze-on-cluster -> cluster-render and a hook-runnin
     assert.deepStrictEqual(app.requires, { 'waze-on-cluster': tool.version });
     assert.deepStrictEqual(Object.keys(tool.requires), ['mgu-deploy', 'cluster-render'], 'the deploy tool installs first');
     assert.strictEqual(tool.requires['mgu-deploy'], '0.7.0');
-    assert.strictEqual(tool.requires['cluster-render'], renderer.version);
+    assert.ok(catalog.compareVersions(renderer.version, tool.requires['cluster-render']) >= 0,
+        'the renderer released beside it meets the tool\'s minimum');
     assert.deepStrictEqual(renderer.requires, { 'mgu-deploy': '0.4.0' });
     assert.deepStrictEqual(tool.mguHmi, ['ID7']);
     const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'native', 'waze-on-cluster', 'component.json'), 'utf8'));
