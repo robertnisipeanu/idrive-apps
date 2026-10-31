@@ -37,6 +37,10 @@ void log_lines_since(uint64_t *seq, std::vector<std::string> *out);
  * An empty path, or a second call, closes the file first. */
 bool log_to_file(const std::string &path, size_t max_bytes, const char *name, const char *version);
 
+/* log_file_kb in bytes: 16 to 16384 KB, otherwise (with a warning) 512 KB,
+ * so a log setting never stops a service. */
+size_t log_file_cap(long kb);
+
 /* "YYYY-MM-DD HH:MM:SS.mmm", UTC, for milliseconds since the epoch. */
 std::string utc_time(int64_t unix_ms);
 

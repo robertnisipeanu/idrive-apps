@@ -125,22 +125,10 @@ bool load_targets(const cld::Config &cfg, std::vector<TargetSpec> *out, std::str
     return true;
 }
 
-/* The log file (log_file, log_file_kb): a size out of range is the
- * default's, so a log setting never stops the service. */
-void open_log_file(const cld::Config &cfg)
-{
-    long kb = cfg.num("log_file_kb");
-    if (kb < 16 || kb > 16384) {
-        log_warn("log_file_kb %s is not from 16 to 16384; 512 it is", cfg.str("log_file_kb").c_str());
-        kb = 512;
-    }
-    if (cfg.has("log_file"))
-        cld::log_to_file(cfg.str("log_file"), (size_t)kb * 1024, "cluster-render", CR_VERSION);
-}
-
 int serve(const cld::Config &cfg)
 {
-    open_log_file(cfg);
+    if (cfg.has("log_file"))
+        cld::log_to_file(cfg.str("log_file"), cld::log_file_cap(cfg.num("log_file_kb")), "cluster-render", CR_VERSION);
     ServiceConfig sc;
     std::string err;
     if (!load_targets(cfg, &sc.targets, &err)) {

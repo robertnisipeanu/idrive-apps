@@ -73,6 +73,8 @@ public:
      * changed and whether the last was blank (FrameTally), once a minute
      * while frames come. Main thread. */
     bool minute(int64_t now_ms, FrameTally::Minute *m);
+    /* Decode errors so far, and the last one's text in *last. */
+    uint32_t decode_errors(std::string *last) const;
     /* Readable once a frame waits to be taken. */
     int ready_fd() const { return ready_[0]; }
     size_t frame_bytes() const { return atlas_bytes_; }

@@ -150,22 +150,10 @@ void write_sibling_file(const std::string &fifo_path, const char *name, const st
         unlink(tmp.c_str());
 }
 
-/* The log file (log_file, log_file_kb): a size out of range is the
- * default's, so a log setting never stops the service. */
-void open_log_file(const Config &cfg)
-{
-    long kb = cfg.num("log_file_kb");
-    if (kb < 16 || kb > 16384) {
-        log_warn("log_file_kb %s is not from 16 to 16384; 512 it is", cfg.str("log_file_kb").c_str());
-        kb = 512;
-    }
-    if (cfg.has("log_file"))
-        log_to_file(cfg.str("log_file"), (size_t)kb * 1024, "waze-on-cluster", WOC_VERSION);
-}
-
 int serve(const Config &cfg)
 {
-    open_log_file(cfg);
+    if (cfg.has("log_file"))
+        log_to_file(cfg.str("log_file"), log_file_cap(cfg.num("log_file_kb")), "waze-on-cluster", WOC_VERSION);
     VideoConfig vc;
     vc.fifo_path = cfg.str("fifo_path");
     vc.carplay_group = cfg.str("carplay_group");
@@ -237,6 +225,8 @@ int serve(const Config &cfg)
     std::vector<uint8_t> frame;
     StatusLog status_log;
     int64_t last_status_write = 0;
+    uint32_t errs_logged = 0;
+    int64_t errs_logged_ms = -60000;
     const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
     StreamLiveness liveness(vc.stall_ms);
     AltScreen::State alt_state = AltScreen::Unknown;
@@ -286,6 +276,14 @@ int serve(const Config &cfg)
             if (producer.minute(now, &m))
                 log_info("waze: %u frames decoded in the last minute, %u changed; the last picture is %s", m.frames,
                          m.changed, m.blank ? "blank" : "not blank");
+            /* New decode errors, at most once a minute. */
+            std::string last_err;
+            const uint32_t errs = producer.decode_errors(&last_err);
+            if (errs != errs_logged && now - errs_logged_ms >= 60000) {
+                log_warn("waze: %u decode errors so far, the last: %s", errs, last_err.c_str());
+                errs_logged = errs;
+                errs_logged_ms = now;
+            }
             write_sibling_file(cfg.str("fifo_path"), "status.json", status);
             /* The framing probe and the renderer's own status (targets, the
              * map layer's writes, the upload cap), for the diagnostics. */

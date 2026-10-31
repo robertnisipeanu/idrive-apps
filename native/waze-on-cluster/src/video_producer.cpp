@@ -279,6 +279,13 @@ bool VideoProducer::frozen(int64_t now_ms) const
     return freeze_.frozen(now_ms);
 }
 
+uint32_t VideoProducer::decode_errors(std::string *last) const
+{
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    *last = last_err_;
+    return decode_errs_;
+}
+
 bool VideoProducer::minute(int64_t now_ms, FrameTally::Minute *m)
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);

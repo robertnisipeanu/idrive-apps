@@ -116,6 +116,15 @@ void log(char level, const char *fmt, ...)
     file_write(level, line);
 }
 
+size_t log_file_cap(long kb)
+{
+    if (kb < 16 || kb > 16384) {
+        log('W', "log_file_kb %ld is not from 16 to 16384; 512 it is", kb);
+        kb = 512;
+    }
+    return (size_t)kb * 1024;
+}
+
 bool log_to_file(const std::string &path, size_t max_bytes, const char *name, const char *version)
 {
     std::lock_guard<std::mutex> lock(file_mutex);
