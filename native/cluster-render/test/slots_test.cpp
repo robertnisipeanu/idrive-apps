@@ -436,14 +436,26 @@ static void slot_comes_back()
     const int64_t lost = r.now;
     ok("a fourth loss in a row waits 20 s on the ladder", r.m.status(0).retry_ms == lost + 20000);
     joined();
-    r.run(3000);
-    r.slot(kMapSlot, 0, kMapScene);   /* still disabled */
-    r.run(10);
+    r.run(3000);   /* one report, before the loss: the display reports a slot only when it changes */
     ok("while the slot stays disabled, nothing is asked for", joined().find("request") == std::string::npos);
     r.slot(kMapSlot, 1, 0);           /* the door closed: the slot is free again */
     r.run(1100);
     ok("the slot free again after it was away: asked for at once, not after 20 s",
        joined().find("request map") != std::string::npos && r.now - lost < 5000);
+
+    Rig v;
+    v.m.want(0, true, true);
+    v.m.tick(v.now);
+    v.m.on_shown(kMapScene, v.now);
+    v.slot(kMapSlot, 2, kMapScene);   /* the table names our mapping */
+    joined();
+    v.m.on_lost(kMapScene, "unmapped", v.now);   /* undecided: the table is asked for */
+    v.slot(kMapSlot, 0, kMapScene);   /* its answer: disabled */
+    v.run(20);
+    v.slot(kMapSlot, 1, 0);
+    v.run(1100);
+    ok("a loss decided by the next report, the slot disabled then free: asked for at once",
+       joined().find("request map") != std::string::npos);
 
     Rig q;
     q.m.want(0, true, true);

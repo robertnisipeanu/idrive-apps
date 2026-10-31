@@ -170,16 +170,18 @@ void Dcsm2Port::on_map_status(uint64_t scene, uint32_t initial, uint32_t final_,
 
 void Dcsm2Port::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
 {
-    /* Each entry is logged when first seen and when it changes: the KOMBI
-     * re-reports every slot on each arbitration. */
+    /* An entry is logged when it is new to this report or changed since the
+     * last one: the KOMBI re-reports every slot on each arbitration. */
+    std::map<std::pair<uint64_t, uint64_t>, SlotInfo> now;
     for (const SlotInfo &s : slots) {
         auto it = slots_.find({s.slot, s.content});
         if (it == slots_.end() || it->second.status != s.status || it->second.klass != s.klass ||
             it->second.map_status != s.map_status)
             log_info("dcsm: slot 0x%llx status %u content 0x%llx class %u map %u", (unsigned long long)s.slot,
                      s.status, (unsigned long long)s.content, s.klass, s.map_status);
-        slots_[{s.slot, s.content}] = s;
+        now[{s.slot, s.content}] = s;
     }
+    slots_.swap(now);
     if (manager_)
         manager_->on_slots(slots, now_ms);
 }

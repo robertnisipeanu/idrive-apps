@@ -146,7 +146,10 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
         retry = (from_ms >= 0 ? from_ms : now_ms) + kLadder[std::min(t.ladder, kLadderSteps - 1)];
         t.ladder++;
     }
-    t.slot_away = false;
+    /* A slot already reported away (the report can come before the loss)
+     * counts from the start of the wait. */
+    auto a = away_.find(specs_[i].slot);
+    t.slot_away = a != away_.end() && a->second;
     set(i, TargetState::Waiting, h, reason, now_ms, retry);
 }
 
@@ -265,8 +268,17 @@ void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &
 
 void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
 {
-    for (const SlotInfo &s : slots)
+    std::map<uint64_t, bool> away;
+    for (const SlotInfo &s : slots) {
         slots_[s.slot] = s;
+        bool ours = false;
+        for (const TargetSpec &spec : specs_)
+            ours = ours || (spec.slot == s.slot && spec.scene_id == s.content);
+        bool &a = away[s.slot];
+        a = a || s.status == 0 || (s.status == 2 && !ours);
+    }
+    for (const auto &kv : away)
+        away_[kv.first] = kv.second;
     slots_seq_++;
     /* A slot that comes back (disabled or held, then free) ends the wait of
      * a target on the ladder: it is asked for at once, not at the next
@@ -277,17 +289,10 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         TargetStatus &st = t.status;
         if (st.state != TargetState::Waiting || st.retry_ms < 0 || t.verdict)
             continue;
-        bool seen = false, away = false;
-        for (const SlotInfo &s : slots) {
-            if (s.slot != specs_[i].slot)
-                continue;
-            seen = true;
-            if (s.status == 0 || (s.status == 2 && s.content != specs_[i].scene_id))
-                away = true;
-        }
-        if (!seen)
+        auto a = away.find(specs_[i].slot);
+        if (a == away.end())
             continue;
-        if (away)
+        if (a->second)
             t.slot_away = true;
         else if (t.slot_away && st.retry_ms > now_ms) {
             st.retry_ms = now_ms;

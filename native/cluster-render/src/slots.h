@@ -66,7 +66,6 @@ struct TargetSpec {
 enum class Holder { None, Us, Stock, Foreign };
 const char *holder_name(Holder h);
 
-/* One row of the display's slot table. */
 /* One entry of the display's slot table. A slot can have several entries,
  * one per content the display knows for it. */
 struct SlotInfo {
@@ -200,6 +199,9 @@ private:
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, SlotInfo> slots_;
+    /* Per slot, from its latest report: disabled, or held by content not
+     * ours. */
+    std::map<uint64_t, bool> away_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
     int64_t slot_poll_ms_ = 0;
