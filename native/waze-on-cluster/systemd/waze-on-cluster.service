@@ -23,6 +23,10 @@ RuntimeDirectory=waze-on-cluster
 # World-traversable so the carplay uid can reach the FIFO (file group-restricted)
 # and the diagnostics uid can read status.json; the files set their own modes.
 RuntimeDirectoryMode=0755
+# The log file's directory (log_file), on /var/opt so it outlives reboots,
+# made as root ("+"); a failure ("-") only leaves the service without the
+# file.
+ExecStartPre=-+/bin/sh -c 'mkdir -p /var/opt/waze-on-cluster/log && chown hmi_5000:hmi_5000 /var/opt/waze-on-cluster/log'
 ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf
 Restart=on-failure
 # At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of

@@ -30,6 +30,13 @@
  * - the REMOVED that answers our own unfetch is not a loss, even when the
  *   same scene id was asked for again since (panel and HUD share one).
  *
+ * For the field logs it counts what the KOMBI sends (fetch, map and slot
+ * events, notifications that did not decode, replies), logs undecoded
+ * notifications (at most every kUndecodedLogMs per event id) and each change
+ * of the subscription's answer, and, when the slot manager gives up on a
+ * request, what arrived since it and the last slot table. The counts, the
+ * availability and the subscription go in the service's status text.
+ *
  * All of it runs on the render thread: Dcsm2Link queues what vsomeip's
  * thread receives and hands it over in order (dcsm2_link.h). */
 #ifndef CRS_DCSM2_PORT_H
@@ -44,6 +51,10 @@
 #include "slots.h"
 
 namespace crs {
+
+/* Up to max of the n bytes at p in hex, a space after every 4, and " ..."
+ * when there were more; "(empty)" for none. */
+std::string hex_bytes(const uint8_t *p, size_t n, size_t max);
 
 /* The requests, as Dcsm2Link sends them. */
 class Dcsm2Wire {
@@ -60,6 +71,8 @@ public:
 
 class Dcsm2Port : public Port {
 public:
+    static const int64_t kUndecodedLogMs = 10000;
+
     explicit Dcsm2Port(Dcsm2Wire *wire) : wire_(wire) {}
     void set_manager(SlotManager *m) { manager_ = m; }
     /* The stock HMI's Dcsm2 client handle, for take-overs (HmiMain3D: 1). */
@@ -70,6 +83,8 @@ public:
     void release(const TargetSpec &t) override;
     void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override { wire_->slots(); }
+    void no_answer(const TargetSpec &t, int64_t now_ms) override;
+    std::string status_text(int64_t now_ms) const override;
 
     /* What the KOMBI says, in the order it said it (render thread). */
     void on_availability(bool up, int64_t now_ms);
@@ -86,6 +101,11 @@ public:
             on_link(silent, now_ms);
     }
     std::function<void(bool silent, int64_t now_ms)> on_link;
+    /* A notification that did not decode (dcsm::Client::onUndecoded): its
+     * event id, payload length and hex_bytes of its start. */
+    void on_undecoded(uint16_t event, size_t length, const std::string &hex, int64_t now_ms);
+    /* The subscription's answer for an event (dcsm::Client::onSubscription). */
+    void on_subscription(uint16_t event, uint16_t code, int64_t now_ms);
 
 private:
     enum class Phase { Fetching, Mapping, Parked, Mapped, Refused, Lost };
@@ -94,6 +114,12 @@ private:
         Phase phase = Phase::Fetching;
         bool map_asked = false;   /* a map went out and was not refused */
     };
+
+    /* What the KOMBI sent since the service started. */
+    struct Counts {
+        uint32_t fetch = 0, map = 0, slots = 0, undecoded = 0, replies = 0;
+    };
+    static std::string counts_text(const Counts &c);
 
     uint64_t take(std::deque<uint64_t> *q);
     void refuse(uint64_t scene, Content &c, Refusal r, const std::string &why, int64_t now_ms);
@@ -113,6 +139,19 @@ private:
     };
     std::deque<Unmap> unmaps_;
     std::map<std::pair<uint64_t, uint64_t>, SlotInfo> slots_;   /* (slot, content): as last logged */
+
+    Counts total_;
+    std::map<uint64_t, Counts> asked_;          /* by scene id: total_ at its last request */
+    std::vector<SlotInfo> table_;               /* the last slot table since Dcsm2 came up */
+    int64_t table_ms_ = -1;                     /* when it came; -1: none */
+    int64_t changed_ms_ = -1;                   /* the last availability change; -1: none yet */
+    std::map<uint16_t, uint16_t> subscribed_;   /* by event id: the last answer's code, since Dcsm2 last went */
+    struct Undecoded {
+        bool logged = false;
+        int64_t logged_ms = 0;
+        uint32_t dropped = 0;   /* not logged since */
+    };
+    std::map<uint16_t, Undecoded> undecoded_;   /* by event id */
 };
 
 }  // namespace crs

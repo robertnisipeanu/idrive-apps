@@ -981,7 +981,7 @@ void Server::report(int64_t now_ms)
             drop_client(i);
 }
 
-std::string Server::status_text(int64_t) const
+std::string Server::status_text(int64_t now_ms) const
 {
     std::string s;
     char line[320];
@@ -1000,6 +1000,7 @@ std::string Server::status_text(int64_t) const
                       st.reason.empty() ? "" : (" " + st.reason).c_str());
         s += line;
     }
+    s += slots_->port().status_text(now_ms);
     for (const Client &c : clients_)
         for (const auto &kv : c.assets)
             for (const Asset *a : comp_->assets())

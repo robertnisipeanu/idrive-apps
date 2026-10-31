@@ -199,6 +199,16 @@ bool MapFeed::take_changed()
     return c;
 }
 
+bool StatusLog::due(const FeedStatus &s)
+{
+    const std::string key = s.state + '\n' + s.reason + '\n' + s.target;
+    if (logged_ && key == last_)
+        return false;
+    last_ = key;
+    logged_ = true;
+    return true;
+}
+
 FeedStatus MapFeed::status(const std::string &decode) const
 {
     FeedStatus s;

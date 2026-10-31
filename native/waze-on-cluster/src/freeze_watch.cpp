@@ -66,4 +66,25 @@ bool FreezeWatch::frozen(int64_t now_ms) const
     return recent * 1000 >= (size_t)cfg_.min_fps * cfg_.ms;
 }
 
+void FrameTally::frame(int64_t now_ms, bool changed, bool blank)
+{
+    if (since_ms_ < 0) {
+        since_ms_ = now_ms;
+        m_ = Minute();
+    }
+    m_.frames++;
+    if (changed)
+        m_.changed++;
+    m_.blank = blank;
+}
+
+bool FrameTally::take(int64_t now_ms, Minute *out)
+{
+    if (since_ms_ < 0 || now_ms - since_ms_ < kMinuteMs)
+        return false;
+    *out = m_;
+    since_ms_ = -1;
+    return true;
+}
+
 }  // namespace woc

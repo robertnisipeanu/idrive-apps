@@ -50,11 +50,11 @@ public:
 
 private:
     struct Event {
-        enum Kind { Availability, Reply, Fetch, Map, Slots, Heartbeat } kind;
+        enum Kind { Availability, Reply, Fetch, Map, Slots, Heartbeat, Undecoded, Subscription } kind;
         explicit Event(Kind k) : kind(k) {}
         bool up = false, ok = false;
-        uint16_t method = 0;
-        uint32_t status = 0, initial = 0;
+        uint16_t method = 0;                /* Undecoded, Subscription: the event id */
+        uint32_t status = 0, initial = 0;   /* Undecoded: the length; Subscription: the code */
         std::string text;
         uint64_t scene = 0;
         std::vector<SlotInfo> slots;

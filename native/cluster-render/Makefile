@@ -32,6 +32,9 @@ CXXFLAGS = -std=c++14 -O2 -g -Wall -Wextra -Werror
 HOSTINC  = -Ikit -Iinclude -I. -Isrc -isystem dcsm/third_party/vsomeip/interface
 CPPFLAGS = $(HOSTINC) -Iabi/include
 
+# component.json's version, compiled into the binary for its log file.
+VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
+
 RAMSES_SONAME = libramses-shared-lib-wayland-ivi-egl-es-3-0.so.19.0
 T = $(BUILD)/target
 H = $(BUILD)/host
@@ -50,7 +53,8 @@ all: test
 
 test: test-kit test-cpp test-js
 
-test-cpp: $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test
+test-cpp: $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test
+	$(H)/log_test
 	$(H)/slots_test
 	$(H)/governor_test
 	$(H)/compositor_test
@@ -77,6 +81,10 @@ test-kit-x86:
 		make -s BUILD=$(BUILD)/x86 CXX=g++ test-kit
 
 # ---- host tests -------------------------------------------------------------
+$(H)/log_test: test/log_test.cpp src/log.cpp src/log.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/log_test.cpp src/log.cpp -lpthread
+
 $(H)/slots_test: test/slots_test.cpp src/slots.cpp src/slots.h src/governor.cpp src/governor.h src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/slots_test.cpp src/slots.cpp src/governor.cpp src/log.cpp -lpthread
@@ -142,8 +150,8 @@ $(T)/stub/libvsomeip3.so.3: dcsm/abi/libvsomeip3.so.3.symbols
 
 STUBS = $(T)/stub/$(RAMSES_SONAME) $(T)/stub/libvsomeip3.so.3
 
-$(T)/cluster-render: $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(CORE_H) $(STUBS)
-	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
+$(T)/cluster-render: $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(CORE_H) $(STUBS) component.json
+	g++ $(CXXFLAGS) $(CPPFLAGS) -DCR_VERSION='"$(VERSION)"' -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
 		-o $@ $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(STUBS)
 	$(PYTHON) tools/ramses19_abi.py check-imports $@ abi/libramses19.symbols
 	$(PYTHON) dcsm/tools/abi.py check $@ dcsm/abi/libvsomeip3.so.3.symbols
