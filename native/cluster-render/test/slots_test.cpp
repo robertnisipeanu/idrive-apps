@@ -416,6 +416,48 @@ static void lost_to_our_own_id()
        ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 2000);
 }
 
+static void slot_comes_back()
+{
+    Rig r;
+    r.m.want(0, true, true);   /* contending, like the Waze map */
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    /* Three losses in a row climb the ladder to its 10 s step. */
+    for (int k = 0; k < 3; k++) {
+        r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning disables the slot */
+        r.m.on_lost(kMapScene, "unmapped", r.now);
+        r.run(r.m.status(0).retry_ms - r.now + 10);
+        r.m.on_shown(kMapScene, r.now);
+        joined();
+    }
+    r.slot(kMapSlot, 0, kMapScene);
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    const int64_t lost = r.now;
+    ok("a fourth loss in a row waits 20 s on the ladder", r.m.status(0).retry_ms == lost + 20000);
+    joined();
+    r.run(3000);
+    r.slot(kMapSlot, 0, kMapScene);   /* still disabled */
+    r.run(10);
+    ok("while the slot stays disabled, nothing is asked for", joined().find("request") == std::string::npos);
+    r.slot(kMapSlot, 1, 0);           /* the door closed: the slot is free again */
+    r.run(1100);
+    ok("the slot free again after it was away: asked for at once, not after 20 s",
+       joined().find("request map") != std::string::npos && r.now - lost < 5000);
+
+    Rig q;
+    q.m.want(0, true, true);
+    q.m.tick(q.now);
+    q.m.on_shown(kMapScene, q.now);
+    joined();
+    q.slot(kMapSlot, 1, 0);           /* the display drops our scene and reports the slot free */
+    q.m.on_lost(kMapScene, "unmapped", q.now);
+    q.slot(kMapSlot, 1, 0);
+    q.run(1500);
+    ok("a slot reported free without having been away waits for the ladder",
+       joined().find("request") == std::string::npos && q.m.status(0).retry_ms > q.now);
+}
+
 static void wake()
 {
     Rig r;
@@ -445,6 +487,7 @@ int main()
     scene_failure();
     ladder_rechecks_the_table();
     lost_to_our_own_id();
+    slot_comes_back();
     wake();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

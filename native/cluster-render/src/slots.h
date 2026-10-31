@@ -27,7 +27,9 @@
  *   HMI's is yielded to the same way unless a wanting layer contends; a
  *   contending target retries after 2, 5, 10, 20, then every 30 s, and the
  *   ladder starts over after 30 s shown. Any other refusal or no answer
- *   retries on the same ladder.
+ *   retries on the same ladder. A target waiting on the ladder whose slot
+ *   the table reports disabled or held and then free again (a door-open
+ *   warning come and gone) is asked for at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot.
  * - The display service going away takes every target down; when it comes
@@ -176,6 +178,9 @@ private:
         bool verdict = false, verdict_removal = false;
         uint64_t verdict_seq = 0;
         int64_t lost_ms = 0;
+        /* Waiting on the ladder: the table has since reported the slot
+         * disabled or held by other content. */
+        bool slot_away = false;
     };
 
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);

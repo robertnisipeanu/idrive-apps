@@ -146,6 +146,7 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
         retry = (from_ms >= 0 ? from_ms : now_ms) + kLadder[std::min(t.ladder, kLadderSteps - 1)];
         t.ladder++;
     }
+    t.slot_away = false;
     set(i, TargetState::Waiting, h, reason, now_ms, retry);
 }
 
@@ -262,11 +263,37 @@ void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &
         wait(i, h, true, reason, now_ms, lost_ms);
 }
 
-void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t)
+void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
 {
     for (const SlotInfo &s : slots)
         slots_[s.slot] = s;
     slots_seq_++;
+    /* A slot that comes back (disabled or held, then free) ends the wait of
+     * a target on the ladder: it is asked for at once, not at the next
+     * step. Only a slot seen away counts, so a display that drops our scene
+     * while reporting the slot free still meets the ladder. */
+    for (size_t i = 0; i < t_.size(); i++) {
+        Target &t = t_[i];
+        TargetStatus &st = t.status;
+        if (st.state != TargetState::Waiting || st.retry_ms < 0 || t.verdict)
+            continue;
+        bool seen = false, away = false;
+        for (const SlotInfo &s : slots) {
+            if (s.slot != specs_[i].slot)
+                continue;
+            seen = true;
+            if (s.status == 0 || (s.status == 2 && s.content != specs_[i].scene_id))
+                away = true;
+        }
+        if (!seen)
+            continue;
+        if (away)
+            t.slot_away = true;
+        else if (t.slot_away && st.retry_ms > now_ms) {
+            st.retry_ms = now_ms;
+            t.slot_away = false;
+        }
+    }
 }
 
 void SlotManager::tick(int64_t now_ms)
