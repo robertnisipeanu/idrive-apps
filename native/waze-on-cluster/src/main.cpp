@@ -52,6 +52,11 @@ using crk::block_bytes;
 using crk::pack_blocks;
 using crk::texture_size_error;
 
+/* component.json's version, given by the target build. */
+#ifndef WOC_VERSION
+#define WOC_VERSION ""
+#endif
+
 namespace {
 
 /* Accepted and ignored, so a local_conf that sets them still starts the
@@ -145,8 +150,22 @@ void write_sibling_file(const std::string &fifo_path, const char *name, const st
         unlink(tmp.c_str());
 }
 
+/* The log file (log_file, log_file_kb): a size out of range is the
+ * default's, so a log setting never stops the service. */
+void open_log_file(const Config &cfg)
+{
+    long kb = cfg.num("log_file_kb");
+    if (kb < 16 || kb > 16384) {
+        log_warn("log_file_kb %s is not from 16 to 16384; 512 it is", cfg.str("log_file_kb").c_str());
+        kb = 512;
+    }
+    if (cfg.has("log_file"))
+        log_to_file(cfg.str("log_file"), (size_t)kb * 1024, "waze-on-cluster", WOC_VERSION);
+}
+
 int serve(const Config &cfg)
 {
+    open_log_file(cfg);
     VideoConfig vc;
     vc.fifo_path = cfg.str("fifo_path");
     vc.carplay_group = cfg.str("carplay_group");
@@ -216,6 +235,7 @@ int serve(const Config &cfg)
     }
 
     std::vector<uint8_t> frame;
+    StatusLog status_log;
     int64_t last_status_write = 0;
     const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
     StreamLiveness liveness(vc.stall_ms);
@@ -253,11 +273,19 @@ int serve(const Config &cfg)
         feed.set_stream(liveness.live(alt_state, producer.last_frame_ms(), now), producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
-        const std::string status = status_line(feed.status(producer.decode_status()));
-        if (feed.take_changed())
+        const FeedStatus fs = feed.status(producer.decode_status());
+        const std::string status = status_line(fs);
+        /* The frame rate changes the status every second; the log keeps
+         * to its state, reason and target, so the app's last lines are not
+         * all status. */
+        if (feed.take_changed() && status_log.due(fs))
             log_info("status %s", status.c_str());
         server.report(status);
         if (now - last_status_write > 1000) {
+            FrameTally::Minute m;
+            if (producer.minute(now, &m))
+                log_info("waze: %u frames decoded in the last minute, %u changed; the last picture is %s", m.frames,
+                         m.changed, m.blank ? "blank" : "not blank");
             write_sibling_file(cfg.str("fifo_path"), "status.json", status);
             /* The framing probe and the renderer's own status (targets, the
              * map layer's writes, the upload cap), for the diagnostics. */
@@ -390,6 +418,8 @@ void define_keys(Config *cfg)
     cfg->define("tex_level_bits", "2");
     cfg->define("target", "map");
     cfg->define("render_socket", "/dev/shm/cluster-render/render.sock");
+    cfg->define("log_file", "/var/opt/waze-on-cluster/log/waze-on-cluster.log");
+    cfg->define("log_file_kb", "512");
     for (const char *key : kIgnoredKeys)
         cfg->define(key, "");
 }

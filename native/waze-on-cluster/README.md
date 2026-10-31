@@ -125,6 +125,25 @@ renderer's own status; and `stream.json`, for `patchd`'s resync. `patchd`
 answers `{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own
 log.
 
+Every line the render logs also goes to
+`/var/opt/waze-on-cluster/log/waze-on-cluster.log` (`log_file`) with its UTC
+time, so it outlives the journal's few minutes on the unit, restarts and
+reboots; past `log_file_kb` (512) the file becomes `waze-on-cluster.log.1`.
+The service makes the directory, owned by `hmi_5000`, at each start; the
+deploy tool removes it with the rest of `/var/opt/waze-on-cluster`. The log
+has the status when its state, reason or target changes, and once a minute
+while frames come, how many were decoded, how many changed and whether the
+last picture was blank.
+
+For a report, run as root on the unit
+`sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
+`/tmp/woc-logs-<UTC date and time>.tar.gz` and prints its path. The archive
+holds both tools' log files (cluster-render's too), the files in
+`/run/cluster-render/` and the three above, this boot's journal of the
+render, `patchd`, the recovery service, cluster-render and carplay, the list
+of boots, `ls -l` of both tools' folders, their `*.local.conf`, the date and
+the uptime.
+
 Sockets: `/dev/shm/waze-on-cluster/ctl.sock` (the render's status and log,
 group `tm_oap_app`; a connection also starts the service) and
 `/dev/shm/waze-on-cluster/patch.sock` (`patchd`, `root:tm_oap_app`, 0660).

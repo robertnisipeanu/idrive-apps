@@ -69,6 +69,10 @@ public:
     bool frozen(int64_t now_ms) const;
     /* When the last frame of the decode size was decoded; -1 for none. */
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
+    /* The last minute's frames of the decode size, how many of them
+     * changed and whether the last was blank (FrameTally), once a minute
+     * while frames come. Main thread. */
+    bool minute(int64_t now_ms, FrameTally::Minute *m);
     /* Readable once a frame waits to be taken. */
     int ready_fd() const { return ready_[0]; }
     size_t frame_bytes() const { return atlas_bytes_; }
@@ -140,6 +144,7 @@ private:
     Spread round_us_;                /* rounding's cost on the source thread (frame_mutex_) */
     ChangeSampler change_;           /* source thread */
     FreezeWatch freeze_;             /* frame_mutex_ */
+    FrameTally tally_;               /* frame_mutex_ */
     std::string last_err_;           /* last decode error, for the status line (frame_mutex_) */
     uint32_t decode_errs_ = 0;
 

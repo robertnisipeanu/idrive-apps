@@ -7,7 +7,9 @@
  * changed or non-blank frame ends it; a change is seen in one sample past
  * the threshold, not in noise under it or between samples; a picture is
  * blank with up to one sample in a thousand off its band, not with a road
- * across it. */
+ * across it. The minute's tally: nothing before a minute from its first
+ * frame, then its frames, changes and the last blank verdict, and none
+ * while no frames come. */
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -110,6 +112,20 @@ int main()
         p[200 * W + x] = 120;
     b.changed(p.data());
     ok("a road across it is not", !b.blank());
+
+    FrameTally tally;
+    FrameTally::Minute mt;
+    ok("tally: nothing before a frame", !tally.take(100000, &mt));
+    tally.frame(1000, true, false);
+    for (int64_t k = 1; k < 900; k++)
+        tally.frame(1000 + k * 66, k % 30 == 0, k == 899);
+    ok("tally: not before a minute from the first frame", !tally.take(60999, &mt));
+    ok("tally: a minute of 15 fps", tally.take(61000, &mt) && mt.frames == 900 && mt.changed == 30 && mt.blank);
+    ok("tally: taken once", !tally.take(61500, &mt));
+    ok("tally: none while no frames come", !tally.take(200000, &mt));
+    tally.frame(300000, false, false);
+    ok("tally: the next minute from its first frame", !tally.take(359999, &mt) && tally.take(360000, &mt) &&
+                                                          mt.frames == 1 && mt.changed == 0 && !mt.blank);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

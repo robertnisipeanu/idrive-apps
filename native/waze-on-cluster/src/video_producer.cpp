@@ -243,6 +243,7 @@ void VideoProducer::on_frame(const VideoFrame &f)
     if (sized) {
         const int64_t now = now_us() / 1000;
         freeze_.frame(now, changed, change_.blank());
+        tally_.frame(now, changed, change_.blank());
         last_frame_ms_ = now;
     }
     back_.swap(*f.atlas);
@@ -276,6 +277,12 @@ bool VideoProducer::frozen(int64_t now_ms) const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
     return freeze_.frozen(now_ms);
+}
+
+bool VideoProducer::minute(int64_t now_ms, FrameTally::Minute *m)
+{
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    return tally_.take(now_ms, m);
 }
 
 void VideoProducer::track_keyframe_wait(int64_t now_ms)

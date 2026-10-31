@@ -51,6 +51,18 @@ struct FeedStatus {
     std::string upload_reason;
 };
 
+/* Whether a status is worth a log line: its state, reason or target differs
+ * from the last one logged. The page (the frame rate, the bytes captured)
+ * and the upload cap change every second and do not count. */
+class StatusLog {
+public:
+    bool due(const FeedStatus &s);
+
+private:
+    std::string last_;
+    bool logged_ = false;
+};
+
 class MapFeed {
 public:
     explicit MapFeed(const FeedConfig &cfg);

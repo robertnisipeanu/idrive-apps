@@ -20,7 +20,9 @@
  * - the stream not live: the layer hidden, idle, the slot released and the
  *   stock map back; live again: shown with the frames; frozen: hidden, the
  *   status says so; no longer frozen: shown again;
- * - before the stream is live the layer is made hidden. */
+ * - before the stream is live the layer is made hidden;
+ * - the status is logged when its state, reason or target changes, not for
+ *   the frame rate, the page or the upload cap. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -255,6 +257,25 @@ int main()
     h.pump(3000, &f1);
     ok("a layer made while the stream is not live is hidden: idle, the slot not asked for",
        h.map_layer() && !h.map_layer()->params.visible && h.st().state == "idle" && h.port.requests == 0);
+
+    StatusLog sl;
+    FeedStatus a;
+    a.state = "showing";
+    a.target = "map";
+    a.page = "Waze map — 15 frames/s";
+    ok("status log: the first status", sl.due(a));
+    a.page = "Waze map — 14 frames/s";
+    a.upload_cap_kb = 5500;
+    a.upload_reason = "slow flushes";
+    ok("status log: not for the page or the upload cap", !sl.due(a));
+    a.state = "starting";
+    a.reason = "the stock map holds the slot";
+    ok("status log: a state and reason", sl.due(a));
+    ok("status log: the same again is not", !sl.due(a));
+    a.reason = "another app holds the slot";
+    ok("status log: a reason alone", sl.due(a));
+    a.target = "panel";
+    ok("status log: a target alone", sl.due(a));
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

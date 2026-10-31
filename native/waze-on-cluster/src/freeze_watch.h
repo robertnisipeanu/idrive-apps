@@ -11,7 +11,8 @@
  * previous one, and says whether the picture is blank; FreezeWatch calls the
  * stream frozen once frames have kept coming at least min_fps for ms, all of
  * them blank and none changed, and not frozen at the next changed or
- * non-blank frame. */
+ * non-blank frame. FrameTally sums the same verdicts a minute at a time for
+ * the log. */
 #ifndef WOC_FREEZE_WATCH_H
 #define WOC_FREEZE_WATCH_H
 
@@ -55,6 +56,25 @@ private:
     FreezeConfig cfg_;
     int64_t unchanged_since_ms_ = -1;   /* the last changed or non-blank frame */
     std::deque<int64_t> times_;         /* unchanged blank frames within ms */
+};
+
+/* The frames of each minute while they come: how many, how many changed,
+ * and whether the last one was blank. A minute starts at its first frame. */
+class FrameTally {
+public:
+    static const int64_t kMinuteMs = 60000;
+    struct Minute {
+        unsigned frames = 0, changed = 0;
+        bool blank = false;   /* the last frame's picture */
+    };
+    void frame(int64_t now_ms, bool changed, bool blank);
+    /* True, with the minute's tally, once a minute has passed since its
+     * first frame; the next minute starts at the next frame. */
+    bool take(int64_t now_ms, Minute *out);
+
+private:
+    int64_t since_ms_ = -1;   /* the minute's first frame; -1: none yet */
+    Minute m_;
 };
 
 }  // namespace woc
