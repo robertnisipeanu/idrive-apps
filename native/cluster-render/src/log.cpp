@@ -151,7 +151,7 @@ std::string utc_time(int64_t unix_ms)
     const time_t secs = (time_t)(unix_ms / 1000);
     struct tm tm;
     gmtime_r(&secs, &tm);
-    char out[40];
+    char out[80];   /* the widest ints the format can take */
     std::snprintf(out, sizeof out, "%04d-%02d-%02d %02d:%02d:%02d.%03d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                   tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(unix_ms % 1000));
     return out;
