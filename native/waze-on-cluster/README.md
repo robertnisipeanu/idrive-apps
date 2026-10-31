@@ -60,6 +60,12 @@ when CarPlay next starts. `patchd` restarts CarPlay at once only where recmgr
 loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
 otherwise the app shows **Restart head unit**, a normal system reboot.
 
+The cluster shows the map only with **Instrument cluster > Central display
+area** set to **Off**. Set to Map view, Route preview or Assisted Driving
+View, the cluster's own content takes the centre. After changing the setting,
+CarPlay may need reconnecting before the map returns: the change can leave
+the phone's cluster stream frozen.
+
 Then connect the iPhone to CarPlay. Waze needs its server-side flag 1006 for
 the alternate display. The phone sends SPS, PPS and an IDR only at the start
 of a stream, so the render service runs from boot, joins the media bus at

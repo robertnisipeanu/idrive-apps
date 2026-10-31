@@ -11,8 +11,15 @@ through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). It requir
 waze-on-cluster 0.5.0, which brings the cluster renderer and writes the
 CarPlay patch as it installs; one head-unit start activates it. After that
 the map is on the cluster whenever CarPlay streams it, whether or not this
-app is open. To remove, remove the app in the Store, then the Waze tool,
-which reverts the patch.
+app is open.
+
+The map needs **Instrument cluster > Central display area** set to **Off**;
+with Map view, Route preview or Assisted Driving View the cluster's own
+content takes the centre. After changing the setting, CarPlay may need
+reconnecting before the map returns.
+
+To remove, remove the app in the Store, then the Waze tool, which reverts
+the patch.
 
 ## The page
 
@@ -21,6 +28,7 @@ One `LT_State_Wide` page:
 | Row | What it does |
 |---|---|
 | status | the patch and map state: `Patch pending — reboot to activate`, `Removal pending — reboot to finish`, `Original — enable the map`, `Not patched — <reason>`, `Applying patch…`, `Patched — waiting for CarPlay`, `Starting map…`, `Showing: Waze map — 16 frames/s …`, `Map error: …`, `Patch service unavailable (reboot may be needed)` |
+| setup | `Set Instrument cluster > Central display area to Off`, always shown |
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
 | Restart head unit | a normal system reboot; shown only while a written change waits for the next head-unit start |
@@ -57,8 +65,8 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.3.0.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.3.0.tgz
+node tools/build.js                  # robertn_waze_cluster@0.3.1.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.3.1.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -77,7 +85,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/robertn_waze_cluster.js` | the app |
 | `src/waze_cluster_control.js` | both socket clients and the status logic |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.3.0/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.3.1/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

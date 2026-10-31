@@ -45,6 +45,28 @@
             }
           ]
         },
+        "21": {
+          "type": "label",
+          "name": "wocSetup",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "",
+                "type": "Text"
+              }
+            }
+          ]
+        },
         "32": {
           "type": "button",
           "name": "wocEnable",
