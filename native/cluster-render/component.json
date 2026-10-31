@@ -1,10 +1,10 @@
 {
   "id": "cluster-render",
   "kind": "tool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "Cluster renderer",
   "description": "Draws every app's layers on the instrument cluster and the HUD, sharing the display slots and one upload budget",
-  "mguHmi": ["ID7"],
+  "mguHmi": ["ID7", "ID8"],
   "requires": { "mgu-deploy": "0.4.0" },
   "uninstallable": true,
   "build": ["make", "target"],

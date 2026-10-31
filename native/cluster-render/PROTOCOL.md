@@ -174,7 +174,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`), `targets` (`map:1088x480,panel:1920x720,hud:800x480`) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,widget:2240x896`) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
@@ -188,8 +188,9 @@ no part with geometry, an asset it samples without pixels; or a video's
 frames stopped); `hidden`; `error` (the renderer refused it). Target states:
 `idle`, `acquiring`, `parked` (mapped, behind the content the slot shows:
 `holder` `stock` or `foreign` once the slot table names it, and `reason`
-`parked behind stock`, `parked behind foreign`, or `parked` until then),
-`shown`, `lingering`, `waiting` (with `holder` `stock` or `foreign` when
+`parked behind stock`, `parked behind foreign`, or `parked` until then; on
+iDrive 8: offered, until the cluster shows it), `shown`, `lingering`,
+`waiting` (with `holder` `stock` or `foreign` when
 someone else holds the slot, and `retry_in_ms` when on a timer),
 `unavailable`.
 

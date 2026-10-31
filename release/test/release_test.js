@@ -163,7 +163,7 @@ test('the Waze chain: app -> waze-on-cluster -> cluster-render and a hook-runnin
     assert.deepStrictEqual(c.activate, ['node', 'patchd.js', 'activate']);
     assert.deepStrictEqual(c.deactivate, ['node', 'patchd.js', 'deactivate']);
     assert.ok(c.files.some((f) => f.path === 'patchd.js'), 'the hook ships');
-    assert.deepStrictEqual(renderer.mguHmi, ['ID7']);
+    assert.deepStrictEqual(renderer.mguHmi, ['ID7', 'ID8'], 'the renderer serves iDrive 8 too');
     // the Store removes the app, then the tool, then the renderer
     assert.strictEqual(app.uninstallable, true);
     assert.strictEqual(tool.uninstallable, true);
