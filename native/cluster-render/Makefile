@@ -132,7 +132,7 @@ target-in-docker: $(T)/cluster-render $(T)/libcluster_render_client.a
 
 $(T)/stub/$(RAMSES_SONAME): abi/libramses19.symbols
 	mkdir -p $(@D)
-	$(PYTHON) tools/ramses19_abi.py stub-source $< > $(@D)/ramses_stub.c
+	$(PYTHON) tools/ramses_abi.py stub-source $< > $(@D)/ramses_stub.c
 	gcc -shared -Wl,-soname,$(RAMSES_SONAME) -o $@ $(@D)/ramses_stub.c
 
 $(T)/stub/libvsomeip3.so.3: dcsm/abi/libvsomeip3.so.3.symbols
@@ -145,7 +145,7 @@ STUBS = $(T)/stub/$(RAMSES_SONAME) $(T)/stub/libvsomeip3.so.3
 $(T)/cluster-render: $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(CORE_H) $(STUBS)
 	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
 		-o $@ $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(STUBS)
-	$(PYTHON) tools/ramses19_abi.py check-imports $@ abi/libramses19.symbols
+	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 	$(PYTHON) dcsm/tools/abi.py check $@ dcsm/abi/libvsomeip3.so.3.symbols
 
 # Every layer kind on the unit's own libramses (TCP, no renderer).
