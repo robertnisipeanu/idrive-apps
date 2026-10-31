@@ -15,7 +15,11 @@
  *   stays gone 15 s, then the map again with the next frames;
  * - a lowered shared upload cap shows on the status line, with its reason in
  *   the status, and leaves the line once it is back at the ceiling;
- * - frames offered faster than they can be written are newest-wins. */
+ * - frames offered faster than they can be written are newest-wins;
+ * - the stream not live: the layer hidden, idle, the slot released and the
+ *   stock map back; live again: shown with the frames; frozen: hidden, the
+ *   status says so; no longer frozen: shown again;
+ * - before the stream is live the layer is made hidden. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -41,8 +45,10 @@ static void ok(const char *name, bool cond)
     if (!cond) failures++;
 }
 
+static int rigs;
+
 struct Rig {
-    std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + ".sock";
+    std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + "-" + std::to_string(++rigs) + ".sock";
     crs::FakeGpu gpu;
     crs::FakePort port;
     crs::ServiceConfig sc;
@@ -64,6 +70,7 @@ struct Rig {
         fc.socket = path;
         fc.video.level_bits = 0;
         feed.reset(new MapFeed(fc));
+        feed->set_stream(true, false);
     }
     void start()
     {
@@ -217,6 +224,32 @@ int main()
     ok("back at the ceiling after healthy upload: the cap leaves the status line, its reason stays",
        r.st().upload_cap_kb == 6000 && r.st().page.find("upload cap") == std::string::npos &&
            r.st().upload_reason.find("raised from 5500 KB/s") == 0);
+    /* the stream's liveness drives the layer, whatever the frames do */
+    const int before = r.port.releases;
+    r.feed->set_stream(false, false);
+    r.pump(1600, &f1);
+    ok("the stream not live: the layer hidden, idle, and the slot released (the stock map back)",
+       r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
+           !r.gpu.graph("map"));
+    r.feed->set_stream(true, false);
+    r.pump(1200, &f1);
+    ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");
+    r.feed->set_stream(true, true);
+    r.pump(100, &f1);
+    ok("frozen: hidden, and the status says why",
+       !r.map_layer()->params.visible && r.st().state == "frozen" && r.st().reason == "the phone's cluster stream froze");
+    r.feed->set_stream(true, false);
+    r.pump(1200, &f1);
+    ok("no longer frozen: shown again", r.map_layer()->params.visible && r.st().state == "showing");
+
+    Rig h;
+    h.feed->set_stream(false, false);
+    h.svc.reset();
+    h.start();
+    h.pump(3000, &f1);
+    ok("a layer made while the stream is not live is hidden: idle, the slot not asked for",
+       h.map_layer() && !h.map_layer()->params.visible && h.st().state == "idle" && h.port.requests == 0);
+
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

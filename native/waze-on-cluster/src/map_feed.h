@@ -10,13 +10,18 @@
  * The renderer draws every frame the way waze-on-cluster always has (one
  * persistent R8 atlas written in changed tiles, packed fast motion, the
  * frame clock, newest frame only) within the budget all its clients share,
- * maps the slot from the first frame, and releases it after the frames stop
- * for stall_ms. Frames handed over while the renderer is not reachable are
- * dropped; the client reconnects by itself and the next frame shows.
+ * and maps the slot from the first frame. The layer is visible while
+ * CarPlay's cluster stream is live and not frozen (set_stream): hidden, the
+ * renderer lets the slot go and the stock map comes back. stall_ms, which
+ * releases the slot once the frames stop that long, is only a backstop,
+ * since a static map sends a frame about every ten seconds. Frames handed
+ * over while the renderer is not reachable are dropped; the client
+ * reconnects by itself and the next frame shows.
  *
- * The app's status line follows the layer and its target: idle until the
- * first frame, starting while the slot is asked for or held by the stock
- * map and while the renderer starts, showing with the frames handed over a
+ * The app's status line follows the stream, the layer and its target: idle
+ * until the first frame or while the stream is not live, frozen while the
+ * stream is, starting while the slot is asked for or held by the stock map
+ * and while the renderer starts, showing with the frames handed over a
  * second, error when the renderer refused the layer or stays unreachable. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
@@ -38,7 +43,7 @@ struct FeedConfig {
 /* The status the Waze app shows (its render socket's "status" event), with
  * the shared upload cap and why it is what it is, for the diagnostics. */
 struct FeedStatus {
-    std::string state = "idle";   /* idle, starting, showing, error */
+    std::string state = "idle";   /* idle, starting, showing, frozen, error */
     std::string target;
     std::string page;
     std::string reason;
@@ -65,6 +70,10 @@ public:
      * reachable. */
     void offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms);
 
+    /* Whether CarPlay's cluster stream is live, and whether it is frozen:
+     * the layer is visible only while it is live and not frozen. */
+    void set_stream(bool live, bool frozen);
+
     /* The status for the app, with decode the capture and decode part of
      * the line; true once per change. */
     FeedStatus status(const std::string &decode) const;
@@ -81,6 +90,8 @@ private:
     FeedConfig cfg_;
     cr::Client client_;
     uint32_t layer_ = 0;
+    cr::LayerOptions lo_;   /* the layer's options as last sent */
+    bool live_ = false, frozen_ = false;
     std::string layer_state_ = "stalled", layer_reason_;
     std::string target_state_, holder_;
     unsigned cap_kb_ = 0, max_kb_ = 0;
