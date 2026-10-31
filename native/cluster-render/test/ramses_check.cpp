@@ -122,7 +122,7 @@ void main() {
     gl_FragColor = vec4(0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + v * 1.6), 1.0);
 })";
 
-/* A cube: 6 faces x 4 vertices with their normals (cluster-demo's). */
+/* A cube: 6 faces x 4 vertices with their normals. */
 static MeshData cube_mesh()
 {
     static const float n[6][3] = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
@@ -381,7 +381,7 @@ int main()
 
     backend(gpu);
 
-    /* Cluster-demo content through the compositor, on the panel. */
+    /* Sample content through the compositor, on the panel. */
     AssetParams gp;
     gp.format = TexFormat::R8;
     gp.w = 256;

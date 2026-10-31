@@ -10,7 +10,6 @@ on:
 permissions:
   contents: read
 
-# Actions are pinned to commits.
 jobs:
   test:
     runs-on: ubuntu-24.04

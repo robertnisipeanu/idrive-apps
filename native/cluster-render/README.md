@@ -420,11 +420,12 @@ node release/release.js publish cluster-render --dry-run  # what publish would d
 
 Builds run on a `git archive` export of HEAD, never the working tree, with
 `SOURCE_DATE_EPOCH` the time of the last commit that touched what ships
-(everything but `test/` and the notes). `release/tool_artifact.js` runs
-`make target` and packs the tool kit `cluster-render@<version>.tgz` in the
-deploy tool's format (mgu-store's `deploy/hu artifact` packs the same
-bytes): its `component.json` (each file's sha256, `mguHmi`), `files/` and
-`units/`, sorted, owned 0:0, one mtime, gzip without a name or time.
+(everything but `test/` and the notes at its top level).
+`release/tool_artifact.js` runs `make target` and packs the tool kit
+`cluster-render@<version>.tgz` in the deploy tool's format (mgu-store's
+`deploy/hu artifact` packs the same bytes): its `component.json` (each
+file's sha256, `mguHmi`), `files/` and `units/`, sorted, owned 0:0, one
+mtime, gzip without a name or time.
 Node's bundled zlib is the one outside input, so CI pins Node 22.12.0.
 
 The repository's catalog (schema 2) lists cluster-render with `requires`,
