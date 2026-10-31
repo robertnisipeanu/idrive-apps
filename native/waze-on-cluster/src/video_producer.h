@@ -147,7 +147,7 @@ private:
     ChangeSampler change_;           /* source thread */
     FreezeWatch freeze_;             /* frame_mutex_ */
     FrameTally tally_;               /* frame_mutex_ */
-    std::string last_err_;           /* last decode error, for the status line (frame_mutex_) */
+    std::string last_err_;           /* last decode error, for the status line and the log (frame_mutex_) */
     uint32_t decode_errs_ = 0;
 
     std::atomic<uint64_t> decoded_total_{0};
