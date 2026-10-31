@@ -30,7 +30,7 @@ is a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.6.0); this tool requires `cluster-render` 0.1.0 and
+app requires this tool (0.6.0); this tool requires `cluster-render` 0.2.0 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 

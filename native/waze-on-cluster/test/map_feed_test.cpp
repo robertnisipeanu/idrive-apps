@@ -6,8 +6,9 @@
  *   1088x480 slot; before a frame the app sees idle, with the first frames
  *   the slot is asked for (starting) and the map shown with the frames as
  *   they were decoded;
- * - the stock map taking the slot shows as starting with that reason, and
- *   the contending map is back after the 2 s retry;
+ * - the stock map taking the slot shows as starting with that reason; the
+ *   contending map asks again, parks behind it, takes it over and is shown,
+ *   the stock map parked behind it;
  * - a control start moves it to the whole panel, centred at 416,120, and an
  *   unknown target is refused;
  * - frames stopping: idle after stall_ms, the slot released;
@@ -61,6 +62,7 @@ struct Rig {
     {
         crs::TargetSpec m, p;
         m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
+        m.take_over_stock = true;   /* as cluster-render.conf ships it */
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         sc.targets = {m, p};
         sc.socket_path = path;
@@ -154,7 +156,10 @@ int main()
     ok("the stock map takes the slot: starting, with that reason",
        r.st().state == "starting" && r.st().reason == "the stock map holds the slot");
     r.pump(2200, &f1);
-    ok("the map contends: shown again after the 2 s retry", r.st().state == "showing" && r.port.requests == 2);
+    const crs::SlotInfo *ours = r.port.row(0x100, 0x010004f0), *stock = r.port.row(0x100, 0x01000101);
+    ok("the map contends: it takes the stock map over and is shown, the stock map parked behind it",
+       r.st().state == "showing" && r.port.requests == 2 && r.port.taken_over.size() == 1 &&
+           r.port.taken_over[0] == 0x01000101 && ours && ours->map_status == 1 && stock && stock->map_status == 3);
 
     /* Many frames between two writes: only the newest is drawn. */
     const std::vector<uint8_t> f2 = atlas(2), f3 = atlas(3);
@@ -189,7 +194,7 @@ int main()
     const int releases = r.port.releases;
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
-    r.pump(1600);
+    r.pump(2000);   /* the fade out, then the linger */
     ok("and the slot is released after the linger", r.port.releases > releases && !r.gpu.graph("map"));
 
     r.svc.reset();
@@ -227,10 +232,11 @@ int main()
     /* the stream's liveness drives the layer, whatever the frames do */
     const int before = r.port.releases;
     r.feed->set_stream(false, false);
-    r.pump(1600, &f1);
-    ok("the stream not live: the layer hidden, idle, and the slot released (the stock map back)",
+    r.pump(2000, &f1);   /* the fade out, then the linger */
+    stock = r.port.row(0x100, 0x01000101);
+    ok("the stream not live: the layer hidden, idle, and the slot released, the parked stock map shown",
        r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
-           !r.gpu.graph("map"));
+           !r.gpu.graph("map") && !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
     r.feed->set_stream(true, false);
     r.pump(1200, &f1);
     ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");
