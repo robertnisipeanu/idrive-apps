@@ -361,8 +361,8 @@ the library):
   instance 7, DCSM 5), and its offers reach the cluster (VERIFIED on the
   car). The unit's vsomeip policies let uid 5000 (as Hmi8 runs) and 6031
   (`nav_didui`, DidUi's) offer both services, and not root (VERIFIED). As
-  `hmi_5000` the service connected and its offers were shown in the
-  emulator; on the car only `nav_didui` has run.
+  `hmi_5000` the service connected and its offers were shown, in the
+  emulator and on the car (VERIFIED, run by hand).
 
 The targets on iDrive 8 (the `id8_` settings), each VERIFIED on the car
 with this category, content, size and scene id (offered as user 801, shown
@@ -388,14 +388,23 @@ by the cluster):
   content fight. Scene ids are `0x4d4755……` ("MGU"), allowed by
   `id8_scene_ids_allowed`.
 
+VERIFIED on the car with the service itself, run by hand as `hmi_5000`
+with `showcase.js all` on `map` and on `widget`:
+- `map` offered, parked and shown within 1 s; every layer kind drawn:
+  plasma, dial and needle, the lit cube, glyph text, the video and the
+  exclusive alert;
+- `widget` listed in the cluster's widget menu without a picture, picked
+  and shown, with the same layers;
+- a release and a request 30 ms later: the cluster accepted the stop
+  within about 30 ms, and the next offer followed after the 1 s request
+  gap and was shown;
+- SIGTERM: the offers stopped, exit 0, the head unit kept running.
+
 CAR-ONLY on iDrive 8:
-- the service itself on the car: its passes, effects, meshes and
-  animations drawn by the cluster's renderer, and how the upload budget
-  fits the cluster's link;
-- `hmi_5000` as the identity (the policy allows it);
+- the `hud` target, and how the upload budget fits the cluster's link
+  over a long run;
 - how long the cluster shows the middle and the HUD, and what takes them
   away (guidance, media, a call);
-- whether the widget menu lists a widget without a picture;
 - whether RemoteContentManager has a watchdog (none seen in the library: an
   offer stands while the participant is connected);
 - what the unit does when `cluster-render.service` exits or is restarted:
