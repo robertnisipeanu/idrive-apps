@@ -24,7 +24,6 @@ bool Dcsm27Port::offer(Content &c)
     log_info("dcsm: content %llu offered in category %llu (scene 0x%llx)", u(c.spec.content), u(c.spec.slot),
              u(c.spec.scene_id));
     c.phase = Phase::Offered;
-    c.reoffer = false;
     answers_.push_back(Answer{c.spec.scene_id, false, ""});
     return true;
 }
@@ -39,9 +38,9 @@ void Dcsm27Port::request(const TargetSpec &t)
 {
     auto it = contents_.find(t.content);
     if (it != contents_.end() && it->second.phase == Phase::Stopping) {
-        it->second.spec = t;
-        it->second.reoffer = true;
-        log_info("dcsm: content %llu offered again once its last stop is accepted", u(t.content));
+        /* The library refuses the offer until the stop is accepted (its
+         * scene is retired until then, so the slot manager waits first). */
+        answers_.push_back(Answer{t.scene_id, true, "offer: its last stop is not accepted yet"});
         return;
     }
     Content &c = contents_[t.content];
@@ -59,10 +58,8 @@ void Dcsm27Port::release(const TargetSpec &t)
         return;
     }
     Content &c = it->second;
-    if (c.phase == Phase::Stopping) {
-        c.reoffer = false;
+    if (c.phase == Phase::Stopping)
         return;
-    }
     std::string why;
     if (!wire_->stop_offer(t.content, &why)) {
         log_error("dcsm: stop of content %llu refused: %s", u(t.content), why.c_str());
@@ -72,7 +69,6 @@ void Dcsm27Port::release(const TargetSpec &t)
     }
     log_info("dcsm: content %llu: offer stopping", u(t.content));
     c.phase = Phase::Stopping;
-    c.reoffer = false;
 }
 
 void Dcsm27Port::take_over(const TargetSpec &, uint64_t)
@@ -212,18 +208,14 @@ void Dcsm27Port::on_stop_accepted(uint64_t content, int64_t now_ms)
         return;
     Content &c = it->second;
     log_info("dcsm: content %llu: offer stopped", u(content));
-    stopped_.push_back(c.spec.scene_id);
-    if (c.phase != Phase::Stopping) {
-        /* Only a stop we asked for is accepted (RAMSES 27's DcsmComponent);
-         * should another come, the offer is gone all the same. */
-        const uint64_t scene = c.spec.scene_id;
-        contents_.erase(it);
-        if (manager_)
-            manager_->on_lost(scene, "offer stopped", now_ms);
-        return;
-    }
-    if (!c.reoffer || !offer(c))
-        contents_.erase(it);
+    const uint64_t scene = c.spec.scene_id;
+    const bool asked = c.phase == Phase::Stopping;
+    stopped_.push_back(scene);
+    contents_.erase(it);
+    /* Only a stop we asked for is accepted (RAMSES 27's DcsmComponent);
+     * should another come, the offer is gone all the same. */
+    if (!asked && manager_)
+        manager_->on_lost(scene, "offer stopped", now_ms);
 }
 
 }  // namespace crs

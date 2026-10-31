@@ -9,7 +9,10 @@
  * (graph_ramses27.h). Any crash on the unit restarts the head unit
  * (VERIFIED on the car), the teardown of RAMSES 27 included: once the
  * offers are stopped and the framework is disconnected, the process leaves
- * with _exit(), running no destructor. */
+ * with _exit(), running no destructor. RAMSES not up yet (at boot) is
+ * waited for here, not left to systemd's restart: what iDrive 8 does when
+ * a service exits is CAR-ONLY (a stopped service restarted the head unit
+ * on the car). */
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -48,6 +51,8 @@ namespace {
 const int kDispatchMs = 20;
 /* How long a stopping offer may take to be accepted at shutdown. */
 const int kStopMs = 1000;
+/* How often a failed connect is tried again. */
+const int kConnectRetryMs = 5000;
 
 ramses::ContentID content_id(uint64_t c) { return ramses::ContentID(c); }
 
@@ -180,7 +185,7 @@ int start(const cld::Config &cfg, char **)
     std::string err;
     if (!service_config(cfg, 8, &sc, &err)) {
         log_error("%s", err.c_str());
-        return 1;
+        _exit(1);
     }
 
     sigset_t sigs;
@@ -191,7 +196,7 @@ int start(const cld::Config &cfg, char **)
     const int sig_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
     if (sig_fd < 0) {
         log_error("signalfd: %s", strerror(errno));
-        return 1;
+        _exit(1);
     }
 
     ramses::RamsesFramework::SetConsoleLogLevel(cfg.num("verbose") ? ramses::ELogLevel::Info : ramses::ELogLevel::Warn);
@@ -201,14 +206,24 @@ int start(const cld::Config &cfg, char **)
     const uint32_t user = (uint32_t)cfg.num("ramses_user");
     if (enable_someip(&fwc, user) != ramses::StatusOK) {
         log_error("ramses: SOME/IP communication user %u refused", user);
-        return 1;
+        _exit(1);
     }
     ramses::RamsesFramework framework(fwc);
     ramses::RamsesClient *client = framework.createClient("cluster-render");
     ramses::DcsmProvider *provider = framework.createDcsmProvider();
-    if (!client || !provider || framework.connect() != ramses::StatusOK) {
-        log_error("ramses: connect failed (communication user %u)", user);
+    if (!client || !provider) {
+        log_error("ramses: no client or DCSM provider");
         _exit(1);
+    }
+    /* A failed connect leaves the framework unconnected, to be tried again
+     * (upstream's RamsesFrameworkImpl::connect). */
+    for (bool said = false; framework.connect() != ramses::StatusOK; said = true) {
+        if (!said)
+            log_error("ramses: connect failed (communication user %u); trying again every %d s", user,
+                      kConnectRetryMs / 1000);
+        pollfd p{sig_fd, POLLIN, 0};
+        if (poll(&p, 1, kConnectRetryMs) > 0)
+            _exit(0);
     }
     log_info("ramses: connected as communication user %u", user);
     Ramses27Gpu gpu(*client);

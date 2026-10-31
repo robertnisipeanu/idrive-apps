@@ -20,9 +20,10 @@
  *   the content back to Ready, Assigned or Offered, as on every layout
  *   change, VERIFIED on the car) are parked again: the offer stays;
  * - a release is a stop of the offer. Until the cluster accepts it the
- *   library refuses a new offer of the content, so a request in between is
- *   sent when stopOfferAccepted comes; and the scene stays published until
- *   then (on_stopped);
+ *   library refuses a new offer of the content (even from inside
+ *   stopOfferAccepted: it forgets the content only after that returns), and
+ *   the scene stays published (on_stopped), so no new scene with its id is
+ *   built (Ramses27Gpu::scene): a request in between waits on the ladder;
  * - nothing is lost while the offer stands: a cluster that goes away takes
  *   its assignments back (contentRelease), and the offer is there when it
  *   comes back. There is no slot table, no take-over (no counterpart is
@@ -100,8 +101,7 @@ private:
     struct Content {
         TargetSpec spec;
         Phase phase = Phase::Offered;
-        bool reoffer = false;   /* Stopping: requested again, offered once the stop is accepted */
-        ContentArea area;       /* as last logged */
+        ContentArea area;   /* as last logged */
     };
     struct Answer {
         uint64_t scene = 0;

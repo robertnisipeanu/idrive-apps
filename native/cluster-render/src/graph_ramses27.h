@@ -22,8 +22,9 @@
  * - a scene taken down stays published as it was last flushed until the
  *   cluster has accepted the stop of its offer (retired, then dropped by
  *   drop_retired()), as icwidget did on the car: unpublished at once, the
- *   stand-in cluster in the emulator logged errors unassigning it. A new
- *   scene with the same id replaces a retired one. */
+ *   stand-in cluster in the emulator logged errors unassigning it. No new
+ *   scene with its id is built meanwhile: scene() refuses, and the target
+ *   waits on the slot manager's ladder. */
 #ifndef CRS_GRAPH_RAMSES27_H
 #define CRS_GRAPH_RAMSES27_H
 

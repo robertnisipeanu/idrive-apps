@@ -5,11 +5,12 @@
  * cluster shows it; the cluster's ready request is answered; hide and
  * release park it again and keep the offer; release is a stop of the offer,
  * the scene going only once the cluster accepts it, and a request before
- * then is offered when it does; a refused offer waits on the ladder and is
- * offered again; events
+ * then waiting on the ladder (no new scene meanwhile); a refused offer
+ * waits on the ladder and is offered again; events
  * for content not offered, or stopping, are ignored; two targets go their
  * own ways; the framework going away forgets everything. */
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,16 +60,26 @@ struct Wire : Dcsm27Wire {
     }
 };
 
-struct Scenes0 : Scenes {
-    bool publish(const TargetSpec &, std::string *) override { return true; }
-    void unpublish(const TargetSpec &) override {}
+/* As Ramses27Gpu: a scene taken down is retired until its offer is gone
+ * (on_stopped), and no new scene with its id is built meanwhile. */
+struct Scenes27 : Scenes {
+    std::set<uint64_t> retired;
+    bool publish(const TargetSpec &t, std::string *err) override
+    {
+        if (retired.count(t.scene_id)) {
+            *err = "its last offer is still stopping";
+            return false;
+        }
+        return true;
+    }
+    void unpublish(const TargetSpec &t) override { retired.insert(t.scene_id); }
 };
 
 static const uint64_t kCentre = 43204041, kWidget = 43204001;
 
 struct Rig {
     Wire wire;
-    Scenes0 scenes;
+    Scenes27 scenes;
     Dcsm27Port port{&wire};
     SlotManager m{&port, &scenes};
     std::vector<std::string> evidence;
@@ -76,7 +87,10 @@ struct Rig {
     int64_t now = 10000;
     Rig()
     {
-        port.on_stopped = [this](uint64_t scene) { stopped.push_back(scene); };
+        port.on_stopped = [this](uint64_t scene) {
+            stopped.push_back(scene);
+            scenes.retired.erase(scene);
+        };
         TargetSpec a;
         a.name = "map"; a.slot = 43100201; a.content = kCentre; a.scene_id = 0x4d4755000108;
         a.width = 874; a.height = 749; a.linger_ms = 0;
@@ -174,12 +188,17 @@ static void restop()
     r.now += 1000;
     r.m.want(0, true, false);
     r.tick();
-    ok("wanted again before the stop is accepted: no offer yet (the library would refuse it)",
-       calls_are("") && r.m.status(0).state == TargetState::Acquiring);
+    ok("wanted again before the stop is accepted: no new scene, no offer (the library would refuse it), the ladder",
+       calls_are("") && r.m.status(0).state == TargetState::Waiting && r.m.status(0).retry_ms > 0 &&
+           r.m.status(0).reason.find("still stopping") != std::string::npos && r.evidence.empty());
     r.port.on_stop_accepted(kCentre, r.now);
-    ok("the stop accepted: offered again", calls_are("offer 43204041 in 43100201"));
     r.tick();
-    ok("and parked", r.m.status(0).state == TargetState::Parked);
+    ok("the stop accepted: the old scene goes, nothing offered yet",
+       calls_are("") && r.stopped.size() == 1 && r.scenes.retired.empty());
+    for (int k = 0; k < 250; k++)
+        r.tick();
+    ok("offered again at the ladder's first step, and parked",
+       calls_are("offer 43204041 in 43100201") && r.m.status(0).state == TargetState::Parked);
 
     Rig c;
     c.offered();

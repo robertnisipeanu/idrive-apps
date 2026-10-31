@@ -320,8 +320,9 @@ the library):
   unit as mgu-store's deploy tool does: MainApp's folder
   (`/usr/lib/oap-mainapp` iDrive 7, `/usr/lib/oap-mainapp21` iDrive 8), and
   with both (as on the iDrive 8 unit, VERIFIED) or neither, the running HMI
-  (`HmiMain3D`, `Hmi8`). Not known yet, it exits 1 and systemd starts it
-  again after `RestartSec`.
+  (`HmiMain3D`, `Hmi8`). Not known yet (at boot), it asks again every 5 s,
+  and `cluster-render-idrive8` tries a failed connect again every 5 s:
+  neither exits for systemd to restart it (CAR-ONLY below).
 - **The graph** (`src/graph_ramses27.h`): the same scenes as on iDrive 7,
   on RAMSES 27's API: effects and array resources per scene, texture
   buffers written with `updateData`, a flush with only a tag. No pass
@@ -343,9 +344,10 @@ the library):
   - A release is `requestStopOfferContent`. The scene stays published, as
     last flushed, until the cluster accepts the stop: unpublished at once,
     the emulator's stand-in cluster logged errors unassigning it. The
-    library refuses a new offer of the content until then, so a request in
-    between is offered when the stop is accepted. At shutdown the service
-    waits 1 s for that.
+    library refuses a new offer of the content until then (even from inside
+    `stopOfferAccepted`), so no new scene with that id is built and a
+    request in between waits on the ladder. At shutdown the service waits
+    1 s for the stop.
   - A refused offer (another provider has the content) waits on the
     ladder. There is no slot table, no take-over and no heartbeat: parked
     behind other content and the take-over are Dcsm2's. A cluster that
@@ -373,7 +375,8 @@ by the cluster):
 | `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, the safe rect shown | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
 
 - Target names are iDrive 7's where the place matches, so a client asking
-  for `map` (waze-on-cluster) gets the cluster's middle. iDrive 8 has no
+  for `map` gets the cluster's middle. waze-on-cluster stays iDrive 7 only:
+  its map is 1088x480, not the middle's 874x749. iDrive 8 has no
   `panel`: a layer on it is refused as on any unknown target. The hello
   names the backend (`id8`) and the targets with their sizes.
 - The widget's safe rect is in canvas coordinates and moves with the
@@ -394,7 +397,11 @@ CAR-ONLY on iDrive 8:
   away (guidance, media, a call);
 - whether the widget menu lists a widget without a picture;
 - whether RemoteContentManager has a watchdog (none seen in the library: an
-  offer stands while the participant is connected).
+  offer stands while the participant is connected);
+- what the unit does when `cluster-render.service` exits or is restarted:
+  on the car, stopping a service restarted the head unit. The service
+  waits for the generation and for RAMSES instead of exiting; a
+  configuration fault or a refused communication user still exits 1.
 
 ## Clients
 

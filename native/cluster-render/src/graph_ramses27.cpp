@@ -1026,7 +1026,10 @@ const Ramses27Gpu::Source *Ramses27Gpu::source(int effect) const
 
 std::unique_ptr<Graph> Ramses27Gpu::scene(const TargetSpec &t, std::string *err)
 {
-    drop_retired(t.scene_id);   /* replaced */
+    if (retired_.count(t.scene_id)) {
+        *err = "its last offer is still stopping";
+        return nullptr;
+    }
     std::unique_ptr<Ramses27Graph> g(new Ramses27Graph(client_, *this));
     if (!g->build(t, err))
         return nullptr;

@@ -4,8 +4,9 @@
  * (unit.h), cluster-render-idrive7 or cluster-render-idrive8 from its own
  * folder, with its own arguments, in its own process (exec): systemd's
  * unit and the socket stay the same on both. `generation` (auto, 7 or 8)
- * settles it; auto asks the unit (generation.h). Not known yet, it exits
- * 1 and systemd starts it again after RestartSec. */
+ * settles it; auto asks the unit (generation.h). Not known yet (at boot,
+ * before the HMI runs), it asks again every 5 s rather than exiting: what
+ * iDrive 8 does when a service exits is CAR-ONLY. */
 #include <cerrno>
 #include <climits>
 #include <cstring>
@@ -20,15 +21,17 @@ namespace crs {
 int start(const cld::Config &cfg, char **argv)
 {
     const std::string g = cfg.str("generation");
-    const int gen = g == "7" ? 7 : g == "8" ? 8 : g == "auto" ? unit_generation() : -1;
+    int gen = g == "7" ? 7 : g == "8" ? 8 : g == "auto" ? unit_generation() : -1;
     if (gen < 0) {
         log_error("generation must be auto, 7 or 8");
         return 1;
     }
-    if (!gen) {
-        log_error("the head unit's generation is not known yet (both or neither MainApp folder, and neither "
-                  "HmiMain3D nor Hmi8 runs); set generation to 7 or 8 to settle it");
-        return 1;
+    if (!gen)
+        log_info("the head unit's generation is not known yet (both or neither MainApp folder, and neither "
+                 "HmiMain3D nor Hmi8 runs); asking again every 5 s, or set generation to 7 or 8 to settle it");
+    while (!gen) {
+        sleep(5);
+        gen = unit_generation();
     }
     char self[PATH_MAX];
     const ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
