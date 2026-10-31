@@ -9,7 +9,13 @@
  * no answer retry on the ladder; requests are spaced; the display service
  * going away takes every target down and its return maps the wanted ones
  * again after the settle time; two targets sharing a scene id are never up
- * together. */
+ * together. With tables of one row per mapping, as the car reports them:
+ * the holder is the row shown; a parked target stays mapped with no
+ * timeout until shown; a contending target parked behind the stock HMI's
+ * content unmaps it as the HMI, spaced 3, 10, 30 s, the count starting over
+ * after 60 s shown or a release, never foreign content, never without a contending
+ * layer, never in another slot; a released target is idle; a locked slot
+ * coming back is asked for at once. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -49,6 +55,12 @@ struct FakePort : Port {
     bool available() const override { return up; }
     void request(const TargetSpec &t) override { calls.push_back("request " + t.name); }
     void release(const TargetSpec &t) override { calls.push_back("release " + t.name); }
+    void take_over(const TargetSpec &t, uint64_t content) override
+    {
+        char b[24];
+        std::snprintf(b, sizeof b, "0x%llx", (unsigned long long)content);
+        calls.push_back("take over " + t.name + " " + b);
+    }
     void refresh_slots() override { calls.push_back("slots?"); }
 };
 
@@ -66,6 +78,7 @@ struct FakeScenes : Scenes {
 static const uint64_t kMapScene = 0x010004f0, kPanelScene = 0x01000400;
 static const uint64_t kMapSlot = 0x100, kPanelSlot = 0x203, kHudSlot = 0x323;
 static const uint64_t kStockMap = 0x01000101;   /* an HmiMain3D scene */
+static const uint64_t kHmiMap = 0x01000300;     /* the HMI's map in Map view (VERIFIED) */
 
 struct Rig {
     FakePort port;
@@ -77,6 +90,7 @@ struct Rig {
         TargetSpec map;
         map.name = "map"; map.slot = kMapSlot; map.scene_id = kMapScene; map.width = 1088; map.height = 480;
         map.linger_ms = 2000;
+        map.take_over_stock = true;
         TargetSpec panel;
         panel.name = "panel"; panel.slot = kPanelSlot; panel.scene_id = kPanelScene; panel.width = 1920;
         panel.height = 720; panel.linger_ms = 3000;
@@ -93,11 +107,24 @@ struct Rig {
             m.tick(now);
         }
     }
+    /* A report of one row: occupied, its content is shown. */
     void slot(uint64_t id, uint32_t status, uint64_t content)
     {
         SlotInfo s;
-        s.slot = id; s.status = status; s.content = content;
+        s.slot = id; s.status = status; s.content = content; s.map_status = status == 2 ? 1 : 0;
         m.on_slots({s}, now);
+    }
+    /* A report of one slot as the car gives it: one row per mapping
+     * (content, map status), the slot's status in each. */
+    void rows(uint64_t id, uint32_t status, std::vector<std::pair<uint64_t, uint32_t>> mappings)
+    {
+        std::vector<SlotInfo> t;
+        for (const auto &mp : mappings) {
+            SlotInfo s;
+            s.slot = id; s.status = status; s.content = mp.first; s.map_status = mp.second;
+            t.push_back(s);
+        }
+        m.on_slots(t, now);
     }
     TargetState state(int i) const { return m.status(i).state; }
 };
@@ -416,6 +443,40 @@ static void lost_to_our_own_id()
        ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 2000);
 }
 
+static void lock_is_not_evidence()
+{
+    Rig r;
+    std::vector<std::string> ev;
+    r.m.on_evidence = [&](Evidence e, const std::string &, int64_t) { ev.push_back(evidence_name(e)); };
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning locks the slot */
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    r.run(1500);
+    ok("a scene the display takes with a lock is not upload evidence", ev.empty());
+    r.slot(kMapSlot, 1, 0);
+    r.run(1100);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.slot(kMapSlot, 1, 0);           /* removed with the slot free: the link */
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    ok("one removed with the slot free still is", ev.size() == 1 && ev[0] == std::string("scene removed"));
+
+    Rig l;   /* lingering: the last layer stopped wanting it */
+    std::vector<std::string> evl;
+    l.m.on_evidence = [&](Evidence e, const std::string &, int64_t) { evl.push_back(evidence_name(e)); };
+    l.m.want(1, true, false);
+    l.m.tick(l.now);
+    l.m.on_shown(kPanelScene, l.now);
+    l.m.want(1, false, false);
+    l.run(100);
+    l.slot(kPanelSlot, 0, kPanelScene);
+    l.m.on_lost(kPanelScene, "unmapped", l.now);
+    ok("a lock while lingering is not evidence either", evl.empty());
+}
+
 static void slot_comes_back()
 {
     Rig r;
@@ -503,6 +564,222 @@ static void slot_comes_back()
        joined().find("request") == std::string::npos && q.m.status(0).retry_ms > q.now);
 }
 
+static void multi_row_holder()
+{
+    Rig a;
+    /* The stock map shown, ours still listed (unmapped) after it: the last
+     * row is not the holder. */
+    a.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 0}});
+    a.m.want(0, true, false);
+    a.m.tick(a.now);
+    ok("rows like the car's: the shown row holds the slot, whatever comes last",
+       a.state(0) == TargetState::Waiting && a.m.status(0).holder == Holder::Stock &&
+           joined().find("request") == std::string::npos);
+    a.rows(kMapSlot, 1, {{kHmiMap, 0}, {kMapScene, 0}});
+    a.m.tick(a.now);
+    ok("every row listed unmapped: free, asked for", calls_are("publish map; request map"));
+
+    Rig b;
+    b.rows(kMapSlot, 2, {{0x00007777, 0}, {kHmiMap, 1}});
+    b.m.want(0, true, true);
+    b.m.tick(b.now);
+    ok("a foreign row listed but not shown does not hold it: the stock map does, and is contended",
+       calls_are("publish map; request map"));
+
+    Rig c;
+    c.rows(kMapSlot, 2, {{kHmiMap, 3}, {0x00007777, 1}});
+    c.m.want(0, true, true);
+    c.m.tick(c.now);
+    ok("a foreign row shown, the stock map parked: foreign holds it, yielded to even contending",
+       c.m.status(0).holder == Holder::Foreign && joined().find("request") == std::string::npos);
+}
+
+/* The map requested and parked behind the stock map: (ours, 3), (stock, 1). */
+static void park(Rig &r, bool contend, uint64_t holder = kHmiMap)
+{
+    r.m.want(0, true, contend);
+    r.m.tick(r.now);
+    r.rows(kMapSlot, 2, {{holder, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+}
+
+static void parked_then_shown()
+{
+    Rig r;
+    park(r, false);
+    ok("map status 3: parked behind the stock HMI, the table asked for",
+       r.state(0) == TargetState::Parked && r.m.status(0).holder == Holder::Stock &&
+           r.m.status(0).reason == "parked behind stock" && r.m.published(0) &&
+           calls_are("publish map; request map; slots?"));
+    r.run(30000);
+    const std::string c = joined();
+    ok("parked for 30 s: no timeout, no release, no request, no take-over without a contending layer",
+       r.state(0) == TargetState::Parked && c.find("release") == std::string::npos &&
+           c.find("request") == std::string::npos && c.find("take over") == std::string::npos);
+    r.rows(kMapSlot, 2, {{kHmiMap, 0}, {kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    ok("the stock map unmapped: ours shown (3 -> 1)", r.state(0) == TargetState::Shown && calls_are(""));
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+    ok("shown, then 1 -> 3: parked again, still mapped", r.state(0) == TargetState::Parked &&
+                                                            calls_are("slots?") && r.m.published(0));
+    r.m.want(0, false, false);
+    r.m.tick(r.now);
+    ok("parked and nobody wants it: released at once, idle", calls_are("release map; unpublish map") &&
+                                                                r.state(0) == TargetState::Idle);
+
+    Rig u;
+    u.m.want(0, true, false);
+    u.m.tick(u.now);
+    joined();
+    u.m.on_parked(kMapScene, u.now);
+    ok("parked before the table names a holder: parked, holder unknown",
+       u.state(0) == TargetState::Parked && u.m.status(0).holder == Holder::None &&
+           u.m.status(0).reason == "parked");
+    u.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    ok("the table names it: parked behind stock", u.m.status(0).holder == Holder::Stock &&
+                                                     u.m.status(0).reason == "parked behind stock");
+}
+
+static void take_over()
+{
+    Rig r;
+    park(r, true);
+    joined();
+    r.m.tick(r.now);
+    ok("contending, parked behind the stock map: it is unmapped as the HMI at once",
+       calls_are("take over map 0x1000300; slots?"));
+    ok("the next take-over wakes the loop", r.m.wake_in_ms(r.now) == 3000);
+    /* The stock map stays on top: the take-overs back off. */
+    const int64_t gaps[] = {3000, 10000, 30000, 30000};
+    bool spaced = true;
+    for (int64_t gap : gaps) {
+        const int64_t at = r.now;
+        r.run(gap - 10);
+        spaced = spaced && joined().find("take over") == std::string::npos;
+        r.run(10);
+        spaced = spaced && joined().find("take over map 0x1000300") != std::string::npos && r.now - at == gap;
+    }
+    ok("still behind it: again after 3, 10, 30, 30 s", spaced);
+    r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    ok("promoted: shown, the HMI's map parked behind ours", r.state(0) == TargetState::Shown);
+    r.run(20000);
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+    joined();
+    r.run(5000);
+    ok("on top again after 20 s shown: the count goes on (30 s after the last)",
+       joined().find("take over") == std::string::npos);
+    r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    r.run(60000);
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+    joined();
+    r.m.tick(r.now);
+    ok("after 60 s shown the count starts over: at once",
+       joined().find("take over map 0x1000300") != std::string::npos);
+    r.run(2990);
+    ok("and 3 s to the next", joined().find("take over") == std::string::npos);
+
+    Rig s;
+    park(s, true);
+    s.m.tick(s.now);
+    s.run(3000);
+    const int64_t second = s.now;
+    ok("two take-overs: the next would wait 10 s", joined().find("take over map 0x1000300; slots?; take over") !=
+                                                       std::string::npos);
+    s.m.want(0, false, false);
+    s.m.tick(s.now);
+    s.run(1000);
+    park(s, true);   /* the stream back, the stock map shown again because of our release */
+    joined();
+    s.run(1990);
+    const bool spaced3 = joined().find("take over") == std::string::npos;
+    s.run(1100);
+    ok("released and asked for again: the count starts over, 3 s after the last take-over",
+       spaced3 && joined().find("take over map 0x1000300") != std::string::npos && s.now - second < 4200);
+
+    Rig f;
+    park(f, true, 0x00007777);
+    f.run(60000);
+    ok("parked behind foreign content: never unmapped", joined().find("take over") == std::string::npos &&
+                                                           f.state(0) == TargetState::Parked);
+
+    Rig n;
+    park(n, false);
+    n.run(10000);
+    n.m.want(0, true, true);
+    n.m.tick(n.now);
+    ok("no take-over until a layer contends; then at once",
+       joined().find("take over map 0x1000300") != std::string::npos);
+
+    Rig o;
+    o.m.want(0, true, true);
+    o.m.tick(o.now);
+    o.rows(kPanelSlot, 2, {{kHmiMap, 1}});   /* the stock map shown in another slot */
+    o.rows(kMapSlot, 2, {{kMapScene, 3}});
+    o.m.on_parked(kMapScene, o.now);
+    o.run(10000);
+    ok("stock content shown only in another slot: never unmapped", joined().find("take over") == std::string::npos);
+
+    Rig p;
+    p.m.want(1, true, true);   /* the panel does not take over */
+    p.m.tick(p.now);
+    p.rows(kPanelSlot, 2, {{0x01000401, 1}, {kPanelScene, 3}});
+    p.m.on_parked(kPanelScene, p.now);
+    p.run(10000);
+    ok("a target without take_over_stock never unmaps", joined().find("take over") == std::string::npos &&
+                                                           p.state(1) == TargetState::Parked);
+}
+
+static void fallback_and_lock()
+{
+    Rig r;
+    park(r, true);
+    r.m.tick(r.now);
+    r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.m.want(0, false, false);
+    r.run(2010);
+    ok("the stream ended: released after the linger, idle (the display shows the parked stock map)",
+       calls_are("release map; unpublish map") && r.state(0) == TargetState::Idle);
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}});
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    ok("then a yielding layer: the stock map's slot is not asked for",
+       r.state(0) == TargetState::Waiting && r.m.status(0).holder == Holder::Stock);
+
+    Rig l;
+    l.m.want(0, true, true);
+    l.m.tick(l.now);
+    l.rows(kMapSlot, 2, {{kMapScene, 1}, {kHmiMap, 3}});
+    l.m.on_shown(kMapScene, l.now);
+    joined();
+    /* A door opens: the slot locked, every mapping unmapped. */
+    l.rows(kMapSlot, 0, {{kMapScene, 0}, {kHmiMap, 0}});
+    l.m.on_lost(kMapScene, "unmapped", l.now);
+    l.run(500);
+    ok("a lock: down, waiting on the ladder", l.state(0) == TargetState::Waiting &&
+                                                 joined().find("request") == std::string::npos);
+    l.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    l.run(600);
+    ok("the lock gone: asked for at once", calls_are("publish map; request map") && l.m.status(0).retry_ms < 0);
+
+    Rig q;
+    park(q, false);
+    joined();
+    q.rows(kMapSlot, 0, {{kHmiMap, 0}, {kMapScene, 0}});
+    q.m.on_lost(kMapScene, "unmapped", q.now);
+    ok("a lock while parked: down and waiting", calls_are("release map; unpublish map") &&
+                                                   q.state(0) == TargetState::Waiting);
+    q.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    q.run(1100);
+    ok("free again: asked for at once", calls_are("publish map; request map"));
+}
+
 static void wake()
 {
     Rig r;
@@ -532,7 +809,12 @@ int main()
     scene_failure();
     ladder_rechecks_the_table();
     lost_to_our_own_id();
+    lock_is_not_evidence();
     slot_comes_back();
+    multi_row_holder();
+    parked_then_shown();
+    take_over();
+    fallback_and_lock();
     wake();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

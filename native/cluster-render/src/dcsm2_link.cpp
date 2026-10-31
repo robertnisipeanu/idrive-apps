@@ -185,6 +185,7 @@ void Dcsm2Link::drain(Dcsm2Port *port, int64_t now_ms)
 void Dcsm2Link::fetch(uint64_t scene) { client_->fetch({scene, 0}); }
 void Dcsm2Link::map(uint64_t scene, uint32_t cls, uint64_t slot) { client_->map({scene, 0}, cls, slot); }
 void Dcsm2Link::unmap(uint64_t scene) { client_->unmap({scene, 0}); }
+void Dcsm2Link::unmap_as(uint64_t client_handle, uint64_t scene) { client_->unmapAs(client_handle, {scene, 0}); }
 void Dcsm2Link::unfetch(uint64_t scene) { client_->unfetch({scene, 0}); }
 void Dcsm2Link::slots() { client_->requestSlotStatus(); }
 

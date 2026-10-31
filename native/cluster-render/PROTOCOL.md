@@ -54,8 +54,8 @@ Layer fields (all optional):
 | `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
-| `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s); 0 waits until it is free |
-| `opacity` | 1 | 0-1, for video and image layers |
+| `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
+| `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |
 | `px`, `py` | the rect's centre | the pivot, in pixels from the rect's top-left; once set, kept until set again |
@@ -186,9 +186,12 @@ or an asset it samples is not written yet; `reason` says which);
 `suspended` (below an exclusive layer); `stalled` (no content yet: no frame,
 no part with geometry, an asset it samples without pixels; or a video's
 frames stopped); `hidden`; `error` (the renderer refused it). Target states:
-`idle`, `acquiring`, `shown`, `lingering`, `waiting` (with `holder` `stock`
-or `foreign` when someone else holds the slot, and `retry_in_ms` when on a
-timer), `unavailable`.
+`idle`, `acquiring`, `parked` (mapped, behind the content the slot shows:
+`holder` `stock` or `foreign` once the slot table names it, and `reason`
+`parked behind stock`, `parked behind foreign`, or `parked` until then),
+`shown`, `lingering`, `waiting` (with `holder` `stock` or `foreign` when
+someone else holds the slot, and `retry_in_ms` when on a timer),
+`unavailable`.
 
 A client that does not read its events (over 1 MiB waiting) is
 disconnected.

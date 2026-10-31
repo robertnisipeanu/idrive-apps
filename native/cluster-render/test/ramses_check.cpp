@@ -290,6 +290,7 @@ int main()
     SlotManager slots(&port, nullptr);
     TargetSpec m;
     m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 500;
+    m.take_over_stock = true;
     TargetSpec p;
     p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 500;
     slots.add(m);
@@ -454,6 +455,8 @@ int main()
     ok("the cube's geometry replaced a second later", comp.geometry(5, box, 1, cube_mesh(), now, &err));
     run(200);
     port.steal(p);
+    run(500);
+    port.free_slot(p);   /* the HMI's content gone again */
     run(2500);
     ok("the panel taken and published again: assets, binds, parts and animations back", all_shown());
     comp.layer(5, needle)->stop(1);

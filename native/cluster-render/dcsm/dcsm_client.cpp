@@ -184,6 +184,10 @@ void Client::unmap(const ContentId2 &c) {
     send(kReqUnmapContent, wire::content_request(clientHandle_, c), true);
 }
 
+void Client::unmapAs(uint64_t clientHandle, const ContentId2 &c) {
+    send(kReqUnmapContent, wire::content_request(clientHandle, c), true);
+}
+
 void Client::unfetch(const ContentId2 &c) {
     send(kReqUnfetchContent, wire::content_request(clientHandle_, c), true);
 }

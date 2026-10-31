@@ -538,6 +538,7 @@ void Compositor::arrange(int64_t now_ms)
             items.push_back(it);
         }
         t.arr = crs::arrange(items);
+        fade((int)ti, t, now_ms);
         slots_->want((int)ti, t.arr.wanted, t.arr.contend);
         if (!t.graph)
             continue;
@@ -559,12 +560,69 @@ void Compositor::arrange(int64_t now_ms)
     }
 }
 
+void Compositor::fade(int ti, Target &t, int64_t now_ms)
+{
+    const int64_t dt = std::max<int64_t>(0, now_ms - t.fade_ms);
+    t.fade_ms = now_ms;
+    const TargetState st = slots_->status(ti).state;
+    const bool on_screen = t.graph && (st == TargetState::Shown || st == TargetState::Lingering);
+    const float step = fade_ms_ > 0 ? (float)dt / (float)fade_ms_ : 1.0f;
+    t.fading_out = false;
+    if (fade_ms_ <= 0) {
+        t.fade = 1.0f;
+    } else if (!on_screen) {
+        t.fade = 0.0f;   /* nothing of it is on screen, or the display took it: no fade */
+    } else if (t.arr.wanted) {
+        t.fade = std::min(1.0f, t.fade + step);
+    } else {
+        /* Nothing wants the target: the layers drawn when something last
+         * did stay drawn, and the target wanted, while they fade out. */
+        std::vector<uint32_t> held;
+        bool fades = false;
+        for (uint32_t id : t.last_drawn) {
+            auto it = layers_.find(id);
+            if (it == layers_.end() || !it->second.layer->attached() || it->second.layer->target() != ti)
+                continue;
+            held.push_back(id);
+            fades = fades || it->second.layer->fades();
+        }
+        t.fade = fades ? std::max(0.0f, t.fade - step) : 0.0f;
+        if (t.fade > 0.0f) {
+            t.fading_out = true;
+            t.arr.drawn = held;
+            t.arr.wanted = true;
+            t.arr.contend = t.last_contend;
+        }
+    }
+    if (t.arr.wanted && !t.fading_out) {
+        t.last_drawn = t.arr.drawn;
+        t.last_contend = t.arr.contend;
+    }
+    /* The layers get it by steps, each in the target's next flush; 0 and 1
+     * go at once. */
+    if (t.fade != t.applied &&
+        (t.fade == 0.0f || t.fade == 1.0f || now_ms - t.applied_ms >= kFadeStepMs)) {
+        t.applied = t.fade;
+        t.applied_ms = now_ms;
+    }
+    for (auto &kv : layers_) {
+        Layer &l = *kv.second.layer;
+        if (l.target() != ti || l.fade() == t.applied)
+            continue;
+        l.set_fade(t.applied);
+        if (l.attached() && l.fades())
+            t.dirty = true;
+    }
+}
+
 void Compositor::render(int64_t now_ms)
 {
     now_ms_ = now_ms;
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
-        if (!t.graph)
+        /* Parked: nothing of it is on screen, and the link carries the
+         * HMI's content too. It stages again once shown. */
+        if (!t.graph || slots_->status((int)ti).state == TargetState::Parked)
             continue;
         /* A layer whose failed write left its buffer half written holds the
          * target: only its whole rewrite stages, and nothing flushes until
@@ -658,11 +716,15 @@ bool Compositor::holds(const Target &t) const
 int64_t Compositor::wake_in_ms(int64_t now_ms) const
 {
     int64_t best = -1;
-    for (const auto &kv : layers_) {
-        const int64_t w = kv.second.layer->wake_in_ms(now_ms);
+    auto at = [&](int64_t w) {
         if (w > 0 && (best < 0 || w < best))
             best = w;
-    }
+    };
+    for (const auto &kv : layers_)
+        at(kv.second.layer->wake_in_ms(now_ms));
+    for (const Target &t : targets_)
+        if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
+            at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
     return best;
 }
 

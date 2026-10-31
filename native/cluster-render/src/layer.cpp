@@ -236,7 +236,7 @@ bool ImageLayer::attach(Graph *g, int64_t, std::string *err)
     g_ = g;
     buf_ = g->buffer(TexFormat::RGBA8, w_, h_, sampling_);
     quad_ = buf_ ? g->quad(effect_, params.rect) : 0;
-    const float op = params.opacity;
+    const float op = params.opacity * fade_;
     if (!quad_ || !g->texture(quad_, "u_image", buf_) || !g->uniform(quad_, "u_opacity", &op, 1) ||
         !g->turn(quad_, params.turn()) || !g->show(quad_, false) || !g->order(quad_, order_)) {
         *err = "image buffer or quad refused";
@@ -279,9 +279,17 @@ void ImageLayer::place()
 {
     if (!g_)
         return;
-    const float op = params.opacity;
+    const float op = params.opacity * fade_;
     g_->place(quad_, params.rect);
     g_->turn(quad_, params.turn());
+    g_->uniform(quad_, "u_opacity", &op, 1);
+}
+
+void ImageLayer::faded()
+{
+    if (!g_)
+        return;
+    const float op = params.opacity * fade_;
     g_->uniform(quad_, "u_opacity", &op, 1);
 }
 

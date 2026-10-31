@@ -44,6 +44,7 @@ public:
     void fetch(uint64_t scene) override;
     void map(uint64_t scene, uint32_t content_class, uint64_t slot) override;
     void unmap(uint64_t scene) override;
+    void unmap_as(uint64_t client_handle, uint64_t scene) override;
     void unfetch(uint64_t scene) override;
     void slots() override;
 

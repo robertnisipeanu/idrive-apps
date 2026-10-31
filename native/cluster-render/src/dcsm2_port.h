@@ -5,21 +5,27 @@
  *
  * A request is a fetch of the target's scene and, once FETCHED, a map into
  * its slot with its content class; MAPPED_FOREGROUND or MAPPED_BACKGROUND
- * (the under-the-gauges layer) is shown. A release is an unmap, when a map
- * was asked for and not refused, then an unfetch. The KOMBI names only the
- * scene id in its events, and its replies name nothing: each reply is the
- * answer to the oldest request of its kind still unanswered (SOME/IP over
- * TCP answers in order), so the scenes asked for are queued per kind while
- * Dcsm2 is available (vsomeip drops requests while it is not).
+ * (the under-the-gauges layer) is shown, MAPPED_INVISIBLE is parked behind
+ * the content the slot shows. A release is an unmap, when a map was asked
+ * for and not refused, then an unfetch. A take-over is an unmap of the
+ * stock HMI's content sent with the HMI's client handle. The KOMBI names
+ * only the scene id in its events, and its replies name nothing: each reply
+ * is the answer to the oldest request of its kind still unanswered (SOME/IP
+ * over TCP answers in order), so the scenes asked for are queued per kind
+ * while Dcsm2 is available (vsomeip drops requests while it is not). Only
+ * fetch and map replies decide anything; unmap replies, ours and the
+ * take-overs', are matched in their own queue and logged.
  *
  * Seen from the slot manager (slots.h):
  * - a refused fetch or map, or FETCH FAILED, is a refusal: PRIOTOOLOW and
  *   ALREADYMAPPED say the slot is busy, an unknown slot, scene or client is
  *   the configuration, the rest (no valid reply, the fetch removed before
  *   it showed) is transient;
- * - a shown scene the KOMBI unmaps, maps invisible or whose fetch it
- *   removes is lost (the stock map re-mapping over ours removes our fetch
- *   with no map transition, seen on the car);
+ * - a mapped scene the KOMBI maps invisible is parked; parked, then shown,
+ *   is shown;
+ * - a shown or parked scene the KOMBI unmaps or whose fetch it removes is
+ *   lost (the stock map re-mapping over ours removes our fetch with no map
+ *   transition, seen on the car; a locked slot unmaps every mapping in it);
  * - Dcsm2 going away loses every scene at once;
  * - the REMOVED that answers our own unfetch is not a loss, even when the
  *   same scene id was asked for again since (panel and HUD share one).
@@ -46,6 +52,8 @@ public:
     virtual void fetch(uint64_t scene) = 0;
     virtual void map(uint64_t scene, uint32_t content_class, uint64_t slot) = 0;
     virtual void unmap(uint64_t scene) = 0;
+    /* An unmap sent with another client's handle. */
+    virtual void unmap_as(uint64_t client_handle, uint64_t scene) = 0;
     virtual void unfetch(uint64_t scene) = 0;
     virtual void slots() = 0;
 };
@@ -54,10 +62,13 @@ class Dcsm2Port : public Port {
 public:
     explicit Dcsm2Port(Dcsm2Wire *wire) : wire_(wire) {}
     void set_manager(SlotManager *m) { manager_ = m; }
+    /* The stock HMI's Dcsm2 client handle, for take-overs (HmiMain3D: 1). */
+    void set_hmi_client_handle(uint64_t h) { hmi_handle_ = h; }
 
     bool available() const override { return up_; }
     void request(const TargetSpec &t) override;
     void release(const TargetSpec &t) override;
+    void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override { wire_->slots(); }
 
     /* What the KOMBI says, in the order it said it (render thread). */
@@ -77,7 +88,7 @@ public:
     std::function<void(bool silent, int64_t now_ms)> on_link;
 
 private:
-    enum class Phase { Fetching, Mapping, Mapped, Refused, Lost };
+    enum class Phase { Fetching, Mapping, Parked, Mapped, Refused, Lost };
     struct Content {
         TargetSpec spec;
         Phase phase = Phase::Fetching;
@@ -89,6 +100,7 @@ private:
 
     Dcsm2Wire *wire_;
     SlotManager *manager_ = nullptr;
+    uint64_t hmi_handle_ = 1;
     bool up_ = false;
     std::map<uint64_t, Content> contents_;   /* by scene id */
     /* Unfetches sent per scene id whose REMOVED may still come. The KOMBI
@@ -96,6 +108,10 @@ private:
      * of the same id, which clears the count. */
     std::map<uint64_t, int> unfetched_;
     std::deque<uint64_t> fetches_, maps_;    /* awaiting a reply, oldest first */
+    struct Unmap {
+        uint64_t scene = 0, handle = 0;   /* handle 0: ours */
+    };
+    std::deque<Unmap> unmaps_;
     std::map<std::pair<uint64_t, uint64_t>, SlotInfo> slots_;   /* (slot, content): as last logged */
 };
 

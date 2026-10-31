@@ -7,7 +7,11 @@
  * classified (busy, configuration, transient); a removed fetch of a shown
  * scene is lost, and evidence for the upload governor unless the stock HMI
  * holds the slot; Dcsm2 going away forgets everything and later events for
- * it are ignored. */
+ * it are ignored. MAPPED_INVISIBLE is parked, with no timeout, and shown
+ * when the KOMBI promotes it; a parked scene unmapped is lost; a take-over
+ * is an unmap of the stock HMI's content with the HMI's handle, whose reply
+ * matches no request of ours: fetch and map replies still go to the oldest
+ * fetch and map. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -51,6 +55,7 @@ struct Wire : Dcsm2Wire {
         calls.push_back("map " + hex(s) + " class " + std::to_string(c) + " slot " + hex(slot));
     }
     void unmap(uint64_t s) override { calls.push_back("unmap " + hex(s)); }
+    void unmap_as(uint64_t h, uint64_t s) override { calls.push_back("unmap " + hex(s) + " as " + hex(h)); }
     void unfetch(uint64_t s) override { calls.push_back("unfetch " + hex(s)); }
     void slots() override { calls.push_back("slots?"); }
 };
@@ -73,6 +78,7 @@ struct Rig {
     {
         TargetSpec a;
         a.name = "map"; a.slot = 0x100; a.scene_id = kMap; a.width = 1088; a.height = 480;
+        a.take_over_stock = true;
         TargetSpec b;
         b.name = "panel"; b.slot = 0x203; b.scene_id = kPanel; b.width = 1920; b.height = 720; b.content_class = 3;
         m.add(a);
@@ -85,9 +91,116 @@ struct Rig {
         now += 1500;
     }
     void tick() { m.tick(now += 10); }
+    /* The map requested, fetched and mapped; its map status still to come. */
+    void map_asked(bool contend)
+    {
+        m.want(0, true, contend);
+        tick();
+        port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", now);
+        port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, now);
+        port.on_reply(dcsm::kReqMapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", now);
+        calls.clear();
+    }
+    /* Slot 0x100 as the car reports it: the stock map and ours. */
+    void table(uint32_t stock_map, uint32_t ours)
+    {
+        SlotInfo h, o;
+        h.slot = o.slot = 0x100;
+        h.status = o.status = stock_map == 1 || ours == 1 ? 2 : 1;
+        h.content = 0x01000300;
+        o.content = kMap;
+        h.map_status = stock_map;
+        o.map_status = ours;
+        port.on_slots({h, o}, now);
+    }
 };
 
-int main()
+static void parked()
+{
+    Rig r;
+    r.map_asked(false);
+    r.table(1, 3);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, r.now);
+    ok("MAPPED_INVISIBLE: parked behind the stock map", r.m.status(0).state == TargetState::Parked &&
+                                                          r.m.status(0).holder == Holder::Stock);
+    calls.clear();
+    for (int k = 0; k < 1000; k++)
+        r.tick();
+    ok("10 s parked: no timeout, nothing released", r.m.status(0).state == TargetState::Parked &&
+                                                      calls_are("slots?; slots?"));
+    r.table(0, 1);
+    r.port.on_map_status(kMap, 3, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    ok("promoted (3 -> 1): shown", r.m.status(0).state == TargetState::Shown);
+    r.port.on_map_status(kMap, 1, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, r.now);
+    ok("1 -> 3: parked, not lost", r.m.status(0).state == TargetState::Parked && calls_are("slots?"));
+    r.m.want(0, false, false);
+    r.tick();
+    ok("released while parked: unmapped, then unfetched", calls_are("unmap 0x10004f0; unfetch 0x10004f0") &&
+                                                            r.m.status(0).state == TargetState::Idle);
+
+    Rig l;
+    l.map_asked(false);
+    l.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, l.now);
+    calls.clear();
+    l.table(0, 0);
+    l.port.on_map_status(kMap, 3, dcsm::E_MAP_STATUS_UNMAPPED, l.now);
+    ok("parked, then unmapped (a lock): lost, unfetched with no unmap", calls_are("unfetch 0x10004f0") &&
+                                                                         l.m.status(0).state == TargetState::Waiting);
+
+    Rig f;
+    f.map_asked(false);
+    f.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, f.now);
+    calls.clear();
+    f.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, f.now);
+    ok("parked, then its fetch removed: lost, no evidence", calls_are("unfetch 0x10004f0") &&
+                                                              f.m.status(0).state == TargetState::Waiting &&
+                                                              f.evidence.empty());
+}
+
+static void take_over()
+{
+    Rig r;
+    r.port.set_hmi_client_handle(1);
+    r.map_asked(true);
+    r.table(1, 3);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, r.now);
+    calls.clear();
+    r.tick();
+    ok("contending and parked behind the stock map: an unmap of it as client 1",
+       calls_are("unmap 0x1000300 as 0x1; slots?"));
+    /* The panel's fetch is out when the take-over's reply comes. */
+    r.m.want(1, true, false);
+    r.tick();
+    calls.clear();
+    r.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_HANDLE_UNKNOWN, "E_DCSM_HANDLE_UNKNOWN", r.now);
+    ok("the take-over's reply, even a refusal, refuses nothing of ours",
+       r.m.status(1).state == TargetState::Acquiring && r.m.status(0).state == TargetState::Parked);
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_CONTENTID_UNKNOWN, "E_DCSM_CONTENTID_UNKNOWN", r.now);
+    ok("the next fetch reply is still the panel's", r.m.status(1).state == TargetState::Waiting &&
+                                                     r.m.status(1).reason.find("CONTENTID") != std::string::npos);
+    r.table(3, 1);
+    r.port.on_map_status(kMap, 3, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    ok("the KOMBI shows ours: shown", r.m.status(0).state == TargetState::Shown);
+
+    Rig h;
+    h.port.set_hmi_client_handle(7);
+    h.map_asked(true);
+    h.table(1, 3);
+    h.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, h.now);
+    calls.clear();
+    h.tick();
+    ok("the HMI's handle is configurable", calls_are("unmap 0x1000300 as 0x7; slots?"));
+    /* More unmap replies than unmaps sent. */
+    h.m.want(0, false, false);
+    h.tick();
+    calls.clear();
+    h.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", h.now);
+    h.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", h.now);
+    h.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", h.now);
+    ok("unmap replies, more than were sent: nothing breaks", h.m.status(0).state == TargetState::Idle);
+}
+
+static void basics()
 {
     Rig r;
     r.m.want(0, true, true);
@@ -132,6 +245,7 @@ int main()
     s.slot = 0x100;
     s.status = 2;
     s.content = 0x01000101;
+    s.map_status = 1;   /* shown */
     r.port.on_slots({s}, r.now);
     r.port.on_map_status(kMap, 1, dcsm::E_MAP_STATUS_UNMAPPED, r.now);
     ok("unmapped by the stock map: lost, no evidence",
@@ -185,6 +299,13 @@ int main()
     u.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, u.now);
     ok("gone: nothing is sent, later events are ignored", calls_are("") &&
                                                              u.m.status(0).state == TargetState::Unavailable);
+}
+
+int main()
+{
+    basics();
+    parked();
+    take_over();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

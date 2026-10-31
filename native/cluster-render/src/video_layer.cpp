@@ -141,7 +141,7 @@ void VideoLayer::show_blocks(bool on)
 
 void VideoLayer::set_opacity()
 {
-    const float a = opaque_ ? params.opacity : 0.0f;
+    const float a = opaque_ ? params.opacity * fade_ : 0.0f;
     g_->uniform(atlas_quad_, "u_opacity", &a, 1);
     if (block_quad_)
         g_->uniform(block_quad_, "u_opacity", &a, 1);

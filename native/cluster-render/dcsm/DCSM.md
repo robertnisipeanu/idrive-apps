@@ -145,6 +145,34 @@ Dcsm2 next becomes available.
 - VERIFIED on the car: the KOMBI accepts this second handle and maps scenes
   for it.
 
+## Slots: one shown, the rest parked
+
+VERIFIED on the car (slot 0x100, the central map area, content class 0):
+- **No pre-emption.** The first content mapped into a slot is shown
+  (`mapStatus` MAPPED_FOREGROUND). A later `reqMapContent` into it is
+  answered `E_DCSM_OK` and parked: MAPPED_INVISIBLE. When the shown content
+  is unmapped, the oldest parked one is shown within about 0.5 s. The
+  content class does not change this for 0x100; class 1 was parked even
+  with the slot free, so the service maps with class 0.
+- **The table** (`slotStatusChange`) has one `SlotStatus2` per mapping:
+  slot, content, class and `mapStatus`, with the slot's status copied into
+  each. The row with MAPPED_FOREGROUND or MAPPED_BACKGROUND is the one
+  shown. Rows stay listed, UNMAPPED, until their content is unfetched.
+- **The stock map.** In Map view the HMI maps its map, content 0x01000300,
+  class 0, into 0x100.
+- **Locks.** A phone reconnecting or a door-open warning disables 0x100
+  (DISABLED), and the KOMBI unmaps every mapping in it. When it is
+  AVAILABLE again, whoever asks first is shown.
+
+### Taking over from the stock HMI
+
+`Client::unmapAs(handle, content)` sends `reqUnmapContent` with another
+client's handle. VERIFIED on the car: an unmap of {0x01000300, tag 0} with
+clientID 1 (the HMI's) is answered `E_DCSM_OK`, the KOMBI shows the content
+parked behind it, and the HMI at once maps 0x01000300 again, which is parked
+behind that content. When that content is unmapped, the stock map is shown
+again within 1 s.
+
 `contentClass` is an opaque u32 defined by the KOMBI; the HMI takes it and
 the slot from per-state records. The service's values are in
 `../cluster-render.conf`.
