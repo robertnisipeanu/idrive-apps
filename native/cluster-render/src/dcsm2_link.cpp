@@ -67,6 +67,8 @@ bool Dcsm2Link::start(const Options &o, std::string *err)
             i.slot = s.slotId;
             i.status = s.slotStatus;
             i.content = s.mappingInfo.contentId.sceneId;
+            i.klass = s.mappingInfo.contentClass;
+            i.map_status = s.mappingInfo.mapStatus;
             e.slots.push_back(i);
         }
         push(e);

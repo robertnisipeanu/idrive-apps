@@ -65,10 +65,14 @@ enum class Holder { None, Us, Stock, Foreign };
 const char *holder_name(Holder h);
 
 /* One row of the display's slot table. */
+/* One entry of the display's slot table. A slot can have several entries,
+ * one per content the display knows for it. */
 struct SlotInfo {
     uint64_t slot = 0;
-    uint32_t status = 0;    /* 0 disabled, 1 available, 2 occupied */
-    uint64_t content = 0;   /* the scene id mapped there; 0: none */
+    uint32_t status = 0;      /* 0 disabled, 1 available, 2 occupied */
+    uint64_t content = 0;     /* the entry's scene id; 0: none */
+    uint32_t klass = 0;       /* its content class */
+    uint32_t map_status = 0;  /* 0 unmapped, 1 foreground, 2 background, 3 invisible */
 };
 
 /* Why a request was not granted. */
