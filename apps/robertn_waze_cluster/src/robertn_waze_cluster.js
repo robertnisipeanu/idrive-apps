@@ -6,12 +6,12 @@
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
  * One LT_State_Wide page: a status line combining the patch state and the
- * render state; Enable map and Disable map, which apply and revert the
- * carplay patch; the diagnostic capture button and its status; and a
- * scrolling list of both tools' log lines, newest first, one per
- * LT_Label_1Row, redrawn at most every LIST_RENDER_MS. Once patched, the
- * render puts the map on the cluster whenever CarPlay streams it, with no
- * button.
+ * render state; the cluster setting the map needs; Enable map and Disable
+ * map, which apply and revert the carplay patch; the diagnostic capture
+ * button and its status; and a scrolling list of both tools' log lines,
+ * newest first, one per LT_Label_1Row, redrawn at most every
+ * LIST_RENDER_MS. Once patched, the render puts the map on the cluster
+ * whenever CarPlay streams it, with no button.
  *
  * Enable map shows for an unpatched or unknown state and Disable map for a
  * patch, both only with no change pending (waze_cluster_control.js
@@ -30,6 +30,7 @@ const logger = logging.getSDKLogger();
 
 const STATE_NAME = 'ST_OnlineApps_WazeCluster';
 const STATUS_NAME = 'wocStatus';
+const SETUP_NAME = 'wocSetup';
 const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
@@ -39,6 +40,9 @@ const ROW_NAMES = Array.from({ length: MAX_LINES }, (_, i) => `wocRow${String(i 
 const LIST_RENDER_MS = 500;
 const ROW_CHARS = 90;
 const PRESS_DEDUPE_MS = 400;
+/* the cluster draws the phone's map only with its own centre content off;
+ * the menu names are the HMI's en_GB ones */
+const SETUP_TEXT = 'Set Instrument cluster > Central display area to Off';
 
 /* A line as one row: no line breaks, at most ROW_CHARS characters. */
 function oneRow(line) {
@@ -127,7 +131,7 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state) {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME}`));
         }
-        const names = [STATUS_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS]
+        const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS]
             .concat(ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
@@ -301,6 +305,7 @@ class WazeClusterApp extends OnlineApp {
             return;
         }
         this._write(STATUS_NAME, this._control.statusText());
+        this._write(SETUP_NAME, SETUP_TEXT);
         this._write(CAPTURE_NAME, this._control.captureButtonText());
         this._write(CAPTURE_STATUS, this._control.captureText());
         const patch = this._control.connectedPatch();

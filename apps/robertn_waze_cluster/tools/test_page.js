@@ -14,7 +14,9 @@
  * and Enable map only while not; pressing every button sends the render
  * nothing; hiding the page closes both sockets; a page opened again reads
  * the render's current state; a pending patch shows its line with no Enable
- * or Disable, from the daemon and, before the daemon runs, from its marker.
+ * or Disable, from the daemon and, before the daemon runs, from its marker;
+ * the line naming the cluster setting the map needs is always on the page,
+ * under the status.
  */
 const assert = require('assert');
 const EventEmitter = require('events');
@@ -152,6 +154,11 @@ async function main() {
     /* The restart button ships hidden; it shows only while a patch is deferred. */
     assert.strictEqual(components['34'].properties.Visible.value, 0, 'wocRestart ships hidden');
     console.log('ok   page buttons: Enable map, Disable map, Restart (hidden), Capture logs; no Show or Stop');
+    const setup = Object.entries(components).find(([, d]) => d.name === 'wocSetup');
+    assert(setup && setup[0] === '21' && setup[1].type === 'label' && setup[1].properties.Visible.value === 1 &&
+        setup[1].properties.Focusable.value === 0, 'wocSetup: a visible, unfocusable label right under wocStatus');
+    assert(/<component id="20" type="label"[^]*?<\/component>\s*<component id="21" type="label" widget="LT_Label_1Row">\s*<property id="2" value="1"\/>/.test(XML),
+        'application.xml: label 21, visible, right after the status');
 
     const render = new FakeRender(RSOCK);
     let patch = new FakePatch(PSOCK);
@@ -173,6 +180,8 @@ async function main() {
         assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocRestart'], 'bound buttons');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
+        await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Off');
+        console.log('ok   the page says to set Instrument cluster > Central display area to Off');
 
         await until('patched: Disable map only', () => byName.wocDisable.visible === true && byName.wocDisable.enabled === true &&
             byName.wocEnable.visible === false && byName.wocEnable.enabled === false);

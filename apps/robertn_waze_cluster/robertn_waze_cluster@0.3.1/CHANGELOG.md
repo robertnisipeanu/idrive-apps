@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+The page says to set Instrument cluster > Central display area to Off: with
+Map view, Route preview or Assisted Driving View there, the cluster shows its
+own content in the centre instead of the map.
+
 ## 0.3.0
 
 Installing the app from the Store installs the Waze tool and the cluster
