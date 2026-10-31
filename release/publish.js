@@ -92,18 +92,19 @@ function githubPreflight(dryRun) {
     assertVisibility();
 }
 
+let visibility = null;
 function assertVisibility() {
     const repo = JSON.parse(gh(['api', `repos/${WHERE}`]));
+    visibility = repo.private === false ? 'public' : 'private';
     if (VISIBILITY !== 'any' && (repo.visibility !== VISIBILITY || repo.private !== (VISIBILITY !== 'public'))) {
         throw new Error(`refusing to publish: ${WHERE} is ${repo.visibility}, not ${VISIBILITY}`);
     }
 }
 
-let visibility = null;
-/* Whether the repository is public (asked once). */
+/* Whether the repository is public, as the last visibility check found it. */
 function isPublic() {
     if (visibility === null) {
-        visibility = JSON.parse(gh(['api', `repos/${WHERE}`])).private === false ? 'public' : 'private';
+        assertVisibility();
     }
     return visibility === 'public';
 }
