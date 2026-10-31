@@ -146,6 +146,10 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
         retry = (from_ms >= 0 ? from_ms : now_ms) + kLadder[std::min(t.ladder, kLadderSteps - 1)];
         t.ladder++;
     }
+    /* A slot already reported away (the report can come before the loss)
+     * counts from the start of the wait. */
+    auto a = away_.find(specs_[i].slot);
+    t.slot_away = a != away_.end() && a->second;
     set(i, TargetState::Waiting, h, reason, now_ms, retry);
 }
 
@@ -166,6 +170,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
 void SlotManager::on_availability(bool up, int64_t now_ms)
 {
     slots_.clear();
+    away_.clear();
     if (up) {
         available_since_ms_ = now_ms;
         return;
@@ -262,11 +267,41 @@ void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &
         wait(i, h, true, reason, now_ms, lost_ms);
 }
 
-void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t)
+void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
 {
-    for (const SlotInfo &s : slots)
+    std::map<uint64_t, bool> away;
+    for (const SlotInfo &s : slots) {
         slots_[s.slot] = s;
+        bool ours = false;
+        for (const TargetSpec &spec : specs_)
+            ours = ours || (spec.slot == s.slot && spec.scene_id == s.content);
+        /* The slot's status is the same in each of its entries; who holds it
+         * is the entry that is mapped. */
+        bool &a = away[s.slot];
+        a = a || s.status == 0 || (!ours && (s.map_status == 1 || s.map_status == 2));
+    }
+    for (const auto &kv : away)
+        away_[kv.first] = kv.second;
     slots_seq_++;
+    /* A slot that comes back (disabled or held, then free) ends the wait of
+     * a target on the ladder: it is asked for at once, not at the next
+     * step. Only a slot seen away counts, so a display that drops our scene
+     * while reporting the slot free still meets the ladder. */
+    for (size_t i = 0; i < t_.size(); i++) {
+        Target &t = t_[i];
+        TargetStatus &st = t.status;
+        if (st.state != TargetState::Waiting || st.retry_ms < 0 || t.verdict)
+            continue;
+        auto a = away.find(specs_[i].slot);
+        if (a == away.end())
+            continue;
+        if (a->second)
+            t.slot_away = true;
+        else if (t.slot_away && st.retry_ms > now_ms) {
+            st.retry_ms = now_ms;
+            t.slot_away = false;
+        }
+    }
 }
 
 void SlotManager::tick(int64_t now_ms)

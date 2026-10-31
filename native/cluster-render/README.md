@@ -85,9 +85,12 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   free. The stock HMI's (scene ids 0x0100xxxx that are not ours) is yielded
   to the same way, unless a wanting layer has `contend`. A contending
   layer, such as the Waze map in 0x100, retries after 2, 5, 10, 20, then
-  every 30 s, and the ladder starts over after 30 s shown. Without a
-  contending layer, a slot the table names as held is not asked for, even
-  when a retry is due.
+  every 30 s, and the ladder starts over after 30 s shown. A slot the
+  table reports disabled or with another content mapped, and then free
+  again (a door-open warning come and gone), is asked for at once,
+  whatever step the ladder is on.
+  Without a contending layer, a slot the table names as held is not asked
+  for, even when a retry is due.
 - **Refusals and no answer** (5 s) retry on the same ladder; they are not
   upload evidence. Requests to a slot are at least 1 s apart, with one
   outstanding.

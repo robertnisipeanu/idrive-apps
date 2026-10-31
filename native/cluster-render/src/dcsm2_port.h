@@ -96,7 +96,7 @@ private:
      * of the same id, which clears the count. */
     std::map<uint64_t, int> unfetched_;
     std::deque<uint64_t> fetches_, maps_;    /* awaiting a reply, oldest first */
-    std::map<uint64_t, SlotInfo> slots_;     /* as last logged */
+    std::map<std::pair<uint64_t, uint64_t>, SlotInfo> slots_;   /* (slot, content): as last logged */
 };
 
 }  // namespace crs

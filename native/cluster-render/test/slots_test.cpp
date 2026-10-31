@@ -416,6 +416,93 @@ static void lost_to_our_own_id()
        ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 2000);
 }
 
+static void slot_comes_back()
+{
+    Rig r;
+    r.m.want(0, true, true);   /* contending, like the Waze map */
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    /* Three losses in a row climb the ladder to its 10 s step. */
+    for (int k = 0; k < 3; k++) {
+        r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning disables the slot */
+        r.m.on_lost(kMapScene, "unmapped", r.now);
+        r.run(r.m.status(0).retry_ms - r.now + 10);
+        r.m.on_shown(kMapScene, r.now);
+        joined();
+    }
+    r.slot(kMapSlot, 0, kMapScene);
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    const int64_t lost = r.now;
+    ok("a fourth loss in a row waits 20 s on the ladder", r.m.status(0).retry_ms == lost + 20000);
+    joined();
+    r.run(3000);   /* one report, before the loss: the display reports a slot only when it changes */
+    ok("while the slot stays disabled, nothing is asked for", joined().find("request") == std::string::npos);
+    r.slot(kMapSlot, 1, 0);           /* the door closed: the slot is free again */
+    r.run(1100);
+    ok("the slot free again after it was away: asked for at once, not after 20 s",
+       joined().find("request map") != std::string::npos && r.now - lost < 5000);
+
+    Rig v;
+    v.m.want(0, true, true);
+    v.m.tick(v.now);
+    v.m.on_shown(kMapScene, v.now);
+    v.slot(kMapSlot, 2, kMapScene);   /* the table names our mapping */
+    joined();
+    v.m.on_lost(kMapScene, "unmapped", v.now);   /* undecided: the table is asked for */
+    v.slot(kMapSlot, 0, kMapScene);   /* its answer: disabled */
+    v.run(20);
+    v.slot(kMapSlot, 1, 0);
+    v.run(1100);
+    ok("a loss decided by the next report, the slot disabled then free: asked for at once",
+       joined().find("request map") != std::string::npos);
+
+    /* The table as the car reports slot 0x100: our entry and the stock
+     * map's, with one slot status. */
+    auto table = [](uint32_t status, uint32_t ours_map, uint32_t stock_map) {
+        SlotInfo o, h;
+        o.slot = h.slot = kMapSlot;
+        o.status = h.status = status;
+        o.content = kMapScene;
+        h.content = 0x01000300;
+        o.map_status = ours_map;
+        h.map_status = stock_map;
+        return std::vector<SlotInfo>{o, h};
+    };
+    Rig e;
+    e.m.want(0, true, true);
+    e.m.tick(e.now);
+    e.m.on_shown(kMapScene, e.now);
+    e.m.on_slots(table(2, 1, 0), e.now);   /* ours mapped, the stock entry listed but not mapped */
+    joined();
+    e.m.on_lost(kMapScene, "unmapped", e.now);
+    e.m.on_slots(table(1, 0, 0), e.now);
+    e.run(1500);
+    ok("a stock entry listed beside ours but not mapped is not the slot away: the ladder",
+       joined().find("request") == std::string::npos);
+    e.run(1000);
+    e.m.on_shown(kMapScene, e.now);
+    e.m.on_slots(table(2, 0, 1), e.now);   /* the stock map mapped over ours */
+    joined();
+    e.m.on_lost(kMapScene, "unmapped", e.now);
+    e.m.on_slots(table(1, 0, 0), e.now);   /* and gone again */
+    e.run(1100);
+    ok("the stock map mapped there and gone again: asked for at once",
+       joined().find("request map") != std::string::npos);
+
+    Rig q;
+    q.m.want(0, true, true);
+    q.m.tick(q.now);
+    q.m.on_shown(kMapScene, q.now);
+    joined();
+    q.slot(kMapSlot, 1, 0);           /* the display drops our scene and reports the slot free */
+    q.m.on_lost(kMapScene, "unmapped", q.now);
+    q.slot(kMapSlot, 1, 0);
+    q.run(1500);
+    ok("a slot reported free without having been away waits for the ladder",
+       joined().find("request") == std::string::npos && q.m.status(0).retry_ms > q.now);
+}
+
 static void wake()
 {
     Rig r;
@@ -445,6 +532,7 @@ int main()
     scene_failure();
     ladder_rechecks_the_table();
     lost_to_our_own_id();
+    slot_comes_back();
     wake();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

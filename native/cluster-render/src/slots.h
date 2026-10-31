@@ -27,7 +27,9 @@
  *   HMI's is yielded to the same way unless a wanting layer contends; a
  *   contending target retries after 2, 5, 10, 20, then every 30 s, and the
  *   ladder starts over after 30 s shown. Any other refusal or no answer
- *   retries on the same ladder.
+ *   retries on the same ladder. A target waiting on the ladder whose slot
+ *   the table reports disabled or with another content mapped, and then
+ *   free again (a door-open warning come and gone), is asked for at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot.
  * - The display service going away takes every target down; when it comes
@@ -64,11 +66,14 @@ struct TargetSpec {
 enum class Holder { None, Us, Stock, Foreign };
 const char *holder_name(Holder h);
 
-/* One row of the display's slot table. */
+/* One entry of the display's slot table. A slot can have several entries,
+ * one per content the display knows for it. */
 struct SlotInfo {
     uint64_t slot = 0;
-    uint32_t status = 0;    /* 0 disabled, 1 available, 2 occupied */
-    uint64_t content = 0;   /* the scene id mapped there; 0: none */
+    uint32_t status = 0;      /* 0 disabled, 1 available, 2 occupied */
+    uint64_t content = 0;     /* the entry's scene id; 0: none */
+    uint32_t klass = 0;       /* its content class */
+    uint32_t map_status = 0;  /* 0 unmapped, 1 foreground, 2 background, 3 invisible */
 };
 
 /* Why a request was not granted. */
@@ -172,6 +177,9 @@ private:
         bool verdict = false, verdict_removal = false;
         uint64_t verdict_seq = 0;
         int64_t lost_ms = 0;
+        /* Waiting on the ladder: the table has since reported the slot
+         * disabled or held by other content. */
+        bool slot_away = false;
     };
 
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);
@@ -191,6 +199,9 @@ private:
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, SlotInfo> slots_;
+    /* Per slot, from its latest report: disabled, or another content
+     * mapped there. */
+    std::map<uint64_t, bool> away_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
     int64_t slot_poll_ms_ = 0;
