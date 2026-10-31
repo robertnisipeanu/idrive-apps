@@ -216,6 +216,9 @@ public:
     void fetch(const ContentId2 &c);
     void map(const ContentId2 &c, uint32_t contentClass, uint64_t slotId);
     void unmap(const ContentId2 &c);
+    // An unmap sent with another client's handle: the KOMBI unmaps that
+    // client's content (DCSM.md "Taking over from the stock HMI").
+    void unmapAs(uint64_t clientHandle, const ContentId2 &c);
     void unfetch(const ContentId2 &c);
     // Asks for slotStatusChange; sent automatically on availability.
     void requestSlotStatus();

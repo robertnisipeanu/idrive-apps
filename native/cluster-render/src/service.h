@@ -33,6 +33,7 @@ struct ServiceConfig {
     int upload_burst_ms = 250;
     int slow_flush_ms = 150;
     int fps = 30;                /* the loop's tick while a target is up */
+    int fade_ms = 250;           /* a target's layers fade in when it is shown, and out before it is released */
     std::string socket_path = "/dev/shm/cluster-render/render.sock";
     unsigned socket_mode = 0660;
     std::string socket_group;

@@ -45,12 +45,17 @@ void define_keys(cld::Config *cfg)
     cfg->define("map_scene_id", "0x010004f0");
     cfg->define("map_size", "1088x480");
     cfg->define("map_linger_ms", "0");
+    cfg->define("map_take_over_stock", "1");
     cfg->define("panel_slot", "0x203");
     cfg->define("panel_content_class", "0");
     cfg->define("panel_scene_id", "0x01000400");
     cfg->define("panel_size", "1920x720");
     cfg->define("panel_linger_ms", "3000");
+    cfg->define("panel_take_over_stock", "0");
     cfg->define("hud_linger_ms", "3000");
+    cfg->define("hud_take_over_stock", "0");
+    cfg->define("dcsm_hmi_client_handle", "1");
+    cfg->define("fade_ms", "250");
     cfg->define("upload_kb_per_s", "6000");
     cfg->define("upload_floor_kb_per_s", "2000");
     cfg->define("upload_step_kb_per_s", "500");
@@ -88,6 +93,7 @@ bool load_targets(const cld::Config &cfg, std::vector<TargetSpec> *out, std::str
         t.content_class = (uint32_t)cfg.num((p + "content_class").c_str());
         t.scene_id = std::strtoull(cfg.str((p + "scene_id").c_str()).c_str(), nullptr, 0);
         t.linger_ms = (int)cfg.num((p + "linger_ms").c_str());
+        t.take_over_stock = cfg.num((p + "take_over_stock").c_str()) != 0;
         if (!cfg.size((p + "size").c_str(), &t.width, &t.height) || t.width < 16 || t.height < 16 ||
             t.width > 4096 || t.height > 4096) {
             *err = "target " + name + ": " + p + "size must be WxH";
@@ -124,9 +130,10 @@ int serve(const cld::Config &cfg)
     long floor_kb = cfg.num("upload_floor_kb_per_s");
     if (max_kb < 0 || max_kb > 1048576 || floor_kb < 0 || step_kb < 1 || cfg.num("upload_burst_ms") < 1 ||
         cfg.num("upload_burst_ms") > 1000 || cfg.num("fps") < 1 || cfg.num("fps") > 60 ||
-        cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000) {
+        cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000 || cfg.num("fade_ms") < 0 ||
+        cfg.num("fade_ms") > 5000) {
         log_error("upload_kb_per_s (0-1048576), upload_floor_kb_per_s (0 and up), upload_step_kb_per_s (1 and up), "
-                  "upload_burst_ms (1-1000), slow_flush_ms (10-10000) or fps (1-60) out of range");
+                  "upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60) or fade_ms (0-5000) out of range");
         return 1;
     }
     /* A ceiling set below the floor is the cap: the governor then has no
@@ -139,6 +146,7 @@ int serve(const cld::Config &cfg)
     sc.slow_flush_ms = (int)cfg.num("slow_flush_ms");
     sc.upload_burst_ms = (int)cfg.num("upload_burst_ms");
     sc.fps = (int)cfg.num("fps");
+    sc.fade_ms = (int)cfg.num("fade_ms");
     sc.socket_path = cfg.str("socket_path");
     sc.socket_mode = (unsigned)std::strtoul(cfg.str("socket_mode").c_str(), nullptr, 8);
     sc.socket_group = cfg.str("socket_group");
@@ -182,6 +190,7 @@ int serve(const cld::Config &cfg)
     Dcsm2Port port(&link);
     Service service(&gpu, &port, sc);
     port.set_manager(&service.slots());
+    port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
     Governor *gov = &service.compositor().governor();
     port.on_link = [gov](bool silent, int64_t now_ms) {
         if (silent)
@@ -199,9 +208,9 @@ int serve(const cld::Config &cfg)
         return 1;
     }
     for (const TargetSpec &t : sc.targets)
-        log_info("target %s: slot 0x%llx class %u scene 0x%llx %ux%u, linger %d ms", t.name.c_str(),
+        log_info("target %s: slot 0x%llx class %u scene 0x%llx %ux%u, linger %d ms%s", t.name.c_str(),
                  (unsigned long long)t.slot, t.content_class, (unsigned long long)t.scene_id, t.width, t.height,
-                 t.linger_ms);
+                 t.linger_ms, t.take_over_stock ? ", takes over from the stock HMI" : "");
 
     std::vector<pollfd> fds;
     for (;;) {

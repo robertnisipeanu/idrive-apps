@@ -15,6 +15,7 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
         slots_.add(t);
     comp_.reset(new Compositor(gpu, &slots_, cfg_.budget, cfg_.upload_burst_ms));
     comp_->set_slow_flush_ms(cfg_.slow_flush_ms);
+    comp_->set_fade_ms(cfg_.fade_ms);
     slots_.set_scenes(comp_.get());
     Governor *gov = &comp_->governor();
     slots_.on_evidence = [gov](Evidence e, const std::string &detail, int64_t now_ms) {

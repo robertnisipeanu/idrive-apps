@@ -71,6 +71,14 @@ public:
     bool holds_flush() const override { return parked_ && drawn_; }
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
+    bool fades() const override { return true; }
+
+protected:
+    void faded() override
+    {
+        if (g_)
+            set_opacity();
+    }
 
 private:
     enum class Kind { None, Exact, Blocks };

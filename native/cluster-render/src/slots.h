@@ -15,21 +15,37 @@
  *                        |                  +----------|----------+    v
  *                        +--refused/timeout--> Waiting <+            release --> Idle
  *
+ * Acquiring and Shown go to Parked when the display parks the scene; Parked
+ * goes to Shown when the display shows it, to Waiting when it is lost, and
+ * is released (Idle) when nothing wants it.
+ *
  * - The slot is requested when at least one layer wants it and released only
  *   when none has for linger_ms, so clients coming and going, or one
  *   replacing another, never unmaps it: their layers change in the scene.
+ * - The display never takes a slot from the content it shows: a map into a
+ *   slot that shows other content is accepted and parked, invisible, and
+ *   the oldest parked mapping is shown when the shown one goes (VERIFIED on
+ *   the car). Parked keeps the target mapped and fetched, with no timeout,
+ *   until the display shows it. A contending target whose slot shows the
+ *   stock HMI's content and that takes over from the stock HMI
+ *   (TargetSpec::take_over_stock) unmaps that content as the HMI
+ *   (Port::take_over), at most once per kTakeOverMs[] step, then waits to be
+ *   shown; the HMI maps its content again, parked behind ours, so it comes
+ *   back when ours goes.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
- *   it comes from the display's slot table: content of the stock HMI (scene
- *   ids 0x0100xxxx that are not ours), or of anything else (an app that does
- *   not use this service). Content of anything else is always yielded to:
- *   the slot is asked for again only once it is reported free. The stock
- *   HMI's is yielded to the same way unless a wanting layer contends; a
- *   contending target retries after 2, 5, 10, 20, then every 30 s, and the
- *   ladder starts over after 30 s shown. Any other refusal or no answer
- *   retries on the same ladder. A target waiting on the ladder whose slot
- *   the table reports disabled or with another content mapped, and then
- *   free again (a door-open warning come and gone), is asked for at once.
+ *   it comes from the display's slot table, one row per mapping: the row
+ *   shown (map status foreground or background) is the holder, content of
+ *   the stock HMI (scene ids 0x0100xxxx that are not ours), or of anything
+ *   else (an app that does not use this service). Content of anything else
+ *   is always yielded to: the slot is asked for again only once it is
+ *   reported free. The stock HMI's is yielded to the same way unless a
+ *   wanting layer contends; a contending target retries after 2, 5, 10, 20,
+ *   then every 30 s, and the ladder starts over after 30 s shown. Any other
+ *   refusal or no answer retries on the same ladder. A target waiting on
+ *   the ladder whose slot the table reports disabled or with another
+ *   content mapped, and then free again (a door-open warning come and
+ *   gone), is asked for at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot.
  * - The display service going away takes every target down; when it comes
@@ -60,14 +76,18 @@ struct TargetSpec {
     uint64_t scene_id = 0;
     uint32_t width = 0, height = 0;   /* scene size in pixels */
     int linger_ms = 2000;             /* kept mapped this long after the last layer stops wanting it */
+    /* Parked behind the stock HMI's content while a layer contends: unmap
+     * that content as the HMI (SlotManager, Port::take_over). */
+    bool take_over_stock = false;
 };
 
 /* Who the display reports in a slot. */
 enum class Holder { None, Us, Stock, Foreign };
 const char *holder_name(Holder h);
 
-/* One entry of the display's slot table. A slot can have several entries,
- * one per content the display knows for it. */
+/* One row of the display's slot table. A slot has one row per mapping the
+ * display knows for it, each with the slot's status; a row stays listed,
+ * unmapped, until its content is unfetched. */
 struct SlotInfo {
     uint64_t slot = 0;
     uint32_t status = 0;      /* 0 disabled, 1 available, 2 occupied */
@@ -93,6 +113,9 @@ public:
     virtual void request(const TargetSpec &t) = 0;
     /* Take it out of its slot. No answer is awaited. */
     virtual void release(const TargetSpec &t) = 0;
+    /* Unmap content of the stock HMI shown in t's slot, as the HMI, so the
+     * display shows t's parked scene. No answer is awaited. */
+    virtual void take_over(const TargetSpec &t, uint64_t content) = 0;
     /* Ask for the slot table (SlotManager::on_slots). */
     virtual void refresh_slots() = 0;
 };
@@ -105,13 +128,13 @@ public:
     virtual void unpublish(const TargetSpec &t) = 0;
 };
 
-enum class TargetState { Idle, Acquiring, Shown, Lingering, Waiting, Unavailable };
+enum class TargetState { Idle, Acquiring, Parked, Shown, Lingering, Waiting, Unavailable };
 const char *target_state_name(TargetState s);
 
 /* A target's state as clients see it. */
 struct TargetStatus {
     TargetState state = TargetState::Idle;
-    Holder holder = Holder::None;   /* who holds the slot while Waiting */
+    Holder holder = Holder::None;   /* who holds the slot while Waiting or Parked */
     std::string reason;
     int64_t retry_ms = -1;          /* Waiting on a timer: when it asks again (or decides a loss); -1: when
                                        the slot is free */
@@ -125,6 +148,11 @@ public:
     static const int64_t kSlotPollMs = 5000;
     static const int64_t kLadderResetMs = 30000;
     static const int64_t kVerdictMs = 1000;
+    /* Take-overs of the stock HMI's content: the gap after the first, the
+     * second, then every later one; the count starts over after
+     * kTakeOverResetMs shown. */
+    static const int64_t kTakeOverMs[3];
+    static const int64_t kTakeOverResetMs = 60000;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
@@ -143,6 +171,8 @@ public:
     /* The display's answers and reports. */
     void on_availability(bool up, int64_t now_ms);
     void on_shown(uint64_t scene_id, int64_t now_ms);
+    /* Mapped, but parked invisible behind the content the slot shows. */
+    void on_parked(uint64_t scene_id, int64_t now_ms);
     void on_refused(uint64_t scene_id, Refusal r, const std::string &why, int64_t now_ms);
     void on_lost(uint64_t scene_id, const std::string &why, int64_t now_ms);
     void on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms);
@@ -150,7 +180,7 @@ public:
     void tick(int64_t now_ms);
 
     const TargetStatus &status(int target) const { return t_[target].status; }
-    /* True when the target's scene is published (Acquiring, Shown,
+    /* True when the target's scene is published (Acquiring, Parked, Shown,
      * Lingering): its layers are drawn and flushed. */
     bool published(int target) const { return t_[target].published; }
     /* Milliseconds until the next timer of any target; -1: none. */
@@ -180,6 +210,10 @@ private:
         /* Waiting on the ladder: the table has since reported the slot
          * disabled or held by other content. */
         bool slot_away = false;
+        /* Take-overs since the count last started over, and when the next
+         * may go. */
+        int takeovers = 0;
+        int64_t takeover_ms = 0;
     };
 
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);
@@ -188,17 +222,25 @@ private:
     /* Waiting; on the ladder, the retry counts from from_ms (-1: now_ms). */
     void wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms = -1);
     Holder other_holder(int i) const;
+    /* The row shown in the target's slot (map status foreground or
+     * background) with content not ours; null: none. */
+    const SlotInfo *holder_row(int i) const;
+    /* The table shows the target's own scene id in its slot. */
+    bool named(int i) const;
+    void park(int i, int64_t now_ms);
+    void take_over(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
     int by_scene(uint64_t scene_id) const;
     bool scene_busy(int i) const;
-    const SlotInfo *slot(uint64_t id) const;
+    /* The slot's status from its latest rows; -1: not reported. */
+    int slot_status(uint64_t id) const;
 
     Port *port_;
     Scenes *scenes_;
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
-    std::map<uint64_t, SlotInfo> slots_;
+    std::map<uint64_t, std::vector<SlotInfo>> slots_;   /* by slot: its rows in the latest report naming it */
     /* Per slot, from its latest report: disabled, or another content
      * mapped there. */
     std::map<uint64_t, bool> away_;

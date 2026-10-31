@@ -12,7 +12,12 @@
  * assets, binds, uniform arrays, a turned image, a mesh layer with a part,
  * its geometry and transform, and animations, all made again after a
  * restart; malformed and oversized mesh messages and bad animation keys
- * refused without harm. */
+ * refused without harm; on a KOMBI that parks a map behind the one it
+ * shows: the map parked behind the stock map, which is unmapped as the HMI,
+ * then shown and faded in, the stock map parked behind it; when the stream
+ * ends the map fades out, is released and the stock map is shown again; a
+ * target that does not take over stays parked, with no timeout, reported
+ * as parked behind the stock HMI, and is shown when the stock content goes. */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -80,6 +85,7 @@ struct Rig {
     {
         TargetSpec m;
         m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
+        m.take_over_stock = true;
         TargetSpec p;
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         sc.targets = {m, p};
@@ -92,9 +98,10 @@ struct Rig {
     ~Rig() { svc.reset(); }
     void start()
     {
+        port.m = nullptr;
+        port.watchdog();
         svc.reset(new Service(&gpu, &port, sc));
         port.m = &svc->slots();
-        port.pending.clear();
         std::string err;
         if (!svc->start(&err))
             std::printf("start: %s\n", err.c_str());
@@ -202,6 +209,93 @@ static std::vector<uint8_t> atlas(int seed)
     for (size_t i = 0; i < f.size(); i++)
         f[i] = (uint8_t)(i < 1088 * 480 ? (i / 7 + seed * 13) & 0xff : 128);
     return f;
+}
+
+/* The atlas quad's opacity as shown; -1: no such quad. */
+static float atlas_opacity(FakeGraph *g)
+{
+    if (!g)
+        return -1.0f;
+    for (auto &kv : g->shown.quads) {
+        auto t = kv.second.textures.find("u_image");
+        if (t != kv.second.textures.end() && g->shown.buffers.at(t->second).f == TexFormat::R8)
+            return kv.second.uniforms["u_opacity"].empty() ? -1.0f : kv.second.uniforms["u_opacity"][0];
+    }
+    return -1.0f;
+}
+
+static void take_over_and_fall_back()
+{
+    Rig r;
+    r.sc.targets[0].linger_ms = 0;   /* as the map's default */
+    r.start();
+    const uint64_t kHmiMap = 0x01000300;
+    r.port.stock_map(0x100, kHmiMap);   /* Map view: the HMI's map shown */
+    cr::Client a("waze", r.path);
+    Events ea;
+    ea.wire(a);
+    std::vector<std::string> states;
+    a.on_target = [&](const std::string &t, const std::string &st, const std::string &h, const std::string &why) {
+        ea.target[t] = st;
+        ea.holder[t] = h;
+        if (t == "map")
+            states.push_back(st + (why.empty() ? "" : " (" + why + ")"));
+    };
+    r.clients = {&a};
+    r.pump(50);
+    cr::LayerOptions lo;
+    lo.target = "map";
+    lo.contend = true;
+    const uint32_t map = a.video(lo, cr::VideoOptions());
+    const std::vector<uint8_t> f = atlas(1);
+    a.frame(map, f.data(), f.size(), 1);
+    r.pump(100);
+    bool parked = false;
+    for (const std::string &st : states)
+        parked = parked || st.find("parked") == 0;
+    const SlotInfo *ours = r.port.row(0x100, 0x010004f0), *hmi = r.port.row(0x100, kHmiMap);
+    ok("the map parked behind the stock map, which is unmapped as the HMI: ours shown, the HMI's parked behind",
+       parked && r.port.taken_over == std::vector<uint64_t>{kHmiMap} && ea.target["map"] == "shown" && ours &&
+           ours->map_status == 1 && hmi && hmi->map_status == 3);
+    const float early = atlas_opacity(r.gpu.graph("map"));
+    r.pump(300);
+    ok("shown: faded in", early >= 0.0f && early < 1.0f && atlas_opacity(r.gpu.graph("map")) == 1.0f &&
+                              ea.layer[map] == "shown");
+    for (int k = 0; k < 20; k++) {
+        a.frame(map, f.data(), f.size(), 2 + k);
+        r.pump(500);
+    }
+    ok("the HMI's map parked behind ours: no more take-overs", r.port.taken_over.size() == 1 &&
+                                                                   ea.target["map"] == "shown");
+
+    /* The stream ends: the app hides the map. */
+    lo.visible = false;
+    a.set(map, lo);
+    r.pump(150);
+    const float mid = atlas_opacity(r.gpu.graph("map"));
+    ok("the stream ended: the map fades out, the slot still ours", ea.target["map"] == "shown" && mid > 0.0f &&
+                                                                       mid < 1.0f);
+    r.pump(200);
+    hmi = r.port.row(0x100, kHmiMap);
+    ok("then released: idle, the stock map shown again", ea.target["map"] == "idle" && hmi && hmi->map_status == 1 &&
+                                                             !r.port.row(0x100, 0x010004f0));
+
+    /* The panel does not take over: parked until the stock content goes. */
+    cr::LayerOptions pl;
+    pl.target = "panel";
+    pl.contend = true;
+    a.effect(pl, cr::EffectOptions{"#version 100\nvoid main(){gl_FragColor=vec4(1.0);}", "", 0});
+    r.pump(10);   /* requested; the HMI maps its speech dialog before the answer */
+    r.port.stock_map(0x203, 0x01000401);
+    r.pump(7000);
+    const std::string text = r.svc->server().status_text(r.now);
+    ok("a target that does not take over: parked, no timeout, in the events and the status",
+       ea.target["panel"] == "parked" && ea.holder["panel"] == "stock" && r.port.taken_over.size() == 1 &&
+           text.find("target panel: slot 0x203 scene 0x1000400 1920x720: parked (stock) parked behind stock") !=
+               std::string::npos);
+    r.port.stock_unmap(0x203, 0x01000401);
+    r.pump(50);
+    ok("the stock content gone: shown", ea.target["panel"] == "shown");
 }
 
 int main()
@@ -326,6 +420,12 @@ int main()
     ok("the last layer gone: the map lingers", eb.target["map"] == "lingering");
     r.pump(200);
     ok("then is released", eb.target["map"] == "idle");
+    {
+        const SlotInfo *stock = r.port.row(0x100, 0x01000101);
+        ok("the stock map, parked behind ours since the take-over, is shown again",
+           r.port.taken_over.size() == 1 && stock && stock->map_status == 1 && !r.port.row(0x100, 0x010004f0));
+    }
+    r.port.free_slot(r.sc.targets[0]);   /* the HMI leaves the map slot */
 
     /* Errors reach the client. */
     cr::LayerOptions bad;
@@ -624,6 +724,7 @@ int main()
     std::string text = r.svc->server().status_text(r.now);
     ok("the status names the targets and the layers",
        text.find("target map") != std::string::npos && text.find("image of overlay") != std::string::npos);
+    take_over_and_fall_back();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

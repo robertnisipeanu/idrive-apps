@@ -44,12 +44,22 @@ void Dcsm2Port::release(const TargetSpec &t)
     auto it = contents_.find(t.scene_id);
     if (it == contents_.end())
         return;
-    if (it->second.map_asked)
+    if (it->second.map_asked) {
+        if (up_)
+            unmaps_.push_back(Unmap{t.scene_id, 0});
         wire_->unmap(t.scene_id);
+    }
     wire_->unfetch(t.scene_id);
     if (up_)
         unfetched_[t.scene_id]++;
     contents_.erase(it);
+}
+
+void Dcsm2Port::take_over(const TargetSpec &, uint64_t content)
+{
+    if (up_)
+        unmaps_.push_back(Unmap{content, hmi_handle_});
+    wire_->unmap_as(hmi_handle_, content);
 }
 
 uint64_t Dcsm2Port::take(std::deque<uint64_t> *q)
@@ -75,6 +85,7 @@ void Dcsm2Port::on_availability(bool up, int64_t now_ms)
     up_ = up;
     fetches_.clear();
     maps_.clear();
+    unmaps_.clear();
     contents_.clear();   /* gone with the service; nothing to release */
     unfetched_.clear();
     slots_.clear();
@@ -84,6 +95,20 @@ void Dcsm2Port::on_availability(bool up, int64_t now_ms)
 
 void Dcsm2Port::on_reply(uint16_t method, bool ok, uint32_t status, const std::string &status_text, int64_t now_ms)
 {
+    if (method == dcsm::kReqUnmapContent) {
+        Unmap u;
+        if (!unmaps_.empty()) {
+            u = unmaps_.front();
+            unmaps_.pop_front();
+        }
+        if (u.handle)
+            log_info("dcsm: reply to the take-over unmap of 0x%llx as client 0x%llx: %s", (unsigned long long)u.scene,
+                     (unsigned long long)u.handle, ok ? status_text.c_str() : "no valid reply");
+        else
+            log_info("dcsm: reply to request 0x%04x (content 0x%llx): %s", method, (unsigned long long)u.scene,
+                     ok ? status_text.c_str() : "no valid reply");
+        return;   /* nothing waits on an unmap */
+    }
     const uint64_t scene = method == dcsm::kReqFetchContent ? take(&fetches_)
                            : method == dcsm::kReqMapContent ? take(&maps_) : 0;
     const std::string why = ok ? status_text : "no valid reply";
@@ -134,7 +159,7 @@ void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
         /* The KOMBI took the slot back by removing the fetch, with no map
          * transition: the stock map re-mapping over ours, its watchdog, or
          * its renderer unsubscribing the scene. */
-        if (c.phase == Phase::Mapped) {
+        if (c.phase == Phase::Mapped || c.phase == Phase::Parked) {
             c.phase = Phase::Lost;
             c.map_asked = false;
             if (manager_)
@@ -156,15 +181,22 @@ void Dcsm2Port::on_map_status(uint64_t scene, uint32_t initial, uint32_t final_,
         return;
     Content &c = it->second;
     const bool showing = final_ == dcsm::E_MAP_STATUS_MAPPED_FOREGROUND || final_ == dcsm::E_MAP_STATUS_MAPPED_BACKGROUND;
-    if (showing && c.phase == Phase::Mapping) {
+    if (showing && (c.phase == Phase::Mapping || c.phase == Phase::Parked)) {
         c.phase = Phase::Mapped;
         if (manager_)
             manager_->on_shown(scene, now_ms);
-    } else if (!showing && c.phase == Phase::Mapped) {
-        c.phase = Phase::Lost;
-        c.map_asked = final_ != dcsm::E_MAP_STATUS_UNMAPPED;
+    } else if (final_ == dcsm::E_MAP_STATUS_MAPPED_INVISIBLE &&
+               (c.phase == Phase::Mapping || c.phase == Phase::Mapped)) {
+        /* Accepted, behind the content the slot shows: the KOMBI shows it
+         * when that goes. */
+        c.phase = Phase::Parked;
         if (manager_)
-            manager_->on_lost(scene, final_ == dcsm::E_MAP_STATUS_UNMAPPED ? "unmapped" : "mapped invisible", now_ms);
+            manager_->on_parked(scene, now_ms);
+    } else if (final_ == dcsm::E_MAP_STATUS_UNMAPPED && (c.phase == Phase::Mapped || c.phase == Phase::Parked)) {
+        c.phase = Phase::Lost;
+        c.map_asked = false;
+        if (manager_)
+            manager_->on_lost(scene, "unmapped", now_ms);
     }
 }
 

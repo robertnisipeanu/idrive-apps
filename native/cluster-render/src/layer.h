@@ -123,6 +123,18 @@ public:
     virtual void arrange(bool drawn, int32_t order) = 0;
     /* params.rect or params.opacity changed. */
     virtual void place() = 0;
+    /* The layer draws its own opacity (video and image): params.opacity
+     * times its target's fade. */
+    virtual bool fades() const { return false; }
+    /* Its target's fade, 0-1 (the compositor's); the next flush carries it. */
+    void set_fade(float f)
+    {
+        if (f != fade_) {
+            fade_ = f;
+            faded();
+        }
+    }
+    float fade() const { return fade_; }
     /* Writes what changed into the scene; the caller flushes. */
     virtual Stage stage(int64_t now_ms) = 0;
     /* After stage() returned Wrote or Failed: whether the flush carrying it
@@ -143,6 +155,8 @@ public:
     virtual std::string stats() const { return ""; }
 
 protected:
+    /* After set_fade() changed the fade. */
+    virtual void faded() {}
     /* What an animation of part acts on in the scene; 0: none. */
     virtual int animated(uint32_t) const { return 0; }
     /* Why this layer cannot play a on part; nullptr: it can. */
@@ -165,6 +179,7 @@ protected:
     Graph *g_ = nullptr;
     bool drawn_ = false;
     int32_t order_ = 0;
+    float fade_ = 1.0f;
 
     /* Keeps a and starts it when attached; no limit (the service's own). */
     bool play(uint32_t anim, uint32_t part, const Animation &a, std::string *err);
@@ -210,8 +225,10 @@ public:
     bool holds_flush() const override { return holding() && drawn_; }
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
+    bool fades() const override { return true; }
 
 protected:
+    void faded() override;
     int animated(uint32_t part) const override { return part ? 0 : quad_; }
     const char *animation_error(uint32_t part, const Animation &a) const override
     {
