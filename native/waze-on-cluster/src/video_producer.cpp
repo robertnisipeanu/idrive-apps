@@ -242,7 +242,7 @@ void VideoProducer::on_frame(const VideoFrame &f)
     std::lock_guard<std::mutex> lock(frame_mutex_);
     if (sized) {
         const int64_t now = now_us() / 1000;
-        freeze_.frame(now, changed);
+        freeze_.frame(now, changed, change_.blank());
         last_frame_ms_ = now;
     }
     back_.swap(*f.atlas);

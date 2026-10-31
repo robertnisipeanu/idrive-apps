@@ -64,7 +64,7 @@ public:
     /* The newest decoded frame not yet taken, swapped into *frame (its
      * buffer comes back for the next one); false when there is none. */
     bool take(std::vector<uint8_t> *frame, uint64_t *id);
-    /* Every decoded frame the same picture while they keep coming
+    /* Every decoded frame the same blank picture while they keep coming
      * (freeze_watch.h). */
     bool frozen(int64_t now_ms) const;
     /* When the last frame of the decode size was decoded; -1 for none. */

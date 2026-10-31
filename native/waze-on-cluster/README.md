@@ -78,7 +78,7 @@ The map comes up at the first decoded frame in the native central-map slot
 `0x100` (scene `0x010004f0`, 1088x480), under the gauges, and stays while the
 stream is live: while carplay holds the phone's connection for the cluster
 stream, TCP port 6031 owned by carplay's uid 13002 in `/proc/net/tcp6`,
-however few frames come (a static map sends one about every ten seconds).
+however few frames come (a static map can send one only every ten seconds).
 When that connection ends (the phone unplugged, the session or the stream
 ended) the map is taken down at the next check, once a second, and the slot
 returns to the cluster's own content; the next stream maps it again. No
@@ -94,10 +94,13 @@ every 30 s. The app shows `Starting map…` while the renderer starts, and a
 map error only when the renderer stays unreachable for 15 s.
 
 A frozen stream, frames still coming (on the car 15-21 a second) but all the
-same picture, is taken down after 10 s (`freeze_ms`, at least
+same blank picture, is taken down after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
 and the app shows `Map frozen — reconnect CarPlay`. The map is back with the
-first changed frame. A static map sends far fewer frames and is not frozen.
+first changed frame. Blank: all but one in a thousand of the sampled luma
+values within 17 levels. A static map is never frozen, however many frames
+the phone sends: some phones send one about every ten seconds, others keep
+their full rate.
 
 A render that missed the stream's start decodes nothing until a new stream.
 Where recmgr allows a CarPlay restart, `patchd` restarts CarPlay after 15 s of
