@@ -59,7 +59,10 @@ int main()
     ok("a non-blank frame ends it", !n.frozen(12066));
     for (int64_t u = 12132; u <= 21000; u += 66)
         n.frame(u, false, true);
-    ok("and blank again, frozen only 10 s after it", !n.frozen(21000));
+    ok("and blank again, not frozen before 10 s after it", !n.frozen(21000));
+    for (int64_t u = 21066; u <= 22200; u += 66)
+        n.frame(u, false, true);
+    ok("and frozen past 10 s after it", n.frozen(22200));
 
     FreezeWatch g(cfg);
     g.frame(0, true, true);
