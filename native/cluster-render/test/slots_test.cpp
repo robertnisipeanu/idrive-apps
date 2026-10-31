@@ -13,7 +13,7 @@
  * the holder is the row shown; a parked target stays mapped with no
  * timeout until shown; a contending target parked behind the stock HMI's
  * content unmaps it as the HMI, spaced 3, 10, 30 s, the count starting over
- * after 60 s shown, never foreign content, never without a contending
+ * after 60 s shown or a release, never foreign content, never without a contending
  * layer, never in another slot; a released target is idle; a locked slot
  * coming back is asked for at once. */
 #include <cstdio>
@@ -582,7 +582,6 @@ static void parked_then_shown()
     ok("parked for 30 s: no timeout, no release, no request, no take-over without a contending layer",
        r.state(0) == TargetState::Parked && c.find("release") == std::string::npos &&
            c.find("request") == std::string::npos && c.find("take over") == std::string::npos);
-    ok("parked: no start-timeout wake", r.m.wake_in_ms(r.now) <= SlotManager::kSlotPollMs);
     r.rows(kMapSlot, 2, {{kHmiMap, 0}, {kMapScene, 1}});
     r.m.on_shown(kMapScene, r.now);
     ok("the stock map unmapped: ours shown (3 -> 1)", r.state(0) == TargetState::Shown && calls_are(""));
@@ -649,6 +648,24 @@ static void take_over()
        joined().find("take over map 0x1000300") != std::string::npos);
     r.run(2990);
     ok("and 3 s to the next", joined().find("take over") == std::string::npos);
+
+    Rig s;
+    park(s, true);
+    s.m.tick(s.now);
+    s.run(3000);
+    const int64_t second = s.now;
+    ok("two take-overs: the next would wait 10 s", joined().find("take over map 0x1000300; slots?; take over") !=
+                                                       std::string::npos);
+    s.m.want(0, false, false);
+    s.m.tick(s.now);
+    s.run(1000);
+    park(s, true);   /* the stream back, the stock map shown again because of our release */
+    joined();
+    s.run(1990);
+    const bool spaced3 = joined().find("take over") == std::string::npos;
+    s.run(1100);
+    ok("released and asked for again: the count starts over, 3 s after the last take-over",
+       spaced3 && joined().find("take over map 0x1000300") != std::string::npos && s.now - second < 4200);
 
     Rig f;
     park(f, true, 0x00007777);

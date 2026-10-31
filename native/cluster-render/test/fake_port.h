@@ -6,9 +6,9 @@
  * and the oldest parked shown when the shown one goes. Requests are answered
  * after grant_ms. A test can play the stock HMI mapping its content, taking
  * a slot from us, the slot coming free and the display service going away;
- * a take-over unmaps the HMI's content, which the HMI maps again (parked)
- * unless hmi_remaps is false. Every change of the table is reported, as
- * the KOMBI reports every slot on each arbitration. */
+ * a take-over unmaps the HMI's content, which the HMI maps again (parked).
+ * Every change of the table is reported, as the KOMBI reports every slot on
+ * each arbitration. */
 #ifndef CRS_FAKE_PORT_H
 #define CRS_FAKE_PORT_H
 
@@ -25,7 +25,6 @@ public:
     SlotManager *m = nullptr;
     bool up = true;
     int64_t grant_ms = 50;
-    bool hmi_remaps = true;
     int requests = 0, releases = 0;
     std::vector<uint64_t> taken_over;      /* contents a take-over unmapped, in order */
     std::map<uint64_t, int64_t> pending;   /* scene -> when it is answered */
@@ -52,8 +51,7 @@ public:
         taken_over.push_back(content);
         if (!unmap(t.slot, content))
             return;
-        if (hmi_remaps)
-            map(t.slot, content);
+        map(t.slot, content);
         report();
     }
     void refresh_slots() override { report(); }
@@ -92,24 +90,6 @@ public:
     {
         if (unmap(slot, content))
             report();
-    }
-    /* The KOMBI locks the slot (a door-open warning): disabled, every
-     * mapping in it unmapped and listed until unfetched. */
-    void lock(uint64_t slot)
-    {
-        for (SlotInfo &s : table)
-            if (s.slot == slot) {
-                s.status = 0;
-                if (s.map_status && slot_of.count(s.content) && m)
-                    m->on_lost(s.content, "unmapped", now);
-                s.map_status = 0;
-            }
-        report();
-    }
-    void unlock(uint64_t slot)
-    {
-        status(slot);
-        report();
     }
     /* The stock HMI maps its own content over the target's slot, removing
      * ours. */

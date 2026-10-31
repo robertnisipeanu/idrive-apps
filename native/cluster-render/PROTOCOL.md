@@ -187,10 +187,11 @@ or an asset it samples is not written yet; `reason` says which);
 no part with geometry, an asset it samples without pixels; or a video's
 frames stopped); `hidden`; `error` (the renderer refused it). Target states:
 `idle`, `acquiring`, `parked` (mapped, behind the content the slot shows:
-`holder` `stock` or `foreign` once the slot table names it, `reason`
-`parked behind stock`), `shown`, `lingering`, `waiting` (with `holder`
-`stock` or `foreign` when someone else holds the slot, and `retry_in_ms`
-when on a timer), `unavailable`.
+`holder` `stock` or `foreign` once the slot table names it, and `reason`
+`parked behind stock`, `parked behind foreign`, or `parked` until then),
+`shown`, `lingering`, `waiting` (with `holder` `stock` or `foreign` when
+someone else holds the slot, and `retry_in_ms` when on a timer),
+`unavailable`.
 
 A client that does not read its events (over 1 MiB waiting) is
 disconnected.

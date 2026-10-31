@@ -15,9 +15,9 @@
  *                        |                  +----------|----------+    v
  *                        +--refused/timeout--> Waiting <+            release --> Idle
  *
- * Acquiring and Shown go to Parked when the display parks the scene; Parked
- * goes to Shown when the display shows it, to Waiting when it is lost, and
- * is released (Idle) when nothing wants it.
+ * Acquiring and Shown go to Parked when the display parks the scene, and
+ * Lingering is released (Idle); Parked goes to Shown when the display shows
+ * it, to Waiting when it is lost, and is released when nothing wants it.
  *
  * - The slot is requested when at least one layer wants it and released only
  *   when none has for linger_ms, so clients coming and going, or one
@@ -29,7 +29,8 @@
  *   until the display shows it. A contending target whose slot shows the
  *   stock HMI's content and that takes over from the stock HMI
  *   (TargetSpec::take_over_stock) unmaps that content as the HMI
- *   (Port::take_over), at most once per kTakeOverMs[] step, then waits to be
+ *   (Port::take_over), at most once per kTakeOverMs[] step (the count
+ *   starts over after kTakeOverResetMs shown, or a release), then waits to be
  *   shown; the HMI maps its content again, parked behind ours, so it comes
  *   back when ours goes.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
@@ -213,12 +214,13 @@ private:
         /* Take-overs since the count last started over, and when the next
          * may go. */
         int takeovers = 0;
-        int64_t takeover_ms = 0;
+        int64_t takeover_ms = 0, takeover_sent_ms = -kTakeOverResetMs;
     };
 
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);
     void acquire(int i, int64_t now_ms);
     void take_down(int i);
+    void release(int i, int64_t now_ms);
     /* Waiting; on the ladder, the retry counts from from_ms (-1: now_ms). */
     void wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms = -1);
     Holder other_holder(int i) const;

@@ -169,6 +169,19 @@ void SlotManager::take_down(int i)
     t.published = false;
 }
 
+/* Released because nothing wants it: the stock HMI's content is shown again
+ * because of us, so the take-overs' count starts over (their 3 s spacing
+ * stays). */
+void SlotManager::release(int i, int64_t now_ms)
+{
+    Target &t = t_[i];
+    take_down(i);
+    t.ladder = 0;
+    t.takeovers = 0;
+    t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
+    set(i, TargetState::Idle, Holder::None, "", now_ms);
+}
+
 void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms)
 {
     Target &t = t_[i];
@@ -241,10 +254,7 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         return;
     const TargetState s = t_[i].status.state;
     if (s == TargetState::Lingering) {
-        /* Nobody wants it and nothing of it is on screen. */
-        take_down(i);
-        t_[i].ladder = 0;
-        set(i, TargetState::Idle, Holder::None, "", now_ms);
+        release(i, now_ms);   /* nobody wants it and nothing of it is on screen */
         return;
     }
     if (s == TargetState::Acquiring || s == TargetState::Shown)
@@ -277,6 +287,7 @@ void SlotManager::take_over(int i, int64_t now_ms)
         return;
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, 2)];
     t.takeovers++;
+    t.takeover_sent_ms = now_ms;
     t.takeover_ms = now_ms + gap;
     log_info("target %s: take-over %d: unmapping the stock HMI's 0x%llx (class %u, map status %u) in slot 0x%llx "
              "as the HMI; the next no sooner than %lld s",
@@ -456,10 +467,7 @@ void SlotManager::tick(int64_t now_ms)
             break;
         case TargetState::Parked:
             if (!t.wanted) {
-                /* Nothing of it is on screen: no linger. */
-                take_down(i);
-                t.ladder = 0;
-                set(i, TargetState::Idle, Holder::None, "", now_ms);
+                release(i, now_ms);   /* nothing of it is on screen: no linger */
                 break;
             }
             poll_slots = true;
@@ -479,9 +487,7 @@ void SlotManager::tick(int64_t now_ms)
             if (t.wanted) {
                 set(i, TargetState::Shown, Holder::Us, "", now_ms);
             } else if (now_ms - t.since_ms >= spec.linger_ms) {
-                take_down(i);
-                t.ladder = 0;
-                set(i, TargetState::Idle, Holder::None, "", now_ms);
+                release(i, now_ms);
             }
             break;
         case TargetState::Waiting: {

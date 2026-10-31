@@ -190,7 +190,7 @@ static void take_over()
     calls.clear();
     h.tick();
     ok("the HMI's handle is configurable", calls_are("unmap 0x1000300 as 0x7; slots?"));
-    /* Our own unmap and the take-over's are answered in order. */
+    /* More unmap replies than unmaps sent. */
     h.m.want(0, false, false);
     h.tick();
     calls.clear();
@@ -199,8 +199,6 @@ static void take_over()
     h.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", h.now);
     ok("unmap replies, more than were sent: nothing breaks", h.m.status(0).state == TargetState::Idle);
 }
-
-
 
 static void basics()
 {

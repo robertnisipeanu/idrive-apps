@@ -112,7 +112,7 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
     within 1 s.
   - Take-overs are at least 3 s apart, then 10 s, then 30 s while the stock
     content keeps coming back on top. The count starts over after 60 s
-    shown.
+    shown, and when the target is released because nothing wants it.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
