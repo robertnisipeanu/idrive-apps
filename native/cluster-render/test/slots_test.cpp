@@ -443,6 +443,28 @@ static void lost_to_our_own_id()
        ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 2000);
 }
 
+static void lock_is_not_evidence()
+{
+    Rig r;
+    std::vector<std::string> ev;
+    r.m.on_evidence = [&](Evidence e, const std::string &, int64_t) { ev.push_back(evidence_name(e)); };
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning locks the slot */
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    r.run(1500);
+    ok("a scene the display takes with a lock is not upload evidence", ev.empty());
+    r.slot(kMapSlot, 1, 0);
+    r.run(1100);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.slot(kMapSlot, 1, 0);           /* removed with the slot free: the link */
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    ok("one removed with the slot free still is", ev.size() == 1 && ev[0] == std::string("scene removed"));
+}
+
 static void slot_comes_back()
 {
     Rig r;
@@ -775,6 +797,7 @@ int main()
     scene_failure();
     ladder_rechecks_the_table();
     lost_to_our_own_id();
+    lock_is_not_evidence();
     slot_comes_back();
     multi_row_holder();
     parked_then_shown();

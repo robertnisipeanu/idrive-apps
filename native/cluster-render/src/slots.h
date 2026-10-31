@@ -224,6 +224,9 @@ private:
     /* Waiting; on the ladder, the retry counts from from_ms (-1: now_ms). */
     void wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms = -1);
     Holder other_holder(int i) const;
+    /* The slot's latest report has it disabled with no other content
+     * mapped: the display's own lock. */
+    bool locked(int i) const;
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
     const SlotInfo *holder_row(int i) const;

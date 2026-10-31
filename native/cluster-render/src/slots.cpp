@@ -328,8 +328,9 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     const Holder h = other_holder(i);
     take_down(i);
     /* A scene removed while shown is evidence for the governor; one lost
-     * before it showed is not. */
-    const bool removal = s == TargetState::Shown || s == TargetState::Lingering;
+     * before it showed is not, and neither is one the display took with a
+     * lock (the slot reported disabled: a door-open warning). */
+    const bool removal = (s == TargetState::Shown || s == TargetState::Lingering) && !locked(i);
     if (s == TargetState::Lingering) {
         if (h == Holder::None && !ours_named && on_evidence)
             on_evidence(Evidence::Removal, specs_[i].name + ": " + why, now_ms);
@@ -353,11 +354,17 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     settle_loss(i, h, removal, "taken: " + why, now_ms, now_ms);
 }
 
+bool SlotManager::locked(int i) const
+{
+    auto a = away_.find(specs_[i].slot);
+    return a != away_.end() && a->second && other_holder(i) == Holder::None;
+}
+
 /* The ladder and the evidence count from lost_ms, when the scene went. */
 void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms,
                               int64_t lost_ms)
 {
-    if (h == Holder::None && removal && on_evidence)
+    if (h == Holder::None && removal && !locked(i) && on_evidence)
         on_evidence(Evidence::Removal, specs_[i].name + ": " + reason, lost_ms);
     if (h == Holder::Foreign || (h == Holder::Stock && !t_[i].contend))
         wait(i, h, false, reason, now_ms);
