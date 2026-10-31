@@ -28,8 +28,8 @@
  *   contending target retries after 2, 5, 10, 20, then every 30 s, and the
  *   ladder starts over after 30 s shown. Any other refusal or no answer
  *   retries on the same ladder. A target waiting on the ladder whose slot
- *   the table reports disabled or held and then free again (a door-open
- *   warning come and gone) is asked for at once.
+ *   the table reports disabled or with another content mapped, and then
+ *   free again (a door-open warning come and gone), is asked for at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot.
  * - The display service going away takes every target down; when it comes
@@ -199,8 +199,8 @@ private:
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, SlotInfo> slots_;
-    /* Per slot, from its latest report: disabled, or held by content not
-     * ours. */
+    /* Per slot, from its latest report: disabled, or another content
+     * mapped there. */
     std::map<uint64_t, bool> away_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;

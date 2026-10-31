@@ -170,6 +170,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
 void SlotManager::on_availability(bool up, int64_t now_ms)
 {
     slots_.clear();
+    away_.clear();
     if (up) {
         available_since_ms_ = now_ms;
         return;
@@ -274,8 +275,10 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         bool ours = false;
         for (const TargetSpec &spec : specs_)
             ours = ours || (spec.slot == s.slot && spec.scene_id == s.content);
+        /* The slot's status is the same in each of its entries; who holds it
+         * is the entry that is mapped. */
         bool &a = away[s.slot];
-        a = a || s.status == 0 || (s.status == 2 && !ours);
+        a = a || s.status == 0 || (!ours && (s.map_status == 1 || s.map_status == 2));
     }
     for (const auto &kv : away)
         away_[kv.first] = kv.second;
