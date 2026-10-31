@@ -93,9 +93,10 @@ $(BUILD)/host/udp_probe_test: test/udp_probe_test.cpp src/udp_source.cpp src/udp
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/udp_probe_test.cpp src/udp_source.cpp src/framing_probe.cpp $(CR)/src/log.cpp -lpthread
 
 # The map feed against the shared renderer's service on fake display
-# backends, over its socket: every service source but the unit's backends
-# and its main.
-CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp graph_ramses19.cpp dcsm2_link.cpp config.cpp log.cpp), \
+# backends, over its socket: every service source but the units' backends,
+# the starter and its main.
+CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp graph_ramses19.cpp dcsm2_link.cpp config.cpp log.cpp \
+                         unit_idrive7.cpp unit_idrive8.cpp graph_ramses27.cpp launch.cpp generation.cpp), \
           $(wildcard $(CR)/src/*.cpp)) $(wildcard $(KIT)/*.cpp)
 $(BUILD)/host/map_feed_test: test/map_feed_test.cpp src/map_feed.cpp src/map_feed.h $(CR_CORE) $(CR_SRC) \
 		$(CR)/src/log.cpp $(wildcard $(CR)/src/*.h $(CR)/include/cluster_render/*.h $(CR)/test/*.h)
