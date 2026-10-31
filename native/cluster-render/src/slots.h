@@ -119,6 +119,11 @@ public:
     virtual void take_over(const TargetSpec &t, uint64_t content) = 0;
     /* Ask for the slot table (SlotManager::on_slots). */
     virtual void refresh_slots() = 0;
+    /* For the log only: the slot manager stopped waiting for an answer to
+     * request(t) (kStartTimeoutMs) and releases it. */
+    virtual void no_answer(const TargetSpec &, int64_t) {}
+    /* Lines for the service's status text; empty: none. */
+    virtual std::string status_text(int64_t) const { return std::string(); }
 };
 
 /* Builds, publishes and takes down each target's scene (the compositor). */
@@ -188,6 +193,7 @@ public:
     int64_t wake_in_ms(int64_t now_ms) const;
 
     Holder holder_of(uint64_t content) const;
+    const Port &port() const { return *port_; }
 
     /* Evidence of the link or the display's renderer falling behind, for the
      * upload governor: a shown scene removed with no other content in its

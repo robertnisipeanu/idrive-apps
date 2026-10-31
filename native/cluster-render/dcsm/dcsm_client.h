@@ -198,6 +198,17 @@ public:
     // ...). ok is false for a SOME/IP error or malformed reply; status is
     // the EDcsm2Status otherwise.
     std::function<void(vsomeip::method_t request, bool ok, uint32_t status)> onReply;
+    // A notification that did not decode: one of the three events with a
+    // payload its decoder (wire::) refuses, or another event id. p and n are
+    // the payload, valid during the call.
+    std::function<void(vsomeip::event_t event, const uint8_t *p, size_t n)> onUndecoded;
+    // vsomeip's answer to the eventgroup's subscription, per event it names
+    // (kFetchStatusChange, kMapStatusChange, kSlotStatusChange, or any other
+    // id it reports, ANY_EVENT for the eventgroup as a whole): code 0x00
+    // accepted, otherwise refused (0x07 for a SUBSCRIBE_NACK). Each
+    // subscription vsomeip makes again, as when Dcsm2 comes back, is
+    // answered again.
+    std::function<void(vsomeip::event_t event, uint16_t code)> onSubscription;
     // HeartbeatMode::kRequest: the first reply, the first bad reply, a
     // refusal, silences and their end; not every reply. Reports come one at a
     // time and in order, on vsomeip's dispatch thread (kSilent on the

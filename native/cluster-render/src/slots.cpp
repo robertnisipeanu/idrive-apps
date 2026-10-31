@@ -473,6 +473,7 @@ void SlotManager::tick(int64_t now_ms)
         }
         case TargetState::Acquiring:
             if (now_ms - t.since_ms >= kStartTimeoutMs) {
+                port_->no_answer(spec, now_ms);
                 take_down(i);
                 wait(i, Holder::None, true, "no answer from the display", now_ms);
             }
