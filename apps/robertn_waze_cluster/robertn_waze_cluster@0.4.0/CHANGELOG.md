@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+The page says to set Instrument cluster > Central display area to Map view:
+the Waze map replaces the stock map while CarPlay streams it, and the stock
+map is back when the stream ends or freezes. A frozen stream shows "Map
+frozen — reconnect CarPlay". Requires waze-on-cluster 0.6.0.
+
 ## 0.3.1
 
 The page says to set Instrument cluster > Central display area to Off: with

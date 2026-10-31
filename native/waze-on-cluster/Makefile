@@ -37,7 +37,7 @@ T = $(BUILD)/target
 
 # The capture, decode and map feed (own files), the kit's atlas, packing and
 # geometry, and the shared renderer's client.
-WOC_SRC = src/main.cpp src/video_producer.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
+WOC_SRC = src/main.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
@@ -59,12 +59,15 @@ test: test-cpp
 	$(NODE) patch/test/recovery_test.js
 
 test-cpp: $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/host/udp_probe_test \
-		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test
+		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
+		$(BUILD)/host/alt_screen_test
 	$(BUILD)/host/nal_reader_test
 	$(BUILD)/host/rtp_h264_test test/data/stream15_start.rtp
 	$(BUILD)/host/udp_probe_test
 	$(BUILD)/host/map_feed_test
 	$(BUILD)/host/keyframe_wait_test
+	$(BUILD)/host/freeze_watch_test
+	$(BUILD)/host/alt_screen_test
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -104,6 +107,14 @@ $(BUILD)/host/map_feed_test: test/map_feed_test.cpp src/map_feed.cpp src/map_fee
 $(BUILD)/host/keyframe_wait_test: test/keyframe_wait_test.cpp src/keyframe_wait.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/keyframe_wait_test.cpp
+
+$(BUILD)/host/freeze_watch_test: test/freeze_watch_test.cpp src/freeze_watch.cpp src/freeze_watch.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/freeze_watch_test.cpp src/freeze_watch.cpp
+
+$(BUILD)/host/alt_screen_test: test/alt_screen_test.cpp src/alt_screen.cpp src/alt_screen.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/alt_screen_test.cpp src/alt_screen.cpp
 
 # ---- target binary (in Docker) --------------------------------------------
 target:

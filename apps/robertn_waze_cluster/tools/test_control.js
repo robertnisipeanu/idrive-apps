@@ -164,6 +164,16 @@ test('Starting map while the render is mapping', async (render, patch) => {
     c.close();
 });
 
+test('a frozen stream: the line says to reconnect CarPlay', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedRender());
+    patch.announce('patched', 'high', null);
+    render.announce('frozen', "the phone's cluster stream froze");
+    await until('frozen', () => c.statusText() === 'Map frozen — reconnect CarPlay');
+    c.close();
+});
+
 test('Disable map reverts', async (render, patch) => {
     const c = control();
     c.open();

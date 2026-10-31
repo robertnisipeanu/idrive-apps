@@ -28,7 +28,8 @@ int64_t now_us()
 }  // namespace
 
 VideoProducer::VideoProducer(const VideoConfig &cfg)
-    : cfg_(cfg), atlas_bytes_((size_t)cfg.tex_width * atlas_height(cfg.tex_height))
+    : cfg_(cfg), atlas_bytes_((size_t)cfg.tex_width * atlas_height(cfg.tex_height)),
+      change_(cfg.tex_width, cfg.tex_height), freeze_(cfg.freeze)
 {
     rtp_sink_ = [this](const uint8_t *d, size_t n, bool end_of_au) { on_nal(d, n, end_of_au); };
     if (pipe2(ready_, O_NONBLOCK | O_CLOEXEC) < 0)
@@ -235,7 +236,15 @@ void VideoProducer::on_frame(const VideoFrame &f)
     if (cfg_.tex_level_bits)
         round_levels(f.atlas->data(), f.atlas->data(), f.atlas->size(), cfg_.tex_level_bits);
     const int64_t round_us = now_us() - t0;
+    /* the atlas starts with the luma plane */
+    const bool sized = f.w == cfg_.tex_width && f.h == cfg_.tex_height;
+    const bool changed = sized && change_.changed(f.atlas->data());
     std::lock_guard<std::mutex> lock(frame_mutex_);
+    if (sized) {
+        const int64_t now = now_us() / 1000;
+        freeze_.frame(now, changed);
+        last_frame_ms_ = now;
+    }
     back_.swap(*f.atlas);
     if (!back_dirty_ && ready_[1] >= 0) {
         const char b = 1;
@@ -261,6 +270,12 @@ bool VideoProducer::take(std::vector<uint8_t> *frame, uint64_t *id)
     while (ready_[0] >= 0 && read(ready_[0], drain, sizeof drain) > 0) {
     }
     return true;
+}
+
+bool VideoProducer::frozen(int64_t now_ms) const
+{
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    return freeze_.frozen(now_ms);
 }
 
 void VideoProducer::track_keyframe_wait(int64_t now_ms)

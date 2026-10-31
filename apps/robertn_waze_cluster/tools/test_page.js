@@ -180,8 +180,8 @@ async function main() {
         assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocRestart'], 'bound buttons');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
-        await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Off');
-        console.log('ok   the page says to set Instrument cluster > Central display area to Off');
+        await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Map view');
+        console.log('ok   the page says to set Instrument cluster > Central display area to Map view');
 
         await until('patched: Disable map only', () => byName.wocDisable.visible === true && byName.wocDisable.enabled === true &&
             byName.wocEnable.visible === false && byName.wocEnable.enabled === false);

@@ -6,8 +6,9 @@
  *   1088x480 slot; before a frame the app sees idle, with the first frames
  *   the slot is asked for (starting) and the map shown with the frames as
  *   they were decoded;
- * - the stock map taking the slot shows as starting with that reason, and
- *   the contending map is back after the 2 s retry;
+ * - the stock map taking the slot shows as starting with that reason; the
+ *   contending map asks again, parks behind it, takes it over and is shown,
+ *   the stock map parked behind it;
  * - a control start moves it to the whole panel, centred at 416,120, and an
  *   unknown target is refused;
  * - frames stopping: idle after stall_ms, the slot released;
@@ -15,7 +16,11 @@
  *   stays gone 15 s, then the map again with the next frames;
  * - a lowered shared upload cap shows on the status line, with its reason in
  *   the status, and leaves the line once it is back at the ceiling;
- * - frames offered faster than they can be written are newest-wins. */
+ * - frames offered faster than they can be written are newest-wins;
+ * - the stream not live: the layer hidden, idle, the slot released and the
+ *   stock map back; live again: shown with the frames; frozen: hidden, the
+ *   status says so; no longer frozen: shown again;
+ * - before the stream is live the layer is made hidden. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -41,8 +46,10 @@ static void ok(const char *name, bool cond)
     if (!cond) failures++;
 }
 
+static int rigs;
+
 struct Rig {
-    std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + ".sock";
+    std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + "-" + std::to_string(++rigs) + ".sock";
     crs::FakeGpu gpu;
     crs::FakePort port;
     crs::ServiceConfig sc;
@@ -55,6 +62,7 @@ struct Rig {
     {
         crs::TargetSpec m, p;
         m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
+        m.take_over_stock = true;   /* as cluster-render.conf ships it */
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         sc.targets = {m, p};
         sc.socket_path = path;
@@ -64,6 +72,7 @@ struct Rig {
         fc.socket = path;
         fc.video.level_bits = 0;
         feed.reset(new MapFeed(fc));
+        feed->set_stream(true, false);
     }
     void start()
     {
@@ -147,7 +156,10 @@ int main()
     ok("the stock map takes the slot: starting, with that reason",
        r.st().state == "starting" && r.st().reason == "the stock map holds the slot");
     r.pump(2200, &f1);
-    ok("the map contends: shown again after the 2 s retry", r.st().state == "showing" && r.port.requests == 2);
+    const crs::SlotInfo *ours = r.port.row(0x100, 0x010004f0), *stock = r.port.row(0x100, 0x01000101);
+    ok("the map contends: it takes the stock map over and is shown, the stock map parked behind it",
+       r.st().state == "showing" && r.port.requests == 2 && r.port.taken_over.size() == 1 &&
+           r.port.taken_over[0] == 0x01000101 && ours && ours->map_status == 1 && stock && stock->map_status == 3);
 
     /* Many frames between two writes: only the newest is drawn. */
     const std::vector<uint8_t> f2 = atlas(2), f3 = atlas(3);
@@ -182,7 +194,7 @@ int main()
     const int releases = r.port.releases;
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
-    r.pump(1600);
+    r.pump(2000);   /* the fade out, then the linger */
     ok("and the slot is released after the linger", r.port.releases > releases && !r.gpu.graph("map"));
 
     r.svc.reset();
@@ -217,6 +229,33 @@ int main()
     ok("back at the ceiling after healthy upload: the cap leaves the status line, its reason stays",
        r.st().upload_cap_kb == 6000 && r.st().page.find("upload cap") == std::string::npos &&
            r.st().upload_reason.find("raised from 5500 KB/s") == 0);
+    /* the stream's liveness drives the layer, whatever the frames do */
+    const int before = r.port.releases;
+    r.feed->set_stream(false, false);
+    r.pump(2000, &f1);   /* the fade out, then the linger */
+    stock = r.port.row(0x100, 0x01000101);
+    ok("the stream not live: the layer hidden, idle, and the slot released, the parked stock map shown",
+       r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
+           !r.gpu.graph("map") && !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
+    r.feed->set_stream(true, false);
+    r.pump(1200, &f1);
+    ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");
+    r.feed->set_stream(true, true);
+    r.pump(100, &f1);
+    ok("frozen: hidden, and the status says why",
+       !r.map_layer()->params.visible && r.st().state == "frozen" && r.st().reason == "the phone's cluster stream froze");
+    r.feed->set_stream(true, false);
+    r.pump(1200, &f1);
+    ok("no longer frozen: shown again", r.map_layer()->params.visible && r.st().state == "showing");
+
+    Rig h;
+    h.feed->set_stream(false, false);
+    h.svc.reset();
+    h.start();
+    h.pump(3000, &f1);
+    ok("a layer made while the stream is not live is hidden: idle, the slot not asked for",
+       h.map_layer() && !h.map_layer()->params.visible && h.st().state == "idle" && h.port.requests == 0);
+
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

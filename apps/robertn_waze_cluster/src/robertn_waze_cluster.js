@@ -40,9 +40,9 @@ const ROW_NAMES = Array.from({ length: MAX_LINES }, (_, i) => `wocRow${String(i 
 const LIST_RENDER_MS = 500;
 const ROW_CHARS = 90;
 const PRESS_DEDUPE_MS = 400;
-/* the cluster draws the phone's map only with its own centre content off;
- * the menu names are the HMI's en_GB ones */
-const SETUP_TEXT = 'Set Instrument cluster > Central display area to Off';
+/* in Map view the stock map is the fallback while CarPlay's cluster stream
+ * is not live; the menu names are the HMI's en_GB ones */
+const SETUP_TEXT = 'Set Instrument cluster > Central display area to Map view';
 
 /* A line as one row: no line breaks, at most ROW_CHARS characters. */
 function oneRow(line) {

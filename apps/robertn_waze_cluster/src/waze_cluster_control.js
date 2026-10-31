@@ -11,7 +11,7 @@
  * control socket, one the root patch daemon.
  *
  *   Render control socket (RENDER_PATH; read only, the app sends nothing)
- *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"error",
+ *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error",
  *                    "target","page","reason"}
  *                   {"ev":"log","line"}      the backlog on connect, then each new line
  *                   {"ev":"slots",...}       ignored here
@@ -401,6 +401,8 @@ class WazeClusterControl extends EventEmitter {
             return `Showing: ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
         case 'error':
             return 'Map error' + (rs.reason ? `: ${rs.reason}` : '');
+        case 'frozen':
+            return 'Map frozen — reconnect CarPlay';
         default:
             return 'Patched — waiting for CarPlay';
         }

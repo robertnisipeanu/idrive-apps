@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "alt_screen.h"
 #include "config.h"
 #include "control.h"
 #include "log.h"
@@ -166,7 +167,10 @@ int serve(const Config &cfg)
                      "(upload_kb_per_s in /var/opt/cluster-render/cluster-render.local.conf)", key, cfg.str(key).c_str());
     struct Range { const char *key; long lo, hi; } ranges[] = {
         {"dirty_threshold", 0, 64}, {"dirty_settle_ms", 0, 3600000}, {"tex_level_bits", 0, 3},
-        {"target_fps", 0, 60},      {"pan_blocks", 0, 1},            {"stall_ms", 1000, 600000}};
+        {"target_fps", 0, 60},      {"pan_blocks", 0, 1},            {"stall_ms", 1000, 600000},
+        {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
+        {"idle_ms", 1000, 600000},
+        {"alt_screen_uid", 0, 4294967294L}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
@@ -174,6 +178,8 @@ int serve(const Config &cfg)
         }
     vc.tex_level_bits = (uint32_t)cfg.num("tex_level_bits");
     vc.stall_ms = (int)cfg.num("stall_ms");
+    vc.freeze.ms = (unsigned)cfg.num("freeze_ms");
+    vc.freeze.min_fps = (unsigned)cfg.num("freeze_min_fps");
 
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
@@ -185,7 +191,9 @@ int serve(const Config &cfg)
     fc.video.dirty_threshold = (unsigned)cfg.num("dirty_threshold");
     fc.video.settle_ms = (unsigned)cfg.num("dirty_settle_ms");
     fc.video.pan_blocks = cfg.num("pan_blocks") == 1 && vc.tex_height % 4 == 0;
-    fc.video.stall_ms = (unsigned)vc.stall_ms;
+    /* The layer's visibility follows the stream (set_stream); the renderer's
+     * stall takes it down if the stream's connection outlives its frames. */
+    fc.video.stall_ms = (unsigned)cfg.num("idle_ms");
 
     sigset_t sigs;
     sigemptyset(&sigs);
@@ -209,6 +217,10 @@ int serve(const Config &cfg)
 
     std::vector<uint8_t> frame;
     int64_t last_status_write = 0;
+    const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
+    StreamLiveness liveness(vc.stall_ms);
+    AltScreen::State alt_state = AltScreen::Unknown;
+    int64_t alt_read_ms = 0;
     for (;;) {
         struct pollfd p[5] = {{sig_fd, POLLIN, 0}, {control.listen_fd(), POLLIN, 0}, {control.owner_fd(), POLLIN, 0},
                               {feed.fd(), (short)(POLLIN | (feed.wants_write() ? POLLOUT : 0)), 0},
@@ -230,6 +242,15 @@ int serve(const Config &cfg)
         uint64_t id = 0;
         if (producer.take(&frame, &id))
             feed.offer(&frame, id, now);
+        if (now - alt_read_ms >= 1000) {
+            const AltScreen::State s = cfg.num("alt_screen_port") ? alt.read() : AltScreen::Unknown;
+            if (s != alt_state)
+                log_info("CarPlay's alternate-screen connection: %s",
+                         s == AltScreen::Connected ? "connected" : s == AltScreen::Absent ? "absent" : "not readable");
+            alt_state = s;
+            alt_read_ms = now;
+        }
+        feed.set_stream(liveness.live(alt_state, producer.last_frame_ms(), now), producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
         const std::string status = status_line(feed.status(producer.decode_status()));
@@ -359,6 +380,11 @@ void define_keys(Config *cfg)
     cfg->define("dirty_threshold", "8");
     cfg->define("dirty_settle_ms", "1000");
     cfg->define("stall_ms", "6000");
+    cfg->define("idle_ms", "60000");
+    cfg->define("freeze_ms", "10000");
+    cfg->define("freeze_min_fps", "3");
+    cfg->define("alt_screen_port", "6031");
+    cfg->define("alt_screen_uid", "13002");
     cfg->define("target_fps", "30");
     cfg->define("pan_blocks", "1");
     cfg->define("tex_level_bits", "2");

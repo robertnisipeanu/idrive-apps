@@ -90,20 +90,21 @@ void MapFeed::make_layer()
     /* The map area: all of the map slot's scene, the centred 1088x480 of a
      * whole-panel one, a fitted centre on the HUD. */
     const crk::QuadRect q = crk::map_quad(tw, th, cfg_.video.w, cfg_.video.h);
-    cr::LayerOptions lo;
-    lo.target = cfg_.target;
-    lo.klass = "content";
-    lo.contend = true;   /* the map takes the slot back from the stock map */
-    lo.x = (int)q.x;
-    lo.y = (int)q.y;
-    lo.w = q.w;
-    lo.h = q.h;
+    lo_ = cr::LayerOptions();
+    lo_.target = cfg_.target;
+    lo_.klass = "content";
+    lo_.contend = true;   /* the map takes the slot back from the stock map */
+    lo_.x = (int)q.x;
+    lo_.y = (int)q.y;
+    lo_.w = q.w;
+    lo_.h = q.h;
+    lo_.visible = live_ && !frozen_;
     refused_.clear();
     layer_state_ = "stalled";
     layer_reason_.clear();
     target_state_.clear();
     holder_.clear();
-    layer_ = client_.video(lo, cfg_.video);
+    layer_ = client_.video(lo_, cfg_.video);
     changed_ = true;
     log_info("render: map layer on %s (%ux%u), quad %ux%u at %u,%u", cfg_.target.c_str(), tw, th, q.w, q.h, q.x, q.y);
 }
@@ -168,6 +169,21 @@ void MapFeed::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
     count_second(now_ms);
 }
 
+void MapFeed::set_stream(bool live, bool frozen)
+{
+    if (live == live_ && frozen == frozen_)
+        return;
+    log_info("render: CarPlay's cluster stream %s", !live ? "is not live" : frozen ? "froze" : "is live");
+    live_ = live;
+    frozen_ = frozen;
+    changed_ = true;
+    const bool visible = live && !frozen;
+    if (layer_ && lo_.visible != visible) {
+        lo_.visible = visible;
+        client_.set(layer_, lo_);
+    }
+}
+
 void MapFeed::request_report()
 {
     if (client_.connected() && !status_asked_) {
@@ -199,6 +215,13 @@ FeedStatus MapFeed::status(const std::string &decode) const
     } else if (!client_.connected()) {
         s.state = down_long_ ? "error" : "starting";
         s.reason = down_long_ ? "cluster renderer not reachable" : "waiting for the cluster renderer";
+        s.page = decode;
+    } else if (frozen_ && live_) {
+        s.state = "frozen";
+        s.reason = "the phone's cluster stream froze";
+        s.page = decode;
+    } else if (!live_) {
+        s.state = "idle";
         s.page = decode;
     } else if (layer_state_ == "shown") {
         s.state = "showing";

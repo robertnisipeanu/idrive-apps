@@ -26,6 +26,7 @@
 
 #include "avb_source.h"
 #include "decoder_msdk.h"
+#include "freeze_watch.h"
 #include "frame_clock.h"
 #include "framing_probe.h"
 #include "h264_source.h"
@@ -49,8 +50,10 @@ struct VideoConfig {
      * yuv_atlas.h): at 2 a byte is at most 2 levels off and 0, 128 and 255
      * stay exact. 0: exact. */
     uint32_t tex_level_bits = 2;
-    /* A frame decoded within this long is live. */
+    /* A frame decoded within this long is live, while the alternate
+     * screen's connection cannot tell (alt_screen.h). */
     int stall_ms = 6000;
+    FreezeConfig freeze;
 };
 
 class VideoProducer {
@@ -61,6 +64,11 @@ public:
     /* The newest decoded frame not yet taken, swapped into *frame (its
      * buffer comes back for the next one); false when there is none. */
     bool take(std::vector<uint8_t> *frame, uint64_t *id);
+    /* Every decoded frame the same picture while they keep coming
+     * (freeze_watch.h). */
+    bool frozen(int64_t now_ms) const;
+    /* When the last frame of the decode size was decoded; -1 for none. */
+    int64_t last_frame_ms() const { return last_frame_ms_.load(); }
     /* Readable once a frame waits to be taken. */
     int ready_fd() const { return ready_[0]; }
     size_t frame_bytes() const { return atlas_bytes_; }
@@ -130,10 +138,13 @@ private:
     uint32_t back_w_ = 0, back_h_ = 0;
     uint64_t back_id_ = 0;           /* its number in the decoder's lifetime */
     Spread round_us_;                /* rounding's cost on the source thread (frame_mutex_) */
+    ChangeSampler change_;           /* source thread */
+    FreezeWatch freeze_;             /* frame_mutex_ */
     std::string last_err_;           /* last decode error, for the status line (frame_mutex_) */
     uint32_t decode_errs_ = 0;
 
     std::atomic<uint64_t> decoded_total_{0};
+    std::atomic<int64_t> last_frame_ms_{-1};
     KeyframeWait keyframe_wait_;            /* main thread */
     std::string udp_status_, avb_status_, fifo_status_;   /* each source's state, for the probe report */
 };

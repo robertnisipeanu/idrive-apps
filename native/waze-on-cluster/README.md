@@ -30,7 +30,7 @@ is a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.5.0); this tool requires `cluster-render` 0.1.0 and
+app requires this tool (0.6.0); this tool requires `cluster-render` 0.2.0 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 
@@ -60,11 +60,13 @@ when CarPlay next starts. `patchd` restarts CarPlay at once only where recmgr
 loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
 otherwise the app shows **Restart head unit**, a normal system reboot.
 
-The cluster shows the map only with **Instrument cluster > Central display
-area** set to **Off**. Set to Map view, Route preview or Assisted Driving
-View, the cluster's own content takes the centre. After changing the setting,
-CarPlay may need reconnecting before the map returns: the change can leave
-the phone's cluster stream frozen.
+Set **Instrument cluster > Central display area** to **Map view**: the
+cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
+stream is live, and the stock map is back when the stream ends. **Off** works
+too, with an empty centre instead of the stock map. With Route preview or
+Assisted Driving View the cluster's own content takes the centre. After
+changing the setting, CarPlay may need reconnecting before the map returns:
+the change can freeze the phone's cluster stream (below).
 
 Then connect the iPhone to CarPlay. Waze needs its server-side flag 1006 for
 the alternate display. The phone sends SPS, PPS and an IDR only at the start
@@ -73,13 +75,29 @@ once (retrying every second until the AVB bridge is up), and decodes from the
 stream's first SPS whether or not the map is shown. The app need not be open.
 
 The map comes up at the first decoded frame in the native central-map slot
-`0x100` (scene `0x010004f0`, 1088x480), under the gauges. `stall_ms` (6 s)
-after the frames stop it is taken down and the slot returns to the cluster's
-own content; the next stream maps it again. While frames flow, a session the
-cluster ends (the stock map taking the slot back, a refusal, no answer) is
-started again after 2, 5, 10, 20, then every 30 s. The app shows
-`Starting map…` while the renderer starts, and a map error only when the
-renderer stays unreachable for 15 s.
+`0x100` (scene `0x010004f0`, 1088x480), under the gauges, and stays while the
+stream is live: while carplay holds the phone's connection for the cluster
+stream, TCP port 6031 owned by carplay's uid 13002 in `/proc/net/tcp6`,
+however few frames come (a static map sends one about every ten seconds).
+When that connection ends (the phone unplugged, the session or the stream
+ended) the map is taken down at the next check, once a second, and the slot
+returns to the cluster's own content; the next stream maps it again. No
+frame for `idle_ms` (60 s) takes it down too. Without that connection
+(carplay took another port) or if `/proc/net` cannot be read, a frame within
+`stall_ms` (6 s) counts as live. That the phone keeps the connection through
+a static map and closes it when the stream ends is still to be confirmed on
+the car.
+
+While the map is up, a session the cluster ends (the stock map taking the
+slot back, a refusal, no answer) is started again after 2, 5, 10, 20, then
+every 30 s. The app shows `Starting map…` while the renderer starts, and a
+map error only when the renderer stays unreachable for 15 s.
+
+A frozen stream, frames still coming (on the car 15-21 a second) but all the
+same picture, is taken down after 10 s (`freeze_ms`, at least
+`freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
+and the app shows `Map frozen — reconnect CarPlay`. The map is back with the
+first changed frame. A static map sends far fewer frames and is not frozen.
 
 A render that missed the stream's start decodes nothing until a new stream.
 Where recmgr allows a CarPlay restart, `patchd` restarts CarPlay after 15 s of
@@ -95,8 +113,8 @@ status.
 ## Status and diagnostics
 
 Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):
-`status.json`, the status the app shows (`state` idle, starting, showing or
-error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
+`status.json`, the status the app shows (`state` idle, starting, showing,
+frozen or error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
 sources, the depacketiser (`rtp: packets nals aus seq_gaps dropped bad`), the
 decoder, the late-join verdict, the noise filter's tile differences and the
