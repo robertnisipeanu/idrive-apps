@@ -170,7 +170,7 @@ evidence at other times is logged, not counted:
 
 | Evidence in the last 30 s | Points |
 |---|---|
-| a shown scene removed by the display, with no other content in its slot | 5 |
+| a shown scene removed by the display, with no other content in its slot and the slot not locked | 5 |
 | heartbeat replies silent after replies came (the link stalled) | 3 |
 | a flush or a setData refused | 2 |
 | a flush that took `slow_flush_ms` (150) or longer | 1 |
@@ -179,8 +179,9 @@ evidence at other times is logged, not counted:
   and the window starts empty. No single event reaches 6, so one transient
   error never lowers it.
 - Another step down waits 15 s.
-- The stock HMI or another app taking a slot, a refused request or one not
-  answered is arbitration, not evidence.
+- The stock HMI or another app taking a slot, the display locking it (the
+  slot reported disabled, as for a door-open warning), a refused request or
+  one not answered is arbitration, not evidence.
 - The cap steps back up 500 KB/s after each minute of healthy upload (at
   least 64 KB a second written, nothing in the window), to the ceiling
   `upload_kb_per_s` (6000). Idle time neither counts nor resets that minute.

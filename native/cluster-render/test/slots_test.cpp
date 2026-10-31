@@ -463,6 +463,18 @@ static void lock_is_not_evidence()
     r.slot(kMapSlot, 1, 0);           /* removed with the slot free: the link */
     r.m.on_lost(kMapScene, "fetch removed", r.now);
     ok("one removed with the slot free still is", ev.size() == 1 && ev[0] == std::string("scene removed"));
+
+    Rig l;   /* lingering: the last layer stopped wanting it */
+    std::vector<std::string> evl;
+    l.m.on_evidence = [&](Evidence e, const std::string &, int64_t) { evl.push_back(evidence_name(e)); };
+    l.m.want(1, true, false);
+    l.m.tick(l.now);
+    l.m.on_shown(kPanelScene, l.now);
+    l.m.want(1, false, false);
+    l.run(100);
+    l.slot(kPanelSlot, 0, kPanelScene);
+    l.m.on_lost(kPanelScene, "unmapped", l.now);
+    ok("a lock while lingering is not evidence either", evl.empty());
 }
 
 static void slot_comes_back()

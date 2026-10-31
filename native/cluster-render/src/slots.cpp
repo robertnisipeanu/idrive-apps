@@ -215,6 +215,7 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
 {
     slots_.clear();
     away_.clear();
+    disabled_.clear();
     if (up) {
         available_since_ms_ = now_ms;
         return;
@@ -332,7 +333,7 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
      * lock (the slot reported disabled: a door-open warning). */
     const bool removal = (s == TargetState::Shown || s == TargetState::Lingering) && !locked(i);
     if (s == TargetState::Lingering) {
-        if (h == Holder::None && !ours_named && on_evidence)
+        if (h == Holder::None && !ours_named && removal && on_evidence)
             on_evidence(Evidence::Removal, specs_[i].name + ": " + why, now_ms);
         set(i, TargetState::Idle, Holder::None, "", now_ms);
         return;
@@ -356,8 +357,8 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
 
 bool SlotManager::locked(int i) const
 {
-    auto a = away_.find(specs_[i].slot);
-    return a != away_.end() && a->second && other_holder(i) == Holder::None;
+    auto d = disabled_.find(specs_[i].slot);
+    return d != disabled_.end() && d->second;
 }
 
 /* The ladder and the evidence count from lost_ms, when the scene went. */
@@ -381,7 +382,7 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         rows[s.slot].push_back(s);
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
-    std::map<uint64_t, bool> away;
+    std::map<uint64_t, bool> away, disabled;
     for (const SlotInfo &s : slots) {
         bool ours = false;
         for (const TargetSpec &spec : specs_)
@@ -390,9 +391,13 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
          * is the row that is mapped. */
         bool &a = away[s.slot];
         a = a || s.status == 0 || (!ours && (s.map_status == 1 || s.map_status == 2));
+        bool &d = disabled[s.slot];
+        d = d || s.status == 0;
     }
     for (const auto &kv : away)
         away_[kv.first] = kv.second;
+    for (const auto &kv : disabled)
+        disabled_[kv.first] = kv.second;
     slots_seq_++;
     /* A slot that comes back (disabled or held, then free) ends the wait of
      * a target on the ladder: it is asked for at once, not at the next

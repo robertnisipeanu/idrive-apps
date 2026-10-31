@@ -191,7 +191,8 @@ public:
 
     /* Evidence of the link or the display's renderer falling behind, for the
      * upload governor: a shown scene removed with no other content in its
-     * slot. A slot the stock HMI or another app takes, a refusal or no
+     * slot and the slot not locked. A slot the stock HMI or another app
+     * takes, a slot the display locks (reported disabled), a refusal or no
      * answer is arbitration, not evidence. */
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
 
@@ -224,8 +225,7 @@ private:
     /* Waiting; on the ladder, the retry counts from from_ms (-1: now_ms). */
     void wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms = -1);
     Holder other_holder(int i) const;
-    /* The slot's latest report has it disabled with no other content
-     * mapped: the display's own lock. */
+    /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
@@ -249,6 +249,8 @@ private:
     /* Per slot, from its latest report: disabled, or another content
      * mapped there. */
     std::map<uint64_t, bool> away_;
+    /* Per slot, from its latest report: disabled (locked by the display). */
+    std::map<uint64_t, bool> disabled_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
     int64_t slot_poll_ms_ = 0;
