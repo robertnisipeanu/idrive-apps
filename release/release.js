@@ -547,11 +547,21 @@ function cmdPublish(ids, dryRun) {
     if (skipped.length) {
         process.exitCode = 1;
     }
-    if (!uploads.length && !removed.length) {
+    // the entries carried over list their artifact as the target does (publish.js listedUrl)
+    const relisted = [...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)).filter((e) => {
+        const url = publishTarget.listedUrl(e);
+        if (url === e.artifact.url) {
+            return false;
+        }
+        e.artifact.url = url;
+        return true;
+    });
+    if (!uploads.length && !removed.length && !relisted.length) {
         console.log('nothing new to publish');
         return;
     }
     removed.forEach((id) => console.log(`${dryRun ? 'would remove' : 'removing'} ${id}: not in the repository`));
+    relisted.forEach((e) => console.log(`${dryRun ? 'would list' : 'listing'} ${e.id}@${e.version} at ${e.artifact.url}`));
     uploads.forEach((e) => console.log(`${dryRun ? 'would publish' : 'publishing'} ${e.id}@${e.version}`));
     if (dryRun) {
         return;

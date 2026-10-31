@@ -23,7 +23,13 @@ touched what the component ships. A change to that needs a new version
 A tool kit holds what mgu-store's `deploy/hu artifact` packs, byte for byte.
 
 **Catalog.** The release `catalog` holds `catalog.json` (schema 2); each
-version is the release `<id>@<version>`, its artifact the one asset.
+version is the release `<id>@<version>`, its artifact the one asset. An
+entry's `artifact.url` is the asset's release download
+(`https://github.com/<owner>/<repo>/releases/download/<tag>/<name>`) while
+this repository is public, which a car without a GitHub sign-in downloads
+without GitHub's API and its rate limit, and the asset's API URL while it
+is private. `publish` lists the entries it carries over the same way, and
+publishes the catalog when only that changed.
 
 | Entry | Fields |
 |---|---|
