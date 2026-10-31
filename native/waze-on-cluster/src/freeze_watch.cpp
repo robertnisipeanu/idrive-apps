@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Robert Nisipeanu
 #include "freeze_watch.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace woc {
@@ -16,21 +17,33 @@ bool ChangeSampler::changed(const uint8_t *y)
 {
     bool diff = !have_;
     size_t i = 0;
+    uint32_t hist[256] = {};
     for (uint32_t r = 0; r < h_; r += step_) {
         const uint8_t *row = y + (size_t)r * w_;
         for (uint32_t c = 0; c < w_; c += step_, i++) {
             if (!diff && (uint32_t)std::abs((int)row[c] - (int)last_[i]) > threshold_)
                 diff = true;
             last_[i] = row[c];
+            hist[row[c]]++;
         }
     }
+    /* the most samples any band of 2 * threshold + 1 levels holds */
+    const uint32_t band = std::min<uint32_t>(2 * threshold_ + 1, 256);
+    size_t in = 0, most = 0;
+    for (uint32_t v = 0; v < 256; v++) {
+        in += hist[v];
+        if (v >= band)
+            in -= hist[v - band];
+        most = std::max(most, in);
+    }
+    blank_ = i && (i - most) * 1000 <= i;
     have_ = true;
     return diff;
 }
 
-void FreezeWatch::frame(int64_t now_ms, bool changed)
+void FreezeWatch::frame(int64_t now_ms, bool changed, bool blank)
 {
-    if (changed || unchanged_since_ms_ < 0) {
+    if (changed || !blank || unchanged_since_ms_ < 0) {
         unchanged_since_ms_ = now_ms;
         times_.clear();
         return;

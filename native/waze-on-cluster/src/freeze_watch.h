@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 /* A frozen CarPlay cluster stream: the phone keeps sending frames (15-21 a
- * second on the car) that all decode to the same picture until CarPlay
- * reconnects. A static map (a red light, parked) sends about one frame in
- * ten seconds instead, so a steady frame rate with no change tells the two
- * apart.
+ * second on the car) that all decode to the same empty picture until CarPlay
+ * reconnects. A static map (a red light, parked) can send the same picture
+ * just as steadily: one phone sends a frame about every ten seconds, another
+ * keeps its full rate. So the rate does not tell the two apart; the picture
+ * does: a map always draws something.
  *
  * ChangeSampler compares each frame's luma, sampled on a grid, with the
- * previous one; FreezeWatch calls the stream frozen once frames have kept
- * coming at least min_fps for ms with none changed, and not frozen at the
- * next changed frame. */
+ * previous one, and says whether the picture is blank; FreezeWatch calls the
+ * stream frozen once frames have kept coming at least min_fps for ms, all of
+ * them blank and none changed, and not frozen at the next changed or
+ * non-blank frame. */
 #ifndef WOC_FREEZE_WATCH_H
 #define WOC_FREEZE_WATCH_H
 
@@ -28,11 +30,14 @@ public:
     /* Whether y (the w x h luma plane) differs from the last one given; the
      * first one does. */
     bool changed(const uint8_t *y);
+    /* Whether the last plane given is blank: all but one in a thousand of
+     * its samples within one band of 2 * threshold + 1 levels. */
+    bool blank() const { return blank_; }
 
 private:
     uint32_t w_, h_, step_, threshold_;
     std::vector<uint8_t> last_;
-    bool have_ = false;
+    bool have_ = false, blank_ = false;
 };
 
 struct FreezeConfig {
@@ -43,13 +48,13 @@ struct FreezeConfig {
 class FreezeWatch {
 public:
     explicit FreezeWatch(const FreezeConfig &cfg) : cfg_(cfg) {}
-    void frame(int64_t now_ms, bool changed);
+    void frame(int64_t now_ms, bool changed, bool blank);
     bool frozen(int64_t now_ms) const;
 
 private:
     FreezeConfig cfg_;
-    int64_t unchanged_since_ms_ = -1;   /* the last changed frame */
-    std::deque<int64_t> times_;         /* unchanged frames within ms */
+    int64_t unchanged_since_ms_ = -1;   /* the last changed or non-blank frame */
+    std::deque<int64_t> times_;         /* unchanged blank frames within ms */
 };
 
 }  // namespace woc

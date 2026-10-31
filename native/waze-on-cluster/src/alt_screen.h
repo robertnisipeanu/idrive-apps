@@ -5,7 +5,7 @@
  * For each screen stream the phone sets up, carplay's AirPlay receiver
  * (libNmeCarPlay) listens on a TCP port, 6031 for the alternate screen, and
  * keeps the phone's connection on it until that stream or the session is
- * torn down, however few frames come: a static map sends one about every
+ * torn down, however few frames come: a static map can send one only every
  * ten seconds. The connection is a row of /proc/net/tcp6 (or tcp), a
  * world-readable table, with carplay's uid, that local port and state 01
  * (established). */
