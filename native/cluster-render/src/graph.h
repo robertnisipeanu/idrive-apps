@@ -5,8 +5,8 @@
  * the renderer plays by itself, and one flush that carries a tick's changes.
  * All content the service draws is built from these, so a display generation
  * is one implementation of Gpu and Graph: graph_ramses19.cpp for iDrive 7
- * (RAMSES 19, the KOMBI's renderer); an iDrive 8 one would sit on RAMSES 27
- * (README.md "iDrive 8").
+ * (RAMSES 19, the KOMBI's renderer), graph_ramses27.cpp for iDrive 8
+ * (RAMSES 27, the cluster's; README.md "iDrive 8").
  *
  * Coordinates are the target's pixels from its top-left corner. A buffer is
  * written in rectangles of tightly packed rows. Every handle is a positive

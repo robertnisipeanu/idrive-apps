@@ -13,7 +13,9 @@ Conflicts=cluster-demo.service
 [Service]
 # uid 5000 is the only uid the unit's vsomeip security allows to request
 # Dcsm2 and offer the RAMSES distributedrendering services
-# (README.md "Identity and packaging").
+# (README.md "Identity and packaging"). On iDrive 8 it may offer RAMSES 27's
+# RamsesService and RemoteContentManager, as Hmi8 does (README.md
+# "iDrive 8"). cluster-render starts the service of the unit's generation.
 User=hmi_5000
 Group=hmi_5000
 RuntimeDirectory=cluster-render

@@ -2,7 +2,10 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 /* cluster-render: the one process that draws on the instrument cluster and
  * the HUD for every app (README.md). It is the RAMSES participant and the
- * Dcsm2 client; apps and native producers are its clients over a socket.
+ * display client (Dcsm2 on iDrive 7, RAMSES 27's DCSM on iDrive 8); apps and
+ * native producers are its clients over a socket. Built three times
+ * (unit.h): cluster-render starts the service for the head unit's
+ * generation, which takes the same arguments.
  *
  *   cluster-render [-c FILE] [-s key=value]...          serve
  *   cluster-render [-c FILE] [-s key=value]... status   print the service's status */
@@ -11,8 +14,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <pthread.h>
-#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -22,12 +23,8 @@
 
 #include "cluster_render/protocol.h"
 #include "config.h"
-#include "dcsm2_link.h"
-#include "dcsm2_port.h"
-#include "graph_ramses19.h"
 #include "log.h"
-#include "ramses19/ramses.h"
-#include "service.h"
+#include "unit.h"
 
 using namespace crs;
 
@@ -37,6 +34,7 @@ namespace {
  * (cluster-render.conf documents each). */
 void define_keys(cld::Config *cfg)
 {
+    cfg->define("generation", "auto");
     cfg->define("vsomeip_app", "cluster-demo");
     cfg->define("targets", "map,panel,hud");
     cfg->define("scene_ids_allowed", "0x010004f0,0x01000400");
@@ -55,6 +53,28 @@ void define_keys(cld::Config *cfg)
     cfg->define("hud_linger_ms", "3000");
     cfg->define("hud_take_over_stock", "0");
     cfg->define("dcsm_hmi_client_handle", "1");
+    /* iDrive 8: a target's slot is a DCSM category, its content the content
+     * offered there (README.md "iDrive 8"). */
+    cfg->define("id8_targets", "map,hud,widget");
+    cfg->define("id8_scene_ids_allowed", "0x4d4755000108,0x4d4755000110,0x4d4755000001");
+    cfg->define("id8_map_category", "43100201");
+    cfg->define("id8_map_content", "43204041");
+    cfg->define("id8_map_scene_id", "0x4d4755000108");
+    cfg->define("id8_map_size", "874x749");
+    cfg->define("id8_map_linger_ms", "0");
+    cfg->define("id8_hud_category", "43100202");
+    cfg->define("id8_hud_content", "43204012");
+    cfg->define("id8_hud_scene_id", "0x4d4755000110");
+    cfg->define("id8_hud_size", "353x203");
+    cfg->define("id8_hud_linger_ms", "3000");
+    cfg->define("id8_widget_category", "43100301");
+    cfg->define("id8_widget_content", "43204001");
+    cfg->define("id8_widget_scene_id", "0x4d4755000001");
+    cfg->define("id8_widget_size", "2240x896");
+    cfg->define("id8_widget_linger_ms", "3000");
+    cfg->define("id8_widget_description", "Cluster renderer");
+    cfg->define("id8_widget_order", "50");
+    cfg->define("id8_widget_preview", "");
     cfg->define("fade_ms", "250");
     cfg->define("upload_kb_per_s", "6000");
     cfg->define("upload_floor_kb_per_s", "2000");
@@ -68,32 +88,42 @@ void define_keys(cld::Config *cfg)
     cfg->set_pair("local_conf=/var/opt/cluster-render/cluster-render.local.conf", &err);
 }
 
-bool load_targets(const cld::Config &cfg, std::vector<TargetSpec> *out, std::string *err)
+/* Generation 7's targets, or 8's from the id8_ keys: a category in place of
+ * the slot, a content, no content class and no take-over. */
+bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec> *out, std::string *err)
 {
+    const std::string g = generation == 8 ? "id8_" : "";
+    const std::string slot = generation == 8 ? "category" : "slot";
     std::vector<uint64_t> allowed;
     {
-        std::stringstream ss(cfg.str("scene_ids_allowed"));
+        std::stringstream ss(cfg.str((g + "scene_ids_allowed").c_str()));
         std::string id;
         while (std::getline(ss, id, ','))
             allowed.push_back(std::strtoull(id.c_str(), nullptr, 0));
     }
-    std::stringstream ss(cfg.str("targets"));
+    std::stringstream ss(cfg.str((g + "targets").c_str()));
     std::string name;
     while (std::getline(ss, name, ',')) {
         if (name.empty())
             continue;
-        const std::string p = name + "_";
+        const std::string p = g + name + "_";
         TargetSpec t;
         t.name = name;
-        if (!cfg.has((p + "slot").c_str()) || !cfg.has((p + "scene_id").c_str())) {
-            *err = "target " + name + ": " + p + "slot and " + p + "scene_id must be set";
+        if (!cfg.has((p + slot).c_str()) || !cfg.has((p + "scene_id").c_str()) ||
+            (generation == 8 && !cfg.has((p + "content").c_str()))) {
+            *err = "target " + name + ": " + p + slot + (generation == 8 ? ", " + p + "content" : std::string()) +
+                   " and " + p + "scene_id must be set";
             return false;
         }
-        t.slot = std::strtoull(cfg.str((p + "slot").c_str()).c_str(), nullptr, 0);
-        t.content_class = (uint32_t)cfg.num((p + "content_class").c_str());
+        t.slot = std::strtoull(cfg.str((p + slot).c_str()).c_str(), nullptr, 0);
         t.scene_id = std::strtoull(cfg.str((p + "scene_id").c_str()).c_str(), nullptr, 0);
         t.linger_ms = (int)cfg.num((p + "linger_ms").c_str());
-        t.take_over_stock = cfg.num((p + "take_over_stock").c_str()) != 0;
+        if (generation == 8) {
+            t.content = std::strtoull(cfg.str((p + "content").c_str()).c_str(), nullptr, 0);
+        } else {
+            t.content_class = (uint32_t)cfg.num((p + "content_class").c_str());
+            t.take_over_stock = cfg.num((p + "take_over_stock").c_str()) != 0;
+        }
         if (!cfg.size((p + "size").c_str(), &t.width, &t.height) || t.width < 16 || t.height < 16 ||
             t.width > 4096 || t.height > 4096) {
             *err = "target " + name + ": " + p + "size must be WxH";
@@ -104,9 +134,11 @@ bool load_targets(const cld::Config &cfg, std::vector<TargetSpec> *out, std::str
             return false;
         }
         /* Only scene ids the KOMBI is known to take: others (7702, 7703)
-         * made it restart the cluster and the HUD. */
+         * made it restart the cluster and the HUD. On iDrive 8, the ones
+         * the cluster took. */
         if (std::find(allowed.begin(), allowed.end(), t.scene_id) == allowed.end()) {
-            *err = "target " + name + ": scene id " + cfg.str((p + "scene_id").c_str()) + " is not in scene_ids_allowed";
+            *err = "target " + name + ": scene id " + cfg.str((p + "scene_id").c_str()) + " is not in " + g +
+                   "scene_ids_allowed";
             return false;
         }
         out->push_back(t);
@@ -118,23 +150,22 @@ bool load_targets(const cld::Config &cfg, std::vector<TargetSpec> *out, std::str
     return true;
 }
 
-int serve(const cld::Config &cfg)
+}  // namespace
+
+bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *out, std::string *err)
 {
-    ServiceConfig sc;
-    std::string err;
-    if (!load_targets(cfg, &sc.targets, &err)) {
-        log_error("%s", err.c_str());
-        return 1;
-    }
+    ServiceConfig &sc = *out;
+    if (!load_targets(cfg, generation, &sc.targets, err))
+        return false;
     const long max_kb = cfg.num("upload_kb_per_s"), step_kb = cfg.num("upload_step_kb_per_s");
     long floor_kb = cfg.num("upload_floor_kb_per_s");
     if (max_kb < 0 || max_kb > 1048576 || floor_kb < 0 || step_kb < 1 || cfg.num("upload_burst_ms") < 1 ||
         cfg.num("upload_burst_ms") > 1000 || cfg.num("fps") < 1 || cfg.num("fps") > 60 ||
         cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000 || cfg.num("fade_ms") < 0 ||
         cfg.num("fade_ms") > 5000) {
-        log_error("upload_kb_per_s (0-1048576), upload_floor_kb_per_s (0 and up), upload_step_kb_per_s (1 and up), "
-                  "upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60) or fade_ms (0-5000) out of range");
-        return 1;
+        *err = "upload_kb_per_s (0-1048576), upload_floor_kb_per_s (0 and up), upload_step_kb_per_s (1 and up), "
+               "upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60) or fade_ms (0-5000) out of range";
+        return false;
     }
     /* A ceiling set below the floor is the cap: the governor then has no
      * room to lower it. 0 is no limit. */
@@ -151,90 +182,11 @@ int serve(const cld::Config &cfg)
     sc.socket_mode = (unsigned)std::strtoul(cfg.str("socket_mode").c_str(), nullptr, 8);
     sc.socket_group = cfg.str("socket_group");
     sc.status_path = cfg.str("status_path");
-
-    sigset_t sigs;
-    sigemptyset(&sigs);
-    sigaddset(&sigs, SIGINT);
-    sigaddset(&sigs, SIGTERM);
-    pthread_sigmask(SIG_BLOCK, &sigs, nullptr);
-    const int sig_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
-    if (sig_fd < 0) {
-        log_error("signalfd: %s", strerror(errno));
-        return 1;
-    }
-
-    const char *args[] = {"cluster-render"};
-    ramses::RamsesFrameworkConfig fwc(1, args);
-    fwc.setDLTApplicationID("CLRD");
-    fwc.setDLTApplicationDescription("cluster-render");
-    const uint32_t user = (uint32_t)cfg.num("ramses_user");
-    if (fwc.enableSomeIPCommunication(user) != ramses::StatusOK) {
-        log_error("ramses: SOME/IP participant %u refused", user);
-        return 1;
-    }
-    ramses::RamsesFramework framework(fwc);
-    ramses::RamsesClient client("cluster-render", framework);
-    if (framework.connect() != ramses::StatusOK) {
-        log_error("ramses: connect failed (participant %u)", user);
-        return 1;
-    }
-    log_info("ramses: connected as participant %u", user);
-    Ramses19Gpu gpu(client);
-    if (!gpu.init(&err)) {
-        log_error("ramses: %s", err.c_str());
-        framework.disconnect();
-        return 1;
-    }
-
-    Dcsm2Link link;
-    Dcsm2Port port(&link);
-    Service service(&gpu, &port, sc);
-    port.set_manager(&service.slots());
-    port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
-    Governor *gov = &service.compositor().governor();
-    port.on_link = [gov](bool silent, int64_t now_ms) {
-        if (silent)
-            gov->evidence(Evidence::LinkStall, now_ms);
-    };
-    Dcsm2Link::Options lo;
-    lo.app_name = cfg.str("vsomeip_app");
-    lo.client_handle = cfg.has("dcsm_client_handle")
-                           ? std::strtoull(cfg.str("dcsm_client_handle").c_str(), nullptr, 0)
-                           : 0;
-    lo.heartbeat_replies = cfg.num("dcsm_heartbeat_replies") != 0;
-    if (!service.start(&err) || !link.start(lo, &err)) {
-        log_error("%s", err.c_str());
-        framework.disconnect();
-        return 1;
-    }
-    for (const TargetSpec &t : sc.targets)
-        log_info("target %s: slot 0x%llx class %u scene 0x%llx %ux%u, linger %d ms%s", t.name.c_str(),
-                 (unsigned long long)t.slot, t.content_class, (unsigned long long)t.scene_id, t.width, t.height,
-                 t.linger_ms, t.take_over_stock ? ", takes over from the stock HMI" : "");
-
-    std::vector<pollfd> fds;
-    for (;;) {
-        fds.clear();
-        fds.push_back(pollfd{sig_fd, POLLIN, 0});
-        fds.push_back(pollfd{link.fd(), POLLIN, 0});
-        const size_t first = service.poll_fds(&fds);
-        const int n = poll(fds.data(), fds.size(), service.timeout_ms(cld::now_ms()));
-        if (n < 0 && errno != EINTR)
-            break;
-        if (fds[0].revents & POLLIN)
-            break;
-        const int64_t now = cld::now_ms();
-        if (fds[1].revents & POLLIN)
-            link.drain(&port, now);
-        service.after_poll(fds, first, now);
-    }
-    service.shutdown(cld::now_ms());
-    usleep(300 * 1000);   /* the unmap and unfetch on their way */
-    link.stop();
-    framework.disconnect();
-    log_info("stopped");
-    return 0;
+    sc.backend = generation == 8 ? "id8" : "id7";
+    return true;
 }
+
+namespace {
 
 /* Prints the service's status: its targets and every client's layers. */
 int status(const cld::Config &cfg)
@@ -309,7 +261,7 @@ int main(int argc, char **argv)
     cld::log_verbose = (int)cfg.num("verbose");
     signal(SIGPIPE, SIG_IGN);
     if (i == argc)
-        return serve(cfg);
+        return start(cfg, argv);
     if (i + 1 == argc && !std::strcmp(argv[i], "status"))
         return status(cfg);
     std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status]\n");

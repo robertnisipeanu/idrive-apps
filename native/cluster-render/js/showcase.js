@@ -17,14 +17,17 @@
  * On the unit (Node 8): copy this file and cluster_render_client.js into one
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video] [--target panel|map|hud]
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video] [--target panel|map|hud|widget]
+ *                    [--size WxH]
+ * The sizes are iDrive 7's targets' and iDrive 8's widget canvas; --size
+ * gives another (iDrive 8: map 874x749, hud 353x203).
  */
 'use strict';
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
 const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video'];
-const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480] };
+const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], widget: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
 
@@ -215,11 +218,15 @@ function parse(argv) {
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === '--socket') a.socket = argv[++i];
         else if (argv[i] === '--target') a.target = argv[++i];
+        else if (argv[i] === '--size') a.size = String(argv[++i]).split('x').map(Number);
         else a.page = argv[i];
     }
-    if (!a.socket || !Object.prototype.hasOwnProperty.call(SIZES, a.target) ||
+    if (!a.size && Object.prototype.hasOwnProperty.call(SIZES, a.target))
+        a.size = SIZES[a.target];
+    if (!a.socket || !a.size || !(a.size[0] >= 16 && a.size[1] >= 16) ||
         (a.page !== 'all' && PAGES.indexOf(a.page) < 0)) {
-        console.error('usage: node showcase.js [--socket PATH] [all|' + PAGES.join('|') + '] [--target panel|map|hud]');
+        console.error('usage: node showcase.js [--socket PATH] [all|' + PAGES.join('|') +
+            '] [--target panel|map|hud|widget] [--size WxH]');
         process.exit(2);
     }
     return a;
@@ -227,7 +234,7 @@ function parse(argv) {
 
 function main() {
     const args = parse(process.argv.slice(2));
-    const target = args.target, W = SIZES[target][0], H = SIZES[target][1];
+    const target = args.target, W = args.size[0], H = args.size[1];
     const on = (page) => args.page === 'all' || args.page === page;
     const cr = new ClusterRender('showcase', args.socket);
     const names = {};
