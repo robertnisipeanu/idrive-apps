@@ -297,8 +297,21 @@ targets (slot, content class, scene id, size, linger; on iDrive 8 the
 menu entry), the upload budget and the tick. A unit's own settings go in
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
-line overrides both. `cluster-render status` prints the targets, every
-client's layers and the upload cap.
+line overrides both. `cluster-render status` prints the targets, Dcsm2's
+availability, the subscription's answer per event and the count of what
+Dcsm2 sent (fetch, map and slot events, notifications that did not decode,
+replies), every client's layers and the upload cap.
+
+Every log line also goes to `/var/opt/cluster-render/log/cluster-render.log`
+(`log_file`) with its UTC time: the unit's journal keeps only minutes, and
+the file outlives restarts and reboots. Past `log_file_kb` (512) the file
+becomes `cluster-render.log.1`, so it takes at most about twice that. The
+service makes the directory, owned by `hmi_5000`, at each start; the deploy
+tool removes it with the rest of `/var/opt/cluster-render` on uninstall.
+For Dcsm2 the log has each change of availability and of the subscription's
+answer, notifications that did not decode (their start in hex, at most every
+10 s per event id), and, for a request that got no answer, what arrived
+since it and the last slot table.
 
 ## iDrive 8
 
@@ -461,6 +474,8 @@ the service and prints every event: `node showcase.js [--socket PATH]
 [--size WxH]` (iDrive 8's `map`: `--size 874x749`).
 
 The host tests:
+- `log_test`: the log file's timestamps, start line, rotation to `.1` and a
+  path that cannot be opened;
 - `slots_test`: arbitration, on slot tables of one row per mapping as the
   car reports them: parked targets, take-overs and their spacing, locks;
 - `governor_test`: the budget's steps, cooldown, recovery and probation;
@@ -475,7 +490,9 @@ The host tests:
   rebuilding all of it; fades in and out and their timing, and a parked
   target staging nothing;
 - `dcsm2_port_test`: the Dcsm2 request sequence, parked and promoted
-  mappings, take-overs, reply matching and refusal kinds;
+  mappings, take-overs, reply matching and refusal kinds; the undecoded
+  notifications' rate limit, subscription answers, the no-answer line and
+  the status text;
 - `dcsm27_port_test`: iDrive 8's offers under the slot manager: parked
   offers, ready, show, hide and release, a stop and its scene kept until it
   is accepted, a request while it is not, refusals, two targets;

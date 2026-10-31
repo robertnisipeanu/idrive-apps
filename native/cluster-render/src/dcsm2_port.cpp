@@ -2,12 +2,38 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 #include "dcsm2_port.h"
 
+#include <cstdio>
+
 #include "dcsm/dcsm_client.h"
 #include "log.h"
 
 namespace crs {
 
 namespace {
+
+const char *phase_name(int phase)
+{
+    static const char *const names[] = {"fetching", "mapping", "parked", "mapped", "refused", "lost"};
+    return phase >= 0 && phase < 6 ? names[phase] : "?";
+}
+
+std::string event_name(uint16_t event)
+{
+    if (event == 0xffff)
+        return "the eventgroup";
+    char b[24];
+    std::snprintf(b, sizeof b, "event 0x%04x", event);
+    return b;
+}
+
+std::string answer_text(uint16_t code)
+{
+    if (code == 0)
+        return "accepted";
+    char b[32];
+    std::snprintf(b, sizeof b, "refused (code 0x%02x)", code);
+    return b;
+}
 
 Refusal classify(bool ok, uint32_t status)
 {
@@ -29,11 +55,37 @@ Refusal classify(bool ok, uint32_t status)
 
 }  // namespace
 
+std::string hex_bytes(const uint8_t *p, size_t n, size_t max)
+{
+    if (n == 0)
+        return "(empty)";
+    std::string out;
+    char b[4];
+    for (size_t i = 0; i < n && i < max; i++) {
+        if (i && i % 4 == 0)
+            out += ' ';
+        std::snprintf(b, sizeof b, "%02x", p[i]);
+        out += b;
+    }
+    if (n > max)
+        out += " ...";
+    return out;
+}
+
+std::string Dcsm2Port::counts_text(const Counts &c)
+{
+    char b[160];
+    std::snprintf(b, sizeof b, "%u fetch, %u map, %u slot, %u undecoded events, %u replies", c.fetch, c.map, c.slots,
+                  c.undecoded, c.replies);
+    return b;
+}
+
 void Dcsm2Port::request(const TargetSpec &t)
 {
     Content &c = contents_[t.scene_id];
     c = Content();
     c.spec = t;
+    asked_[t.scene_id] = total_;
     if (up_)
         fetches_.push_back(t.scene_id);
     wire_->fetch(t.scene_id);
@@ -83,6 +135,12 @@ void Dcsm2Port::on_availability(bool up, int64_t now_ms)
 {
     log_info("dcsm: Dcsm2 %s", up ? "available" : "not available");
     up_ = up;
+    changed_ms_ = now_ms;
+    table_.clear();
+    table_ms_ = -1;
+    asked_.clear();
+    if (!up)
+        subscribed_.clear();
     fetches_.clear();
     maps_.clear();
     unmaps_.clear();
@@ -95,6 +153,7 @@ void Dcsm2Port::on_availability(bool up, int64_t now_ms)
 
 void Dcsm2Port::on_reply(uint16_t method, bool ok, uint32_t status, const std::string &status_text, int64_t now_ms)
 {
+    total_.replies++;
     if (method == dcsm::kReqUnmapContent) {
         Unmap u;
         if (!unmaps_.empty()) {
@@ -126,6 +185,7 @@ void Dcsm2Port::on_reply(uint16_t method, bool ok, uint32_t status, const std::s
 
 void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
 {
+    total_.fetch++;
     log_info("dcsm: content 0x%llx fetch status %u", (unsigned long long)scene, status);
     auto un = unfetched_.find(scene);
     if (un != unfetched_.end()) {
@@ -175,6 +235,7 @@ void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
 
 void Dcsm2Port::on_map_status(uint64_t scene, uint32_t initial, uint32_t final_, int64_t now_ms)
 {
+    total_.map++;
     log_info("dcsm: content 0x%llx map status %u -> %u", (unsigned long long)scene, initial, final_);
     auto it = contents_.find(scene);
     if (it == contents_.end())
@@ -214,8 +275,108 @@ void Dcsm2Port::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         now[{s.slot, s.content}] = s;
     }
     slots_.swap(now);
+    total_.slots++;
+    table_ = slots;
+    table_ms_ = now_ms;
     if (manager_)
         manager_->on_slots(slots, now_ms);
+}
+
+void Dcsm2Port::on_undecoded(uint16_t event, size_t length, const std::string &hex, int64_t now_ms)
+{
+    total_.undecoded++;
+    Undecoded &u = undecoded_[event];
+    if (u.logged && now_ms - u.logged_ms < kUndecodedLogMs) {
+        u.dropped++;
+        return;
+    }
+    if (u.dropped)
+        log_warn("dcsm: event 0x%04x (%zu bytes) not decoded: %s; %u more not logged since the last", event, length,
+                 hex.c_str(), u.dropped);
+    else
+        log_warn("dcsm: event 0x%04x (%zu bytes) not decoded: %s", event, length, hex.c_str());
+    u.logged = true;
+    u.logged_ms = now_ms;
+    u.dropped = 0;
+}
+
+void Dcsm2Port::on_subscription(uint16_t event, uint16_t code, int64_t)
+{
+    auto it = subscribed_.find(event);
+    if (it != subscribed_.end() && it->second == code)
+        return;
+    subscribed_[event] = code;
+    if (code == 0)
+        log_info("dcsm: subscription to %s: accepted", event_name(event).c_str());
+    else
+        log_error("dcsm: subscription to %s: %s", event_name(event).c_str(), answer_text(code).c_str());
+}
+
+/* What arrived since the request, and the last slot table, so a log tells
+ * events not delivered, events not decoded and a KOMBI that does not
+ * answer apart. */
+void Dcsm2Port::no_answer(const TargetSpec &t, int64_t now_ms)
+{
+    Counts since = total_;
+    auto a = asked_.find(t.scene_id);
+    if (a != asked_.end()) {
+        since.fetch -= a->second.fetch;
+        since.map -= a->second.map;
+        since.slots -= a->second.slots;
+        since.undecoded -= a->second.undecoded;
+        since.replies -= a->second.replies;
+    }
+    auto c = contents_.find(t.scene_id);
+    const char *phase = c == contents_.end() ? "released" : phase_name((int)c->second.phase);
+    std::string table;
+    if (table_ms_ < 0) {
+        table = "no slot table since Dcsm2 came up";
+    } else {
+        char b[96];
+        std::snprintf(b, sizeof b, "last slot table %lld ms ago, %zu rows (slot status content class map):",
+                      (long long)(now_ms - table_ms_), table_.size());
+        table = b;
+        for (size_t i = 0; i < table_.size(); i++) {
+            if (table.size() > 640) {
+                std::snprintf(b, sizeof b, " +%zu more", table_.size() - i);
+                table += b;
+                break;
+            }
+            const SlotInfo &r = table_[i];
+            std::snprintf(b, sizeof b, "%s 0x%llx %u 0x%llx %u %u", i ? "," : "", (unsigned long long)r.slot, r.status,
+                          (unsigned long long)r.content, r.klass, r.map_status);
+            table += b;
+        }
+    }
+    log_warn("dcsm: no answer for content 0x%llx (target %s, slot 0x%llx, %s); since its request: %s; %s",
+             (unsigned long long)t.scene_id, t.name.c_str(), (unsigned long long)t.slot, phase,
+             counts_text(since).c_str(), table.c_str());
+}
+
+std::string Dcsm2Port::status_text(int64_t now_ms) const
+{
+    std::string s = "dcsm: Dcsm2 ";
+    char b[96];
+    if (changed_ms_ < 0)
+        s += "not available yet";
+    else {
+        std::snprintf(b, sizeof b, "%s for %lld s", up_ ? "available" : "not available",
+                      (long long)((now_ms - changed_ms_) / 1000));
+        s += b;
+    }
+    s += "; subscription:";
+    if (subscribed_.empty())
+        s += " no answer yet";
+    for (auto it = subscribed_.begin(); it != subscribed_.end(); ++it)
+        s += (it == subscribed_.begin() ? " " : ", ") + event_name(it->first) + " " + answer_text(it->second);
+    s += "\ndcsm: since start: " + counts_text(total_) + "; ";
+    if (table_ms_ < 0)
+        s += "no slot table since Dcsm2 came up\n";
+    else {
+        std::snprintf(b, sizeof b, "last slot table %lld s ago\n", (long long)((now_ms - table_ms_) / 1000));
+        s += b;
+    }
+    return s;
 }
 
 }  // namespace crs

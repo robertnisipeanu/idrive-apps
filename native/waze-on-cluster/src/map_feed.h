@@ -14,7 +14,7 @@
  * CarPlay's cluster stream is live and not frozen (set_stream): hidden, the
  * renderer lets the slot go and the stock map comes back. stall_ms, which
  * releases the slot once the frames stop that long, is only a backstop,
- * since a static map sends a frame about every ten seconds. Frames handed
+ * since a static map can send a frame only every ten seconds. Frames handed
  * over while the renderer is not reachable are dropped; the client
  * reconnects by itself and the next frame shows.
  *
@@ -49,6 +49,18 @@ struct FeedStatus {
     std::string reason;
     unsigned upload_cap_kb = 0;   /* 0 until the renderer reports it */
     std::string upload_reason;
+};
+
+/* Whether a status is worth a log line: its state, reason or target differs
+ * from the last one logged. The page (the frame rate, the bytes captured)
+ * and the upload cap change every second and do not count. */
+class StatusLog {
+public:
+    bool due(const FeedStatus &s);
+
+private:
+    std::string last_;
+    bool logged_ = false;
 };
 
 class MapFeed {

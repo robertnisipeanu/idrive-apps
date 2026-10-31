@@ -11,12 +11,20 @@
  * when the KOMBI promotes it; a parked scene unmapped is lost; a take-over
  * is an unmap of the stock HMI's content with the HMI's handle, whose reply
  * matches no request of ours: fetch and map replies still go to the oldest
- * fetch and map. */
+ * fetch and map.
+ *
+ * The field-log diagnostics: an undecoded notification is logged with its
+ * start in hex at most every 10 s per event id, with the number not logged
+ * in between; each change of the subscription's answer is logged once; a
+ * request the slot manager gives up on logs what arrived since it and the
+ * last slot table, or that none came; the status text carries the counts,
+ * the availability and the subscription. */
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "../src/dcsm2_port.h"
+#include "../src/log.h"
 #include "dcsm/dcsm_client.h"
 
 using namespace crs;
@@ -301,11 +309,121 @@ static void basics()
                                                              u.m.status(0).state == TargetState::Unavailable);
 }
 
+/* The lines logged since the last call. */
+static std::vector<std::string> logged()
+{
+    static uint64_t seq;
+    std::vector<std::string> out;
+    cld::log_lines_since(&seq, &out);
+    return out;
+}
+
+static bool has(const std::string &s, const std::string &part)
+{
+    if (s.find(part) != std::string::npos)
+        return true;
+    std::printf("     \"%s\"\n     lacks \"%s\"\n", s.c_str(), part.c_str());
+    return false;
+}
+
+static void diagnostics()
+{
+    const uint8_t bytes[70] = {0x00, 0x00, 0x00, 0x20, 0x01, 0x02, 0x03, 0x04, 0xab};
+    ok("hex: groups of 4", hex_bytes(bytes, 9, 64) == "00000020 01020304 ab");
+    ok("hex: cut at the limit", hex_bytes(bytes, 70, 8) == "00000020 01020304 ...");
+    ok("hex: empty", hex_bytes(bytes, 0, 64) == "(empty)");
+
+    Rig r;
+    logged();
+    r.port.on_undecoded(0x8009, 36, "00000020 ...", r.now);
+    std::vector<std::string> l = logged();
+    ok("undecoded: logged", l.size() == 1 && l[0] == "dcsm: event 0x8009 (36 bytes) not decoded: 00000020 ...");
+    r.port.on_undecoded(0x8009, 36, "x", r.now + 5000);
+    r.port.on_undecoded(0x8009, 36, "x", r.now + 9999);
+    r.port.on_undecoded(0x8008, 8, "y", r.now + 9999);
+    l = logged();
+    ok("within 10 s: not logged again; another id is", l.size() == 1 && has(l[0], "event 0x8008 (8 bytes)"));
+    r.port.on_undecoded(0x8009, 40, "z", r.now + 10000);
+    l = logged();
+    ok("after 10 s: logged with the number not logged",
+       l.size() == 1 && l[0] == "dcsm: event 0x8009 (40 bytes) not decoded: z; 2 more not logged since the last");
+    r.port.on_undecoded(0x8009, 40, "z", r.now + 20000);
+    l = logged();
+    ok("and the count starts over", l.size() == 1 && l[0] == "dcsm: event 0x8009 (40 bytes) not decoded: z");
+
+    r.port.on_subscription(0x8008, 0, r.now);
+    r.port.on_subscription(0x8008, 0, r.now);
+    r.port.on_subscription(0x8009, 7, r.now);
+    r.port.on_subscription(0xffff, 0, r.now);
+    l = logged();
+    ok("subscription: each change once", l.size() == 3 && l[0] == "dcsm: subscription to event 0x8008: accepted" &&
+                                             l[1] == "dcsm: subscription to event 0x8009: refused (code 0x07)" &&
+                                             l[2] == "dcsm: subscription to the eventgroup: accepted");
+    std::string st = r.port.status_text(r.now + 2000);
+    ok("status: availability and subscription",
+       has(st, "dcsm: Dcsm2 available for 3 s; subscription: event 0x8008 accepted, event 0x8009 refused (code "
+               "0x07), the eventgroup accepted\n"));
+    ok("status: the counts, no table yet",
+       has(st, "dcsm: since start: 0 fetch, 0 map, 0 slot, 6 undecoded events, 0 replies; no slot table since "
+               "Dcsm2 came up\n"));
+    r.port.on_subscription(0x8009, 0, r.now);
+    l = logged();
+    ok("refused, then accepted: logged", l.size() == 1 && l[0] == "dcsm: subscription to event 0x8009: accepted");
+
+    /* The map asked for: the fetch accepted and FETCHED, the map accepted,
+     * then nothing for 5 s. */
+    r.m.want(0, true, false);
+    r.tick();
+    r.table(1, 0);
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, r.now);
+    r.port.on_reply(dcsm::kReqMapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_undecoded(0x8008, 8, "y", r.now + 20000);
+    logged();
+    r.now += 4990;
+    r.tick();
+    l = logged();
+    ok("no answer: what arrived since the request and the last table",
+       l.size() == 1 &&
+           l[0] == "dcsm: no answer for content 0x10004f0 (target map, slot 0x100, mapping); since its request: 1 "
+                   "fetch, 0 map, 1 slot, 1 undecoded events, 2 replies; last slot table 5000 ms ago, 2 rows (slot "
+                   "status content class map): 0x100 2 0x1000300 0 1, 0x100 2 0x10004f0 0 0");
+    ok("and the target waits as before", r.m.status(0).state == TargetState::Waiting &&
+                                             r.m.status(0).reason == "no answer from the display");
+    st = r.port.status_text(r.now);
+    ok("status: the totals and the table's age",
+       has(st, "dcsm: since start: 1 fetch, 0 map, 1 slot, 7 undecoded events, 2 replies; last slot table 5 s ago\n"));
+
+    r.port.on_availability(false, r.now);
+    r.port.on_availability(true, r.now + 1000);
+    st = r.port.status_text(r.now + 3500);
+    ok("Dcsm2 back: availability since, subscription and table forgotten",
+       has(st, "dcsm: Dcsm2 available for 2 s; subscription: no answer yet\n") &&
+           has(st, "no slot table since Dcsm2 came up"));
+    r.now += 1000;
+    for (int k = 0; k < 200; k++)
+        r.tick();
+    logged();
+    for (int k = 0; k < 600; k++)
+        r.tick();
+    l = logged();
+    bool told = false;
+    for (const std::string &x : l)
+        told = told || x == "dcsm: no answer for content 0x10004f0 (target map, slot 0x100, fetching); since its "
+                            "request: 0 fetch, 0 map, 0 slot, 0 undecoded events, 0 replies; no slot table since "
+                            "Dcsm2 came up";
+    ok("no answer with nothing since: says no table came", told);
+    Dcsm2Port fresh(&r.wire);
+    ok("status before Dcsm2 was ever seen", has(fresh.status_text(0), "dcsm: Dcsm2 not available yet; subscription: "
+                                                                       "no answer yet\n"));
+}
+
 int main()
 {
     basics();
     parked();
     take_over();
+    diagnostics();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

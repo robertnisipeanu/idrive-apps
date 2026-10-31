@@ -158,6 +158,17 @@ void Client::start() {
                             vsomeip::event_type_e::ET_EVENT,
                             vsomeip::reliability_type_e::RT_RELIABLE);
     }
+    // Selective: refusals are reported too, not only acceptances.
+    for (vsomeip::event_t e :
+         {kFetchStatusChange, kMapStatusChange, kSlotStatusChange, vsomeip::ANY_EVENT}) {
+        app_->register_subscription_status_handler(
+            kService, kInstance, kEventgroup, e,
+            [this](vsomeip::service_t, vsomeip::instance_t, vsomeip::eventgroup_t,
+                   vsomeip::event_t event, uint16_t code) {
+                if (onSubscription) onSubscription(event, code);
+            },
+            true);
+    }
     app_->request_service(kService, kInstance, kMajor, vsomeip::ANY_MINOR);
     app_->subscribe(kService, kInstance, kEventgroup, kMajor);
     heartbeat_ = std::thread([this] { heartbeatLoop(); });
@@ -167,6 +178,9 @@ void Client::stop() {
     if (!running_.exchange(false)) return;
     heartbeat_.join();
     app_->unsubscribe(kService, kInstance, kEventgroup);
+    for (vsomeip::event_t e :
+         {kFetchStatusChange, kMapStatusChange, kSlotStatusChange, vsomeip::ANY_EVENT})
+        app_->unregister_subscription_status_handler(kService, kInstance, kEventgroup, e);
     app_->release_service(kService, kInstance);
     app_->unregister_availability_handler(kService, kInstance, kMajor, vsomeip::ANY_MINOR);
     app_->unregister_message_handler(kService, kInstance, vsomeip::ANY_METHOD);
@@ -227,18 +241,24 @@ void Client::onMessage(const std::shared_ptr<vsomeip::message> &m) {
     ContentId2 c;
 
     switch (m->get_message_type()) {
-    case vsomeip::message_type_e::MT_NOTIFICATION:
+    case vsomeip::message_type_e::MT_NOTIFICATION: {
+        bool decoded = false;
         if (m->get_method() == kSlotStatusChange) {
             std::vector<SlotStatus2> slots;
-            if (wire::slot_status_change(p, n, slots) && onSlots) onSlots(slots);
+            decoded = wire::slot_status_change(p, n, slots);
+            if (decoded && onSlots) onSlots(slots);
         } else if (m->get_method() == kMapStatusChange) {
             MapStatusTransition t;
-            if (wire::map_status_change(p, n, c, t) && onMapStatus) onMapStatus(c, t);
+            decoded = wire::map_status_change(p, n, c, t);
+            if (decoded && onMapStatus) onMapStatus(c, t);
         } else if (m->get_method() == kFetchStatusChange) {
             uint32_t s;
-            if (wire::fetch_status_change(p, n, c, s) && onFetchStatus) onFetchStatus(c, s);
+            decoded = wire::fetch_status_change(p, n, c, s);
+            if (decoded && onFetchStatus) onFetchStatus(c, s);
         }
+        if (!decoded && onUndecoded) onUndecoded(m->get_method(), p, n);
         break;
+    }
     case vsomeip::message_type_e::MT_RESPONSE:
     case vsomeip::message_type_e::MT_ERROR: {
         if (m->get_method() == kHeartbeat) {

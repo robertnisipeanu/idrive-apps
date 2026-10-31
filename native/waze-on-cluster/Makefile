@@ -35,6 +35,9 @@ CPPFLAGS = -I. -Isrc -I$(KIT) -I$(CR)/include -Iabi/include -I$(CR)/src
 
 T = $(BUILD)/target
 
+# component.json's version, compiled into the binary for its log file.
+VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
+
 # The capture, decode and map feed (own files), the kit's atlas, packing and
 # geometry, and the shared renderer's client.
 WOC_SRC = src/main.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
@@ -129,29 +132,29 @@ target-in-docker: $(T)/waze-on-cluster
 # SONAME, so the binary records the right DT_NEEDED.
 $(T)/stub/libmfxhw64.so: abi/libmfx.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/mfx_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/mfx_stub.c
 	gcc -shared -Wl,-soname,libmfxhw64.so -o $@ $(@D)/mfx_stub.c
 
 $(T)/stub/libva.so.1: abi/libva.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/va_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/va_stub.c
 	gcc -shared -Wl,-soname,libva.so.1 -o $@ $(@D)/va_stub.c
 
 $(T)/stub/libva-drm.so.1: abi/libva-drm.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/va_drm_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/va_drm_stub.c
 	gcc -shared -Wl,-soname,libva-drm.so.1 -o $@ $(@D)/va_drm_stub.c
 
 $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1: abi/libias_avb.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/ias_avb_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/ias_avb_stub.c
 	gcc -shared -Wl,-soname,libias-media_transport-avb_ufipc_bridge.so.1 -o $@ $(@D)/ias_avb_stub.c
 
 STUBS = $(T)/stub/libmfxhw64.so $(T)/stub/libva.so.1 $(T)/stub/libva-drm.so.1 \
         $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1
 
-$(T)/waze-on-cluster: $(SRC) $(STUBS)
-	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
+$(T)/waze-on-cluster: $(SRC) $(STUBS) component.json
+	g++ $(CXXFLAGS) $(CPPFLAGS) -DWOC_VERSION='"$(VERSION)"' -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
 		-o $@ $(SRC) $(STUBS)
 	$(PYTHON) $(CR)/dcsm/tools/abi.py check $@ $(CR)/dcsm/abi/libvsomeip3.so.3.symbols   # loader, glibc/libstdc++ limits
 	$(PYTHON) tools/woc_abi.py check-imports $@ --prefix MFX va ias_ -- \

@@ -37,6 +37,9 @@ HOSTINC  = -Ikit -Iinclude -I. -Isrc -isystem dcsm/third_party/vsomeip/interface
 CPPFLAGS = $(HOSTINC) -Iabi/include
 CPPFLAGS27 = $(HOSTINC) -isystem abi/include/ramses27   # RAMSES 27.0.116's own headers (abi/ABI27.md)
 
+# component.json's version, compiled into the binary for its log file.
+VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
+
 RAMSES_SONAME = libramses-shared-lib-wayland-ivi-egl-es-3-0.so.19.0
 RAMSES27_SONAME = libramses-shared-lib-wayland-ivi-egl-es-3-0.so.27.0
 T = $(BUILD)/target
@@ -58,8 +61,9 @@ all: test
 
 test: test-kit test-cpp test-js
 
-test-cpp: $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test \
+test-cpp: $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test \
 		$(H)/dcsm27_port_test $(H)/generation_test
+	$(H)/log_test
 	$(H)/slots_test
 	$(H)/governor_test
 	$(H)/compositor_test
@@ -88,6 +92,10 @@ test-kit-x86:
 		make -s BUILD=$(BUILD)/x86 CXX=g++ test-kit
 
 # ---- host tests -------------------------------------------------------------
+$(H)/log_test: test/log_test.cpp src/log.cpp src/log.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/log_test.cpp src/log.cpp -lpthread
+
 $(H)/slots_test: test/slots_test.cpp src/slots.cpp src/slots.h src/governor.cpp src/governor.h src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/slots_test.cpp src/slots.cpp src/governor.cpp src/log.cpp -lpthread
@@ -176,14 +184,14 @@ $(T)/cluster-render: $(LAUNCH_SRC) $(CORE_H)
 	g++ $(CXXFLAGS) $(HOSTINC) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ $(LAUNCH_SRC)
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 
-$(T)/cluster-render-idrive7: $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(CORE_H) $(STUBS)
-	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
+$(T)/cluster-render-idrive7: $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(CORE_H) $(STUBS) component.json
+	g++ $(CXXFLAGS) $(CPPFLAGS) -DCR_VERSION='"$(VERSION)"' -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
 		-o $@ $(CORE_SRC) $(KIT_SRC) $(UNIT_SRC) $(STUBS)
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 	$(PYTHON) dcsm/tools/abi.py check $@ dcsm/abi/libvsomeip3.so.3.symbols
 
-$(T)/cluster-render-idrive8: $(CORE_SRC) $(KIT_SRC) $(UNIT8_SRC) $(CORE_H) $(T)/stub/$(RAMSES27_SONAME)
-	g++ $(CXXFLAGS) $(CPPFLAGS27) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
+$(T)/cluster-render-idrive8: $(CORE_SRC) $(KIT_SRC) $(UNIT8_SRC) $(CORE_H) $(T)/stub/$(RAMSES27_SONAME) component.json
+	g++ $(CXXFLAGS) $(CPPFLAGS27) -DCR_VERSION='"$(VERSION)"' -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread \
 		-o $@ $(CORE_SRC) $(KIT_SRC) $(UNIT8_SRC) $(T)/stub/$(RAMSES27_SONAME)
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses27.symbols
 
