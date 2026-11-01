@@ -221,13 +221,14 @@ int main()
 
     /* the governor counts evidence seen while writes go */
     r.svc->compositor().governor().activity(r.now);
-    r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
+    r.svc->compositor().governor().evidence(crs::Evidence::LinkStall, r.now);
+    r.svc->compositor().governor().evidence(crs::Evidence::LinkStall, r.now);
     r.pump(100, &f1);
     ok("a lowered shared upload cap shows on the status line",
        r.st().page.find("upload cap 5000 KB/s") != std::string::npos);
     ok("the status carries the cap and why",
        r.st().upload_cap_kb == 5000 && r.st().upload_reason.find("lowered from 5500 KB/s") == 0 &&
-           r.st().upload_reason.find("scene removed") != std::string::npos);
+           r.st().upload_reason.find("heartbeat replies silent") != std::string::npos);
     /* A minute of healthy upload raises it back to the ceiling, which the
      * status line leaves out. */
     for (int s = 0; s < 62; s++) {
