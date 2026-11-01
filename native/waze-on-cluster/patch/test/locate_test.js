@@ -4,10 +4,11 @@
 /* Proves carplay_locate.js and carplay_patch.js on synthetic builds
  * (synthetic_carplay.js): every site found where the build put it, also with
  * other offsets, addresses and code order, and in its patched state; a
- * signature found twice refused as ambiguous; a damaged site refused with the
- * reason; apply, verify, probe and revert on a build outside the proven list,
- * byte-exact. With CARPLAY_BIN, the reference build's sites are the documented
- * offsets.
+ * signature found twice refused as ambiguous; a damaged site, a broken
+ * cross-check or a relocation over an edit refused with the reason; apply
+ * (only with --unproven), verify, probe and revert on a build outside the
+ * proven list, byte-exact. With CARPLAY_BIN, the reference build's sites are
+ * the documented offsets.
  *
  *   node locate_test.js
  */
@@ -71,7 +72,7 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
 
 /* A signature found twice is ambiguous. */
 [['two sink URL slots', { twoSinks: true }, 'sink: URL slot found 2 times'],
- ['two converter switches', { twoConverters: true }, 'variant: converter switch found 2 times']].forEach(function (t) {
+ ['a second converter switch outside codingToInternal', { twoConverters: true }, 'variant: converter switch also outside codingToInternal']].forEach(function (t) {
     var loc = locator.locate(synthetic.build(t[1]).buf);
     ok(t[0] + ': refused as ambiguous, the other edits found', !loc.ok && json(reasons(loc)) === json([t[2]]), json(reasons(loc)));
 });
@@ -85,6 +86,8 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     ['onSuggestUi calls something else', function (b, at) { b.writeInt32LE(b.readInt32LE(at.call + 1) + 0x40, at.call + 1); }, 'self-start: onSuggestUi call not found'],
     ['no ForceKeyframe check', function (b) { var i = b.indexOf('ForceKeyframe'); b.write('ForceKeyFrame', i, 'latin1'); }, 'self-start: ForceKeyframe string not found'],
     ['a geometry store broken', function (b, at) { b[at.px + 8] = 0x90; }, 'resolution: 1 geometry builders (want 2)'],
+    ['requestStream only reached through onSuggestUi', function (b, at) { b.fill(0x90, at.cmdCall, at.cmdCall + 5); }, 'self-start: requestStream not called directly'],
+    ['a getter reads another field', function (b, at) { b[at.getter2c + 3] = 0x2a; }, 'resolution: geometry getters not found'],
 ].forEach(function (t) {
     var s = synthetic.build({}), b = Buffer.from(s.buf);
     t[1](b, s.at);
@@ -93,7 +96,10 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
 });
 (function () {
     var loc = locator.locate(synthetic.build({ noEhFrame: true }).buf);
-    ok('no function table: self-start and resolution say so', json(reasons(loc)) === json(['self-start: no function table', 'resolution: no function table']), json(reasons(loc)));
+    ok('no function table: variant, self-start and resolution say so',
+        json(reasons(loc)) === json(['variant: no function table', 'self-start: no function table', 'resolution: no function table']), json(reasons(loc)));
+    loc = locator.locate(synthetic.build({ relocSink: true }).buf);
+    ok('a dynamic relocation over the sink slot: refused', json(reasons(loc)) === json(['sink: a dynamic relocation over the edit']), json(reasons(loc)));
     loc = locator.locate(Buffer.from('#!/bin/sh\nexec carplay "$@"\n'));
     ok('not an ELF', loc.elf === false && loc.reason === 'not an ELF file' && !loc.ok, json(loc));
 })();
@@ -116,7 +122,10 @@ try {
         r.out.indexOf('immediates ' + [at.mm, at.px, at.safe1, at.safe2].map(hx).join(' ')) >= 0 &&
         r.out.indexOf('build-id:  ' + at.buildId) >= 0, r.out);
 
-    r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--yes']);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    ok('apply without --unproven: refused, no write, no backup', r.code !== 0 && /is not a proven build; pass --unproven/.test(r.out) &&
+        fs.readFileSync(tgt).equals(orig) && !fs.existsSync(tgt + '.woc-orig'), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
     var b = fs.readFileSync(tgt);
     ok('apply high: all four edits written', r.code === 0 && /patched OK/.test(r.out) && b.readUInt32LE(at.slot) === at.high &&
         b.toString('hex', at.call, at.call + 5) === at.callPatched && b.toString('latin1', at.sink, at.sink + 9) === 'udp://127' &&

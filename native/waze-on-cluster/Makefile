@@ -72,6 +72,7 @@ test-bin: $(CPP_TESTS)
 
 test-node:
 	$(NODE) patch/test/locate_test.js
+	$(NODE) patch/test/mutation_test.js
 	$(NODE) patch/test/patch_test.js
 	$(NODE) patch/test/patchd_patch_test.js
 	$(NODE) patch/test/patchd_activate_test.js
