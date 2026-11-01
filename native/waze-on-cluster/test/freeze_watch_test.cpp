@@ -4,7 +4,8 @@
  * rates: a frozen stream at 15 frames a second, all the same blank picture
  * after a map, is frozen after 10 s and not before; a stream blank from its
  * start is frozen only after 30 s of it with frames still coming, so the
- * car's start (93 blank frames in 2 s, then a pause) never is, and a new
+ * car's start (93 blank frames in 2 s, then a pause) never is, nor has it a
+ * picture until the map's first non-blank frame, and a new
  * stream (live again) starts without a picture; a static
  * map is never frozen, at one frame in 11 s or at 15 a second; a stream that
  * stops is not frozen; a changed or non-blank frame ends it; a change is seen in one sample past
@@ -56,6 +57,12 @@ int main()
     for (int64_t u = 2000; u <= 62000; u += 100)
         never = never && !fc.frozen(u);
     ok("the car's start: 93 blank frames in 2 s, then nothing for 60 s: never frozen", never);
+    ok("and no picture yet, so the map stays off the slot", !fc.pictured());
+    fc.frame(62100, true, false);
+    ok("the map's first picture: pictured", fc.pictured());
+    fc.live(false);
+    fc.live(true);
+    ok("a new stream starts without a picture", !fc.pictured());
 
     FreezeWatch st(cfg);
     st.live(true);

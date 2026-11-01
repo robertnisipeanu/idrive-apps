@@ -19,7 +19,9 @@
  * - frames offered faster than they can be written are newest-wins;
  * - the stream not live: the layer hidden, idle, the slot released and the
  *   stock map back; live again: shown with the frames; frozen: hidden, the
- *   status says so; no longer frozen: shown again;
+ *   status says so; no longer frozen: shown again; live without a picture
+ *   yet (a phone's blank start): hidden, the stock map shown, then shown with
+ *   the first picture;
  * - before the stream is live the layer is made hidden;
  * - the status is logged when its state, reason or target changes, not for
  *   the frame rate, the page or the upload cap. */
@@ -257,6 +259,18 @@ int main()
     r.feed->set_stream(true, false);
     r.pump(1200, &f1);
     ok("no longer frozen: shown again", r.map_layer()->params.visible && r.st().state == "showing");
+    /* A new stream's blank start: live, frames coming, no picture yet. */
+    const int released = r.port.releases;
+    r.feed->set_stream(true, false, false);
+    r.pump(2000, &f1);
+    stock = r.port.row(0x100, 0x01000101);
+    ok("live with no picture yet: hidden, idle, the slot released and the stock map shown",
+       !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > released &&
+           !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
+    ok("and the status says why", r.st().reason == "no map picture from the phone yet");
+    r.feed->set_stream(true, false, true);
+    r.pump(1200, &f1);
+    ok("the first picture: shown with the frames", r.map_layer()->params.visible && r.st().state == "showing");
 
     Rig h;
     h.feed->set_stream(false, false);
