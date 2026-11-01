@@ -48,8 +48,9 @@
  *                    the next head-unit start (carplay is then deferred)
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
- *                    something else modified, a carplay.service that starts
- *                    another program)
+ *                    something else modified, a build outside the patcher's
+ *                    proven list that Enable map has not patched yet, a
+ *                    carplay.service that starts another program)
  *                  {"ev":"log","line":...}   the backlog on connect, then each new line
  *
  * Install-time activation (the deploy tool's activate and deactivate hooks,
@@ -259,6 +260,7 @@ function readState(cb) {
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
+        var proven = !/proven:\s+no/.test(text);
         var backup = /backup:\s+(\S+)/.exec(text);
         var hasBackup = !!backup && backup[1] !== 'none';
         /* "patched" requires every edit: the variant gate, a known sink
@@ -296,10 +298,13 @@ function readState(cb) {
         /* What keeps the tool from writing the patch by itself: a binary the
          * patcher cannot patch (an edit site not found, or one it does not
          * recognise), one something else modified (no backup of ours, not the
-         * pristine build), or another program started as carplay. */
+         * pristine build), a build outside the proven list that Enable map has
+         * not patched (no backup of ours), or another program started as
+         * carplay. */
         var conflict = err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
+            : !hasBackup && !proven ? 'untested carplay build'
             : foreignStart();
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -758,10 +763,12 @@ function runPatch(args, action, noRestart, done) {
  * "avb": the stock avb:// sink, the media bus the render joins (the mode the
  * app applies). "udp": Edit 2 sink -> udp://127.0.0.1:UDP_PORT, the stream
  * sink the projection bridge accepts, which this tool receives. "fifo": sink
- * -> the file:// FIFO (the bridge rejects it on the car). */
-function apply(panel, mode, noRestart, done) {
+ * -> the file:// FIFO (the bridge rejects it on the car). `unproven`: the
+ * user's Enable map, which also patches a build outside the proven list;
+ * install-time activation never does. */
+function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
-    var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'];
+    var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'].concat(unproven ? ['--unproven'] : []);
     if (mode === 'avb') {
         log('apply IC_' + panel.toUpperCase() + ', stock AVB sink (the render joins the media bus)');
     } else if (mode === 'udp') {
@@ -844,7 +851,7 @@ function handle(line, sock) {
         var mode = (msg.mode === 'avb' || msg.mode === 'udp') ? msg.mode : 'fifo';   /* capture mode; default fifo */
         busy = true;
         status({ reason: op === 'apply' ? 'applying' : 'reverting' });
-        var fn = op === 'apply' ? function (cb) { apply(panel, mode, false, cb); } : function (cb) { revert(false, false, cb); };
+        var fn = op === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); };
         /* Hold the shared remount lock so the boot-recovery service does not
          * remount / at the same time. User-driven, so it proceeds after a short
          * wait even if the lock looks stuck; recovery yields to it. */
@@ -969,7 +976,7 @@ function oneShot(which) {
                 return;
             }
             var before = sha(TARGET);
-            var run = p.op === 'apply' ? function (cb) { log(which + ': applying the map patch'); apply('high', 'avb', true, cb); }
+            var run = p.op === 'apply' ? function (cb) { log(which + ': applying the map patch'); apply('high', 'avb', true, false, cb); }
                 : function (cb) { log(which + ': reverting the map patch'); revert(true, true, cb); };
             run(function (pErr, roErr, activation, refused) {
                 var written = sha(TARGET) !== before;

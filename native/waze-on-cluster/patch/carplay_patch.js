@@ -39,6 +39,7 @@
  *
  * The sites are found in each build by carplay_locate.js; a build where any
  * of them is not found, or reads as neither stock nor this patch, is refused.
+ * The first edit of a build outside the proven list needs --unproven.
  * All four edits are reversible from a verified full backup of the original
  * binary.
  *
@@ -46,7 +47,7 @@
  *
  *   carplay_patch.js status [--target <file>]
  *   carplay_patch.js probe  [<file>]
- *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--target <file>] [--yes]
+ *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--target <file>] [--unproven] [--yes]
  *   carplay_patch.js revert [--target <file>] [--yes] [--drop-backup]
  *   carplay_patch.js verify [--target <file>]
  *
@@ -62,7 +63,9 @@ var path = require('path');
 var locator = require('./carplay_locate.js');
 
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
- * whole file to be the shipped one, and anything else counts as modified. */
+ * whole file to be the shipped one, and anything else counts as modified. A
+ * first edit of any other build needs --unproven: its sites pass the
+ * locator's checks, but no car has run it patched. */
 var PROVEN = {
     '5de62156575d737391ea42254e778a97dbbb51f8': {
         version: 'carplay 22.28.3+gitr624+993efc1-r0.14',
@@ -206,6 +209,7 @@ function header(target, buf, c) {
     line('size', buf.length);
     line('sha256', sha256(buf));
     line('build-id', c.loc.buildId || 'none');
+    line('version', c.loc.version || 'unknown');
 }
 
 function cmdStatus(target) {
@@ -224,6 +228,7 @@ function cmdStatus(target) {
     }
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
         : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
+    line('proven', PROVEN[c.loc.buildId] ? 'yes' : 'no');
     EDITS.forEach(function (e) { line(e, describe(e, c[e])); });
     line('backup', hasBak ? bak : 'none');
 }
@@ -307,7 +312,7 @@ function checkedBackup(target) {
     return why ? { err: why } : { buf: orig, hash: hash, c: c };
 }
 
-function cmdApply(target, panel, capture, sink, res, safe, yes) {
+function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
     var wantRes = resFor(panel, res, safe);
     var sinkUrl = sinkUrlFor(capture, sink), slotLen = locator.SINK_STOCK.length;
@@ -323,6 +328,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes) {
     if (!fs.existsSync(bak)) {
         var why = notPristine(c, buf);
         if (why) die('first edit requires the pristine build: ' + why);
+        if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (carplay ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
         fs.writeFileSync(bak, buf, { mode: 0o600 });
         fsyncFile(bak);
         if (!fs.readFileSync(bak).equals(buf)) { try { fs.unlinkSync(bak); } catch (e) {} die('backup verification failed; no change made'); }
@@ -496,6 +502,7 @@ function parseArgs(argv) {
         if (t === '--yes') a.yes = true;
         else if (t === '--force') a.force = true;
         else if (t === '--drop-backup') a.dropBackup = true;
+        else if (t === '--unproven') a.unproven = true;
         else if (t === '--target') a.target = argv[++i];
         else if (t === '--panel') a.panel = argv[++i];
         else if (t === '--capture') {
@@ -518,10 +525,10 @@ function main() {
     var target = a.target || '/usr/bin/carplay';
     if (cmd === 'status') cmdStatus(target);
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
-    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes);
+    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
-    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
 main();

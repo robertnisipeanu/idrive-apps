@@ -311,8 +311,10 @@ Settings are in `waze-on-cluster.conf` (documented inline). Overrides go in
 `patch/carplay_patch.js` (Node 8, no dependencies) makes four edits after a
 verified full backup. `patch/carplay_locate.js` finds each edit's site in the
 build by its code and data and checks it before any write, so the patch
-applies to any carplay build in which every site is found exactly once; a
-build where one is not is left alone, with the reason. `carplay_patch.js
+applies to any carplay build in which every site is found exactly once and
+passes its cross-checks; a build where one does not is left alone, with the
+reason. The install patches only the proven build; another build is a
+conflict until Enable map (or `apply --unproven`) patches it once. `carplay_patch.js
 probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
 whether it is patchable, without writing. The build the patch was proven on,
 carplay 22.28.3, also has to match its shipped SHA-256 before the first edit.
@@ -329,7 +331,7 @@ Its sites:
 `woc-patch.sh` is the shell path, for experiments: `status`, `probe`,
 `verify`, `revert [--force]`, and `apply high|mid` with `--avb` (the app's
 sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
-<url>`, plus `--res WxH|stock` and `--safe WxH+X+Y|full`. It remounts `/` read-write only
+<url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It remounts `/` read-write only
 for the write. **Never `systemctl stop` or `restart` carplay**: that
 power-cycles the head unit, and so does any CarPlay death unless recmgr
 loaded `carplay` in both restart lists at this boot. `revert` refuses a
@@ -343,7 +345,8 @@ binary it does not recognise as a patched form of the backup
   site is not found or not recognised, is written by atomic rename, and
   takes effect at the next CarPlay start. Its first apply to a proven build
   (PATCH.md) also requires the whole file to be the shipped one; on any
-  other build, and once its backup exists, only the four sites are checked.
+  other build it needs `--unproven` (Enable map passes it, the install does
+  not), and once its backup exists only the four sites are checked.
   Removal reverts our edits only.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture
