@@ -61,6 +61,12 @@ when CarPlay next starts. `patchd` restarts CarPlay at once only where recmgr
 loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
 otherwise the app shows **Restart head unit**, a normal system reboot.
 
+The tool puts `carplay` on recmgr's restart list (the deploy tool writes it
+into both sections at install and takes it out at removal). From the next
+head-unit start after the install, a CarPlay crash leaves the head unit
+running instead of restarting it. On a fresh install the patched CarPlay
+first runs at that same start.
+
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
 stream is live, and the stock map is back when the stream ends. **Off** works

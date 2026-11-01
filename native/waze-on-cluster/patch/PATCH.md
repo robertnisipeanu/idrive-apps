@@ -363,6 +363,9 @@ binary it does not recognise. Every write is an atomic rename.
 
 On a stock restart list a CarPlay crash reboots the head unit with the
 patched binary still on disk: a boot loop with no HMI to turn the map off.
+The tool's `carplay` entry on recmgr's restart list (README) prevents that
+from the next head-unit start after the install; the recovery below covers
+a boot whose list recmgr loaded without it.
 `recovery.js` (`waze-on-cluster-recovery.service`, root) breaks it with the
 same `carplay_patch.js revert` Disable map uses. **It never kills, restarts
 or reboots anything**; it only replaces the binary on disk, keeping the
