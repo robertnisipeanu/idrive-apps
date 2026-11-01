@@ -15,9 +15,39 @@
 #include "graph_ramses19.h"
 #include "log.h"
 #include "ramses19/ramses.h"
+#include "ramses_console.h"
 #include "unit.h"
 
 namespace crs {
+
+namespace {
+
+/* The console's lines and events since the last call: the lines into the
+ * log, the events to the slot manager. */
+void renderer_events(RamsesConsole *console, SlotManager *slots)
+{
+    std::vector<ConsoleEvent> events;
+    std::vector<std::string> raw;
+    uint64_t dropped = 0;
+    console->take(&events, &raw, &dropped);
+    for (const std::string &line : raw)
+        log_info("ramses: %.400s", line.c_str());
+    if (dropped)
+        log_info("ramses: %llu more such lines not logged (at most %u a minute)", (unsigned long long)dropped,
+                 RamsesConsole::kRawPerMinute);
+    for (const ConsoleEvent &e : events) {
+        switch (e.kind) {
+        case ConsoleEvent::Subscribed:
+        case ConsoleEvent::Unsubscribed:
+            slots->on_subscription(e.scene, e.kind == ConsoleEvent::Subscribed, e.unknown, e.guid, e.ms);
+            break;
+        case ConsoleEvent::RendererGone: slots->on_renderer_gone(e.guid, e.ms); break;
+        case ConsoleEvent::ResourceRequest: slots->on_resource_request(e.guid, e.resources, e.ms); break;
+        }
+    }
+}
+
+}  // namespace
 
 int start(const cld::Config &cfg, char **)
 {
@@ -39,8 +69,16 @@ int start(const cld::Config &cfg, char **)
         return 1;
     }
 
-    const char *args[] = {"cluster-render"};
-    ramses::RamsesFrameworkConfig fwc(1, args);
+    /* The renderer's subscriptions, from RAMSES's console at info
+     * (ramses_console.h): stdout goes to the reader before RAMSES starts. */
+    std::vector<uint64_t> scenes;
+    for (const TargetSpec &t : sc.targets)
+        scenes.push_back(t.scene_id);
+    RamsesConsole *console = new RamsesConsole(scenes);   /* for the process: its thread reads until exit */
+    if (!console->start(&err))
+        log_warn("ramses: console not read (%s): renderer subscription not observable", err.c_str());
+    const char *args[] = {"cluster-render", "--log-level-console", "info"};
+    ramses::RamsesFrameworkConfig fwc(3, args);
     fwc.setDLTApplicationID("CLRD");
     fwc.setDLTApplicationDescription("cluster-render");
     const uint32_t user = (uint32_t)cfg.num("ramses_user");
@@ -93,6 +131,7 @@ int start(const cld::Config &cfg, char **)
         fds.clear();
         fds.push_back(pollfd{sig_fd, POLLIN, 0});
         fds.push_back(pollfd{link.fd(), POLLIN, 0});
+        fds.push_back(pollfd{console->fd(), POLLIN, 0});
         const size_t first = service.poll_fds(&fds);
         const int n = poll(fds.data(), fds.size(), service.timeout_ms(cld::now_ms()));
         if (n < 0 && errno != EINTR)
@@ -102,6 +141,8 @@ int start(const cld::Config &cfg, char **)
         const int64_t now = cld::now_ms();
         if (fds[1].revents & POLLIN)
             link.drain(&port, now);
+        if (fds[2].revents & POLLIN)
+            renderer_events(console, &service.slots());
         service.after_poll(fds, first, now);
     }
     service.shutdown(cld::now_ms());

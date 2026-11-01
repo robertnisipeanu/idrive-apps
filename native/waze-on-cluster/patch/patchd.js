@@ -49,8 +49,9 @@
  *                    pending: apply | revert, while a written change waits for
  *                    the next head-unit start (carplay is then deferred)
  *                    conflict: why the patch is not applied when the tool is
- *                    installed (an unrecognised binary, one something else
- *                    modified, a carplay.service that starts another program)
+ *                    installed (a binary the patcher cannot patch, one
+ *                    something else modified, a carplay.service that starts
+ *                    another program)
  *                  {"ev":"log","line":...}   the backlog on connect, then each new line
  *
  * Install-time activation (the deploy tool's activate and deactivate hooks,
@@ -295,11 +296,11 @@ function readState(cb) {
         else if (/variant:\s+ORIGINAL/.test(text) && sinkOriginal) state = 'original';
         else state = 'unknown';
         /* What keeps the tool from writing the patch by itself: a binary the
-         * patcher does not know, one something else modified (no backup of
-         * ours, not the pristine build), or another program started as
-         * carplay. */
+         * patcher cannot patch (an edit site not found, or one it does not
+         * recognise), one something else modified (no backup of ours, not the
+         * pristine build), or another program started as carplay. */
         var conflict = err && !text ? 'carplay status unreadable: ' + err.message
-            : !known ? 'carplay is not the build this patch knows' + (unknownWhy ? ' (' + unknownWhy[1] + ')' : '')
+            : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
             : foreignStart();
         /* A change waiting for the next head-unit start: the running carplay is

@@ -53,6 +53,7 @@ all: test
 
 # ---- host tests (no unit libraries) ---------------------------------------
 test: test-cpp
+	$(NODE) patch/test/locate_test.js
 	$(NODE) patch/test/patch_test.js
 	$(NODE) patch/test/patchd_patch_test.js
 	$(NODE) patch/test/patchd_activate_test.js

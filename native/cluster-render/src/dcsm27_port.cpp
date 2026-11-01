@@ -38,8 +38,8 @@ void Dcsm27Port::request(const TargetSpec &t)
 {
     auto it = contents_.find(t.content);
     if (it != contents_.end() && it->second.phase == Phase::Stopping) {
-        /* The library refuses the offer until the stop is accepted (its
-         * scene is retired until then, so the slot manager waits first). */
+        /* The library refuses the offer until the stop is accepted (the
+         * slot manager waits for confirmed() first, at most kConfirmMs). */
         answers_.push_back(Answer{t.scene_id, true, "offer: its last stop is not accepted yet"});
         return;
     }
@@ -108,10 +108,24 @@ void Dcsm27Port::dispatch(int64_t now_ms)
     }
 }
 
+bool Dcsm27Port::confirmed(const TargetSpec &t) const
+{
+    auto it = contents_.find(t.content);
+    return it == contents_.end() || it->second.phase != Phase::Stopping;
+}
+
 bool Dcsm27Port::stopping() const
 {
     for (const auto &kv : contents_)
         if (kv.second.phase == Phase::Stopping)
+            return true;
+    return false;
+}
+
+bool Dcsm27Port::holds(uint64_t scene_id) const
+{
+    for (const auto &kv : contents_)
+        if (kv.second.spec.scene_id == scene_id)
             return true;
     return false;
 }

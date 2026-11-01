@@ -9,8 +9,9 @@
 # It writes /tmp/woc-logs-<UTC date and time>.tar.gz and prints its path:
 # both tools' log files (with their .1), the renderer's and the capture's
 # status files, this boot's journal of the tools and of carplay (what the
-# journal still holds), the list of boots, the tools' folders, their local
-# settings, the time and the uptime. Anything missing is left out. It changes
+# journal still holds), the list of boots, the carplay patch probe (where its
+# edit sites are in this carplay), the tools' folders, their local settings,
+# the time and the uptime. Anything missing is left out. It changes
 # nothing on the unit. POSIX sh, for the unit's shell.
 set -u
 umask 077
@@ -50,6 +51,12 @@ if command -v journalctl >/dev/null 2>&1; then
         journalctl -b -o short-precise --no-pager -u "$unit" > "$DIR/journal-$unit.txt" 2>/dev/null
     done
     journalctl --list-boots --no-pager > "$DIR/boots.txt" 2>/dev/null
+fi
+
+HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+if [ -f "$HERE/carplay_patch.js" ]; then
+    NODE=$(command -v node || echo /usr/bin/node)
+    "$NODE" "$HERE/carplay_patch.js" probe > "$DIR/carplay-probe.txt" 2>&1
 fi
 
 ls -l /var/opt/cluster-render /var/opt/waze-on-cluster > "$DIR/ls.txt" 2>&1

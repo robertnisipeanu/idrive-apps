@@ -60,19 +60,27 @@ struct Wire : Dcsm27Wire {
     }
 };
 
-/* As Ramses27Gpu: a scene taken down is retired until its offer is gone
- * (on_stopped), and no new scene with its id is built meanwhile. */
+/* As Ramses27Gpu: a scene taken down while its content is offered or
+ * stopping is retired until its offer is gone (on_stopped), and no new scene
+ * with its id is built meanwhile. */
 struct Scenes27 : Scenes {
     std::set<uint64_t> retired;
+    std::function<bool(uint64_t)> offered;
+    int published = 0;
     bool publish(const TargetSpec &t, std::string *err) override
     {
         if (retired.count(t.scene_id)) {
             *err = "its last offer is still stopping";
             return false;
         }
+        published++;
         return true;
     }
-    void unpublish(const TargetSpec &t) override { retired.insert(t.scene_id); }
+    void unpublish(const TargetSpec &t) override
+    {
+        if (offered(t.scene_id))
+            retired.insert(t.scene_id);
+    }
 };
 
 static const uint64_t kCentre = 43204041, kWidget = 43204001;
@@ -91,6 +99,7 @@ struct Rig {
             stopped.push_back(scene);
             scenes.retired.erase(scene);
         };
+        scenes.offered = [this](uint64_t scene) { return port.holds(scene); };
         TargetSpec a;
         a.name = "map"; a.slot = 43100201; a.content = kCentre; a.scene_id = 0x4d4755000108;
         a.width = 874; a.height = 749; a.linger_ms = 0;
@@ -185,20 +194,40 @@ static void restop()
     r.tick();
     r.tick();
     ok("released: the offer stopping", calls_are("stop 43204041"));
-    r.now += 1000;
+    TargetSpec centre;
+    centre.content = kCentre;
+    ok("its scene stays published, warm, the release not confirmed",
+       r.m.published(0) && r.scenes.retired.empty() && !r.port.confirmed(centre));
     r.m.want(0, true, false);
-    r.tick();
-    ok("wanted again before the stop is accepted: no new scene, no offer (the library would refuse it), the ladder",
-       calls_are("") && r.m.status(0).state == TargetState::Waiting && r.m.status(0).retry_ms > 0 &&
-           r.m.status(0).reason.find("still stopping") != std::string::npos && r.evidence.empty());
-    r.port.on_stop_accepted(kCentre, r.now);
-    r.tick();
-    ok("the stop accepted: the old scene goes, nothing offered yet",
-       calls_are("") && r.stopped.size() == 1 && r.scenes.retired.empty());
-    for (int k = 0; k < 250; k++)
+    for (int k = 0; k < 50; k++)
         r.tick();
+    ok("wanted again before the stop is accepted: no offer (the library would refuse it), waiting for it",
+       calls_are("") && r.m.status(0).state == TargetState::Idle && r.evidence.empty());
+    r.port.on_stop_accepted(kCentre, r.now);
+    ok("the stop accepted: confirmed", r.port.confirmed(centre));
+    for (int k = 0; k < 60; k++)
+        r.tick();
+    ok("offered again after the request gap in the same scene, and parked",
+       calls_are("offer 43204041 in 43100201") && r.m.status(0).state == TargetState::Parked &&
+           r.stopped.size() == 1 && r.scenes.published == 1);
+
+    Rig s;
+    s.offered();
+    s.m.want(0, false, false);
+    s.tick();
+    s.tick();
+    calls.clear();
+    s.m.want(0, true, false);
+    for (int k = 0; k < 110; k++)
+        s.tick();
+    ok("no acceptance within kConfirmMs: asked anyway, refused without an offer, the ladder",
+       calls_are("") && s.m.status(0).state == TargetState::Waiting && s.m.status(0).retry_ms > 0 &&
+           s.m.status(0).reason.find("not accepted yet") != std::string::npos && s.evidence.empty());
+    s.port.on_stop_accepted(kCentre, s.now);
+    for (int k = 0; k < 250; k++)
+        s.tick();
     ok("offered again at the ladder's first step, and parked",
-       calls_are("offer 43204041 in 43100201") && r.m.status(0).state == TargetState::Parked);
+       calls_are("offer 43204041 in 43100201") && s.m.status(0).state == TargetState::Parked);
 
     Rig c;
     c.offered();

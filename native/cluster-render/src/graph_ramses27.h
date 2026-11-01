@@ -19,15 +19,18 @@
  * - no pass clears colour, the first one included: the cluster draws the
  *   scene into its own area (VERIFIED on the car with icwidget, whose
  *   moving text left no trail);
- * - a scene taken down stays published as it was last flushed until the
- *   cluster has accepted the stop of its offer (retired, then dropped by
- *   drop_retired()), as icwidget did on the car: unpublished at once, the
- *   stand-in cluster in the emulator logged errors unassigning it. No new
- *   scene with its id is built meanwhile: scene() refuses, and the target
- *   waits on the slot manager's ladder. */
+ * - a scene taken down while its content is offered, or its offer is
+ *   stopping, stays published as it was last flushed until the cluster has
+ *   accepted the stop (retired, then dropped by drop_retired()), as icwidget
+ *   did on the car: unpublished at once, the stand-in cluster in the
+ *   emulator logged errors unassigning it. No new scene with its id is built
+ *   meanwhile: scene() refuses, and the target waits on the slot manager's
+ *   ladder. A scene taken down with no offer left (a warm scene, slots.h)
+ *   goes at once. */
 #ifndef CRS_GRAPH_RAMSES27_H
 #define CRS_GRAPH_RAMSES27_H
 
+#include <functional>
 #include <map>
 #include <set>
 
@@ -71,6 +74,9 @@ public:
     /* The offer of the scene's content is gone: its retired scene is
      * unpublished and destroyed. */
     void drop_retired(uint64_t scene_id);
+    /* Whether the scene's content is offered or its offer is stopping
+     * (Dcsm27Port::holds); unset: always. */
+    std::function<bool(uint64_t scene_id)> offered;
 
 private:
     ramses::RamsesClient &client_;

@@ -85,6 +85,7 @@ void Dcsm2Port::request(const TargetSpec &t)
     Content &c = contents_[t.scene_id];
     c = Content();
     c.spec = t;
+    pending_.erase(t.scene_id);   /* confirmed or not, no longer awaited */
     asked_[t.scene_id] = total_;
     if (up_)
         fetches_.push_back(t.scene_id);
@@ -102,8 +103,13 @@ void Dcsm2Port::release(const TargetSpec &t)
         wire_->unmap(t.scene_id);
     }
     wire_->unfetch(t.scene_id);
-    if (up_)
+    if (up_) {
         unfetched_[t.scene_id]++;
+        unfetches_.push_back(Unfetch{t.scene_id, it->second.fetched});
+        Pending &p = pending_[t.scene_id];
+        p.replies++;
+        p.removals += it->second.fetched;
+    }
     contents_.erase(it);
 }
 
@@ -121,6 +127,14 @@ uint64_t Dcsm2Port::take(std::deque<uint64_t> *q)
     uint64_t s = q->front();
     q->pop_front();
     return s;
+}
+
+void Dcsm2Port::settle(uint64_t scene, Pending &p)
+{
+    if (p.replies > 0 || p.removals > 0)
+        return;
+    log_info("dcsm: content 0x%llx: the release is confirmed", (unsigned long long)scene);
+    pending_.erase(scene);
 }
 
 void Dcsm2Port::refuse(uint64_t scene, Content &c, Refusal r, const std::string &why, int64_t now_ms)
@@ -144,6 +158,8 @@ void Dcsm2Port::on_availability(bool up, int64_t now_ms)
     fetches_.clear();
     maps_.clear();
     unmaps_.clear();
+    unfetches_.clear();
+    pending_.clear();
     contents_.clear();   /* gone with the service; nothing to release */
     unfetched_.clear();
     slots_.clear();
@@ -168,6 +184,23 @@ void Dcsm2Port::on_reply(uint16_t method, bool ok, uint32_t status, const std::s
                      ok ? status_text.c_str() : "no valid reply");
         return;   /* nothing waits on an unmap */
     }
+    if (method == dcsm::kReqUnfetchContent) {
+        Unfetch u;
+        if (!unfetches_.empty()) {
+            u = unfetches_.front();
+            unfetches_.pop_front();
+        }
+        log_info("dcsm: reply to request 0x%04x (content 0x%llx): %s", method, (unsigned long long)u.scene,
+                 ok ? status_text.c_str() : "no valid reply");
+        auto p = pending_.find(u.scene);
+        if (p == pending_.end())
+            return;
+        p->second.replies--;
+        if (u.removal && !(ok && status == dcsm::E_DCSM_OK))
+            p->second.removals--;   /* not unfetched: no REMOVED comes */
+        settle(u.scene, p->second);
+        return;
+    }
     const uint64_t scene = method == dcsm::kReqFetchContent ? take(&fetches_)
                            : method == dcsm::kReqMapContent ? take(&maps_) : 0;
     const std::string why = ok ? status_text : "no valid reply";
@@ -187,6 +220,11 @@ void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
 {
     total_.fetch++;
     log_info("dcsm: content 0x%llx fetch status %u", (unsigned long long)scene, status);
+    auto p = pending_.find(scene);
+    if (p != pending_.end() && status == dcsm::E_FETCH_STATUS_REMOVED && p->second.removals > 0) {
+        p->second.removals--;
+        settle(scene, p->second);
+    }
     auto un = unfetched_.find(scene);
     if (un != unfetched_.end()) {
         if (status == dcsm::E_FETCH_STATUS_REMOVED) {
@@ -207,18 +245,20 @@ void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
             break;
         c.phase = Phase::Mapping;
         c.map_asked = true;
+        c.fetched = true;
         if (up_)
             maps_.push_back(scene);
         wire_->map(scene, c.spec.content_class, c.spec.slot);
         break;
     case dcsm::E_FETCH_STATUS_FAILED:
         if (c.phase == Phase::Fetching)
-            refuse(scene, c, Refusal::Transient, "E_FETCH_STATUS_FAILED", now_ms);
+            refuse(scene, c, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", now_ms);
         break;
     case dcsm::E_FETCH_STATUS_REMOVED:
         /* The KOMBI took the slot back by removing the fetch, with no map
          * transition: the stock map re-mapping over ours, its watchdog, or
          * its renderer unsubscribing the scene. */
+        c.fetched = false;
         if (c.phase == Phase::Mapped || c.phase == Phase::Parked) {
             c.phase = Phase::Lost;
             c.map_asked = false;

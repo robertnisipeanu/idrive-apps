@@ -620,9 +620,10 @@ void Compositor::render(int64_t now_ms)
     now_ms_ = now_ms;
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
-        /* Parked: nothing of it is on screen, and the link carries the
-         * HMI's content too. It stages again once shown. */
-        if (!t.graph || slots_->status((int)ti).state == TargetState::Parked)
+        /* Released: nothing of it is asked for. Parked: nothing of it is
+         * on screen, and the link carries the HMI's content too. It stages
+         * again once shown. */
+        if (!t.graph || !slots_->requested((int)ti) || slots_->status((int)ti).state == TargetState::Parked)
             continue;
         /* A layer whose failed write left its buffer half written holds the
          * target: only its whole rewrite stages, and nothing flushes until
@@ -659,18 +660,12 @@ void Compositor::render(int64_t now_ms)
         }
         if (!wrote && !failed && !t.dirty)
             continue;
-        /* The link counts as carrying load (for the governor) from kLoadBytes
-         * a second written, whether or not the flush goes. */
-        if (now_ms - second_ms_ >= 1000) {
-            second_ms_ = now_ms;
-            second_bytes_ = 0;
-        }
+        uint64_t bytes = 0;
         for (const Layer *l : staged)
-            second_bytes_ += l->staged_bytes();
+            bytes += l->staged_bytes();
         for (const Asset *a : staged_assets)
-            second_bytes_ += a->staged_bytes();
-        if (second_bytes_ >= kLoadBytes)
-            governor_.activity(now_ms);
+            bytes += a->staged_bytes();
+        load(bytes, now_ms);
         bool ok = false;
         if (failed)
             governor_.evidence(Evidence::WriteRefused, now_ms, slots_->targets()[ti].name);
@@ -703,6 +698,38 @@ void Compositor::render(int64_t now_ms)
         pacer_.set_rate(governor_.cap());
 }
 
+/* The link counts as carrying load (for the governor) from kLoadBytes a
+ * second written, whether or not the flush goes. */
+void Compositor::load(uint64_t bytes, int64_t now_ms)
+{
+    if (now_ms - second_ms_ >= 1000) {
+        second_ms_ = now_ms;
+        second_bytes_ = 0;
+    }
+    second_bytes_ += bytes;
+    if (second_bytes_ >= kLoadBytes)
+        governor_.activity(now_ms);
+}
+
+void Compositor::resent(const TargetSpec &spec, int64_t now_ms)
+{
+    const int ti = slots_->index(spec.name);
+    uint64_t bytes = 0;
+    for (const auto &kv : layers_)
+        if (kv.second.layer->target() == ti)
+            bytes += kv.second.layer->buffer_bytes();
+    for (const auto &kv : assets_)
+        if (kv.second.asset->target() == ti && kv.second.asset->attached())
+            bytes += kv.second.asset->bytes();
+    if (!bytes)
+        return;
+    pacer_.ready(now_ms);
+    pacer_.spend(bytes);
+    load(bytes, now_ms);
+    log_info("target %s: its scene goes whole to the renderer again: %llu KB charged to the upload budget",
+             spec.name.c_str(), (unsigned long long)(bytes / 1024));
+}
+
 bool Compositor::holds(const Target &t) const
 {
     for (uint32_t id : t.arr.order) {
@@ -721,7 +748,8 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             best = w;
     };
     for (const auto &kv : layers_)
-        at(kv.second.layer->wake_in_ms(now_ms));
+        if (slots_->requested(kv.second.layer->target()))
+            at(kv.second.layer->wake_in_ms(now_ms));
     for (const Target &t : targets_)
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
@@ -764,6 +792,21 @@ std::vector<const Layer *> Compositor::layers() const
     for (const auto &kv : layers_)
         out.push_back(kv.second.layer.get());
     return out;
+}
+
+WriteStats Compositor::write_stats(int target) const
+{
+    WriteStats sum;
+    for (const auto &kv : layers_) {
+        if (kv.second.layer->target() != target)
+            continue;
+        const WriteStats w = kv.second.layer->write_stats();
+        sum.frames += w.frames;
+        sum.bytes += w.bytes;
+        sum.failed += w.failed;
+        sum.holds += w.holds;
+    }
+    return sum;
 }
 
 std::vector<const Asset *> Compositor::assets() const

@@ -11,7 +11,8 @@
  *
  * This service restores the verified known-good original automatically when it
  * sees that pattern, using the same vetted, reversible carplay_patch.js revert
- * (verified backup, SHA gate, refuses an unrecognised binary) that Disable map
+ * (verified backup, refuses a binary it does not recognise as a patched form of
+ * the backup's build) that Disable map
  * uses, with / remounted read-write only for the write and read-only again
  * after. It never kills or restarts carplay and never reboots: it only replaces
  * the on-disk binary, which the next carplay start (the crash's own restart, or
@@ -26,10 +27,9 @@
  * HEALTHY_MS) clears the counter; a clean shutdown (SIGTERM) exempts that boot.
  *
  * It is only ever armed/counted while the on-disk carplay is a recognised
- * patched build of the known original with a verified backup present; a stock
- * binary, or one a firmware update replaced (unrecognised), is left untouched
- * and the counter is cleared — recovery never downgrades a binary it does not
- * recognise. A classify that cannot be read leaves the counter as it is.
+ * patched build with a backup present; a stock binary, or one a firmware
+ * update replaced (unrecognised), is left untouched and the counter is
+ * cleared — recovery never downgrades a binary it does not recognise. A classify that cannot be read leaves the counter as it is.
  *
  * Node 8.16.2 on the unit. No dependencies.
  */
@@ -312,7 +312,11 @@ function runMain() {
     rec.startBoot(function () {
         starting = false;
         if (stopping) { finish(); return; }   /* a stop arrived mid-restore: let it complete, then exit */
-        if (rec.patchActive) timer = setInterval(function () { rec.tick(); }, POLL_MS);
+        /* Polled even with nothing to watch (tick skips then): the service
+         * stays up, since Restart=always would otherwise start it again every
+         * few seconds and the deploy tool's health check takes that for a
+         * crash loop. */
+        timer = setInterval(function () { rec.tick(); }, POLL_MS);
     });
     function stop() { stopping = true; if (!starting) finish(); }   /* else finish() runs when startBoot returns */
     process.on('SIGTERM', stop);

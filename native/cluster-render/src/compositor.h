@@ -4,7 +4,7 @@
  *
  * Each tick, arrange() orders each target's layers (stack.h), shows the
  * drawn ones in its scene and tells the slot manager whether the target is
- * wanted; render() then has every layer of each published target stage its
+ * wanted; render() then has every layer of each requested target stage its
  * changes, top layer first (so overlays get the byte budget before a video
  * under them), and flushes the scene once: a tick's changes of all layers
  * reach the display together or not at all. A setData a layer could not
@@ -30,7 +30,16 @@
  * It is the slot manager's Scenes: publishing a target builds its scene and
  * attaches the target's assets and then its layers, which start from what
  * they last showed, binds and animations included; unpublishing takes the
- * scene down and keeps the assets and the layers. */
+ * scene down and keeps the assets and the layers. Only a target the slot
+ * manager has requested stages and flushes. A released target's scene stays
+ * published as last flushed, its layers attached and holding what they have
+ * not written: a video's newest frame, an image's changed rectangles. Asked
+ * for again, its layers continue from there in the tick that asks: what
+ * their buffers hold is what the scene last flushed, and a renderer that
+ * subscribes gets the scene whole, as last flushed, from the RAMSES client
+ * (VERIFIED in the emulator: sent at the subscription), so a video writes
+ * the tiles that differ from it, not the whole frame. That resend is
+ * charged to the byte budget when the scene is asked for (resent()). */
 #ifndef CRS_COMPOSITOR_H
 #define CRS_COMPOSITOR_H
 
@@ -128,11 +137,15 @@ public:
     void set_clock(int64_t (*clock_us)()) { clock_us_ = clock_us; }
     /* Layers by id, for status reports. */
     std::vector<const Layer *> layers() const;
+    /* The sum of the target's layers' write_stats(). */
+    WriteStats write_stats(int target) const;
     std::vector<const Asset *> assets() const;
     uint64_t owner_of(uint32_t id) const;
 
     bool publish(const TargetSpec &t, std::string *err) override;
     void unpublish(const TargetSpec &t) override;
+    /* Charges the budget the scene's buffer bytes, layers' and assets'. */
+    void resent(const TargetSpec &t, int64_t now_ms) override;
 
 private:
     struct Entry {
@@ -166,6 +179,8 @@ private:
     };
 
     uint32_t admit(uint64_t owner, int target, size_t pixel_bytes, std::string *err);
+    /* Bytes written now_ms, flushed or not, for the governor's load. */
+    void load(uint64_t bytes, int64_t now_ms);
     /* Moves the target's fade on to now_ms and, fading out, keeps the
      * layers last drawn in t.arr; gives the layers the fade by steps. */
     void fade(int ti, Target &t, int64_t now_ms);

@@ -238,6 +238,7 @@ int start(const cld::Config &cfg, char **)
     Service service(&gpu, &port, sc);
     port.set_manager(&service.slots());
     port.on_stopped = [&gpu](uint64_t scene) { gpu.drop_retired(scene); };
+    gpu.offered = [&port](uint64_t scene) { return port.holds(scene); };
     Events events(port);
     if (!service.start(&err)) {
         log_error("%s", err.c_str());

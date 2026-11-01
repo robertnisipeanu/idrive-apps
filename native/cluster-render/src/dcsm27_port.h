@@ -19,11 +19,14 @@
  * - contentShow is shown; contentHide and contentRelease (the cluster takes
  *   the content back to Ready, Assigned or Offered, as on every layout
  *   change, VERIFIED on the car) are parked again: the offer stays;
- * - a release is a stop of the offer. Until the cluster accepts it the
- *   library refuses a new offer of the content (even from inside
- *   stopOfferAccepted: it forgets the content only after that returns), and
- *   the scene stays published (on_stopped), so no new scene with its id is
- *   built (Ramses27Gpu::scene): a request in between waits on the ladder;
+ * - a release is a stop of the offer, confirmed() once the cluster accepts
+ *   it (on the car within about 30 ms). Until then the library refuses a new
+ *   offer of the content (even from inside stopOfferAccepted: it forgets the
+ *   content only after that returns): the slot manager waits for the
+ *   confirmation, and a request that comes anyway is refused (the ladder).
+ *   The scene stays published meanwhile, warm (slots.h) or, taken down,
+ *   retired until on_stopped (Ramses27Gpu::scene builds no new one with its
+ *   id);
  * - nothing is lost while the offer stands: a cluster that goes away takes
  *   its assignments back (contentRelease), and the offer is there when it
  *   comes back. There is no slot table, no take-over (no counterpart is
@@ -73,6 +76,7 @@ public:
     bool available() const override { return up_; }
     void request(const TargetSpec &t) override;
     void release(const TargetSpec &t) override;
+    bool confirmed(const TargetSpec &t) const override;
     void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override {}
 
@@ -90,6 +94,8 @@ public:
     void dispatch(int64_t now_ms);
     /* An offer is stopping: the cluster has not accepted the stop yet. */
     bool stopping() const;
+    /* A content of the scene is offered or its offer is stopping. */
+    bool holds(uint64_t scene_id) const;
 
     /* A released target's offer is gone (its stop accepted, or none to
      * stop): its scene may go now (Ramses27Gpu::drop_retired). Called from

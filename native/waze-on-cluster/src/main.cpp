@@ -260,7 +260,9 @@ int serve(const Config &cfg)
             alt_state = s;
             alt_read_ms = now;
         }
-        feed.set_stream(liveness.live(alt_state, producer.last_frame_ms(), now), producer.frozen(now));
+        const bool live = liveness.live(alt_state, producer.last_frame_ms(), now);
+        producer.set_live(live);
+        feed.set_stream(live, producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status());

@@ -961,8 +961,11 @@ Ramses27Gpu::~Ramses27Gpu()
 
 void Ramses27Gpu::retire(ramses::Scene *scene)
 {
-    drop_retired(scene->getSceneId().getValue());
-    retired_[scene->getSceneId().getValue()] = scene;
+    const uint64_t id = scene->getSceneId().getValue();
+    drop_retired(id);
+    retired_[id] = scene;
+    if (offered && !offered(id))
+        drop_retired(id);   /* no offer to stop: no stop to wait for */
 }
 
 void Ramses27Gpu::drop_retired(uint64_t scene_id)

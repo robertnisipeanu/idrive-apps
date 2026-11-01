@@ -176,7 +176,7 @@ Every JSON message has `ev`.
 |---|---|---|
 | `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,widget:2240x896`) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
-| `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms` | a target's state changed |
+| `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
 | `error` | `op`, `ref`, `reason` | a message was refused |
 | `status` | `text` | after a status request |
@@ -192,7 +192,10 @@ frames stopped); `hidden`; `error` (the renderer refused it). Target states:
 iDrive 8: offered, until the cluster shows it), `shown`, `lingering`,
 `waiting` (with `holder` `stock` or `foreign` when
 someone else holds the slot, and `retry_in_ms` when on a timer),
-`unavailable`.
+`unavailable`. `rendering`, for a shown or lingering target: `verified`
+(the display's renderer is subscribed to its scene), `checking` (not
+subscribed yet; after 1.5 s shown the service asks for the slot again),
+`unobservable` (the service cannot see subscriptions); `none` otherwise.
 
 A client that does not read its events (over 1 MiB waiting) is
 disconnected.
