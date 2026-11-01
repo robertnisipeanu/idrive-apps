@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* Proves carplay_patch.js against the unit's carplay binary (CARPLAY_BIN): the SHA
- * gate, variant apply (high and mid), the sink redirect, the self-start call
- * retarget, the resolution geometry and safe-area rewrite, region-bounded diffs,
- * idempotence, verify, and byte-exact revert of all four edits. Without
- * CARPLAY_BIN it skips.
+/* Proves carplay_patch.js against the unit's carplay binary (CARPLAY_BIN): the
+ * located sites are the documented ones, the proven build's SHA gate, variant
+ * apply (high and mid), the sink redirect, the self-start call retarget, the
+ * resolution geometry and safe-area rewrite, region-bounded diffs, idempotence,
+ * verify, partial patches, byte-exact revert of all four edits, a build not in
+ * the proven list, and a read-only probe. Without CARPLAY_BIN it skips.
  *
  *   node patch_test.js
  */
@@ -347,7 +348,7 @@ try {
     r = run(['status', '--target', fs1]);
     ok('safe area outside the frame: status res UNKNOWN', /res:\s+UNKNOWN/.test(r.out), r.out);
     r = run(['apply', '--target', fs1, '--panel', 'high', '--yes']);
-    ok('safe area outside the frame: apply refused, no write', r.code !== 0 && /resolution geometry/.test(r.out) && fs.readFileSync(fs1).equals(bad), r.out);
+    ok('safe area outside the frame: apply refused, no write', r.code !== 0 && /resolution: geometry not recognised/.test(r.out) && fs.readFileSync(fs1).equals(bad), r.out);
 
     /* a corrupted resolution anchor is refused before any write */
     var badres = Buffer.from(SRCBUF); badres[0x20ca5c] ^= 0xff;   /* the store after the px movabs */
@@ -358,14 +359,73 @@ try {
     r = run(['apply', '--target', br, '--panel', 'high', '--yes']);
     ok('bad res anchor: apply refused, no write', r.code !== 0 && /resolution/.test(r.out) && sha256(br) === brSha, r.out);
 
-    /* a corrupted self-start anchor is refused before any write */
-    var badanchor = Buffer.from(SRCBUF); badanchor[CALL - 4] ^= 0xff;   /* inside selfstart_anchor_before */
-    var ba = path.join(dir, 'carplay_badanchor'); fs.writeFileSync(ba, badanchor);
-    r = run(['status', '--target', ba]);
-    ok('bad self-start anchor: status reports selfstart UNKNOWN', /selfstart:\s+UNKNOWN/.test(r.out), r.out);
-    var baSha = sha256(ba);
-    r = run(['apply', '--target', ba, '--panel', 'high', '--yes']);
-    ok('bad self-start anchor: apply refused, no write', r.code !== 0 && /anchor/.test(r.out) && sha256(ba) === baSha, r.out);
+    /* a self-start call without its AVAILABLE argument is refused before any write */
+    var badcall = Buffer.from(SRCBUF); badcall[CALL - 12] = 0x02;   /* mov dword [rsp+8],1 -> 2 */
+    var bc = path.join(dir, 'carplay_badcall'); fs.writeFileSync(bc, badcall);
+    r = run(['status', '--target', bc]);
+    ok('damaged self-start site: status reports selfstart UNKNOWN with the reason', /selfstart:\s+UNKNOWN \(self-start: call has no AVAILABLE argument\)/.test(r.out) &&
+        /known:\s+NO — self-start: call has no AVAILABLE argument/.test(r.out), r.out);
+    var bcSha = sha256(bc);
+    r = run(['apply', '--target', bc, '--panel', 'high', '--yes']);
+    ok('damaged self-start site: apply refused, no write', r.code !== 0 && /refusing: self-start: call has no AVAILABLE argument/.test(r.out) && sha256(bc) === bcSha, r.out);
+
+    /* An Edit-1-only binary (the variant slot alone): partially patched, and
+     * without our backup the first edit refuses it. */
+    var e1 = path.join(dir, 'carplay_edit1');
+    var e1buf = Buffer.from(SRCBUF); e1buf.writeUInt32LE(0xfff7f2bc >>> 0, SLOT);
+    fs.writeFileSync(e1, e1buf);
+    r = run(['status', '--target', e1]);
+    ok('edit-1-only: variant PATCHED, the rest ORIGINAL, a modified build', /variant:\s+PATCHED -> IC_HIGH/.test(r.out) && /sink:\s+ORIGINAL/.test(r.out) &&
+        /selfstart:\s+ORIGINAL/.test(r.out) && /res:\s+ORIGINAL/.test(r.out) && /known:\s+yes, modified build/.test(r.out), r.out);
+    r = run(['verify', '--target', e1]);
+    ok('edit-1-only: verify FAILS as partially patched', r.code !== 0 && /partially patched — variant patched, self-start original, res original/.test(r.out), r.out);
+    r = run(['apply', '--target', e1, '--panel', 'high', '--yes']);
+    ok('edit-1-only: the first edit refuses it', r.code !== 0 && /first edit requires the pristine build: variant edited/.test(r.out) && fs.readFileSync(e1).equals(e1buf), r.out);
+
+    /* probe reads only, and names the documented sites */
+    var before = fs.statSync(SRC).mtime.getTime();
+    r = run(['probe', SRC]);
+    ok('probe: the documented sites, proven, patchable', r.code === 0 && /variant:\s+slot 0x2ba4f0 \(table 0x2ba4d4, 12 slots\): ORIGINAL/.test(r.out) &&
+        /sink:\s+slot 0x2a20b0 \(59 bytes\): ORIGINAL/.test(r.out) &&
+        /selfstart:\s+call 0x18176c in onSuggestUi 0x1816f0 \(setStreamStatus 0x181560, requestStream 0x181810\): ORIGINAL/.test(r.out) &&
+        /res:\s+immediates 0x20ca32 0x20ca54 0x20ca66 0x20ca74 \(builder 0x20ca30\): ORIGINAL/.test(r.out) &&
+        /proven:\s+yes, carplay 22\.28\.3/.test(r.out) && /patchable:\s+yes/.test(r.out) && /build-id:\s+5de62156/.test(r.out), r.out);
+    ok('probe: the file untouched', sha256(SRC) === ORIG_SHA && fs.statSync(SRC).mtime.getTime() === before);
+    r = run(['probe', bc]);
+    ok('probe: a damaged site makes the build not patchable, with the reason', /patchable:\s+no — self-start: call has no AVAILABLE argument/.test(r.out), r.out);
+
+    /* A build outside the proven list (another build-id) with every site
+     * stock: patched without the whole-file gate, and reverted byte-exact. */
+    var other = Buffer.from(SRCBUF);
+    var bid = other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'));
+    other[bid] ^= 0xff;
+    other[0x9f9a0] ^= 0xff;   /* and a byte that differs from the proven build elsewhere */
+    var ot = path.join(dir, 'carplay_other');
+    fs.writeFileSync(ot, other);
+    r = run(['status', '--target', ot]);
+    ok('unproven build: pristine by its stock sites', /known:\s+yes, pristine build a2e62156/.test(r.out), r.out);
+    r = run(['apply', '--target', ot, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--yes']);
+    ok('unproven build: apply writes all four edits', r.code === 0 && /patched OK/.test(r.out) && /variant -> IC_HIGH/.test(r.out) &&
+        /self-start -> requestStream/.test(r.out) && /resolution -> 1088x480/.test(r.out), r.out);
+    var od = diffs(other, fs.readFileSync(ot));
+    ok('unproven build: the diff stays in the edit regions', od.length > 0 && od.every(function (x) {
+        return (x >= SLOT && x < SLOT + 4) || (x >= SINK && x < SINK + SINK_LEN) || (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x); }));
+    r = run(['verify', '--target', ot]);
+    ok('unproven build: verify passes', r.code === 0 && /IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557/.test(r.out), r.out);
+    r = run(['revert', '--target', ot, '--yes']);
+    ok('unproven build: revert restores it byte-exact', r.code === 0 && fs.readFileSync(ot).equals(other), r.out);
+
+    /* A backup of another build is never restored over the target. */
+    fs.writeFileSync(tgt, SRCBUF);
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    fs.writeFileSync(tgt + '.woc-orig', other);
+    fs.unlinkSync(tgt + '.woc-orig.json');
+    var tSha = sha256(tgt);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('a backup of another build: revert refuses, no write', r.code !== 0 && /another build/.test(r.out) && sha256(tgt) === tSha, r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'mid', '--yes']);
+    ok('a backup of another build: apply refuses, no write', r.code !== 0 && /original of another build/.test(r.out) && sha256(tgt) === tSha, r.out);
 } finally {
     try { fs.readdirSync(dir).forEach(function (f) { fs.unlinkSync(path.join(dir, f)); }); fs.rmdirSync(dir); } catch (e) {}
 }

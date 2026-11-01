@@ -9,7 +9,7 @@ driven from the HMI by the companion app
 CarPlay sends the cluster map only as H.264 video, with no map data, so this
 is a video pipeline:
 
-1. **Ungate the second display.** A reversible, SHA-pinned patch to
+1. **Ungate the second display.** A reversible patch to
    `/usr/bin/carplay` makes `KI_KOMBI_VARIANT` 7 resolve to a supported
    cluster variant, makes CarPlay start the cluster stream itself, and
    advertises the size the map is shown at ([patch/PATCH.md](patch/PATCH.md)).
@@ -40,9 +40,9 @@ kills or restarts CarPlay. The Store shows a restart pending; the app shows
 `Patch pending — reboot to activate`. One head-unit start runs the patched
 CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
 and the app says why and offers Enable map, when Disable map was used, when
-the binary is not the known build or something else modified it, or when
-`carplay.service` starts another program. An update brings an older patch of
-ours up to date.
+the patcher cannot find or recognise one of its edit sites in the binary or
+something else modified it, or when `carplay.service` starts another program.
+An update brings an older patch of ours up to date.
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` reverts only our byte regions,
@@ -202,11 +202,17 @@ Settings are in `waze-on-cluster.conf` (documented inline). Overrides go in
 
 ## The patch
 
-`patch/carplay_patch.js` (Node 8, no dependencies) makes four edits, each
-validated against the one known build (whole-file SHA-256, plus anchor bytes
-around each region), after a verified full backup:
+`patch/carplay_patch.js` (Node 8, no dependencies) makes four edits after a
+verified full backup. `patch/carplay_locate.js` finds each edit's site in the
+build by its code and data and checks it before any write, so the patch
+applies to any carplay build in which every site is found exactly once; a
+build where one is not is left alone, with the reason. `carplay_patch.js
+probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
+whether it is patchable, without writing. The build the patch was proven on,
+carplay 22.28.3, also has to match its shipped SHA-256 before the first edit.
+Its sites:
 
-| Edit | What it does | Where |
+| Edit | What it does | Where (carplay 22.28.3) |
 |---|---|---|
 | variant | jump-table slot for `KI_KOMBI_VARIANT` 7 → IC_HIGH or IC_MID | 4 B at `0x2ba4f0` |
 | sink | second-stream sink URL: stock `avb://`, or `udp://…`, `file://…` | ≤ 59 B at `0x2a20b0` |
@@ -214,10 +220,10 @@ around each region), after a verified full backup:
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
-`woc-patch.sh` is the shell path, for experiments: `status`, `verify`,
-`revert [--force]`, and `apply high|mid` with `--avb` (the app's sink), no
-flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink <url>`, plus
-`--res WxH|stock` and `--safe WxH+X+Y|full`. It remounts `/` read-write only
+`woc-patch.sh` is the shell path, for experiments: `status`, `probe`,
+`verify`, `revert [--force]`, and `apply high|mid` with `--avb` (the app's
+sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
+<url>`, plus `--res WxH|stock` and `--safe WxH+X+Y|full`. It remounts `/` read-write only
 for the write. **Never `systemctl stop` or `restart` carplay**: that
 power-cycles the head unit, and so does any CarPlay death unless recmgr
 loaded `carplay` in both restart lists at this boot. `revert` refuses a
@@ -226,9 +232,10 @@ binary it does not recognise as a patched form of the backup
 
 ## Safety
 
-- The patch is the only change to a BMW binary. It is reversible, SHA-pinned
-  and fully backed up, refuses an unknown or otherwise-modified build, is
-  written by atomic rename, and takes effect at the next CarPlay start.
+- The patch is the only change to a BMW binary. It is reversible and fully
+  backed up, checks every edit site before writing, refuses a build where a
+  site is not found or not recognised and one otherwise modified, is written
+  by atomic rename, and takes effect at the next CarPlay start.
   Removal reverts our edits only.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture
@@ -296,8 +303,8 @@ link-only stubs of the unit's libmfx, libva, libva-drm and IAS AVB bridge
 The patch tests run against a copy of the unit's `/usr/bin/carplay`
 (carplay 22.28.3, sha256
 `ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50`) named by
-`CARPLAY_BIN`; without it they are skipped (`SKIP`). The repository carries
-no BMW binary. `test-firmware` runs the unit's own dlt-daemon, libdlt and
+`CARPLAY_BIN`; without it they are skipped (`SKIP`). The locator's test runs
+on synthetic builds without it. The repository carries no BMW binary. `test-firmware` runs the unit's own dlt-daemon, libdlt and
 dlt-receive from `ROOTFS`, an extracted root file system of the unit.
 
 ## License
