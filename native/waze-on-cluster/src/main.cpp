@@ -3,8 +3,9 @@
 /* waze-on-cluster: decode the captured CarPlay 2nd-screen H.264 (the Waze/Maps
  * cluster map) and hand it to the shared cluster renderer (cluster-render),
  * which draws it in a cluster slot. The service runs from boot, so it decodes
- * from the stream's first keyframe; the map goes up with the first decoded
- * frame and comes down after the frames stop (map_feed.h). The control socket
+ * from the stream's first keyframe; the map goes up with the first non-blank
+ * picture and comes down when the stream ends, freezes or stays blank
+ * (map_feed.h, freeze_watch.h). The control socket
  * reports its status and log to the Waze app.
  *
  *   waze-on-cluster [-c FILE] [-s key=value]...     serve the control socket
@@ -175,7 +176,7 @@ int serve(const Config &cfg)
         {"dirty_threshold", 0, 64}, {"dirty_settle_ms", 0, 3600000}, {"tex_level_bits", 0, 3},
         {"target_fps", 0, 60},      {"pan_blocks", 0, 1},            {"stall_ms", 1000, 600000},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
-        {"idle_ms", 1000, 600000},
+        {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
         {"alt_screen_uid", 0, 4294967294L}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
@@ -186,6 +187,7 @@ int serve(const Config &cfg)
     vc.stall_ms = (int)cfg.num("stall_ms");
     vc.freeze.ms = (unsigned)cfg.num("freeze_ms");
     vc.freeze.min_fps = (unsigned)cfg.num("freeze_min_fps");
+    vc.freeze.blank_ms = (unsigned)cfg.num("blank_ms");
 
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
@@ -262,7 +264,7 @@ int serve(const Config &cfg)
         }
         const bool live = liveness.live(alt_state, producer.last_frame_ms(), now);
         producer.set_live(live);
-        feed.set_stream(live, producer.frozen(now));
+        feed.set_stream(live, producer.frozen(now), producer.picture(now));
         feed.poll(now);
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
@@ -421,6 +423,7 @@ void define_keys(Config *cfg)
     cfg->define("idle_ms", "60000");
     cfg->define("freeze_ms", "10000");
     cfg->define("freeze_min_fps", "3");
+    cfg->define("blank_ms", "10000");
     cfg->define("alt_screen_port", "6031");
     cfg->define("alt_screen_uid", "13002");
     cfg->define("target_fps", "30");

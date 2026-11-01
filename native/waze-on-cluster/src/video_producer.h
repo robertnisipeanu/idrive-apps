@@ -102,6 +102,8 @@ public:
     /* Every decoded frame the same blank picture while they keep coming,
      * after the stream showed a picture (freeze_watch.h). */
     bool frozen(int64_t now_ms) const;
+    /* What the stream has to show (FreezeWatch::picture). */
+    Picture picture(int64_t now_ms) const;
     /* Whether CarPlay's cluster stream is live (FreezeWatch::live). Main
      * thread. */
     void set_live(bool on);

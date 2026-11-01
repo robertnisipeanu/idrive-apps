@@ -12,7 +12,14 @@
  * blank with up to one sample in a thousand off its band, not with a road
  * across it. The minute's tally: nothing before a minute from its first
  * frame, then its frames, changes and the last blank verdict, and none
- * while no frames come. */
+ * while no frames come. What the stream has to show: nothing before a
+ * frame; blank through the car's start and for a stream blank from its
+ * start, whatever the rate; a picture at the first non-blank frame; still
+ * a picture through blank spells shorter than blank_ms, so a map that
+ * blanks briefly does not go up and down; blank once a picture stays blank
+ * blank_ms, at full rate (as it freezes) or after a single blank frame; a
+ * picture again at the next non-blank frame; nothing again for a new
+ * stream. */
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -120,6 +127,58 @@ int main()
     for (int64_t u = 66; u <= 30000; u += 66)
         off.frame(u, false, true);
     ok("ms 0: never frozen", !off.frozen(30000));
+
+    FreezeWatch pw(cfg);
+    pw.live(true);
+    ok("picture: nothing before a frame", pw.picture(0) == Picture::None);
+    pw.frame(0, true, true);
+    bool blank = true;
+    for (int k = 1; k < 93; k++) {
+        pw.frame(k * 22, false, true);
+        blank = blank && pw.picture(k * 22) == Picture::Blank;
+    }
+    for (int64_t u = 2000; u <= 62000; u += 100)
+        blank = blank && pw.picture(u) == Picture::Blank;
+    ok("picture: the car's start, 93 blank frames and a minute's pause: blank throughout", blank);
+    for (int64_t u = 62066; u <= 122000; u += 66)
+        pw.frame(u, false, true);
+    ok("picture: blank from the start at 15 fps for a minute: blank, and frozen",
+       pw.picture(122000) == Picture::Blank && pw.frozen(122000));
+    pw.frame(122066, true, false);
+    ok("picture: the first non-blank frame is a picture, at once, no longer frozen",
+       pw.picture(122066) == Picture::Shown && !pw.frozen(122066));
+    bool steady = true;
+    int64_t u = 122066;
+    for (int spell = 0; spell < 10; spell++) {
+        for (int64_t e = u + 9000; u < e;) {
+            u += 66;
+            pw.frame(u, false, true);
+            steady = steady && pw.picture(u) == Picture::Shown;
+        }
+        u += 66;
+        pw.frame(u, true, false);
+        steady = steady && pw.picture(u) == Picture::Shown;
+    }
+    ok("picture: blank spells of 9 s between pictures: a picture throughout", steady);
+    const int64_t b0 = u + 66;
+    for (u = b0; u < b0 + 9900; u += 66)
+        pw.frame(u, false, true);
+    ok("picture: blank at 15 fps: a picture until blank_ms", pw.picture(b0 + 9900) == Picture::Shown);
+    for (; u <= b0 + 10100; u += 66)
+        pw.frame(u, false, true);
+    ok("picture: and blank at blank_ms, as the stream freezes",
+       pw.picture(b0 + 10100) == Picture::Blank && pw.frozen(b0 + 10100));
+    pw.frame(b0 + 20000, false, false);
+    ok("picture: a non-blank frame is a picture again", pw.picture(b0 + 20000) == Picture::Shown);
+    pw.frame(b0 + 21000, false, true);
+    ok("picture: one blank frame, then nothing: a picture until blank_ms after it",
+       pw.picture(b0 + 30999) == Picture::Shown && pw.picture(b0 + 31000) == Picture::Blank && !pw.frozen(b0 + 31000));
+    pw.live(false);
+    pw.live(true);
+    ok("picture: a new stream has nothing to show until its frames", pw.picture(b0 + 31000) == Picture::None);
+    pw.frame(b0 + 31100, true, true);
+    ok("picture: and its blank start is blank, whatever the last stream showed",
+       pw.picture(b0 + 31100) == Picture::Blank);
 
     const uint32_t w = 64, h = 32;
     std::vector<uint8_t> y(w * h, 100);
