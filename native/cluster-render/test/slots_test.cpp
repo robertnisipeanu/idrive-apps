@@ -1021,7 +1021,7 @@ static void removal_retry()
         quick = quick && calls_are("request map") && r.now - at == 1500;
     }
     ok("a fetch failing within 300 ms of it: not ready, asked again after 1.5 s, four times", quick);
-    ok("the warm scene's resend charged once for all those requests", r.scenes.resends == 1);
+    ok("no resend charged while the display fails the fetches", r.scenes.resends == 0);
     r.run(130);
     r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
     const int64_t at = r.now;
@@ -1030,6 +1030,8 @@ static void removal_retry()
     ok("the fifth: the ladder's next step", calls_are(""));
     r.run(10);
     ok("5 s", calls_are("request map") && r.now - at == 5000);
+    r.m.on_shown(kMapScene, r.now);
+    ok("charged once when the display takes it", r.scenes.resends == 1);
 
     Rig s;   /* failing later than 300 ms after the request: a refusal, the ladder */
     s.m.want(0, true, false);

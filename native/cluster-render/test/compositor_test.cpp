@@ -593,12 +593,19 @@ static void warm_scene_charged()
     r.slots.on_lost(0x010004f0, "fetch removed", r.now);
     a[W * 300] += 40;
     vl->offer(a.data(), r.now);
+    const uint64_t b1 = g->flushed_bytes;
     while (r.port.requests < 2)
         r.step(10);
-    /* Asked for again with a full burst: the resend of atlas and banks
-     * (1,305,600 B) leaves 793,600 B of debt, 388 ms. */
+    r.step(10);
+    ok("a warm scene asked for again: its newest frame flushed at once, nothing charged until the display takes it",
+       g->flushed_bytes > b1);
+    /* Taken with nearly a full burst: the resend of atlas and banks
+     * (1,305,600 B) leaves about 800,000 B of debt, about 390 ms. */
+    r.slots.on_shown(0x010004f0, r.now);
+    a[W * 100] += 40;
+    vl->offer(a.data(), r.now);
     const int64_t warm = until_written(r, g);
-    ok("a warm scene asked for again: its resend charged, the next write after 380-400 ms",
+    ok("taken: its resend charged, the next write after 380-400 ms",
        atlas + banks == 1305600 && warm >= 380 && warm <= 400);
 }
 

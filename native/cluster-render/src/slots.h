@@ -290,7 +290,7 @@ private:
         bool wanted = false, contend = false;
         bool requested = false;
         bool scene = false;          /* published */
-        bool resend_charged = false; /* the warm scene's resend charged since it was last parked or shown */
+        bool resend_due = false;     /* asked for again warm: its resend is charged when the display takes it */
         int64_t scene_ms = 0;        /* when it was published */
         int fresh_retries = 0;       /* fetch failures since, asked again after kFreshRetryMs */
         bool fresh_retry = false;    /* the next request may go kFreshRetryMs after the last */
@@ -357,6 +357,7 @@ private:
     /* The table shows the target's own scene id in its slot. */
     bool named(int i) const;
     void park(int i, int64_t now_ms);
+    void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
