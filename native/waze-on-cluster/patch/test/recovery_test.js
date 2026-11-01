@@ -14,8 +14,8 @@
  * shutdown exempting a boot; a cross-boot crash loop restoring at the threshold
  * (delayed recovery); a carplay restart breaking the healthy run; a remount failure
  * during restore preserving the counter for a retry; a patched binary with no
- * verified backup not restored; and the remount lock's mutual exclusion and
- * stale break.
+ * verified backup not restored; the remount lock's mutual exclusion and
+ * stale break; and the service staying up with nothing to watch.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -362,6 +362,32 @@ test('realRestore reports a remount failure instead of leaving / writable silent
         const r = stageAndRestore(dir, 'case "$*" in *remount,rw*) echo "/dev/root / ext4 rw 0 0" > "' + path.join(dir, 'mounts') + '";; esac\n');
         assert(r.err && /read-write after remount/.test(r.err), 'the remount failure is reported: ' + r.err);
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
+});
+
+test('the service stays up without a patch to watch, and stops on SIGTERM', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-idle-'));
+    let child = null;
+    try {
+        const tgt = path.join(dir, 'carplay');
+        fs.writeFileSync(tgt, 'not a carplay build\n');
+        fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-idle\n');
+        child = cp.spawn(process.execPath, [RECOVERY_PATH], {
+            env: Object.assign({}, process.env, {
+                WOC_CARPLAY: tgt, WOC_RECOVERY_STATE: path.join(dir, 'state.json'), WOC_BOOT_ID: path.join(dir, 'boot_id'),
+            }),
+            stdio: 'ignore',
+        });
+        let exit = null;
+        child.on('exit', (code, signal) => { exit = { code, signal }; });
+        await new Promise((r) => setTimeout(r, 2000));
+        assert.strictEqual(exit, null, 'still running 2 s after start: ' + JSON.stringify(exit));
+        child.kill('SIGTERM');
+        await new Promise((r) => setTimeout(r, 1000));
+        assert(exit && exit.code === 0, 'a SIGTERM ends it cleanly: ' + JSON.stringify(exit));
+    } finally {
+        if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        cp.execFileSync('rm', ['-rf', dir]);
+    }
 });
 
 async function main() {

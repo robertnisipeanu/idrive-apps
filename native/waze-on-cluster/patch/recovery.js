@@ -312,7 +312,11 @@ function runMain() {
     rec.startBoot(function () {
         starting = false;
         if (stopping) { finish(); return; }   /* a stop arrived mid-restore: let it complete, then exit */
-        if (rec.patchActive) timer = setInterval(function () { rec.tick(); }, POLL_MS);
+        /* Polled even with nothing to watch (tick skips then): the service
+         * stays up, since Restart=always would otherwise start it again every
+         * few seconds and the deploy tool's health check takes that for a
+         * crash loop. */
+        timer = setInterval(function () { rec.tick(); }, POLL_MS);
     });
     function stop() { stopping = true; if (!starting) finish(); }   /* else finish() runs when startBoot returns */
     process.on('SIGTERM', stop);
