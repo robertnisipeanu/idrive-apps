@@ -7,14 +7,26 @@
 # fast shutdown that stops no service, so carplay's state at that moment tells them apart
 # for boot recovery (recovery.js): it writes "<boot id> running|failed|stopped"
 # to <state dir>/shutdown. failed is a Result other than success. It writes
-# nothing when carplay's state cannot be read, and always exits 0.
+# nothing when carplay's state cannot be read within WAIT seconds, and always
+# exits 0, so it never holds up the remount.
 DIR=${WOC_STATE_DIR:-/var/opt/waze-on-cluster}
 BOOT_ID=${WOC_BOOT_ID:-/proc/sys/kernel/random/boot_id}
 SYSTEMCTL=${WOC_SYSTEMCTL:-systemctl}
+WAIT=${WOC_MARK_WAIT:-3}
 
 [ -d "$DIR" ] || exit 0
 boot=$(cat "$BOOT_ID" 2>/dev/null) || exit 0
-show=$("$SYSTEMCTL" show carplay.service -p ActiveState -p Result 2>/dev/null) || exit 0
+# The unit has no timeout(1) on its path: systemctl runs in the background and
+# is killed after WAIT seconds.
+out="$DIR/shutdown.show"
+"$SYSTEMCTL" show carplay.service -p ActiveState -p Result > "$out" 2>/dev/null &
+pid=$!
+( sleep "$WAIT"; kill "$pid" 2>/dev/null ) &
+guard=$!
+wait "$pid" || { rm -f "$out"; exit 0; }
+kill "$guard" 2>/dev/null
+show=$(cat "$out")
+rm -f "$out"
 case "$show" in
   *Result=success*)
     case "$show" in

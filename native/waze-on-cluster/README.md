@@ -67,14 +67,15 @@ a CarPlay crash for an expected stop and does not restart the head unit for
 it, from the next head-unit start after the install. On a fresh install the
 patched CarPlay first runs at that same start.
 
-**When CarPlay crashes.** recmgr does not start CarPlay again; the recovery
-service does, at most three times per head-unit start, 5 s, 15 s and 60 s
-after a crash. At the second crash of the patched CarPlay with no crash-free
-head-unit start in between, it first restores the original binary, so
-CarPlay comes back without the map until Enable map. Where a crash still
-restarts the head unit (recmgr had not loaded the entry, or restarts it
-anyway), a boot step that runs before CarPlay counts the crashed start and,
-at the second, restores the original before CarPlay starts. Details:
+**When CarPlay crashes.** recmgr does not start CarPlay again; where it
+loaded the entry, the recovery service does, at most three times per
+head-unit start, 5 s, 15 s and 60 s after a crash. At the second crash of
+the patched CarPlay with no crash-free head-unit start in between, it first
+restores the original binary, so CarPlay comes back without the map until
+Enable map. Where a crash still restarts the head unit (recmgr had not
+loaded the entry, or restarts it anyway), the recovery service only records
+the crash, and a boot step that runs before CarPlay counts the crashed start
+and, at the second, restores the original before CarPlay starts. Details:
 PATCH.md "Boot recovery".
 
 To break a loop by hand: keep the phone from connecting (unplug it, or turn
@@ -179,8 +180,8 @@ the render decodes through a lost packet:
   mid-stream, or a loss the decoder does not decode through) and while the
   decoder has given up its sequence. The detail, with when that began, is
   in the log (`waze: stream lost: the stream arrives with nothing decoded
-  since 12:40:50`) and in `probe.txt`. A status line whose only change is the stream's reason is
-  logged at most once every 10 s.
+  since 12:40:50`) and in `probe.txt`. A status line whose only change is
+  the stream's reason is logged at most once every 10 s.
 
 From a shell, `waze-on-cluster -c <conf> run map|panel|hud` (`sail` is an
 alias of `map`) sets the target until the service restarts and prints the
@@ -222,11 +223,11 @@ For a report, run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
 `/tmp/woc-logs-<UTC date and time>.tar.gz` and prints its path. The archive
 holds both tools' log files (cluster-render's too), the files in
-`/run/cluster-render/` and the three above, boot recovery's counter and
-shutdown record, this boot's journal of the render, `patchd`, the boot step,
-the recovery service, cluster-render and carplay, the list
-of boots, `ls -l` of both tools' folders, their `*.local.conf`, the date and
-the uptime.
+`/run/cluster-render/`, the render's `status.json` and `probe.txt`, boot
+recovery's counter and shutdown record, this boot's journal of the render,
+`patchd`, the boot step, the recovery service, cluster-render and carplay,
+the list of boots, `ls -l` of both tools' folders, their `*.local.conf`, the
+date and the uptime.
 
 Sockets: `/dev/shm/waze-on-cluster/ctl.sock` (the render's status and log,
 group `tm_oap_app`; a connection also starts the service) and

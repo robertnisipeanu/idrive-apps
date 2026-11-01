@@ -15,10 +15,14 @@ Before=carplay.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=-/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js boot
-# Holds carplay back at most this long; a stop mid-restore lets the revert
-# finish so / is not left writable, then KillMode=mixed ends the rest.
-TimeoutStartSec=30
-TimeoutStopSec=10
+# Below the threshold carplay waits about the time Node takes to start; a
+# restore takes seconds. Every command a restore runs is bounded, so it ends
+# within 71 s (recovery.js RESTORE_BOUND_MS), inside the start timeout: carplay
+# is held back 90 s at most, and only when those commands hang. A stop
+# mid-restore lets it finish, inside the stop timeout, so / is not left
+# writable; KillMode=mixed signals only the step, not its mount/revert children.
+TimeoutStartSec=90
+TimeoutStopSec=90
 KillMode=mixed
 StandardOutput=journal
 StandardError=journal

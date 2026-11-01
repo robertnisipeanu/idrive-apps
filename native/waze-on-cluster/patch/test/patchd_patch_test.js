@@ -89,7 +89,7 @@ fs.writeFileSync(path.join(BIN, 'systemctl'), '#!' + process.execPath + '\n' + [
     "if (a[0] === 'start') line += ' killed-pid-alive=' + alive(st.pid);",
     "fs.appendFileSync(" + JSON.stringify(CALLS) + ", line + '\\n');",
     "function gone() { cp.execFileSync('rm', ['-rf', path.join(P, '4242')]); }",
-    "if (a[0] === 'show') { if (st.mode === 'nopid') gone(); process.stdout.write((st.mode === 'nopid' ? 0 : st.pid) + '\\n'); }",
+    "if (a[0] === 'show') { if (st.mode === 'nopid') gone(); var p = st.mode === 'nopid' ? 0 : st.pid; process.stdout.write('MainPID=' + p + '\\nInvocationID=inv-' + p + '\\nExecMainStartTimestampMonotonic=5\\n'); }",
     "else if (a[0] === 'start') {",
     "    if (st.mode === 'startfail') { gone(); process.stderr.write('Job for carplay.service failed.\\n'); process.exit(1); }",
     "    st.state = st.mode === 'inactive' ? 'failed' : 'active';",
@@ -252,10 +252,10 @@ async function main() {
     calls = newCalls();
     ok('apply: patched, udp, carplay restarted', r.state === 'patched' && r.mode === 'udp' && r.panel === 'high', JSON.stringify(r));
     ok('apply: the carplay main process got SIGKILL', await diedWithin(dummy) === 'SIGKILL');
-    ok('apply: the killed PID is recorded for boot recovery',
-        fs.readFileSync(path.join(path.dirname(SOCK), 'carplay-killed'), 'utf8') === dummy.pid + '\n');
+    ok('apply: the killed run is recorded for boot recovery',
+        fs.readFileSync(path.join(path.dirname(SOCK), 'carplay-killed'), 'utf8') === 'inv-' + dummy.pid + '\n');
     ok('apply: MainPID read, then start once it was gone, then is-active',
-        calls.length === 3 && calls[0] === 'show carplay.service -p MainPID --value' &&
+        calls.length === 3 && calls[0] === 'show carplay.service -p MainPID -p InvocationID -p ExecMainStartTimestampMonotonic' &&
         calls[1] === 'start carplay.service killed-pid-alive=false' && calls[2] === 'is-active carplay.service', JSON.stringify(calls));
     ok('apply: / is read-only again', /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')));
     r = await status();

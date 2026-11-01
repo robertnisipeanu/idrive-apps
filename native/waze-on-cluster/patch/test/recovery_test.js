@@ -17,7 +17,7 @@ const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
 
-const { Recovery, tally } = require('../recovery.js');
+const { Recovery, tally, RESTORE_BOUND_MS } = require('../recovery.js');
 
 const RECOVERY_PATH = path.join(__dirname, '..', 'recovery.js');
 const MARK_SH = path.join(__dirname, '..', 'shutdown_mark.sh');
@@ -33,7 +33,7 @@ function tmpState() {
     return path.join(os.tmpdir(), `woc-rec-${process.pid}-${tmpN++}.json`);
 }
 
-/* A controllable clock. */
+/* A controllable monotonic clock. */
 function clock(start) {
     let t = start || 1000000;
     const fn = () => t;
@@ -41,15 +41,15 @@ function clock(start) {
     return fn;
 }
 
-/* A fake carplay.service and system around a Recovery: carplay.pid / state /
- * result as systemctl show reports them, the set of live PIDs, the system's
- * state, the shutdown mark, the patch on disk. Every effect lands in
- * world.events in order. */
+/* A fake carplay.service and system around a Recovery: carplay's current run
+ * (InvocationID), main PID, ActiveState and Result as systemctl show reports
+ * them, the live PIDs, the system's state, the shutdown marks, the patch on
+ * disk. Every effect lands in world.events in order. */
 function makeWorld(opts) {
     opts = opts || {};
     const w = {
         statePath: opts.statePath || tmpState(),
-        carplay: { pid: 0, state: 'inactive', result: 'success' },
+        carplay: { run: '', pid: 0, state: 'inactive', result: 'success' },
         alive: new Set(),
         system: 'running',
         marks: {},
@@ -57,7 +57,7 @@ function makeWorld(opts) {
         restorable: opts.restorable !== false,
         backup: opts.backup !== false,
         recmgr: !!opts.recmgr,
-        killed: 0,
+        killed: '',
         lockHeld: false,
         events: [],
         now: opts.now || clock(),
@@ -65,14 +65,15 @@ function makeWorld(opts) {
     let nextPid = 100;
     w.carplayStarts = () => {
         const pid = nextPid++;
-        w.carplay = { pid, state: 'active', result: 'success' };
+        w.carplay = { run: 'run-' + pid, pid, state: 'active', result: 'success' };
         w.alive.add(pid);
         w.events.push('carplay-start:' + (w.patched ? 'patched' : 'stock'));
         return pid;
     };
+    /* The run ends; systemd keeps its InvocationID while the unit is failed. */
     w.carplayCrashes = () => {
         w.alive.delete(w.carplay.pid);
-        w.carplay = { pid: 0, state: 'failed', result: 'core-dump' };
+        w.carplay = { run: w.carplay.run, pid: 0, state: 'failed', result: 'core-dump' };
         w.events.push('carplay-crash');
     };
     w.recovery = (bootId, extra) => new Recovery(Object.assign({
@@ -104,6 +105,7 @@ function readState(p) {
 const startBoot = (rec) => new Promise((resolve) => rec.startBoot(resolve));
 const tick = (rec) => new Promise((resolve) => rec.tick(resolve));
 const shutdown = (rec) => new Promise((resolve) => rec.onShutdown(resolve));
+const starts = (w) => w.events.filter((e) => e.startsWith('carplay-start')).length;
 
 /* One boot as the units order it: the boot step, carplay's start, the
  * watcher's own start; then the watcher sees one tick. */
@@ -123,30 +125,25 @@ async function orderlyReboot(w, watcher) {
     await shutdown(watcher);
     w.system = 'running';
     w.alive.clear();
-    w.carplay = { pid: 0, state: 'inactive', result: 'success' };
+    w.carplay = { run: '', pid: 0, state: 'inactive', result: 'success' };
 }
 
-test('crash loop with orderly reboots: each crash counts despite SIGTERM, and the threshold restores before carplay starts again', async () => {
+test('crash loop with orderly reboots: each crash counts despite SIGTERM, and the boot step restores before carplay starts', async () => {
     const w = makeWorld({ recmgr: false });
-    let r;
     for (const boot of ['A', 'B']) {
         const { watcher } = await bootUp(w, boot);
         w.carplayCrashes();
-        r = await tick(watcher);
-            await orderlyReboot(w, watcher);
-        if (boot === 'A') {
-            assert.strictEqual(r.fails, 1);
-            assert.deepStrictEqual(readState(w.statePath).arm, { boot: 'A', crashes: 1, confirmed: false, clean: false },
-                'persisted at once, and SIGTERM does not exempt a crashed boot');
-        }
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).action, 'crash');
+        await orderlyReboot(w, watcher);
+        assert.deepStrictEqual(readState(w.statePath).arm, { boot, crashes: 1, confirmed: false, clean: false },
+            'persisted at once, and SIGTERM does not exempt a crashed boot');
     }
-    assert.strictEqual(r.restore, 'restored', 'the second crash reached the threshold');
-    const crash2 = w.events.lastIndexOf('carplay-crash');
-    assert.deepStrictEqual(w.events.slice(crash2), ['carplay-crash', 'classify', 'restore']);
+    assert(!w.events.includes('classify') && !w.events.includes('restore'), 'no in-boot restore without the entry');
     w.events.length = 0;
-    await bootUp(w, 'C');
-    assert.deepStrictEqual(w.events.slice(0, 2), ['boot-step:armed', 'carplay-start:stock']);
-    assert.strictEqual(readState(w.statePath).fails, 0);
+    const { step } = await bootUp(w, 'C');
+    assert.strictEqual(step.action, 'restored');
+    assert.deepStrictEqual(w.events.slice(0, 4), ['classify', 'restore', 'boot-step:restored', 'carplay-start:stock']);
 });
 
 test('crash loop the watcher never sees: the shutdown mark counts it and the boot step restores before carplay starts', async () => {
@@ -174,7 +171,7 @@ test('a crash after a healthy minute still counts, so a late crash loops too', a
         await tick(watcher);
         await orderlyReboot(w, watcher);
     }
-    assert(w.events.includes('restore'));
+    assert.strictEqual((await bootUp(w, 'C')).step.action, 'restored');
 });
 
 test('a healthy boot clears the counter', async () => {
@@ -225,7 +222,7 @@ test('no patch of ours on disk: the boot step neither classifies nor restores, a
     const r = await startBoot(w.recovery('B', { classify: () => { throw new Error('classified'); } }));
     assert.strictEqual(r.action, 'idle');
     assert(Date.now() - t0 < 100);
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
 });
 
 test('below the threshold the boot step arms without classifying', async () => {
@@ -243,7 +240,7 @@ test('the watcher counts nothing twice and retries a restore the boot step did n
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restore-failed');
     assert.strictEqual(readState(w.statePath).fails, 2);
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restored');
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
 });
 
 test('a firmware-replaced binary at the threshold is never restored, and the counter clears', async () => {
@@ -269,11 +266,28 @@ test('an unreadable carplay state at the threshold leaves the counter', async ()
     assert.strictEqual(readState(w.statePath).fails, 2);
 });
 
-test('a 0.7.4 state carries over: an unconfirmed arm counts, a clean or confirmed one does not', () => {
-    assert.strictEqual(tally(1, { boot: 'A', state: 'unconfirmed' }, null), 2);
-    assert.strictEqual(tally(1, { boot: 'A', state: 'clean' }, null), 1);
-    assert.strictEqual(tally(1, { boot: 'A', state: 'confirmed' }, null), 0);
+test('a 0.7.5 arm carries over: an unconfirmed one counts, a clean or confirmed one does not', async () => {
+    for (const [state, fails] of [['unconfirmed', 2], ['clean', 1], ['confirmed', 0]]) {
+        const w = makeWorld();
+        fs.writeFileSync(w.statePath, JSON.stringify({ fails: 1, arm: { boot: 'A', state } }));
+        await startBoot(w.recovery('B', { classify: (cb) => cb({ ok: false }) }));
+        assert.strictEqual(readState(w.statePath).fails, fails, state);
+    }
     assert.strictEqual(tally(1, { boot: 'A', crashes: 2 }, 'failed'), 3, 'seen crashes are not counted twice');
+});
+
+test('a 0.7.5 arm of this boot (an update mid-boot) counts the next crash as one, not a restore', async () => {
+    const w = makeWorld({ recmgr: true });
+    fs.writeFileSync(w.statePath, JSON.stringify({ fails: 0, arm: { boot: 'A', state: 'unconfirmed' } }));
+    w.carplayStarts();
+    const watcher = w.recovery('A');
+    await startBoot(watcher);
+    await tick(watcher);
+    w.carplayCrashes();
+    const r = await tick(watcher);
+    assert.strictEqual(r.fails, 1);
+    assert.strictEqual(r.restore, undefined);
+    assert.strictEqual(readState(w.statePath).arm.crashes, 1);
 });
 
 test('recmgr loaded carplay: an in-boot crash loop is restored and carplay started again, with no reboot', async () => {
@@ -281,39 +295,124 @@ test('recmgr loaded carplay: an in-boot crash loop is restored and carplay start
     const { watcher } = await bootUp(w, 'A');
     w.events.length = 0;
     w.carplayCrashes();
+    w.now.advance(5000);
     assert.strictEqual((await tick(watcher)).fails, 1);
     assert.strictEqual((await tick(watcher)).action, 'watch', 'the start waits its delay');
     w.now.advance(5000);
     assert.strictEqual((await tick(watcher)).action, 'started');
     await tick(watcher);
     w.carplayCrashes();
+    w.now.advance(5000);
     const r = await tick(watcher);
     assert.strictEqual(r.restore, 'restored');
     w.now.advance(15000);
     assert.strictEqual((await tick(watcher)).action, 'started');
     assert.deepStrictEqual(w.events, ['carplay-crash', 'classify', 'carplay-start:patched',
         'carplay-crash', 'classify', 'restore', 'carplay-start:stock']);
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: { boot: 'A', n: 2 } });
+    const st = readState(w.statePath);
+    assert.deepStrictEqual([st.fails, st.arm, st.starts], [0, null, { boot: 'A', n: 2 }]);
+});
+
+test('(a) a run that crashed before the watcher\'s first probe is a crash', async () => {
+    const w = makeWorld({ recmgr: true });
+    await startBoot(w.recovery('A'));
+    w.carplayStarts();
+    w.carplayCrashes();   /* phone off, crashed at start, before the watcher looked */
+    const watcher = w.recovery('A');
+    await startBoot(watcher);
+    assert.strictEqual((await tick(watcher)).action, 'crash');
+    w.now.advance(5000);
+    assert.strictEqual((await tick(watcher)).action, 'started');
+    assert.strictEqual(readState(w.statePath).arm.crashes, 1);
+});
+
+test('(b) a run the watcher started that dies before the next tick is a crash', async () => {
+    const w = makeWorld({ recmgr: true, patched: false });
+    const { watcher } = await bootUp(w, 'A');
+    w.carplayCrashes();
+    w.now.advance(5000);
+    await tick(watcher);
+    w.now.advance(5000);
+    w.carplayStarts = ((orig) => () => { const pid = orig(); w.carplayCrashes(); return pid; })(w.carplayStarts);
+    assert.strictEqual((await tick(watcher)).action, 'started');
+    assert.strictEqual((await tick(watcher)).action, 'crash', 'probed at the next tick, not PROBE_MS later');
+});
+
+test('(c) after patchd\'s activation kill, a crash of the run it started is a crash', async () => {
+    const w = makeWorld({ recmgr: true });
+    const { watcher } = await bootUp(w, 'A');
+    w.killed = w.carplay.run;   /* patchd records the run, SIGKILLs it ... */
+    w.alive.delete(w.carplay.pid);
+    w.carplay = Object.assign({}, w.carplay, { pid: 0, state: 'failed', result: 'signal' });
+    assert.strictEqual((await tick(watcher)).action, 'watch', 'patchd\'s kill is not a crash');
+    w.carplayStarts();   /* ... and starts the next run, which crashes before the watcher looks */
+    w.carplayCrashes();
+    w.now.advance(5000);
+    assert.strictEqual((await tick(watcher)).action, 'crash');
+    assert.strictEqual(readState(w.statePath).arm.crashes, 1);
+});
+
+test('a failed run is counted once, also across a watcher restart', async () => {
+    const w = makeWorld({ recmgr: false });
+    const { watcher } = await bootUp(w, 'A');
+    w.carplayCrashes();
+    w.now.advance(5000);
+    assert.strictEqual((await tick(watcher)).action, 'crash');
+    w.now.advance(5000);
+    assert.strictEqual((await tick(watcher)).action, 'watch');
+    const again = w.recovery('A');
+    await startBoot(again);
+    assert.strictEqual((await tick(again)).action, 'watch');
+    assert.strictEqual(readState(w.statePath).arm.crashes, 1);
 });
 
 test('recmgr loaded carplay: starts are bounded per boot', async () => {
     const w = makeWorld({ recmgr: true, patched: false });
     const { watcher } = await bootUp(w, 'A');
-    let starts = 0;
     for (let i = 0; i < 5; i++) {
-        await tick(watcher);
         w.carplayCrashes();
+        w.now.advance(5000);
         await tick(watcher);
         w.now.advance(60000);
-        if ((await tick(watcher)).action === 'started') starts++;
+        await tick(watcher);
+        w.now.advance(5000);
+        await tick(watcher);
     }
-    assert.strictEqual(starts, 3);
+    assert.strictEqual(starts(w), 1 + 3);
+});
+
+test('an unwritable state file neither lifts the start limit nor loses this boot\'s crashes', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-ro-'));
+    try {
+        const w = makeWorld({ recmgr: true, statePath: path.join(dir, 'state.json') });
+        const { watcher } = await bootUp(w, 'A');
+        fs.chmodSync(dir, 0o500);
+        fs.chmodSync(path.join(dir, 'state.json'), 0o400);
+        w.carplayCrashes();
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).fails, 1);
+        w.now.advance(5000);
+        await tick(watcher);
+        w.carplayCrashes();
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).restore, 'restored', 'the second crash still reaches the threshold');
+        w.patched = false;
+        for (let i = 0; i < 5; i++) {
+            w.now.advance(60000);
+            await tick(watcher);
+            w.carplayCrashes();
+            w.now.advance(5000);
+            await tick(watcher);
+        }
+        assert.strictEqual(starts(w), 1 + 3);
+    } finally { fs.chmodSync(dir, 0o700); cp.execFileSync('rm', ['-rf', dir]); }
 });
 
 test('recmgr loaded carplay: no start while patchd holds the lock, the system stops, or carplay is up again', async () => {
     const w = makeWorld({ recmgr: true, patched: false });
     const { watcher } = await bootUp(w, 'A');
     w.carplayCrashes();
+    w.now.advance(5000);
     await tick(watcher);
     w.now.advance(5000);
     w.lockHeld = true;
@@ -323,8 +422,8 @@ test('recmgr loaded carplay: no start while patchd holds the lock, the system st
     assert.strictEqual((await tick(watcher)).action, 'start-skipped');
     w.system = 'running';
     w.carplayStarts();
-    await tick(watcher);
     w.carplayCrashes();
+    w.now.advance(5000);
     await tick(watcher);
     w.now.advance(5000);
     w.carplayStarts();
@@ -332,24 +431,25 @@ test('recmgr loaded carplay: no start while patchd holds the lock, the system st
     assert.strictEqual(readState(w.statePath).starts, null, 'the watcher started nothing');
 });
 
-test('recmgr did not load carplay: a crash is counted but carplay is not started', async () => {
+test('recmgr did not load carplay: a crash is recorded, nothing is classified, restored or started', async () => {
     const w = makeWorld({ recmgr: false });
+    fs.writeFileSync(w.statePath, JSON.stringify({ fails: 5, arm: null }));
     const { watcher } = await bootUp(w, 'A');
+    w.events.length = 0;
     w.carplayCrashes();
+    w.now.advance(5000);
     await tick(watcher);
     for (let i = 0; i < 3; i++) { w.now.advance(60000); await tick(watcher); }
-    assert.strictEqual(w.events.filter((e) => e.startsWith('carplay-start')).length, 1);
+    assert.deepStrictEqual(w.events, ['carplay-crash']);
     assert.strictEqual(readState(w.statePath).arm.crashes, 1);
 });
 
-test('not a crash: patchd\'s activation kill, a clean stop, or a death while the system stops', async () => {
-    for (const how of ['killed', 'stopped', 'stopping']) {
+test('not a crash: a clean stop, or a death while the system stops', async () => {
+    for (const how of ['stopped', 'stopping']) {
         const w = makeWorld({ recmgr: true });
         const { watcher } = await bootUp(w, 'A');
-        const pid = w.carplay.pid;
-        w.alive.delete(pid);
-        w.carplay = { pid: 0, state: how === 'stopped' ? 'inactive' : 'failed', result: how === 'stopped' ? 'success' : 'signal' };
-        if (how === 'killed') w.killed = pid;
+        w.alive.delete(w.carplay.pid);
+        w.carplay = Object.assign({}, w.carplay, { pid: 0, state: how === 'stopped' ? 'inactive' : 'failed', result: how === 'stopped' ? 'success' : 'signal' });
         if (how === 'stopping') w.system = 'stopping';
         assert.strictEqual((await tick(watcher)).action, 'watch', how);
         assert.strictEqual(readState(w.statePath).arm.crashes, 0, how);
@@ -364,14 +464,45 @@ test('a dying PID systemd has not reaped yet is not taken for a crash', async ()
     assert.strictEqual(readState(w.statePath).arm.crashes, 0);
 });
 
-test('the watcher stays quiet between probes while the PID lives', async () => {
+test('systemctl is asked every 5 s, not every tick, with carplay up or down', async () => {
     const w = makeWorld();
     let probes = 0;
     const watcher = w.recovery('A', { probe: (cb) => { probes++; cb(Object.assign({}, w.carplay)); } });
     await startBoot(watcher);
     w.carplayStarts();
-    for (let i = 0; i < 4; i++) { await tick(watcher); w.now.advance(1000); }
-    assert.strictEqual(probes, 1);
+    for (let i = 0; i < 10; i++) { await tick(watcher); w.now.advance(1000); }
+    assert.strictEqual(probes, 2, 'carplay up');
+    w.carplayCrashes();
+    w.carplay.state = 'inactive';
+    w.carplay.result = 'success';
+    probes = 0;
+    for (let i = 0; i < 10; i++) { await tick(watcher); w.now.advance(1000); }
+    assert.strictEqual(probes, 2, 'carplay down');
+});
+
+test('a stop during a restore waits for it', async () => {
+    const w = makeWorld({ recmgr: true });
+    fs.writeFileSync(w.statePath, JSON.stringify({ fails: 1, arm: null }));
+    let finishRestore = null;
+    const watcher = w.recovery('A', { restore: (cb) => { finishRestore = cb; } });
+    await startBoot(watcher);
+    w.carplayStarts();
+    await tick(watcher);
+    w.carplayCrashes();
+    w.now.advance(5000);
+    watcher.tick();
+    assert.strictEqual(watcher.restoring, true);
+    let stopped = false;
+    watcher.whenRestored(() => { stopped = true; });
+    assert.strictEqual(stopped, false);
+    finishRestore(null);
+    assert.strictEqual(stopped, true);
+});
+
+test('the clock is monotonic: the default timer reads process.hrtime', () => {
+    const rec = new Recovery({ statePath: tmpState(), bootId: 'A' });
+    const a = rec._now(), real = process.hrtime();
+    assert(Math.abs(a - (real[0] * 1000 + real[1] / 1e6)) < 1000);
 });
 
 /* shutdown_mark.sh against a fake systemctl. */
@@ -380,13 +511,15 @@ function runMark(show, opts) {
     try {
         fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-X\n');
         const sc = path.join(dir, 'systemctl');
-        fs.writeFileSync(sc, '#!/bin/sh\n' + (show === null ? 'exit 1\n' : 'printf "%s\\n" "' + show.join('" "') + '"\n'));
+        fs.writeFileSync(sc, '#!/bin/sh\n' + (show === null ? 'exit 1\n' : show === 'hang' ? 'exec sleep 30\n' : 'printf "%s\\n" "' + show.join('" "') + '"\n'));
         fs.chmodSync(sc, 0o755);
         const state = path.join(dir, 'state');
         if (!(opts && opts.noDir)) fs.mkdirSync(state);
-        const r = cp.spawnSync('sh', [MARK_SH], { env: Object.assign({}, process.env, { WOC_STATE_DIR: state, WOC_BOOT_ID: path.join(dir, 'boot_id'), WOC_SYSTEMCTL: sc }) });
+        const t0 = Date.now();
+        const r = cp.spawnSync('sh', [MARK_SH], { env: Object.assign({}, process.env, { WOC_STATE_DIR: state, WOC_BOOT_ID: path.join(dir, 'boot_id'), WOC_SYSTEMCTL: sc, WOC_MARK_WAIT: '1' }) });
         let mark = null;
         try { mark = fs.readFileSync(path.join(state, 'shutdown'), 'utf8'); } catch (e) {}
+        if (opts && opts.ms) opts.ms.v = Date.now() - t0;
         return { status: r.status, mark };
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 }
@@ -398,6 +531,9 @@ test('shutdown_mark.sh records running, failed or stopped, and nothing it cannot
     assert.deepStrictEqual(runMark(['ActiveState=inactive', 'Result=success']), { status: 0, mark: 'boot-X stopped\n' });
     assert.deepStrictEqual(runMark(null), { status: 0, mark: null });
     assert.deepStrictEqual(runMark(['ActiveState=active', 'Result=success'], { noDir: true }), { status: 0, mark: null });
+    const ms = {};
+    assert.deepStrictEqual(runMark('hang', { ms }), { status: 0, mark: null }, 'a hung systemctl writes nothing');
+    assert(ms.v < 5000, 'and holds the remount up WAIT seconds at most: ' + ms.v);
 });
 
 test('the boot step exits 0 whatever fails, so carplay\'s start goes ahead', () => {
@@ -431,7 +567,11 @@ test('the boot unit orders itself before carplay, never blocks it, and is whitel
     assert(!/^(Requires|BindsTo|Requisite|RequiredBy)=/m.test(unit), 'carplay does not depend on it');
     assert.strictEqual(val('Type'), 'oneshot');
     assert(/^-/.test(val('ExecStart')), 'its exit status is ignored');
-    assert(parseInt(val('TimeoutStartSec'), 10) <= 30);
+    const start = parseInt(val('TimeoutStartSec'), 10) * 1000, stop = parseInt(val('TimeoutStopSec'), 10) * 1000;
+    assert(start > RESTORE_BOUND_MS + 5000 && start <= 90000, 'a restore always ends inside the start timeout');
+    assert(stop > RESTORE_BOUND_MS, 'a stop mid-restore lets it finish');
+    const watcher = fs.readFileSync(path.join(__dirname, '..', '..', 'systemd', 'waze-on-cluster-recovery.service'), 'utf8');
+    assert(parseInt(/^TimeoutStopSec=(\d+)/m.exec(watcher)[1], 10) * 1000 > RESTORE_BOUND_MS);
     const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'component.json'), 'utf8'));
     assert(c.recmgr.includes('waze-on-cluster-boot'), 'a timed-out oneshot fails; recmgr must not reboot for it');
     assert(!c.restart.includes('waze-on-cluster-boot.service'), 'it runs at boot, not at install');
@@ -465,7 +605,7 @@ test('remount lock: mutual exclusion and stale break', () => {
 
 /* Stage a patched carplay copy (with the verified stock backup) and a fake
  * mount, then run the real realRestore in a child with those env paths. */
-function stageAndRestore(dir, mountBody, before) {
+function stageAndRestore(dir, mountBody, before, alwaysLink) {
     const sock = path.join(dir, 'sock');
     fs.mkdirSync(sock, { recursive: true });
     const tgt = path.join(dir, 'carplay');
@@ -483,10 +623,11 @@ function stageAndRestore(dir, mountBody, before) {
     fs.mkdirSync(proc);
     if (before) before(tgt, proc);
     const out = cp.execFileSync(process.execPath, ['-e',
-        'require(process.env.RP).realRestore(function(e){process.stdout.write(JSON.stringify({err:e&&e.message}));process.exit(0);});'], {
+        'require(process.env.RP).realRestore(process.env.ALWAYS_LINK !== "1", function(e){process.stdout.write(JSON.stringify({err:e&&e.message}));process.exit(0);});'], {
         env: Object.assign({}, process.env, {
             RP: RECOVERY_PATH, WOC_CARPLAY: tgt, WOC_MOUNT: mount, WOC_PROC_MOUNTS: mounts,
             WOC_PATCH_SOCK: path.join(sock, 'patch.sock'), WOC_REMOUNT_LOCK: path.join(sock, 'remount.lock'), WOC_PROC: proc,
+            ALWAYS_LINK: alwaysLink ? '1' : '',
         }),
         encoding: 'utf8',
     });
@@ -529,6 +670,19 @@ test('realRestore keeps the patched binary carplay runs linked so / can go read-
         assert.strictEqual(r.err, null, 'no error: ' + r.err);
         assert.strictEqual(r.tgtSha, sha(fs.readFileSync(CARPLAY_BIN)), 'carplay restored to the verified stock');
         assert.strictEqual(r.runningIno, patchedIno, 'the running binary is linked');
+        assert(/\bro\b/.test(r.mounts), '/ is read-only again');
+    } finally { cp.execFileSync('rm', ['-rf', dir]); }
+});
+
+test('the watcher\'s realRestore links the patched binary even with nothing running it yet', () => {
+    if (!fs.existsSync(CARPLAY_BIN)) { console.log('     (skipped: carplay binary not found)'); return; }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-rr-'));
+    try {
+        let patchedIno = null;
+        const r = stageAndRestore(dir, ROMOUNT(dir), (tgt) => { patchedIno = fs.statSync(tgt).ino; }, true);
+        assert.strictEqual(r.err, null, 'no error: ' + r.err);
+        assert.strictEqual(r.tgtSha, sha(fs.readFileSync(CARPLAY_BIN)), 'carplay restored to the verified stock');
+        assert.strictEqual(r.runningIno, patchedIno, 'a carplay started meanwhile would run a linked file');
         assert(/\bro\b/.test(r.mounts), '/ is read-only again');
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
@@ -615,7 +769,7 @@ test('the boot step at the threshold restores a patched copy before carplay woul
         assert.strictEqual(sha(fs.readFileSync(tgt)), sha(fs.readFileSync(CARPLAY_BIN)), 'carplay starts the verified stock');
         assert(/\bro\b/.test(fs.readFileSync(mounts, 'utf8')), '/ is read-only again');
         assert(!fs.existsSync(tgt + '.woc-running'), 'nothing ran it: no link');
-        assert.deepStrictEqual(readState(state), { fails: 0, arm: null, starts: null });
+        assert.deepStrictEqual(readState(state), { fails: 0, arm: null, starts: null, ended: null });
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
 

@@ -359,6 +359,7 @@ function remountRo(tries, cb) {
  * (recmgr_list.js). On a unit whose list recmgr loaded without it a change is
  * left to take effect at the next head-unit start. */
 var recmgrLoaded = require('./recmgr_list.js').recmgrLoaded;
+var parseShow = require('./recovery.js').parseShow;
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return null; } }
 
@@ -367,7 +368,7 @@ function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { re
  * socket in /dev/shm, which the next head-unit start clears; until then
  * status reports it instead of the binary's state. */
 var PENDING = path.join(path.dirname(SOCK), 'activation-pending');
-/* The PID restartCarplay kills, for recovery.js. */
+/* The carplay run restartCarplay kills, for recovery.js. */
 var KILLED = path.join(path.dirname(SOCK), 'carplay-killed');
 var PENDING_REASON = {
     apply: 'patch written; takes effect at the next head-unit start',
@@ -383,13 +384,15 @@ var PENDING_REASON = {
 var RESTART_POLL_MS = parseInt(process.env.WOC_RESTART_POLL_MS, 10) || 250;
 var RESTART_TRIES = 40;
 function restartCarplay(cb) {
-    cp.execFile('systemctl', ['show', 'carplay.service', '-p', 'MainPID', '--value'], { timeout: 15000 }, function (err, out) {
+    cp.execFile('systemctl', ['show', 'carplay.service', '-p', 'MainPID', '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic'],
+        { timeout: 15000 }, function (err, out) {
         if (err) { cb(new Error('carplay restart: reading MainPID failed: ' + err.message)); return; }
-        var pid = parseInt(((out || '') + '').trim(), 10);
-        if (!(pid > 0)) { cb(new Error('carplay restart: carplay.service has no main PID (MainPID=' + ((out || '') + '').trim() + '); not restarted')); return; }
+        var run = parseShow((out || '') + ''), pid = run.pid;
+        if (!(pid > 0)) { cb(new Error('carplay restart: carplay.service has no main PID (MainPID=' + pid + '); not restarted')); return; }
         log('restarting carplay: SIGKILL main PID ' + pid + ', then systemctl start');
-        /* The boot-recovery watcher takes this death for patchd's, not a crash. */
-        try { fs.writeFileSync(KILLED, pid + '\n'); } catch (e) { log('recording the killed PID failed: ' + e.message); }
+        /* The boot-recovery watcher takes the end of this run for patchd's
+         * kill, not a crash. */
+        try { fs.writeFileSync(KILLED, run.run + '\n'); } catch (e) { log('recording the killed run failed: ' + e.message); }
         try { process.kill(pid, 'SIGKILL'); }
         catch (e) { if (e.code !== 'ESRCH') { cb(new Error('carplay restart: SIGKILL ' + pid + ': ' + e.message)); return; } }
         waitCarplayGone(pid, RESTART_TRIES, function (gErr) {
