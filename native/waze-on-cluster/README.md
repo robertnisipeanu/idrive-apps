@@ -85,7 +85,8 @@ restart the head unit.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
-stream is live, and the stock map is back when the stream ends. **Off** works
+stream is live and shows a map, and the stock map is back when the stream
+ends or shows no map. **Off** works
 too, with an empty centre instead of the stock map. With Route preview or
 Assisted Driving View the cluster's own content takes the centre. After
 changing the setting, CarPlay may need reconnecting before the map returns:
@@ -97,12 +98,13 @@ of a stream, so the render service runs from boot, joins the media bus at
 once (retrying every second until the AVB bridge is up), and decodes from the
 stream's first SPS whether or not the map is shown. The app need not be open.
 
-The map comes up at the first decoded frame in the native central-map slot
-`0x100` (scene `0x010004f0`, 1088x480), under the gauges, and stays while the
-stream is live: while carplay holds the phone's connection for the cluster
-stream, TCP port 6031 owned by carplay's uid 13002 in `/proc/net/tcp6`,
-however few frames come (how often a static map sends a frame depends on the
-phone: one about every ten seconds, another about 30 a second).
+The map comes up at the stream's first non-blank picture in the native
+central-map slot `0x100` (scene `0x010004f0`, 1088x480), under the gauges,
+and stays while the stream is live: while carplay holds the phone's
+connection for the cluster stream, TCP port 6031 owned by carplay's uid
+13002 in `/proc/net/tcp6`, however few frames come (how often a static map
+sends a frame depends on the phone: one about every ten seconds, another
+about 30 a second).
 When that connection ends (the phone unplugged, the session or the stream
 ended) the map is taken down at the next check, once a second, and the slot
 returns to the cluster's own content; the next stream maps it again. No
@@ -112,23 +114,43 @@ frame for `idle_ms` (60 s) takes it down too. Without that connection
 a static map and closes it when the stream ends is still to be confirmed on
 the car.
 
+CarPlay starts the cluster stream as soon as the phone connects (PATCH.md
+Edit 3), before any navigation app draws on the cluster, and the phone sends
+a blank picture until one does: on the car about 100 blank frames in the
+first 2 s, then nothing; in the field the map came once a route started in
+Waze or Google Maps, and stayed after it ended. So the stock map stays until
+the first non-blank picture, and the app shows `Waiting for the phone's map
+— start navigation`. A picture that stays blank for `blank_ms` (10 s) after
+a map gives the slot back to the stock map; the app then shows the same
+line, or `Map frozen — reconnect CarPlay` when the blank frames keep coming
+fast enough to be a frozen stream (see "A frozen stream" below). The next
+non-blank picture takes the slot again. A map always draws something, so a
+blank spell shorter than that keeps the map up, and the map never comes and
+goes faster than once every `blank_ms`.
+
 While the map is up, a session the cluster ends (the stock map taking the
 slot back, a refusal, no answer) is started again after 2, 5, 10, 20, then
 every 30 s. The app shows `Starting map…` while the renderer starts, and a
 map error only when the renderer stays unreachable for 15 s.
 
 A frozen stream, frames still coming (on the car 15-21 a second) but all the
-same blank picture, is taken down after 10 s (`freeze_ms`, at least
+same blank picture, is frozen after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
-and the app shows `Map frozen — reconnect CarPlay`. The map is back with the
-first changed frame. A stream that has shown no picture yet is frozen only
-after three times as long (30 s), frames still coming: a phone starting its
-stream sends the same blank picture for a couple of seconds and pauses
-before the map's first. A stream starts when CarPlay's cluster stream
-becomes live and ends when it stops being live. Blank: all but one in a thousand of the sampled luma
-values within 17 levels. A static map is never frozen, however many frames
-the phone sends: some phones send one about every ten seconds, others keep
-their full rate.
+and the app shows `Map frozen — reconnect CarPlay`, not `Waiting for the
+phone's map — start navigation`. The map is down while the stream is frozen
+or its picture has stayed blank for `blank_ms`, whichever comes first; with
+both at 10 s they come together. The map is back with the next non-blank
+picture. A stream that has shown no picture yet is frozen only after three
+times as long (30 s), frames still coming: a phone starting its stream
+sends the same blank picture for a couple of seconds and pauses. A stream
+is CarPlay's cluster stream while it is live: its frames are those decoded
+while it is live and those decoded at most 2 s before it became live (the
+frame that made it live, or a first frame decoded before the connection
+was read, which is read once a second). An older frame, such as the last
+stream's still on its way after it ended, does not count. Blank: all but
+one in a thousand of the sampled luma values within 17 levels. A static map
+is never frozen, however many frames the phone sends: some phones send one
+about every ten seconds, others keep their full rate.
 
 A render that missed the stream's start decodes nothing until a new stream:
 reconnect the phone.
@@ -335,8 +357,9 @@ binary it does not recognise as a patched form of the backup
   entry this boot; it never stops, kills or restarts anything. Its shutdown
   record is a drop-in for `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
-- Nothing is mapped on the cluster before the first decoded frame or after
-  the frames stop. The map never alters the gauges' data.
+- Nothing is mapped on the cluster before the stream's first non-blank
+  picture, once its picture has stayed blank for `blank_ms`, or after the
+  frames stop. The map never alters the gauges' data.
 - The render runs as `hmi_5000` with the groups `video` (the DRM render
   node), `mgu_ufipc` (the AVB bridge's shared memory; the receiver fails
   without it) and `tm_oap_app` (the renderer's socket).

@@ -131,6 +131,11 @@ Only the rel32 changes. NavController then receives STREAMING where stock
 sends AVAILABLE; it is inert either way, and these messages never reach the
 phone. Both guards make it one-shot per session. Every mode applies it.
 
+The stream thus starts with the session, before any navigation app draws on
+the cluster, and the phone sends a blank picture until one does (on the car
+about 100 blank frames in the first 2 s, then a pause). The render keeps the
+stock map up until the first non-blank picture (README).
+
 **Found by** name. setStreamStatus, requestStream and onSuggestUi are the
 functions that load their own function-name strings (`void
 …AlternateDisplays::setStreamStatus(…`, `…::requestStream()`,
