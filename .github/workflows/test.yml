@@ -28,7 +28,8 @@ jobs:
   #   native/waze-on-cluster/  its jobs
   #   apps/<id>/               the app's tests
   #   native/<id>/test/        tests only: the tool's artifact leaves out test/
-  #   native/**.md, README.md, LICENSE, LICENSES/   nothing
+  #   native/<id>/*.md, README.md, LICENSE, LICENSES/   nothing (a nested
+  #                            .md counts toward its tool's artifact)
   #   release/, tools/, .github/, any other path    every job
   # Each changed component (a folder with a component.json or release.json in
   # the commit tested) is built twice from a clean export, on two runners, and
@@ -36,6 +37,7 @@ jobs:
   changes:
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       cluster-render: ${{ steps.paths.outputs.cluster-render }}
@@ -57,8 +59,13 @@ jobs:
           else
             files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
             while read -r f; do
+              # a tool's top-level notes (native/<id>/*.md) are not in its artifact
+              r=${f#native/*/}
+              if [ "$r" != "$f" ] && [ "${r%.md}" != "$r" ] && [ "${r#*/}" = "$r" ]; then
+                continue
+              fi
               case $f in
-              native/*.md|README.md|LICENSE|LICENSES/*) ;;
+              README.md|LICENSE|LICENSES/*) ;;
               native/cluster-render/test/*) cr=true woc=true ;;
               native/cluster-render/*) cr=true woc=true ids="$ids native/cluster-render native/waze-on-cluster" ;;
               native/waze-on-cluster/test/*) woc=true ;;
@@ -70,22 +77,24 @@ jobs:
               esac
             done <<< "$files"
           fi
-          # only folders that are components in the commit tested: a removed
-          # one, or a folder without a component.json or release.json, is not
-          # shellcheck disable=SC2086 # one folder per word
-          for d in $(printf '%s\n' $ids | sort -u); do
-            m=component.json
-            [ "${d%%/*}" = apps ] && m=release.json
-            if err=$(gh api "repos/$REPO/contents/$d/$m?ref=$SHA" --silent 2>&1); then
-              keep="$keep ${d#*/}"
-            elif ! grep -q 'HTTP 404' <<< "$err"; then
-              echo "$d/$m: $err"
-              exit 1
-            fi
-          done
-          ids=$keep
           if [ "$all" = true ]; then
             cr=true woc=true app=true ids=all
+          else
+            # A folder without a component.json (native/) or release.json
+            # (apps/) in the commit tested, such as a removed component, is
+            # left out of the release builds.
+            # shellcheck disable=SC2086 # one folder per word
+            for d in $(printf '%s\n' $ids | sort -u); do
+              m=component.json
+              [ "${d%%/*}" = apps ] && m=release.json
+              if err=$(gh api "repos/$REPO/contents/$d/$m?ref=$SHA" --silent 2>&1); then
+                keep="$keep ${d#*/}"
+              elif ! grep -q 'HTTP 404' <<< "$err"; then
+                echo "$d/$m: $err"
+                exit 1
+              fi
+            done
+            ids=$keep
           fi
           # shellcheck disable=SC2086 # one id per word
           ids=$(printf '%s\n' $ids | sort -u | paste -sd' ' -)
