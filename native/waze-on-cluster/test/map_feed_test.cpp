@@ -29,7 +29,9 @@
  *   shorter than blank_ms between pictures keep the map up without asking
  *   for the slot again; a picture blank for blank_ms gives the slot back to
  *   the stock map, and the next picture takes it again; a stream blank at
- *   full rate from its start is frozen, the stock map showing;
+ *   full rate from its start is frozen, the stock map showing; live
+ *   through a recent frame (no connection to read), a static map's frame
+ *   every 10 s takes the slot over each time it makes the stream live;
  * - the status is logged when its state, reason or target changes, not for
  *   the frame rate, the page or the upload cap. */
 #include <poll.h>
@@ -72,6 +74,10 @@ struct Rig {
     /* watched: the frames' pictures drive the stream state, as in the
      * service's loop; otherwise the stream is live with a picture */
     bool watched;
+    /* watched and > 0: live while a frame came within this long, as the
+     * service decides without the stream's connection; 0: always live */
+    int64_t live_stall_ms = 0;
+    int64_t last_frame_ms = -1;
     FreezeWatch watch{FreezeConfig()};
     ChangeSampler sampler{1088, 480};
 
@@ -113,10 +119,14 @@ struct Rig {
                 if (watched) {
                     const bool changed = sampler.changed(frame->data());
                     watch.frame(now, changed, sampler.blank());
+                    last_frame_ms = now;
                 }
             }
-            if (watched)
-                feed->set_stream(true, watch.frozen(now), watch.picture(now));
+            if (watched) {
+                const bool live = !live_stall_ms || (last_frame_ms >= 0 && now - last_frame_ms <= live_stall_ms);
+                watch.live(live);
+                feed->set_stream(live, watch.frozen(now), watch.picture(now));
+            }
             for (int round = 0; round < 400; round++) {
                 std::vector<pollfd> fds;
                 size_t first = 0;
@@ -344,6 +354,21 @@ int main()
     fz.pump(31000, &black, 65);   /* blank at 15 fps from the start */
     ok("blank at full rate from the start: frozen after 30 s, the slot never asked for",
        fz.st().state == "frozen" && fz.port.requests == 0 && !fz.map_layer()->params.visible);
+
+    Rig lf(true, 60000);
+    lf.live_stall_ms = 6000;
+    lf.port.stock_map(0x100, 0x01000101);
+    lf.pump(100);
+    bool every = true;
+    for (int k = 0; k < 3; k++) {
+        lf.pump(5, &f1);   /* one frame, then nothing for 10 s */
+        lf.pump(1500);
+        every = every && lf.st().state == "showing" && lf.map_layer()->params.visible;
+        lf.pump(8500);
+        every = every && lf.st().state == "idle";
+    }
+    ok("live through a recent frame: a static map's frame every 10 s is shown each time it makes the stream live",
+       every && lf.port.requests == 3);
 
     StatusLog sl;
     FeedStatus a;

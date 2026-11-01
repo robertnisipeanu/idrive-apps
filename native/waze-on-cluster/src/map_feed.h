@@ -121,6 +121,7 @@ private:
     cr::LayerOptions lo_;   /* the layer's options as last sent */
     bool live_ = false, frozen_ = false;
     Picture picture_ = Picture::None;
+    const char *stream_line_ = nullptr;   /* the stream's state as last logged */
     std::string layer_state_ = "stalled", layer_reason_;
     std::string target_state_, holder_;
     unsigned cap_kb_ = 0, max_kb_ = 0;

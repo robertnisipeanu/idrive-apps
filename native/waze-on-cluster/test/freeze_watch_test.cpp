@@ -19,7 +19,10 @@
  * blanks briefly does not go up and down; blank once a picture stays blank
  * blank_ms, at full rate (as it freezes) or after a single blank frame; a
  * picture again at the next non-blank frame; nothing again for a new
- * stream. */
+ * stream. A stream ends when it stops being live: the frame that makes it
+ * live again counts (live through a recent frame, a static map's frame
+ * every 10 s shows at once each time), while the ended stream's frames do
+ * not. */
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -179,6 +182,35 @@ int main()
     pw.frame(b0 + 31100, true, true);
     ok("picture: and its blank start is blank, whatever the last stream showed",
        pw.picture(b0 + 31100) == Picture::Blank);
+
+    /* live through a recent frame (no connection to read): each frame of a
+     * static map, one every 10 s, comes before the stream is live again */
+    FreezeWatch fb(cfg);
+    bool each = true;
+    for (int64_t t0 = 0; t0 < 60000; t0 += 10000) {
+        fb.frame(t0, t0 == 0, false);
+        fb.live(true);
+        each = each && fb.picture(t0) == Picture::Shown;
+        fb.live(false);   /* stall_ms on */
+    }
+    ok("the frame that makes the stream live counts: a static map every 10 s is a picture at each", each);
+    fb.frame(70000, true, true);
+    fb.live(true);
+    ok("and so does a blank one", fb.picture(70000) == Picture::Blank);
+
+    FreezeWatch tr(cfg);
+    tr.live(true);
+    for (int64_t u = 0; u <= 5000; u += 66)
+        tr.frame(u, true, false);
+    tr.live(false);
+    tr.live(true);
+    ok("trailing: the ended stream's pictures do not count for the next", tr.picture(5100) == Picture::None);
+    tr.frame(5200, true, false);
+    tr.live(false);
+    tr.frame(9000, true, true);
+    tr.live(true);
+    ok("trailing: a stream whose first frame is blank is blank, whatever the last one showed",
+       tr.picture(9000) == Picture::Blank);
 
     const uint32_t w = 64, h = 32;
     std::vector<uint8_t> y(w * h, 100);

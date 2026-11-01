@@ -162,12 +162,14 @@ void MapFeed::set_stream(bool live, bool frozen, Picture picture)
 {
     if (live == live_ && frozen == frozen_ && picture == picture_)
         return;
-    log_info("render: CarPlay's cluster stream %s",
-             !live                       ? "is not live"
-             : frozen                    ? "froze"
-             : picture == Picture::None  ? "is live, no frame yet"
-             : picture == Picture::Blank ? "is live, its picture blank"
-                                         : "is live, with a picture");
+    const char *line = !live                       ? "is not live"
+                       : frozen                    ? "froze"
+                       : picture == Picture::None  ? "is live, no frame yet"
+                       : picture == Picture::Blank ? "is live, its picture blank"
+                                                   : "is live, with a picture";
+    if (line != stream_line_)   /* frames after the stream ends change only the verdicts */
+        log_info("render: CarPlay's cluster stream %s", line);
+    stream_line_ = line;
     live_ = live;
     frozen_ = frozen;
     picture_ = picture;

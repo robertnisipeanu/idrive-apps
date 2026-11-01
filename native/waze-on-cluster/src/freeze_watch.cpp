@@ -64,6 +64,10 @@ void FreezeWatch::live(bool on)
     if (on == live_)
         return;
     live_ = on;
+    /* Frames since the last stream ended are the next one's, so the frame
+     * that makes the stream live counts. */
+    if (on)
+        return;
     framed_ = pictured_ = false;
     blank_since_ms_ = -1;
     unchanged_since_ms_ = -1;

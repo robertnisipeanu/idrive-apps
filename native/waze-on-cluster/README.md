@@ -120,10 +120,12 @@ first 2 s, then nothing; in the field the map came once a route started in
 Waze or Google Maps, and stayed after it ended. So the stock map stays until
 the first non-blank picture, and the app shows `Waiting for the phone's map
 — start navigation`. A picture that stays blank for `blank_ms` (10 s) after
-a map gives the slot back to the stock map, with the same line; the next
-non-blank picture takes it again. A map always draws something, so a blank
-spell shorter than that keeps the map up, and the map never comes and goes
-faster than once every `blank_ms`.
+a map gives the slot back to the stock map; the app then shows the same
+line, or `Map frozen — reconnect CarPlay` when the blank frames keep coming
+fast enough to be a frozen stream (see "A frozen stream" below). The next
+non-blank picture takes the slot again. A map always draws something, so a
+blank spell shorter than that keeps the map up, and the map never comes and
+goes faster than once every `blank_ms`.
 
 While the map is up, a session the cluster ends (the stock map taking the
 slot back, a refusal, no answer) is started again after 2, 5, 10, 20, then
@@ -133,12 +135,15 @@ map error only when the renderer stays unreachable for 15 s.
 A frozen stream, frames still coming (on the car 15-21 a second) but all the
 same blank picture, is frozen after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
-and the app shows `Map frozen — reconnect CarPlay` in place of the line
-above. The map is back with the next non-blank picture. A stream that has
-shown no picture yet is frozen only after three times as long (30 s),
-frames still coming: a phone starting its stream sends the same blank
-picture for a couple of seconds and pauses. A stream starts when CarPlay's
-cluster stream becomes live and ends when it stops being live. Blank: all
+and the app shows `Map frozen — reconnect CarPlay`, not `Waiting for the
+phone's map — start navigation`. The map is down while the stream is frozen
+or its picture has stayed blank for `blank_ms`, whichever comes first; with
+both at 10 s they come together. The map is back with the next non-blank
+picture. A stream that has shown no picture yet is frozen only after three
+times as long (30 s), frames still coming: a phone starting its stream
+sends the same blank picture for a couple of seconds and pauses. A stream
+ends when CarPlay's cluster stream stops being live; the frames from then
+on, the one that makes it live again among them, are the next stream's. Blank: all
 but one in a thousand of the sampled luma values within 17 levels. A static
 map is never frozen, however many frames the phone sends: some phones send
 one about every ten seconds, others keep their full rate.
