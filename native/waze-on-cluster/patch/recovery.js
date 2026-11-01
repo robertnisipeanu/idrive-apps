@@ -126,10 +126,11 @@ function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
 
 /* The on-disk carplay's state. ok is false when the status could not be read
  * (a transient spawn/timeout failure), so the counter is not disturbed. The
- * patch counts as active, and restorable, when the patcher has a verified
- * backup of the same build that differs from it: byte for byte, whatever its
- * locator makes of the binary, so a patch any version of this tool wrote is
- * counted and restored. */
+ * patch counts as active, and restorable, when the patcher's revert would
+ * change the binary (`restorable: yes`): a verified backup of the same build
+ * differs from it in one of our edits' regions when the locator recognises
+ * both as that build, else anywhere, so a patch any version of this tool
+ * wrote is counted and restored. */
 function realClassify(cb) {
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: STEP_MS }, function (err, out) {
         var text = (out || '') + '';

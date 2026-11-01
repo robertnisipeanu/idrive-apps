@@ -215,7 +215,9 @@ function header(target, buf, c) {
 function cmdStatus(target) {
     var buf = readTarget(target), c = classify(buf);
     header(target, buf, c);
-    line('restorable', restorable(target, buf));
+    var p;
+    try { p = restorePlan(target, buf, c); } catch (e) { p = { err: e.message }; }
+    line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) ? 'yes' : 'no');
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
     /* A backup apply would refuse (another build's original, or
@@ -223,7 +225,7 @@ function cmdStatus(target) {
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
     if (hasBak && !bad.length) {
         var b;
-        try { b = checkedBackup(target); } catch (e) { b = { err: e.message }; }
+        try { b = checkedBackup(target, p.bc ? { buf: p.b.buf, c: p.bc } : null); } catch (e) { b = { err: e.message }; }
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
@@ -304,12 +306,13 @@ function resFor(panel, res, safe) {
 }
 
 /* The backup, checked for an apply: its SHA-256 is the one recorded when it
- * was taken, and it is a pristine build. { buf, hash, c } or { err }. */
-function checkedBackup(target) {
-    var orig = fs.readFileSync(backupPath(target)), hash = sha256(orig), meta = null;
+ * was taken, and it is a pristine build. `pre`, when given, is the backup
+ * already read and classified ({ buf, c }). { buf, hash, c } or { err }. */
+function checkedBackup(target, pre) {
+    var orig = pre ? pre.buf : fs.readFileSync(backupPath(target)), hash = sha256(orig), meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
     if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
-    var c = classify(orig), why = notPristine(c, orig);
+    var c = pre ? pre.c : classify(orig), why = notPristine(c, orig);
     return why ? { err: why } : { buf: orig, hash: hash, c: c };
 }
 
@@ -318,22 +321,24 @@ function checkedBackup(target) {
  * (variant 4, sink 59, self-start 5, geometry 4 x 8), twice over. */
 var SAME_BUILD_MAX_DIFF = 2 * (4 + 59 + 5 + 4 * 8);
 
-/* `cur` is the build `orig` is the original of: the same build-id and size,
- * or, when either has no build-id, the same size and at most
- * SAME_BUILD_MAX_DIFF bytes apart. */
-function sameBuildAs(cur, orig) {
+/* Why `cur` is not the build `orig` is the original of, or null when it is:
+ * the same build-id and size, or, when either has no build-id, the same size
+ * and at most SAME_BUILD_MAX_DIFF bytes apart. */
+function otherBuild(cur, orig) {
+    if (cur.length !== orig.length) return 'its size differs';
     var a = locator.buildId(cur), b = locator.buildId(orig);
-    if (cur.length !== orig.length) return false;
-    if (a && b) return a === b;
-    for (var i = 0, n = 0; i < cur.length; i++) if (cur[i] !== orig[i] && ++n > SAME_BUILD_MAX_DIFF) return false;
-    return true;
+    if (a && b) return a === b ? null : 'its build-id differs';
+    for (var i = 0, n = 0; i < cur.length; i++) {
+        if (cur[i] !== orig[i] && ++n > SAME_BUILD_MAX_DIFF) return 'no build-id, and more than ' + SAME_BUILD_MAX_DIFF + ' bytes differ';
+    }
+    return null;
 }
 
 /* The backup, checked for a restore without the locator, so a binary any
  * version of this tool patched can be restored: its SHA-256 and GNU build-id
  * are the recorded ones (each when recorded). { buf, hash, meta, other } or
- * { err }; other is true when `cur` is not the backup's build, which writing
- * the backup whole would replace. */
+ * { err }; other says why `cur` is not the backup's build (which writing the
+ * backup whole would replace), null when it is. */
 function trustedBackup(target, cur) {
     var orig, meta = null;
     try { orig = fs.readFileSync(backupPath(target)); } catch (e) { return { err: 'no backup' }; }
@@ -341,35 +346,27 @@ function trustedBackup(target, cur) {
     var hash = sha256(orig), id = locator.buildId(orig);
     if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
     if (meta && meta.buildId && id && meta.buildId !== id) return { err: 'build-id ' + id + ' != recorded ' + meta.buildId };
-    return { buf: orig, hash: hash, meta: !!meta, other: !sameBuildAs(cur, orig) };
+    return { buf: orig, hash: hash, meta: !!meta, other: otherBuild(cur, orig) };
 }
 
-/* What a revert of `cur` writes, without --force: { b, regionWise, out } or
- * { err }. When the locator recognises the target and the backup as the same
+/* What a revert of `cur` (classified as `c`) writes, without --force:
+ * { b, bc (the backup classified), regionWise, out } or { err }. When the locator recognises the target and the backup as the same
  * build, the backup's bytes in the edits' regions only (another tool's
  * changes stay); otherwise the whole backup. A backup with no record of the
  * original (an older release's, cut short by a power loss) is written whole
  * only when the locator reads it as the pristine build or it has the
  * target's size. */
-function restorePlan(target, cur) {
+function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) return b;
-    var orig = b.buf, c = classify(cur), bc = classify(orig), pristine = !notPristine(bc, orig);
+    var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);
     if (!b.other && !unrecognised(c).length && pristine && sameBuild(c, bc)) {
         var out = Buffer.from(cur);
         regions(c.loc).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
-        return { b: b, regionWise: true, out: out };
+        return { b: b, bc: bc, regionWise: true, out: out };
     }
     if (!b.meta && !pristine && orig.length !== cur.length) return { err: 'no record of the original, and it is not the pristine build' };
-    return { b: b, regionWise: false, out: orig };
-}
-
-/* Whether a revert would change the target: 'yes', or 'no' with why. */
-function restorable(target, buf) {
-    try {
-        var p = restorePlan(target, buf);
-        return p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build)' : !p.out.equals(buf) ? 'yes' : 'no';
-    } catch (e) { return 'no (' + e.message + ')'; }
+    return { b: b, bc: bc, regionWise: false, out: orig };
 }
 
 function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
@@ -393,6 +390,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
          * written in full and renamed into place, then the backup renamed: a
          * backup never exists without its record. */
         var bakTmp = bak + '.tmp', metaTmp = metaPath(target) + '.tmp';
+        [bakTmp, metaTmp].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });   /* an earlier apply's, cut short */
         fs.writeFileSync(bakTmp, buf, { mode: 0o600 });
         fsyncFile(bakTmp);
         if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
@@ -474,20 +472,22 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
 function cmdRevert(target, yes, force, dropBackup) {
     function drop() {
         if (!dropBackup) return;
-        [bak, metaPath(target)].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') die('dropping ' + f + ': ' + e.message); } });
+        [bak, metaPath(target), bak + '.tmp', metaPath(target) + '.tmp'].forEach(function (f) {
+            try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') die('dropping ' + f + ': ' + e.message); }
+        });
         process.stdout.write('backup dropped\n');
     }
     var bak = backupPath(target);
     if (!fs.existsSync(bak)) die('no backup at ' + bak + '; cannot revert');
     var cur = readTarget(target), p;
-    try { p = restorePlan(target, cur); } catch (e) { p = { err: e.message }; }
+    try { p = restorePlan(target, cur, classify(cur)); } catch (e) { p = { err: e.message }; }
     if (p.err) die('backup ' + bak + ' is not a verified original (' + p.err + '); refusing to restore it');
     var b = p.b, orig = b.buf;
     if (cur.equals(orig)) { process.stdout.write('already at the original; nothing to do\n'); drop(); return; }
     /* Another build (a firmware update replaced carplay and left the old
      * backup behind): restoring would downgrade it. */
     if (b.other && !force) {
-        die('current ' + target + ' is another build than the backup (its build-id or size differs).' +
+        die('current ' + target + ' is another build than the backup (' + b.other + ').' +
             '\n  It may have been replaced (e.g. a firmware update). Refusing to overwrite it.' +
             '\n  Pass --force only if you are sure this backup is the right original for it.');
     }

@@ -361,13 +361,15 @@ capture restores the DLT tracing mode as it stops.
 
 ## Reversibility
 
-Before the first edit the patcher writes the backup under a temporary name
-and checks it, writes the record of the original (SHA-256, build-id and
-version) to `<target>.woc-orig.json` in full by rename, and then renames the
-backup to `<target>.woc-orig`: a backup never exists without its record. `apply` re-checks the backup: its recorded
-SHA-256, a pristine build (above), and the same build as the target (size,
-build-id and every site). The stock geometry `apply` writes back (`--res
-stock`, `--panel mid`) is the backup's.
+Before the first edit the patcher writes the backup under a temporary name and
+checks it, writes the record of the original (SHA-256, build-id and version)
+to `<target>.woc-orig.json` in full by rename, and then renames the backup to
+`<target>.woc-orig`: a backup never exists without its record. The
+temporary files of an apply cut short go at the next first edit and at a
+removal (`revert --drop-backup`). `apply`
+re-checks the backup: its recorded SHA-256, a pristine build (above), and the
+same build as the target (size, build-id and every site). The stock geometry
+`apply` writes back (`--res stock`, `--panel mid`) is the backup's.
 
 `revert` needs no locator to trust the backup: its SHA-256 and GNU build-id
 must be the recorded ones (each when recorded). The target is the backup's
@@ -509,13 +511,13 @@ repository carries no BMW binary.
   third builder, a getter reading another field, inlining, a split-off part,
   a second or merged sink string, a relocation over an edit); each is found
   where it really is or refused, never found elsewhere.
-- `patch_test.js`: the sites the probe reports, the SHA gate, `--unproven`, both panels,
-  the sink inside its slot, the call retarget, region-bounded diffs,
-  idempotence, partial patches (an Edit-1-only binary among them), the
+- `patch_test.js`: the sites the probe reports, the SHA gate, `--unproven`,
+  both panels, the sink inside its slot, the call retarget, region-bounded
+  diffs, idempotence, partial patches (an Edit-1-only binary among them), the
   geometry and safe area, byte-exact revert, a binary of the backup's build
-  the locator does not recognise restored whole, another build over the
-  backup refused unless `--force`, a build outside the proven list, a
-  backup of another build refused.
+  the locator does not recognise restored whole, another build over the backup
+  refused unless `--force`, a build outside the proven list, a backup of
+  another build refused.
 - `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
   locator now refuses a site (`carplay_mutations.js`): `status` restorable,
   `revert` writes the original whole without `--force`, also with no

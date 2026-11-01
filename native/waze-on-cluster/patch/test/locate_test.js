@@ -157,9 +157,11 @@ try {
     var noId = Buffer.from(orig);
     noId.writeUInt32LE(0, 0x208);   /* the build-id note's type */
     [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    fs.writeFileSync(tgt + '.woc-orig.tmp', 'cut short');        /* an earlier apply's, cut short */
+    fs.writeFileSync(tgt + '.woc-orig.json.tmp', '{"sha');
     fs.writeFileSync(tgt, noId);
     r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
-    ok('no build-id: apply writes the backup and its record, no temporary file left', r.code === 0 && fs.existsSync(tgt + '.woc-orig') &&
+    ok('no build-id: apply writes the backup and its record, an earlier temporary file gone', r.code === 0 && fs.existsSync(tgt + '.woc-orig') &&
         fs.existsSync(tgt + '.woc-orig.json') && !fs.existsSync(tgt + '.woc-orig.tmp') && !fs.existsSync(tgt + '.woc-orig.json.tmp'), r.out);
     var noIdPatched = fs.readFileSync(tgt), mangled = Buffer.from(noIdPatched);
     mangled[at.highHandler] = 0x90;   /* a site the locator now refuses */
@@ -168,13 +170,20 @@ try {
     ok('no build-id: a patch the locator refuses is restorable', /known:\s+NO/.test(r.out) && /^restorable: yes$/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('no build-id: revert writes the original whole', r.code === 0 && fs.readFileSync(tgt).equals(noId), r.out);
+    fs.writeFileSync(tgt + '.woc-orig.tmp', 'cut short');
+    fs.writeFileSync(tgt + '.woc-orig.json.tmp', '{"sha');
+    r = run(['revert', '--target', tgt, '--yes', '--drop-backup']);
+    ok('a removal drops the backup, its record and any temporary file', r.code === 0 && !fs.existsSync(tgt + '.woc-orig') &&
+        !fs.existsSync(tgt + '.woc-orig.json') && !fs.existsSync(tgt + '.woc-orig.tmp') && !fs.existsSync(tgt + '.woc-orig.json.tmp'), r.out);
+    run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
     var far = Buffer.from(noId);
     for (var k = 0; k < 400; k++) far[0x300 + k] ^= 0xff;
     fs.writeFileSync(tgt, far);
     r = run(['status', '--target', tgt]);
-    ok('no build-id: a binary hundreds of bytes away is another build', /^restorable: no \(another build\)$/m.test(r.out), r.out);
+    ok('no build-id: a binary hundreds of bytes away is another build', /^restorable: no \(another build: no build-id, and more than 200 bytes differ\)$/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
-    ok('no build-id: revert refuses it without --force', r.code !== 0 && /another build/.test(r.out) && fs.readFileSync(tgt).equals(far), r.out);
+    ok('no build-id: revert refuses it without --force, saying why', r.code !== 0 && /another build than the backup \(no build-id, and more than 200 bytes differ\)/.test(r.out) &&
+        fs.readFileSync(tgt).equals(far), r.out);
 
     /* A backup an older release left without its record, cut short: never
      * written, also with --force. */

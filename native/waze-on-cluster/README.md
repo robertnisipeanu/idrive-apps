@@ -315,8 +315,8 @@ verified full backup. `patch/carplay_locate.js` finds each edit's site in the
 build by its code and data and checks it before any write, so the patch
 applies to any carplay build in which every site is found exactly once and
 passes its cross-checks; a build where one does not is left alone, with the
-reason. The install patches only the proven build; another build is a
-conflict until Enable map (or `apply --unproven`) patches it once. `carplay_patch.js
+reason. The install patches only the proven build; another build is a conflict
+until Enable map (or `apply --unproven`) patches it once. `carplay_patch.js
 probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
 whether it is patchable, without writing. The build the patch was proven on,
 carplay 22.28.3, also has to match its shipped SHA-256 before the first edit.
@@ -333,12 +333,13 @@ Its sites:
 `woc-patch.sh` is the shell path, for experiments: `status`, `probe`,
 `verify`, `revert [--force]`, and `apply high|mid` with `--avb` (the app's
 sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
-<url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It remounts `/` read-write only
-for the write. **Never `systemctl stop` or `restart` carplay**: that
-power-cycles the head unit, and so does any CarPlay death unless recmgr
-loaded `carplay` in both restart lists at this boot. `revert` restores any
-binary of the backup's build (`/usr/bin/carplay.woc-orig`), and refuses
-another build (a firmware update) unless given `--force`.
+<url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It
+remounts `/` read-write only for the write. **Never `systemctl stop` or
+`restart` carplay**: that power-cycles the head unit, and so does any CarPlay
+death unless recmgr loaded `carplay` in both restart lists at this boot.
+`revert` restores any binary of the backup's build
+(`/usr/bin/carplay.woc-orig`), and refuses another build (a firmware update)
+unless given `--force`.
 
 ## Safety
 
@@ -356,12 +357,13 @@ another build (a firmware update) unless given `--force`.
   commands; no value reaches a shell or a path. It checks `/` is read-only
   again after every write. It applies no patch and restarts nothing on its
   own. `reboot` is honoured only while a change is pending.
-- Boot recovery (`recovery.js`, root) changes the binary only through the
-  same revert as Disable map, and only when that revert would change it
-  (`restorable: yes`: a verified backup of the binary's own build). Its one action on a service is `systemctl start
-  carplay.service` after a crash, bounded, where recmgr loaded `carplay`'s
-  entry this boot; it never stops, kills or restarts anything. Its shutdown
-  record is a drop-in for `var-opt-ro.service`, removed with the tool.
+- Boot recovery (`recovery.js`, root) changes the binary only through the same
+  revert as Disable map, and only when that revert would change it
+  (`restorable: yes`: a verified backup of the binary's own build). Its one
+  action on a service is `systemctl start carplay.service` after a crash,
+  bounded, where recmgr loaded `carplay`'s entry this boot; it never stops,
+  kills or restarts anything. Its shutdown record is a drop-in for
+  `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
 - Nothing is mapped on the cluster before the stream's first non-blank
   picture, once its picture has stayed blank for `blank_ms`, or after the
