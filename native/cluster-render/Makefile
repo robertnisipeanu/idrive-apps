@@ -206,23 +206,26 @@ $(T)/stub/libvsomeip3.so.3: dcsm/abi/libvsomeip3.so.3.symbols
 STUBS = $(T)/stub/$(RAMSES_SONAME) $(T)/stub/libvsomeip3.so.3
 
 # Each binary's sources compile in a folder of their own, with that binary's
-# flags.
+# flags and their header dependencies (-MD: the -isystem RAMSES and vsomeip
+# headers too).
 LAUNCH_FLAGS  = $(CXXFLAGS) $(HOSTINC) -pthread
 IDRIVE7_FLAGS = $(CXXFLAGS) $(CPPFLAGS) -DCR_VERSION='"$(VERSION)"' -pthread
 IDRIVE8_FLAGS = $(CXXFLAGS) $(CPPFLAGS27) -DCR_VERSION='"$(VERSION)"' -pthread
 LD_UNIT       = -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2
 
-$(T)/launch/%.o: %.cpp $(CORE_H)
+$(T)/launch/%.o: %.cpp
 	@mkdir -p $(@D)
-	g++ $(LAUNCH_FLAGS) -c -o $@ $<
+	g++ $(LAUNCH_FLAGS) -MD -MP -c -o $@ $<
 
-$(T)/idrive7/%.o: %.cpp $(CORE_H) component.json
+$(T)/idrive7/%.o: %.cpp component.json
 	@mkdir -p $(@D)
-	g++ $(IDRIVE7_FLAGS) -c -o $@ $<
+	g++ $(IDRIVE7_FLAGS) -MD -MP -c -o $@ $<
 
-$(T)/idrive8/%.o: %.cpp $(CORE_H) component.json
+$(T)/idrive8/%.o: %.cpp component.json
 	@mkdir -p $(@D)
-	g++ $(IDRIVE8_FLAGS) -c -o $@ $<
+	g++ $(IDRIVE8_FLAGS) -MD -MP -c -o $@ $<
+
+-include $(wildcard $(T)/launch/*/*.d $(T)/idrive7/*/*.d $(T)/idrive8/*/*.d)
 
 # Starts the service of the unit's generation (src/unit.h): needs neither
 # libramses.

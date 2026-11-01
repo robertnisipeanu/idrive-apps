@@ -203,16 +203,18 @@ $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1: abi/libias_avb.symbols
 STUBS = $(T)/stub/libmfxhw64.so $(T)/stub/libva.so.1 $(T)/stub/libva-drm.so.1 \
         $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1
 
-# Each source compiles once, in parallel.
+# Each source compiles once, in parallel, with its header dependencies.
 WOC_FLAGS = $(CXXFLAGS) $(CPPFLAGS) -DWOC_VERSION='"$(VERSION)"' -pthread
 
 $(T)/obj/cr/%.o: $(CR)/%.cpp component.json
 	@mkdir -p $(@D)
-	g++ $(WOC_FLAGS) -c -o $@ $<
+	g++ $(WOC_FLAGS) -MD -MP -c -o $@ $<
 
 $(T)/obj/%.o: %.cpp component.json
 	@mkdir -p $(@D)
-	g++ $(WOC_FLAGS) -c -o $@ $<
+	g++ $(WOC_FLAGS) -MD -MP -c -o $@ $<
+
+-include $(wildcard $(T)/obj/*/*.d $(T)/obj/cr/*/*.d)
 
 $(T)/waze-on-cluster: $(call objs,$(SRC),$(T)/obj) $(STUBS)
 	g++ $(WOC_FLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -o $@ $^
