@@ -105,6 +105,12 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     loc = locator.locate(rel.buf);
     ok('relocations it cannot read: every edit refused', json(reasons(loc)) ===
         json(['variant: relocations not readable', 'sink: relocations not readable', 'self-start: relocations not readable', 'resolution: relocations not readable']), json(reasons(loc)));
+    rel = synthetic.build({ relocSink: true });
+    for (var ph = 64; rel.buf.readUInt32LE(ph) !== 2; ph += 56);
+    rel.buf.writeUInt32LE(rel.buf.length - 8, ph + 8);   /* PT_DYNAMIC running past the end of the file */
+    loc = locator.locate(rel.buf);
+    ok('a dynamic segment outside the file: every edit refused, no throw', json(reasons(loc)) ===
+        json(['variant: relocations not readable', 'sink: relocations not readable', 'self-start: relocations not readable', 'resolution: relocations not readable']), json(reasons(loc)));
     loc = locator.locate(Buffer.from('#!/bin/sh\nexec carplay "$@"\n'));
     ok('not an ELF', loc.elf === false && loc.reason === 'not an ELF file' && !loc.ok, json(loc));
 })();

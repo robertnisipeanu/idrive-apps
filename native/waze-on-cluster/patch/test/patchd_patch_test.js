@@ -344,6 +344,28 @@ async function main() {
         !fs.existsSync(path.join(dir, 'sock', 'activation-pending')), JSON.stringify(r));
     ok('undo: no systemctl call', newCalls().length === 0);
 
+    /* Disable map on what an older release patched where the locator now
+     * refuses a site (with its backup and record): the original back, carplay
+     * restarted. */
+    if (require('crypto').createHash('sha256').update(SRCBUF).digest('hex') === 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50') {
+        setRecmgr(['HBAdasMgu', 'carplay'], true);
+        var locate = require('../carplay_locate.js'), fx = require('./carplay_mutations.js')(SRCBUF).oldRelease();
+        for (var k = 0; k < fx.length; k++) {
+            fs.writeFileSync(TGT, fx[k].patched);
+            fs.writeFileSync(TGT + '.woc-orig', fx[k].original);
+            fs.writeFileSync(TGT + '.woc-orig.json', JSON.stringify({ buildId: locate.buildId(fx[k].original),
+                sha256_original: require('crypto').createHash('sha256').update(fx[k].original).digest('hex') }));
+            dummy = dummyCarplay();
+            setUnit('ok', dummy.pid);
+            r = await op({ cmd: 'revert' });
+            ok(fx[k].name + ': Disable map restores the original, carplay restarted', r.carplay === 'restarted' && fs.readFileSync(TGT).equals(fx[k].original) &&
+                /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')), JSON.stringify(r));
+            newCalls();
+        }
+        fs.writeFileSync(TGT, SRCBUF);
+        [TGT + '.woc-orig', TGT + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    }
+
     /* reboot with a pending activation: a normal system reboot, once. A second
      * request is refused while that one is in progress; carplay is never killed
      * or restarted (no systemctl call), and apply/revert are refused meanwhile.

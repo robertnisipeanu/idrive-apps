@@ -339,7 +339,7 @@ pending, which the Store shows.
 | the original with our backup (Disable map was used) | nothing: the map stays off | drops our backup |
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
-| a build with an edit site not found or not recognised | nothing: a conflict | nothing |
+| a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
 | a proven build modified by something else, or any build with one of our edits and no backup of ours | nothing: a conflict | nothing (the patcher refuses) |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | nothing: a conflict | reverts our patch |
 
@@ -363,14 +363,22 @@ capture restores the DLT tracing mode as it stops.
 
 Before the first edit the patcher copies the binary to `<target>.woc-orig`,
 checks the copy, and records the original's SHA-256, build-id and version in
-`<target>.woc-orig.json`. `apply` and `revert` re-check the backup: its
-recorded SHA-256, a pristine build (above), and the same build as the target
-(size, build-id and every site). `revert` restores only the edits' regions
-from it, so another tool's change elsewhere stays; it then confirms all four
-edits read original (and the whole file matches the backup when nothing else
-changed). The stock geometry `apply` writes back (`--res stock`, `--panel
-mid`) is the backup's. `revert --force` writes the whole backup, also over a
-binary it does not recognise. Every write is an atomic rename.
+`<target>.woc-orig.json`. `apply` re-checks the backup: its recorded
+SHA-256, a pristine build (above), and the same build as the target (size,
+build-id and every site). The stock geometry `apply` writes back (`--res
+stock`, `--panel mid`) is the backup's.
+
+`revert` needs no locator to trust the backup: its SHA-256 and GNU build-id
+must be the recorded ones (each when recorded; a backup without a record
+is checked by build-id alone). When the locator recognises the target and
+the backup as the same build, `revert` restores only the edits' regions, so
+another tool's change elsewhere stays, and confirms all four edits read
+original. Otherwise, when the target is the backup's build (same build-id
+and size), it writes the whole backup: that undoes a patch any version of
+this tool wrote, also one whose sites the locator now refuses. Over another
+build (a firmware update) it refuses; `revert --force` writes the whole
+backup there too. `status` prints `restorable: yes` when such a backup of
+the target's own build differs from it. Every write is an atomic rename.
 
 ## Boot recovery
 
@@ -457,11 +465,13 @@ watcher also runs the boot step's logic at its own start, so a start whose
 boot step did not run or finish is counted, and a restore it left undone is
 retried. A stop waits for a restore in progress.
 
-**Restoring** is the `carplay_patch.js revert` Disable map uses (verified
-backup, refuses a binary it does not recognise as a patched form of the
-backup's build), with `/` read-write only for the write and read-only again
-after. It acts only on a recognised patched build with a verified backup; a
-stock or firmware-replaced binary is left alone and the counter cleared. The
+**Restoring** is the `carplay_patch.js revert` Disable map uses (a
+verified backup of the target's own build, above), with `/` read-write only
+for the write and read-only again after. CarPlay counts as patched, for the
+counter and the restore, when `status` reads `restorable: yes`: whatever the
+locator makes of the binary, so a patch any version of this tool wrote is
+counted and restored. A stock or firmware-replaced binary is left alone and
+the counter cleared. The
 watcher keeps the patched binary linked as `<target>.woc-running`, since
 CarPlay could start between its check and the rename; the boot step, which
 CarPlay waits for, links it only if a process runs it. `patchd` removes a
@@ -497,8 +507,17 @@ repository carries no BMW binary.
 - `patch_test.js`: the sites the probe reports, the SHA gate, `--unproven`, both panels,
   the sink inside its slot, the call retarget, region-bounded diffs,
   idempotence, partial patches (an Edit-1-only binary among them), the
-  geometry and safe area, byte-exact revert, a build outside the proven list,
-  a backup of another build refused.
+  geometry and safe area, byte-exact revert, a binary of the backup's build
+  the locator does not recognise restored whole, another build over the
+  backup refused unless `--force`, a build outside the proven list, a
+  backup of another build refused.
+- `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
+  locator now refuses a site (`carplay_mutations.js`): `status` restorable,
+  `revert` writes the original whole without `--force`, also with no
+  record; a backup that is not the recorded original, or another build over
+  it, refused; `apply` refused. `recovery_test.js`, `patchd_patch_test.js`
+  and `patchd_activate_test.js` restore the same builds at the crash
+  threshold, by Disable map and by the removal.
 - `patchd_patch_test.js`, `patchd_activate_test.js`: `patchd` and both hooks
   on a copy, against a fake `/proc`, `mount`, `systemctl` and recmgr list:
   both activation branches, every row of the install table, the marker, the

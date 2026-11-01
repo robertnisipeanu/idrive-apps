@@ -89,8 +89,8 @@ case "$cmd" in
     echo "Revert any time with: woc-patch.sh revert"
     ;;
   revert)
-    # Pass through extra flags (e.g. --force to restore over an unrecognised
-    # current binary; the patcher refuses that without it).
+    # Pass through extra flags (e.g. --force to restore over another carplay
+    # build; the patcher refuses that without it).
     trap 'sync; "$MOUNT" -o remount,ro / 2>/dev/null || true' EXIT INT TERM HUP
     "$MOUNT" -o remount,rw /
     "$NODE" "$PATCHER" revert --target "$TARGET" --yes "$@"

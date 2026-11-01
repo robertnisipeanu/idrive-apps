@@ -174,15 +174,29 @@ try {
     r = run(['apply', '--target', tgt, '--panel', 'high', '--capture', '--yes']);
     ok('--capture without a value is refused', r.code !== 0 && /--capture needs/.test(r.out) && sha256(tgt) === ORIG_SHA, r.out);
 
-    /* revert refuses to overwrite a binary it no longer recognises (e.g. a
-     * firmware update replaced carplay and left the backup behind) */
+    /* A binary of the backup's build the locator does not recognise: revert
+     * writes the whole backup. */
     run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
     var mangled = Buffer.from(fs.readFileSync(tgt));
     mangled.writeUInt32LE(0x11223344, 0x2ba4d4);   /* corrupt the converter table -> unknown variant */
     fs.writeFileSync(tgt, mangled);
+    r = run(['status', '--target', tgt]);
+    ok('status: an unrecognised binary of the backup\'s build is restorable', /known:\s+NO/.test(r.out) && /restorable:\s+yes/.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes', '--drop-backup']);
-    ok('revert refuses an unrecognised current binary, keeping the backup', r.code !== 0 && /not a recognised/.test(r.out) &&
-        fs.existsSync(tgt + '.woc-orig'), r.out);
+    ok('revert restores it whole, without --force, and drops the backup', r.code === 0 && sha256(tgt) === ORIG_SHA &&
+        !fs.existsSync(tgt + '.woc-orig') && !fs.existsSync(tgt + '.woc-orig.json'), r.out);
+
+    /* Another build over the backup (a firmware update replaced carplay and
+     * left the backup behind): refused; --force writes the backup. */
+    run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    var replaced = Buffer.from(fs.readFileSync(tgt));
+    replaced[replaced.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 0xff;
+    fs.writeFileSync(tgt, replaced);
+    r = run(['status', '--target', tgt]);
+    ok('status: another build is not restorable', /restorable:\s+no/.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('revert refuses another build, keeping it and the backup', r.code !== 0 && /another build/.test(r.out) &&
+        fs.readFileSync(tgt).equals(replaced) && fs.existsSync(tgt + '.woc-orig'), r.out);
     r = run(['revert', '--target', tgt, '--yes', '--force']);
     ok('revert --force restores it to the backed-up original', r.code === 0 && sha256(tgt) === ORIG_SHA, r.out);
 

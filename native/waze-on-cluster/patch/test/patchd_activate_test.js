@@ -417,6 +417,24 @@ async function main() {
     r = hook('deactivate');
     ok('unpatchable binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
 
+    /* What an older release patched where the locator now refuses a site
+     * (with its backup and record): activate leaves it, a conflict; the
+     * removal restores the original whole and drops the backup. */
+    if (sha(SRCBUF) === 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50') {
+        var locate = require('../carplay_locate.js');
+        require('./carplay_mutations.js')(SRCBUF).oldRelease().forEach(function (f) {
+            fresh(f.patched);
+            fs.writeFileSync(BAK, f.original, { mode: 0o600 });
+            fs.writeFileSync(TGT + '.woc-orig.json', JSON.stringify({ buildId: locate.buildId(f.original), sha256_original: sha(f.original) }));
+            r = hook('activate');
+            ok(f.name + ': activate leaves it, conflict, exit 0', r.code === 0 && fs.readFileSync(TGT).equals(f.patched) &&
+                /^not patchable: /.test(r.result.conflict || '') && !r.result.reboot && ro(), JSON.stringify(r.result));
+            r = hook('deactivate');
+            ok(f.name + ': deactivate restores the original, drops the backup, pending', r.code === 0 && fs.readFileSync(TGT).equals(f.original) &&
+                !fs.existsSync(BAK) && !fs.existsSync(TGT + '.woc-orig.json') && marker() && marker().action === 'revert' && ro(), JSON.stringify(r.result));
+        });
+    }
+
     /* A build outside the proven list with every site stock: a fresh install
      * leaves it, a conflict; once Enable map patched it (our backup), an
      * install brings the patch up to date. */

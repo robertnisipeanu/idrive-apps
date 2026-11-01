@@ -336,9 +336,9 @@ sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
 <url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It remounts `/` read-write only
 for the write. **Never `systemctl stop` or `restart` carplay**: that
 power-cycles the head unit, and so does any CarPlay death unless recmgr
-loaded `carplay` in both restart lists at this boot. `revert` refuses a
-binary it does not recognise as a patched form of the backup
-(`/usr/bin/carplay.woc-orig`) unless given `--force`.
+loaded `carplay` in both restart lists at this boot. `revert` restores any
+binary of the backup's build (`/usr/bin/carplay.woc-orig`), and refuses
+another build (a firmware update) unless given `--force`.
 
 ## Safety
 

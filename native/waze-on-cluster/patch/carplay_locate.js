@@ -30,11 +30,14 @@ function parseElf(buf) {
     if (buf[4] !== 2 || buf[5] !== 1 || buf.readUInt16LE(18) !== 62) return { reason: 'not a 64-bit little-endian x86-64 ELF' };
     var phoff = u64(buf, 0x20), phentsize = buf.readUInt16LE(0x36), phnum = buf.readUInt16LE(0x38);
     if (phoff === null || phoff + phnum * phentsize > buf.length) return { reason: 'ELF program headers out of range' };
-    var elf = { load: [], exec: null, eh: null, notes: [], dyn: null };
+    var elf = { load: [], exec: null, eh: null, notes: [], dyn: null, dynBad: false };
     for (var i = 0; i < phnum; i++) {
         var o = phoff + i * phentsize, type = buf.readUInt32LE(o);
         var seg = { off: u64(buf, o + 8), va: u64(buf, o + 16), size: u64(buf, o + 32) };
-        if (seg.off === null || seg.va === null || seg.size === null || seg.off + seg.size > buf.length) continue;
+        if (seg.off === null || seg.va === null || seg.size === null || seg.off + seg.size > buf.length) {
+            if (type === 2) elf.dynBad = true;          /* a PT_DYNAMIC outside the file */
+            continue;
+        }
         if (type === 1) {                               /* PT_LOAD; PF_X marks the code */
             elf.load.push(seg);
             if ((buf.readUInt32LE(o + 4) & 1) && !elf.exec) elf.exec = { off: seg.off, end: seg.off + seg.size };
@@ -44,6 +47,13 @@ function parseElf(buf) {
     }
     if (!elf.exec) return { reason: 'no executable ELF segment' };
     return elf;
+}
+
+/* The GNU build-id of an ELF image as hex, or null: what tells one build
+ * from another without locating anything. */
+function elfBuildId(buf) {
+    var elf = parseElf(buf);
+    return elf.load ? buildId(buf, elf.notes) : null;
 }
 
 /* The GNU build-id note as hex, or null. */
@@ -68,6 +78,7 @@ function Image(buf, elf) {
     this.exec = elf.exec;
     this.starts = funcStarts(buf, elf.eh);
     this.dyn = elf.dyn;
+    this.dynBad = elf.dynBad;
     this.callIndex = null;
 }
 Image.prototype.va = function (off) {
@@ -366,8 +377,9 @@ function builder(im, f) {
  * caller of the constructor calls after it, each reading one field of
  * `this` (mov rax,[rdi+d8] / mov eax,[rdi+d8] / movzx eax,word [rdi+d8]).
  * The edit writes pixel size (+0x18), view x,y (+0x20, +0x22), safe width
- * and height (+0x24) and safe x,y (+0x2c, +0x2e): some caller must read
- * exactly those, so the immediates mean what the edit writes. */
+ * and height (+0x24) and safe x,y (+0x2c, +0x2e): the getters some caller
+ * calls must read each of those, other fields besides, so the immediates
+ * mean what the edit writes. */
 var FIELDS = ['q18', 'w20', 'w22', 'q24', 'w2c', 'w2e'];
 function fieldRead(im, f) {
     var fn = im.func(f), buf = im.buf, found = [];
@@ -451,11 +463,13 @@ function locateRes(im, str, refs) {
 /* ---- relocations and version -------------------------------------------- */
 
 /* The edits the loader would rewrite: all of them with text relocations or
- * relocations this cannot read (REL, RELR, or a table outside the file), else
+ * relocations this cannot read (REL, RELR, or a dynamic segment or table
+ * outside the file), else
  * those of `regions` ([edit, off, len]) that a relocation's 8 bytes (RELA or
  * PLT) overlap. { all: why or null, edits } */
 function relocated(im, regions) {
     var out = { all: null, edits: [] };
+    if (im.dynBad) { out.all = 'relocations not readable'; return out; }
     if (!im.dyn) return out;
     var buf = im.buf, d = {}, rel = [];
     for (var o = im.dyn.off; o + 16 <= im.dyn.off + im.dyn.size; o += 16) {
@@ -518,4 +532,4 @@ function locate(buf) {
     return out;
 }
 
-module.exports = { locate: locate, SINK_STOCK: SINK_STOCK };
+module.exports = { locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK };

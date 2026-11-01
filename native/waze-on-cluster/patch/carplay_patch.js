@@ -193,7 +193,7 @@ function readTarget(t) {
     try { return fs.readFileSync(t); } catch (e) { die('cannot read ' + t + ': ' + e.message); }
 }
 
-function pad(s) { return (s + ':          ').slice(0, 11); }
+function pad(s) { return (s + ':          ').slice(0, Math.max(11, s.length + 2)); }
 function line(name, text) { process.stdout.write(pad(name) + text + '\n'); }
 
 function describe(name, s) {
@@ -215,9 +215,10 @@ function header(target, buf, c) {
 function cmdStatus(target) {
     var buf = readTarget(target), c = classify(buf);
     header(target, buf, c);
+    line('restorable', restorable(target, buf) ? 'yes' : 'no');
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
-    /* A backup apply and revert would refuse (another build's original, or
+    /* A backup apply would refuse (another build's original, or
      * not the original recorded) makes the build one this tool cannot patch. */
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
     if (hasBak && !bad.length) {
@@ -302,14 +303,38 @@ function resFor(panel, res, safe) {
     return g;
 }
 
-/* The backup, checked: its SHA-256 is the one recorded when it was taken, and
- * it is a pristine build. { buf, hash, c } or { err }. */
+/* The backup, checked for an apply: its SHA-256 is the one recorded when it
+ * was taken, and it is a pristine build. { buf, hash, c } or { err }. */
 function checkedBackup(target) {
     var orig = fs.readFileSync(backupPath(target)), hash = sha256(orig), meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
     if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
     var c = classify(orig), why = notPristine(c, orig);
     return why ? { err: why } : { buf: orig, hash: hash, c: c };
+}
+
+/* The backup, checked for a restore without the locator, so a binary any
+ * version of this tool patched can be restored: its SHA-256 is the one
+ * recorded when it was taken, and its GNU build-id the recorded one (each when
+ * recorded). { buf, hash, other } or { err }; other is true when `cur` is not
+ * the same build (another build-id or size), which writing the backup whole
+ * would replace. */
+function trustedBackup(target, cur) {
+    var orig, meta = null;
+    try { orig = fs.readFileSync(backupPath(target)); } catch (e) { return { err: 'no backup' }; }
+    try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
+    var hash = sha256(orig), id = locator.buildId(orig);
+    if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
+    if (!id) return { err: 'no build-id' };
+    if (meta && meta.buildId && meta.buildId !== id) return { err: 'build-id ' + id + ' != recorded ' + meta.buildId };
+    return { buf: orig, hash: hash, other: locator.buildId(cur) !== id || cur.length !== orig.length };
+}
+
+/* yes when a trusted backup of the target's own build differs from it: a
+ * restore would change it, whatever the locator makes of either. */
+function restorable(target, buf) {
+    var b = trustedBackup(target, buf);
+    return !b.err && !b.other && !b.buf.equals(buf);
 }
 
 function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
@@ -397,11 +422,14 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
     process.stdout.write('revert:  carplay_patch.js revert --target ' + target + ' --yes\n');
 }
 
-/* Revert puts the backup's bytes back in the edits' regions; the rest of the
- * target, another tool's changes included, stays as it is. --force writes the
- * whole backup, also over a target it does not recognise. --drop-backup deletes the
- * backup once none of the edits is left in the target, for a removal of the
- * tool: nothing is left to revert. */
+/* Revert puts the backup's bytes back. When the locator recognises the target
+ * and the backup as the same build, only in the edits' regions, so another
+ * tool's changes elsewhere stay; otherwise, the target being the backup's own
+ * build (same build-id and size), the whole backup, which also undoes a patch
+ * the locator no longer recognises. --force writes the whole backup over
+ * another build too. --drop-backup deletes the backup once none of the edits
+ * is left in the target, for a removal of the tool: nothing is left to
+ * revert. */
 function cmdRevert(target, yes, force, dropBackup) {
     function drop() {
         if (!dropBackup) return;
@@ -410,34 +438,30 @@ function cmdRevert(target, yes, force, dropBackup) {
     }
     var bak = backupPath(target);
     if (!fs.existsSync(bak)) die('no backup at ' + bak + '; cannot revert');
-    var b = checkedBackup(target);
-    if (b.err) die('backup ' + bak + ' is not a pristine original (' + b.err + '); refusing to restore an unrecognised backup');
+    var cur = readTarget(target), b = trustedBackup(target, cur);
+    if (b.err) die('backup ' + bak + ' is not a verified original (' + b.err + '); refusing to restore it');
     var orig = b.buf;
-
-    var cur = readTarget(target);
     if (cur.equals(orig)) { process.stdout.write('already at the original; nothing to do\n'); drop(); return; }
-    /* Only restore over a binary we recognise as a patched form of the
-     * backup's build. If the current file is some other binary (e.g. a
-     * firmware update replaced carplay and left the old backup behind),
-     * restoring would downgrade it. */
-    var c = classify(cur), bad = unrecognised(c);
-    var recognised = !bad.length && sameBuild(c, b.c);
-    if (!recognised && !force) {
-        die('current ' + target + ' is not a recognised patched build of this backup (' + (bad.length ? brief(bad) : 'another build') + ').' +
+    /* Another build (a firmware update replaced carplay and left the old
+     * backup behind): restoring would downgrade it. */
+    if (b.other && !force) {
+        die('current ' + target + ' is another build than the backup (its build-id or size differs).' +
             '\n  It may have been replaced (e.g. a firmware update). Refusing to overwrite it.' +
             '\n  Pass --force only if you are sure this backup is the right original for it.');
     }
+    var c = classify(cur), bc = classify(orig);
+    var regionWise = !force && !b.other && !unrecognised(c).length && !notPristine(bc, orig) && sameBuild(c, bc);
     var out = Buffer.from(orig);
-    if (recognised && !force) {
+    if (regionWise) {
         out = Buffer.from(cur);
         regions(c.loc).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
         if (out.equals(cur)) { process.stdout.write('nothing to do: none of the edits is in it; other changes kept\n'); drop(); return; }
     }
-    process.stdout.write('About to restore ' + (recognised && !force ? 'the edited regions of ' : '') + target + ' from ' + bak + ' (sha256 ' + b.hash + ')\n');
+    process.stdout.write('About to restore ' + (regionWise ? 'the edited regions of ' : '') + target + ' from ' + bak + ' (sha256 ' + b.hash + ')\n');
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
-    var after = readTarget(target), ca = classify(after);
-    if (!after.equals(out) || EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; })) die('restore verification failed');
+    var after = readTarget(target), ca = regionWise ? classify(after) : null;
+    if (!after.equals(out) || (ca && EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; }))) die('restore verification failed');
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');
     if (dropBackup) drop();
