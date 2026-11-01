@@ -488,7 +488,12 @@ var calmSince = null, resyncWaiting = false, resyncHeld = null, resyncing = fals
 
 function saveResync() {
     var record = Object.assign({ waiting: resyncWaiting, held: resyncHeld }, resync);
-    try { fs.writeFileSync(RESYNC_FILE, JSON.stringify(record) + '\n'); } catch (e) { log('resync state: ' + e.message); }
+    /* Written whole and renamed into place: the render reads it any time. */
+    var tmp = RESYNC_FILE + '.tmp';
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(record) + '\n');
+        fs.renameSync(tmp, RESYNC_FILE);
+    } catch (e) { log('resync state: ' + e.message); }
 }
 
 function streamWait() {
