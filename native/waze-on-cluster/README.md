@@ -235,9 +235,9 @@ binary it does not recognise as a patched form of the backup
 - The patch is the only change to a BMW binary. It is reversible and fully
   backed up, checks every edit site before writing, refuses a build where a
   site is not found or not recognised, is written by atomic rename, and
-  takes effect at the next CarPlay start. On a proven build (PATCH.md) it
-  also refuses one modified anywhere else; on any other build only the four
-  sites are checked.
+  takes effect at the next CarPlay start. Its first apply to a proven build
+  (PATCH.md) also requires the whole file to be the shipped one; on any
+  other build, and once its backup exists, only the four sites are checked.
   Removal reverts our edits only.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture

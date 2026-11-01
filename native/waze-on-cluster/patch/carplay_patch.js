@@ -217,8 +217,9 @@ function cmdStatus(target) {
      * not the original recorded) makes the build one this tool cannot patch. */
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
     if (hasBak && !bad.length) {
-        var b = checkedBackup(target);
-        bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original (' + b.err + ')'
+        var b;
+        try { b = checkedBackup(target); } catch (e) { b = { err: e.message }; }
+        bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
