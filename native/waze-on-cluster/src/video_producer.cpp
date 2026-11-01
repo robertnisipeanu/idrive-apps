@@ -171,7 +171,7 @@ std::string VideoProducer::probe_report() const
                       cfg_.tex_level_bits, (long long)round_us_.mean(), (long long)round_us_.max,
                       (long long)(queue_.oldest_wait_us() / 1000), (long long)(backlog_.max_wait_us() / 1000),
                       (unsigned long long)backlog_.skipped_total(),
-                      backlog_.behind() ? "; the decoder is behind the stream" : "");
+                      backlog_.behind(cld::now_ms()) ? "; the decoder is behind the stream" : "");
         r += line;
     }
     return r + probe_.report();

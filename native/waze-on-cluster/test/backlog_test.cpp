@@ -45,7 +45,7 @@ int main()
         quiet = quiet && b.packet(4900, 150000).empty();
         for (int64_t t = 5000; t < 9900; t += 100)
             quiet = quiet && b.packet(t, 250000).empty();
-        ok("long waits short of 5 s in a row: not behind", quiet && !b.behind());
+        ok("long waits short of 5 s in a row: not behind", quiet && !b.behind(9800));
     }
     {
         Backlog b;
@@ -54,15 +54,28 @@ int main()
             quiet = quiet && b.packet(t, 250000).empty();
         const std::string start = b.packet(5000, 850000);
         ok("every packet over 200 ms for 5 s: behind, said once",
-           quiet && b.behind() &&
+           quiet && b.behind(5000) &&
                start == "waze: the decoder is behind the stream: every packet for 5 s waited over 200 ms in the "
                         "receive queue, now 850 ms, with pictures skipped to catch up");
-        ok("and not again while it stays behind", b.packet(5100, 2400000).empty() && b.packet(5200, 150000).empty() &&
-                                                      b.behind());
+        bool still = b.packet(5100, 2400000).empty() && b.packet(5200, 150000).empty();
+        for (int64_t t = 5300; t < 42000; t += 500)
+            still = still && b.packet(t, 300000).empty();
+        ok("and not again while it stays behind", still && b.behind(41900));
         const std::string end = b.packet(42000, 40000);
         ok("a wait under 100 ms ends it",
-           !b.behind() &&
+           !b.behind(42000) &&
                end == "waze: the decoder caught up with the stream after 42 s behind it (packets waited at most 2400 ms)");
+    }
+    {
+        /* Behind, then the stream stops: not behind once the packets have
+         * paused, and the next stream starts afresh, with no line. */
+        Backlog b;
+        for (int64_t t = 0; t <= 5000; t += 100)
+            b.packet(t, 300000);
+        const bool was = b.behind(5000);
+        ok("behind while the packets come, not after a pause", was && b.behind(6000) && !b.behind(6001));
+        ok("the next stream starts afresh, with no caught-up line",
+           b.packet(60000, 300000).empty() && !b.behind(60000) && b.packet(60100, 20000).empty());
     }
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

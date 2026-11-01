@@ -9,7 +9,8 @@
  * few frames' decoding (well under kLagUs on the unit's GPU), so waits of
  * kLagUs or more on every packet for kLagForMs mean the decoder is slower
  * than the stream even without the pictures: the decoder is behind until a
- * packet waits less than half of kLagUs. Not thread-safe. */
+ * packet waits less than half of kLagUs, or no packet comes for kPauseMs
+ * (the stream paused or ended). Not thread-safe. */
 #ifndef WOC_BACKLOG_H
 #define WOC_BACKLOG_H
 
@@ -25,6 +26,7 @@ class Backlog {
 public:
     static const int64_t kLagUs = 200000;
     static const int64_t kLagForMs = 5000;
+    static const int64_t kPauseMs = 1000;
 
     struct Minute {
         crk::Spread wait_us;     /* the packets taken */
@@ -39,6 +41,11 @@ public:
         minute_.wait_us.add(wait_us);
         if (wait_us > max_us_)
             max_us_ = wait_us;
+        if (last_ms_ >= 0 && now_ms - last_ms_ > kPauseMs) {
+            over_since_ms_ = -1;
+            behind_ = false;
+        }
+        last_ms_ = now_ms;
         char line[200] = "";
         if (wait_us < kLagUs) {
             over_since_ms_ = -1;
@@ -84,13 +91,15 @@ public:
 
     int64_t max_wait_us() const { return max_us_; }
     uint64_t skipped_total() const { return skipped_total_; }
-    bool behind() const { return behind_; }
+    /* Behind the stream at now_ms: not once the packets paused. */
+    bool behind(int64_t now_ms) const { return behind_ && now_ms - last_ms_ <= kPauseMs; }
 
 private:
     Minute minute_;
     int64_t max_us_ = 0;
     uint64_t skipped_total_ = 0;
     int64_t over_since_ms_ = -1;   /* the first of the packets in a row that waited kLagUs or more */
+    int64_t last_ms_ = -1;         /* the last packet taken */
     bool behind_ = false;
     int64_t behind_since_ms_ = 0, behind_max_us_ = 0;
 };

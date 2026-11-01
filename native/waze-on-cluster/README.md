@@ -260,8 +260,9 @@ sustained congestion and recovering slowly. Set it with `upload_kb_per_s` in
 `/var/opt/cluster-render/cluster-render.local.conf`. This tool's own
 `upload_kb_per_s` and `upload_burst_ms` keys are accepted and ignored with a
 warning naming that file. On the car 8000 KB/s made the cluster flash black;
-6000 KB/s stayed smooth with packed motion and no failed writes, but the link
-looked overloaded near 5.8 MB/s, so the ceiling sits below that. Real Waze
+6000 KB/s stayed smooth with packed motion and no failed writes, but the
+cluster once removed a shown map after a minute averaging 5774 KB/s, so the
+ceiling sits below that. Real Waze
 transitions peaked at about 3.2 MB/s. Every head-unit participant shares
 the link to the cluster, so an upload that outruns it can drop other contents
 too. Details: the cluster-render README.

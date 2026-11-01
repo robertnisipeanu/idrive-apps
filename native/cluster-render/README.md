@@ -213,8 +213,8 @@ cluster is offered, and what differs is in "iDrive 8".
 
 Every layer of every client writes within one budget (`src/governor.h`,
 `kit/upload_pacer.h`). Its ceiling, `upload_kb_per_s`, is 5500 KB/s: on the
-car the cluster flashed black at 8000 KB/s, and the link looked overloaded
-near 5.8 MB/s. The cap follows what the link shows while writes go (64 KB
+car the cluster flashed black at 8000 KB/s, and once removed a shown map
+after a minute averaging 5774 KB/s. The cap follows what the link shows while writes go (64 KB
 or more written within the last second, whether or not the flush went);
 evidence at other times is logged, not counted:
 
@@ -228,7 +228,7 @@ evidence at other times is logged, not counted:
 - At 6 points the cap steps down 500 KB/s, to the 2000 KB/s floor at most,
   and the window starts empty. A removal reaches 6 alone: on the car the
   KOMBI removed a shown map, with healthy heartbeats and no lock, after the
-  busiest minute of upload (5.8 MB/s with a 1.3 MB whole-scene resend). No
+  busiest minute of upload (5774 KB/s with a 1.3 MB whole-scene resend). No
   other single event does, so one transient error of another kind never
   lowers the cap.
 - Another step down waits 15 s.
