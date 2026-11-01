@@ -62,7 +62,7 @@ UNIT8_SRC = src/main.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.
 LAUNCH_SRC = src/main.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
 
-.PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 target target-in-docker \
+.PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
 	test-ramses test-ramses27 clean
 
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
@@ -175,6 +175,11 @@ $(H)/frame_clock_test: $(KO)/test/frame_clock_test.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # ---- target binary (in Docker) ----------------------------------------------
+# The build image, built when missing; prints its tag.
+image:
+	@$(DOCKER_IMAGE) >/dev/null
+	@echo $(IMAGE)
+
 target:
 	$(DOCKER_IMAGE)
 	docker run --rm --platform linux/amd64 --user "$$(id -u):$$(id -g)" -v "$(CURDIR):/w/cluster-render" -w /w/cluster-render $(IMAGE) \

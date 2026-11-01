@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Robert Nisipeanu
 # Every test, the head-unit builds and the reproducibility check, as parallel
-# jobs.
+# jobs: on a pull request, the jobs of the components it changes; on main,
+# every job. The `ci` job is the one result to require.
 name: Test
 
 # A pull request runs once, on its merge commit; main runs on every push.
@@ -20,7 +21,69 @@ permissions:
   contents: read
 
 jobs:
+  # What the pull request changes, by path:
+  #   native/cluster-render/   both tools' jobs (waze-on-cluster compiles the
+  #                            renderer's client, kit and core, and builds in
+  #                            its image)
+  #   native/waze-on-cluster/  its jobs
+  #   apps/<id>/               the app's tests
+  #   native/<id>/test/        tests only: the tool's artifact leaves out test/
+  #   native/**.md             nothing
+  #   release/, tools/, .github/  every job
+  # Each changed component is built twice from a clean export, on two runners,
+  # and the artifacts compared.
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      cluster-render: ${{ steps.paths.outputs.cluster-render }}
+      waze-on-cluster: ${{ steps.paths.outputs.waze-on-cluster }}
+      app: ${{ steps.paths.outputs.app }}
+      release: ${{ steps.paths.outputs.release }}
+      components: ${{ steps.paths.outputs.components }}
+    steps:
+      - id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          cr=false woc=false app=false all=false ids=
+          if [ -z "$PR" ]; then
+            all=true
+          else
+            files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
+            while read -r f; do
+              case $f in
+              .github/*|release/*|tools/*) all=true ;;
+              native/*.md) ;;
+              native/cluster-render/test/*) cr=true woc=true ;;
+              native/cluster-render/*) cr=true woc=true ids="$ids cluster-render waze-on-cluster" ;;
+              native/waze-on-cluster/test/*) woc=true ;;
+              native/waze-on-cluster/*) woc=true ids="$ids waze-on-cluster" ;;
+              native/*/test/*) ;;
+              native/*/*) f=${f#native/} ids="$ids ${f%%/*}" ;;
+              apps/*/*) f=${f#apps/} app=true ids="$ids ${f%%/*}" ;;
+              esac
+            done <<< "$files"
+          fi
+          if [ "$all" = true ]; then
+            cr=true woc=true app=true ids=all
+          fi
+          # shellcheck disable=SC2086 # one id per word
+          ids=$(printf '%s\n' $ids | sort -u | paste -sd' ' -)
+          {
+            echo "cluster-render=$cr"
+            echo "waze-on-cluster=$woc"
+            echo "app=$app"
+            echo "release=$([ -n "$ids" ] && echo true || echo false)"
+            echo "components=$([ "$ids" = all ] || echo "$ids")"
+          } | tee -a "$GITHUB_OUTPUT"
+
   cluster-render:
+    needs: changes
+    if: needs.changes.outputs.cluster-render == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,14 +96,19 @@ jobs:
 
   # the unit's toolchain (gcc 7.5) in Docker, preinstalled on the runner
   cluster-render-x86:
+    needs: changes
+    if: needs.changes.outputs.cluster-render == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/build-image
       - run: make -C native/cluster-render test-x86
 
   waze-on-cluster:
+    needs: changes
+    if: needs.changes.outputs.waze-on-cluster == 'true' || needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,31 +117,87 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.12.0
-      - run: make -C native/waze-on-cluster test
+      - if: needs.changes.outputs.waze-on-cluster == 'true'
+        run: make -C native/waze-on-cluster test
       - run: node apps/robertn_waze_cluster/tools/test_control.js
       - run: node apps/robertn_waze_cluster/tools/test_page.js
 
   waze-on-cluster-x86:
+    needs: changes
+    if: needs.changes.outputs.waze-on-cluster == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/build-image
       - run: make -C native/waze-on-cluster test-x86
 
-  release:
+  # release.js check across two runners: two clean builds of each changed
+  # component, compared byte for byte by the release job
+  release-a:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-24.04
+    outputs:
+      artifacts: ${{ steps.build.outputs.artifacts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # release.js check: SOURCE_DATE_EPOCH comes from each component's last commit
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - id: build
+        uses: ./.github/actions/release-build
         with:
-          node-version: 22.12.0
+          components: ${{ needs.changes.outputs.components }}
       - run: node release/test/release_test.js
-      # Builds every component twice from a clean export of HEAD and compares
-      # the artifacts. A tool's build is its `make target`: the head-unit
-      # binaries in Docker, every import checked against the unit's libraries.
-      - run: node release/release.js check
+
+  release-b:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      artifacts: ${{ steps.build.outputs.artifacts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: build
+        uses: ./.github/actions/release-build
+        with:
+          components: ${{ needs.changes.outputs.components }}
+
+  release:
+    needs: [release-a, release-b]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          A: ${{ needs.release-a.outputs.artifacts }}
+          B: ${{ needs.release-b.outputs.artifacts }}
+        run: |
+          # shellcheck disable=SC2086 # <id>@<version> <sha256> pairs
+          printf '%s %s\n' $A > a.txt
+          # shellcheck disable=SC2086
+          printf '%s %s\n' $B > b.txt
+          if [ -z "$A" ] || ! diff a.txt b.txt; then
+            echo "the two builds differ"
+            exit 1
+          fi
+          awk '{ print "reproducible  " $1 }' a.txt
+
+  # The one result: fails when a job failed or was cancelled; a job left out
+  # for what the pull request changes passes.
+  ci:
+    needs: [changes, cluster-render, cluster-render-x86, waze-on-cluster, waze-on-cluster-x86, release-a, release-b,
+            release]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do
+            case $r in success|skipped) ;; *) exit 1 ;; esac
+          done
