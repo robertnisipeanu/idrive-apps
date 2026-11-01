@@ -161,40 +161,11 @@ and the map shows smudges until the phone codes those areas again (README
 "Losses"). `probe.txt` counts `seq_gaps` and its `late-join:` line reads
 `RISK` on this stream.
 
-### Stream resync
-
 A render that missed the start (it restarted), or whose decoder gave up its
-sequence after decode errors in a row, decodes nothing until a new stream,
-and nothing on the head unit asks the phone for a keyframe. A new CarPlay
-session brings a new stream, so `patchd` restarts CarPlay the way it
-activates a patch:
-
-- About once a second the render writes `stream.json`: how long the stream
-  has arrived with no frame decoded and no SPS or IDR. A decoded frame or the
-  stream stopping resets it; a keyframe seen since the last decoded frame
-  holds it at 0, since a new stream would not fix a decoder that fails on a
-  keyframe.
-- `patchd` reads it every 2 s, as a small regular file opened without
-  following links and without blocking; a report older than 5 s counts as
-  none. Past 15 s it SIGKILLs CarPlay's main PID and starts the unit, only
-  when recmgr loaded CarPlay's restart entry this boot and no apply, revert
-  or reboot runs.
-- Attempts are spaced 2 min, then 10 min, then 30 min, at most 6 per
-  head-unit start; 10 min without a wait resets the spacing. The counts live
-  in `/dev/shm/waze-on-cluster/resync.json`, so they survive a `patchd`
-  restart and clear at a head-unit start. Each attempt, and each held one
-  with its reason, is in `patchd`'s log.
-- From the first report of a wait, `patchd` decides whether a resync would
-  go and records it in the same file: `waiting` true and `held`, null when
-  it would go or why not. Both clear when the wait ends, and at each
-  `patchd` start. The render reads it each second: its status says `Stream
-  lost — restarting CarPlay` only with `waiting` true and `held` null, and
-  `Stream lost — reconnect CarPlay` otherwise; its log and `probe.txt` give
-  the reason.
-
-On the car the stream resumed after a CarPlay restart; the restart also ends
-the main-screen session until the phone reconnects. With a stock restart list
-the resync is held and the map waits for a reconnect.
+sequence after decode errors in a row, decodes nothing until the next
+stream, and nothing on the head unit asks the phone for a keyframe. Its
+status says `Stream lost — reconnect CarPlay`; the map returns with the next
+CarPlay session, when the phone reconnects.
 
 ## Edit 4 — resolution
 
@@ -403,5 +374,5 @@ repository carries no BMW binary.
   both activation branches, every row of the install table, the marker, the
   link's lifetime, `/` read-only after every path, and no `systemctl`, `kill`
   or `reboot` from the hooks.
-- `patchd_resync_test.js`, `recovery_test.js`: the resync's timing and
-  limits; the boot counter, the remount lock and a real restore on a copy.
+- `recovery_test.js`: the boot counter, the remount lock and a real restore
+  on a copy.

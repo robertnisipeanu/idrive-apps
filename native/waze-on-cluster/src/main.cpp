@@ -127,40 +127,9 @@ private:
     std::string last_;
 };
 
-/* Whether patchd would restart CarPlay for a new stream (PATCH.md "Stream
- * resync"), from the resync record it keeps next to its socket, root's and
- * world-readable: "waiting" true once it decided for the current wait, and
- * "held", null or why it would not. Unread without the record or its
- * "held". */
-ResyncState read_resync(const std::string &path)
-{
-    ResyncState r;
-    char buf[1024];
-    const int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-    if (fd < 0)
-        return r;
-    const ssize_t n = read(fd, buf, sizeof buf - 1);
-    close(fd);
-    if (n <= 0)
-        return r;
-    buf[n] = 0;
-    const char key[] = "\"held\":";
-    const char *p = std::strstr(buf, key);
-    if (!p)
-        return r;
-    p += sizeof key - 1;
-    const char *end = *p == '"' ? std::strchr(p + 1, '"') : nullptr;
-    r.read = end || std::strncmp(p, "null", 4) == 0;
-    if (end)
-        r.held.assign(p + 1, end);
-    r.waiting = std::strstr(buf, "\"waiting\":true") != nullptr;
-    return r;
-}
-
 /* Files next to the FIFO, in the render's own RuntimeDirectory, which it can
- * write: status.json, probe.txt and stream.json, for the remote diagnostics
- * and patchd, read without taking the control socket's owner slot. 0644,
- * world-readable. */
+ * write: status.json and probe.txt, for the remote diagnostics, read
+ * without taking the control socket's owner slot. 0644, world-readable. */
 void write_sibling_file(const std::string &fifo_path, const char *name, const std::string &content)
 {
     std::string::size_type slash = fifo_path.find_last_of('/');
@@ -259,9 +228,6 @@ int serve(const Config &cfg)
     int64_t errs_logged_ms = -60000;
     const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
     StreamLiveness liveness(vc.stall_ms);
-    const std::string socket_path = cfg.str("socket_path");
-    const std::string resync_file = socket_path.substr(0, socket_path.find_last_of('/') + 1) + "resync.json";
-    ResyncState resync;
     std::string last_detail;
     AltScreen::State alt_state = AltScreen::Unknown;
     int64_t alt_read_ms = 0;
@@ -299,7 +265,7 @@ int serve(const Config &cfg)
         feed.set_stream(live, producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
-        const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason(resync));
+        const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
         const std::string status = status_line(fs);
         /* The frame rate changes the status every second; the log keeps
          * to its state, reason and target, so the app's last lines are not
@@ -320,8 +286,7 @@ int serve(const Config &cfg)
                          sm.losses, sm.lost, (unsigned long long)overflows, bm.wait_us.mean() / 1000.0,
                          (long long)(bm.wait_us.max / 1000));
             producer.track_keyframe_wait(now);
-            resync = read_resync(resync_file);
-            const std::string detail = producer.stream_detail(resync);
+            const std::string detail = producer.stream_detail();
             if (producer.stream_lost() && detail != last_detail)
                 log_warn("waze: stream lost: %s", detail.c_str());
             last_detail = detail;
@@ -340,9 +305,6 @@ int serve(const Config &cfg)
                                producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" +
                                    feed.report());
             feed.request_report();
-            /* For patchd's stream resync (PATCH.md "Stream resync"). */
-            write_sibling_file(cfg.str("fifo_path"), "stream.json",
-                               "{\"keyframe_wait_ms\":" + std::to_string(producer.keyframe_wait_ms(now)) + "}");
             last_status_write = now;
         }
     }

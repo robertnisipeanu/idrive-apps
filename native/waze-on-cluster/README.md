@@ -114,9 +114,7 @@ values within 17 levels. A static map is never frozen, however many frames
 the phone sends: some phones send one about every ten seconds, others keep
 their full rate.
 
-A render that missed the stream's start decodes nothing until a new stream.
-Where recmgr allows a CarPlay restart, `patchd` restarts CarPlay after 15 s of
-stream with no keyframe, rate-limited (PATCH.md "Stream resync"); elsewhere,
+A render that missed the stream's start decodes nothing until a new stream:
 reconnect the phone. If a patched CarPlay crash-loops,
 `waze-on-cluster-recovery.service` restores the original binary on disk
 (PATCH.md "Boot recovery").
@@ -149,8 +147,8 @@ the render decodes through a lost packet:
   areas again, and MSDK's per-frame `Corrupted` flags are counted. A decoder
   that has never started still waits for the stream's first SPS. Only
   30 access units in a row that fail to decode give the sequence up; the
-  decoder then waits for a keyframe as at the start, and the resync above
-  applies.
+  decoder then waits for a keyframe as at the start, until the next
+  stream.
 - A gap followed by an SPS is a new stream (the phone reconnected or
   CarPlay asked for a new one), logged as `waze: a new stream from avb
   (sequence 40000, expected 17)`, not a loss. Any other gap is a loss,
@@ -163,16 +161,12 @@ the render decodes through a lost packet:
 - Decoding through a loss, the map shows and the status has no reason
   for it; `probe.txt`'s `stream:` line says `lost part of the stream at
   12:39:50; decoding through it` until that clean frame. The status's
-  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`, or
-  `Stream lost — restarting CarPlay` once `patchd` has decided for this
-  wait that it will restart CarPlay (PATCH.md "Stream resync"), while the
-  stream arrives with nothing decoded for 2 s (a render started
+  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`
+  while the stream arrives with nothing decoded for 2 s (a render started
   mid-stream, or a loss the decoder does not decode through) and while the
-  decoder has given up its sequence. The detail, with when that began and
-  `patchd`'s reason for holding the resync, is in the log (`waze: stream
-  lost: the stream arrives with nothing decoded since 12:40:50; resync
-  held: recmgr did not load a carplay restart entry this boot`) and in
-  `probe.txt`. A status line whose only change is the stream's reason is
+  decoder has given up its sequence. The detail, with when that began, is
+  in the log (`waze: stream lost: the stream arrives with nothing decoded
+  since 12:40:50`) and in `probe.txt`. A status line whose only change is the stream's reason is
   logged at most once every 10 s.
 
 From a shell, `waze-on-cluster -c <conf> run map|panel|hud` (`sail` is an
@@ -191,9 +185,8 @@ held`), its backlog (`backlog: the oldest packet waiting N ms, the longest
 wait M ms; K frames decoded without a picture to catch up`, with `; the
 decoder is behind the stream` while it is), the stream (`stream: whole` or
 the detail above), the decoder, the late-join verdict, the noise filter's
-tile differences and the renderer's own status; and `stream.json`, for
-`patchd`'s resync. `patchd` answers `{"cmd":"logs"}` with CarPlay, AVB and
-DLT marker lines and its own log.
+tile differences and the renderer's own status. `patchd` answers
+`{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own log.
 
 Every line the render logs also goes to
 `/var/opt/waze-on-cluster/log/waze-on-cluster.log` (`log_file`) with its UTC
@@ -318,9 +311,8 @@ binary it does not recognise as a patched form of the backup
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture
   commands; no value reaches a shell or a path. It checks `/` is read-only
-  again after every write. It applies no patch on its own; its only
-  unrequested action is the rate-limited stream resync. `reboot` is honoured
-  only while a change is pending.
+  again after every write. It applies no patch and restarts nothing on its
+  own. `reboot` is honoured only while a change is pending.
 - No debug arming: the services are normal units whitelisted in recmgr.
 - Nothing is mapped on the cluster before the first decoded frame or after
   the frames stop. The map never alters the gauges' data.

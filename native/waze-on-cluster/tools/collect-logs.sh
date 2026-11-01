@@ -42,7 +42,7 @@ done
 for f in /run/cluster-render/*; do
     copy "$f" "run-cluster-render-${f##*/}"
 done
-for f in status.json probe.txt stream.json; do
+for f in status.json probe.txt; do
     copy "/run/waze-on-cluster/$f" "run-waze-on-cluster-$f"
 done
 
