@@ -361,24 +361,29 @@ capture restores the DLT tracing mode as it stops.
 
 ## Reversibility
 
-Before the first edit the patcher copies the binary to `<target>.woc-orig`,
-checks the copy, and records the original's SHA-256, build-id and version in
-`<target>.woc-orig.json`. `apply` re-checks the backup: its recorded
+Before the first edit the patcher writes the backup under a temporary name
+and checks it, writes the record of the original (SHA-256, build-id and
+version) to `<target>.woc-orig.json` in full by rename, and then renames the
+backup to `<target>.woc-orig`: a backup never exists without its record. `apply` re-checks the backup: its recorded
 SHA-256, a pristine build (above), and the same build as the target (size,
 build-id and every site). The stock geometry `apply` writes back (`--res
 stock`, `--panel mid`) is the backup's.
 
 `revert` needs no locator to trust the backup: its SHA-256 and GNU build-id
-must be the recorded ones (each when recorded; a backup without a record
-is checked by build-id alone). When the locator recognises the target and
-the backup as the same build, `revert` restores only the edits' regions, so
-another tool's change elsewhere stays, and confirms all four edits read
-original. Otherwise, when the target is the backup's build (same build-id
-and size), it writes the whole backup: that undoes a patch any version of
-this tool wrote, also one whose sites the locator now refuses. Over another
-build (a firmware update) it refuses; `revert --force` writes the whole
-backup there too. `status` prints `restorable: yes` when such a backup of
-the target's own build differs from it. Every write is an atomic rename.
+must be the recorded ones (each when recorded). The target is the backup's
+build when both have the same build-id and size, or, when either has no
+build-id, the same size and at most 200 bytes apart (twice the edits'
+bytes). When the locator recognises the target and the backup as the same
+build, `revert` restores only the edits' regions, so another tool's change
+elsewhere stays, and confirms all four edits read original. Otherwise, over
+the backup's build, it writes the whole backup: that undoes a patch any
+version of this tool wrote, also one whose sites the locator now refuses.
+Over another build (a firmware update) it refuses; `revert --force` writes
+the whole backup there too. A backup without a record (an older release's)
+is written whole only when the locator reads it as the pristine build or it
+has the target's size, `--force` or not. `status` prints `restorable: yes`
+when the revert would change the target, else `no` with why. Every write is
+an atomic rename.
 
 ## Boot recovery
 

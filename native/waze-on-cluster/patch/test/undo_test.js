@@ -64,7 +64,7 @@ try {
         ok(f.name + ': revert writes the original whole, without --force', r.code === 0 && fs.readFileSync(tgt).equals(f.original) &&
             /restored OK/.test(r.out), r.out);
         r = run(['status', '--target', tgt]);
-        ok(f.name + ': then not restorable', /^restorable: no$/m.test(r.out), r.out);
+        ok(f.name + ': then not restorable', /^restorable: no\b/m.test(r.out), r.out);
     });
 
     var f = fixtures[0];
@@ -75,7 +75,7 @@ try {
 
     stage(tgt, f, { sha256_original: sha256(REF) });
     r = run(['status', '--target', tgt]);
-    ok('a backup that is not the recorded original: not restorable', /^restorable: no$/m.test(r.out), r.out);
+    ok('a backup that is not the recorded original: not restorable', /^restorable: no\b/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes', '--force']);
     ok('a backup that is not the recorded original: revert refuses, also with --force', r.code !== 0 && /not a verified original/.test(r.out) &&
         fs.readFileSync(tgt).equals(f.patched), r.out);
@@ -89,7 +89,7 @@ try {
     other[other.indexOf(Buffer.from(locator.buildId(f.original), 'hex'))] ^= 0xff;
     fs.writeFileSync(tgt, other);
     r = run(['status', '--target', tgt]);
-    ok('another build over the backup: not restorable', /^restorable: no$/m.test(r.out), r.out);
+    ok('another build over the backup: not restorable', /^restorable: no\b/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('another build over the backup: revert refuses without --force', r.code !== 0 && /another build/.test(r.out) && fs.readFileSync(tgt).equals(other), r.out);
 } finally {

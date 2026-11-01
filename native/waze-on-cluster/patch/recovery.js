@@ -35,11 +35,12 @@
  * on SIGTERM while the system stops), and otherwise adds one (it ended with no
  * record, e.g. power lost).
  *
- * The restore is the carplay_patch.js revert Disable map uses (verified
- * backup, refuses a binary it does not recognise as a patched form of the
- * backup's build), under the remount lock shared with patchd, with / read-write
- * only for the write. It acts only on a recognised patched build with a
- * verified backup; a stock or firmware-replaced binary clears the counter.
+ * The restore is the carplay_patch.js revert Disable map uses (a verified
+ * backup of the target's own build), under the remount lock shared with
+ * patchd, with / read-write only for the write. It acts when the patcher's
+ * status reads `restorable: yes` (a revert would change the binary, whatever
+ * the locator makes of it); a stock or firmware-replaced binary clears the
+ * counter.
  * Every command it runs is bounded (STEP_MS), so a restore ends within
  * RESTORE_BOUND_MS. It never kills, restarts or reboots anything; the only
  * start is `systemctl start carplay.service` after a crash, never stop or

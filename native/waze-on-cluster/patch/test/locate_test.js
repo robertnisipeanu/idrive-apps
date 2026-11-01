@@ -152,6 +152,48 @@ try {
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
 
+    /* A build without a GNU build-id: the same build is the same size and at
+     * most a few hundred bytes apart from the backup. */
+    var noId = Buffer.from(orig);
+    noId.writeUInt32LE(0, 0x208);   /* the build-id note's type */
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    fs.writeFileSync(tgt, noId);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    ok('no build-id: apply writes the backup and its record, no temporary file left', r.code === 0 && fs.existsSync(tgt + '.woc-orig') &&
+        fs.existsSync(tgt + '.woc-orig.json') && !fs.existsSync(tgt + '.woc-orig.tmp') && !fs.existsSync(tgt + '.woc-orig.json.tmp'), r.out);
+    var noIdPatched = fs.readFileSync(tgt), mangled = Buffer.from(noIdPatched);
+    mangled[at.highHandler] = 0x90;   /* a site the locator now refuses */
+    fs.writeFileSync(tgt, mangled);
+    r = run(['status', '--target', tgt]);
+    ok('no build-id: a patch the locator refuses is restorable', /known:\s+NO/.test(r.out) && /^restorable: yes$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('no build-id: revert writes the original whole', r.code === 0 && fs.readFileSync(tgt).equals(noId), r.out);
+    var far = Buffer.from(noId);
+    for (var k = 0; k < 400; k++) far[0x300 + k] ^= 0xff;
+    fs.writeFileSync(tgt, far);
+    r = run(['status', '--target', tgt]);
+    ok('no build-id: a binary hundreds of bytes away is another build', /^restorable: no \(another build\)$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('no build-id: revert refuses it without --force', r.code !== 0 && /another build/.test(r.out) && fs.readFileSync(tgt).equals(far), r.out);
+
+    /* A backup an older release left without its record, cut short: never
+     * written, also with --force. */
+    fs.writeFileSync(tgt, noIdPatched);
+    fs.writeFileSync(tgt + '.woc-orig', noId.slice(0, noId.length - 4096));
+    fs.unlinkSync(tgt + '.woc-orig.json');
+    r = run(['revert', '--target', tgt, '--yes', '--force']);
+    ok('a short backup with no record: revert --force refuses, no write', r.code !== 0 && /no record of the original/.test(r.out) &&
+        fs.readFileSync(tgt).equals(noIdPatched), r.out);
+
+    /* A backup whose build-id note cannot be read: status says why and goes on. */
+    var badNote = Buffer.from(orig);
+    badNote.writeUInt32LE(0x7ffffffe, 0x200);   /* the note's name size */
+    fs.writeFileSync(tgt + '.woc-orig', badNote);
+    r = run(['status', '--target', tgt]);
+    ok('a backup with a malformed note: not restorable, with the reason, status complete', r.code === 0 && /^restorable: no \(.+\)$/m.test(r.out) &&
+        /^backup: /m.test(r.out), r.out);
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+
     var amb = synthetic.build({ twoSinks: true }).buf;
     fs.writeFileSync(tgt, amb);
     r = run(['probe', tgt]);

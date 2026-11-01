@@ -214,6 +214,8 @@ try {
     var expect = Buffer.from(SRCBUF);
     Buffer.from('e900000000', 'hex').copy(expect, 0x9f9a0);
     ok('revert: the result is the original with only their edit', reverted.equals(expect));
+    r = run(['status', '--target', tgt]);
+    ok('status with only their edit left: not restorable', /^restorable: no\b/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert with only their edit left: nothing to do, the file untouched', r.code === 0 && /nothing to do/.test(r.out) && fs.readFileSync(tgt).equals(expect), r.out);
     r = run(['revert', '--target', tgt, '--yes', '--force']);

@@ -349,15 +349,16 @@ another build (a firmware update) unless given `--force`.
   (PATCH.md) also requires the whole file to be the shipped one; on any
   other build it needs `--unproven` (Enable map passes it, the install does
   not), and once its backup exists only the four sites are checked.
-  Removal reverts our edits only.
+  Removal restores the backup's bytes in our edits' regions, or the whole
+  backup over a binary of its build the patcher no longer recognises.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture
   commands; no value reaches a shell or a path. It checks `/` is read-only
   again after every write. It applies no patch and restarts nothing on its
   own. `reboot` is honoured only while a change is pending.
 - Boot recovery (`recovery.js`, root) changes the binary only through the
-  same revert as Disable map, and only a recognised patch of ours with a
-  verified backup. Its one action on a service is `systemctl start
+  same revert as Disable map, and only when that revert would change it
+  (`restorable: yes`: a verified backup of the binary's own build). Its one action on a service is `systemctl start
   carplay.service` after a crash, bounded, where recmgr loaded `carplay`'s
   entry this boot; it never stops, kills or restarts anything. Its shutdown
   record is a drop-in for `var-opt-ro.service`, removed with the tool.
