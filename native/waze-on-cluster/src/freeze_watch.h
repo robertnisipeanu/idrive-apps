@@ -5,10 +5,10 @@
  * A blank picture: the phone sends one when the cluster has nothing to
  * show. A stream starts blank (93 frames in about 2 s on the car, then a
  * pause) and stays so until a navigation app draws its cluster view (in
- * the field, once a route starts in Waze or Google Maps). A map always draws something, so the map
- * goes up only once the stream shows a non-blank picture and comes down
- * again once its picture has stayed blank for blank_ms: the stock map shows
- * instead of a black centre.
+ * the field, once a route starts in Waze or Google Maps). A map always
+ * draws something, so the map goes up only once the stream shows a
+ * non-blank picture and comes down again once its picture has stayed blank
+ * for blank_ms: the stock map shows instead of a black centre.
  *
  * A frozen stream: the phone keeps sending frames (15-21 a second on the
  * car) that all decode to the same blank picture until CarPlay reconnects.
@@ -24,11 +24,15 @@
  * none changed, and not frozen at the next changed or non-blank frame.
  * Until the stream has shown a picture that takes three times as long: one
  * that starts blank and keeps sending it at full rate (a reconnect that did
- * not take) is frozen, while the start's short burst and pause is not. A
- * stream ends when CarPlay's cluster stream stops being live; the frames
- * from then on, the one that makes it live again among them, are the next
- * stream's. FrameTally sums the same verdicts a minute at a time
- * for the log. */
+ * not take) is frozen, while the start's short burst and pause is not.
+ *
+ * A stream is CarPlay's cluster stream while it is live. Its frames are the
+ * ones decoded while it is live and, from before, those decoded at most
+ * kLiveLagMs before it became live: the frame that made it live (live
+ * through a recent frame) or a first frame decoded before the connection
+ * was read. An older frame, such as one of the last stream's still on its
+ * way after that stream ended, does not count. FrameTally sums the same
+ * verdicts a minute at a time for the log. */
 #ifndef WOC_FREEZE_WATCH_H
 #define WOC_FREEZE_WATCH_H
 
@@ -70,19 +74,32 @@ enum class Picture { None, Blank, Shown };
 
 class FreezeWatch {
 public:
+    /* The most a stream's first frame is decoded before the stream reads as
+     * live: the connection is read once a second (two reads), and a recent
+     * frame makes it live at once. */
+    static const int64_t kLiveLagMs = 2000;
+
     explicit FreezeWatch(const FreezeConfig &cfg) : cfg_(cfg) {}
     void frame(int64_t now_ms, bool changed, bool blank);
-    /* Whether CarPlay's cluster stream is live. Going not live ends the
-     * stream: what its frames showed is forgotten, and the next stream has
-     * no frame yet. */
-    void live(bool on);
+    /* Whether CarPlay's cluster stream is live. Each change starts a new
+     * stream: going live, with the frames decoded within kLiveLagMs before;
+     * going not live, with none. */
+    void live(bool on, int64_t now_ms);
     bool frozen(int64_t now_ms) const;
     Picture picture(int64_t now_ms) const;
 
 private:
+    struct Seen {
+        int64_t ms;
+        bool changed, blank;
+    };
+    void reset();
+    void add(int64_t now_ms, bool changed, bool blank);
+
     FreezeConfig cfg_;
     bool live_ = false;
-    bool framed_ = false;               /* None (no frame) or Blank: their status lines differ */
+    std::deque<Seen> before_;           /* frames while not live, the last kLiveLagMs */
+    bool framed_ = false;               /* the stream has had a frame, blank or not */
     bool pictured_ = false;             /* the stream has shown a non-blank picture */
     int64_t blank_since_ms_ = -1;       /* the first blank frame since the last non-blank one */
     int64_t unchanged_since_ms_ = -1;   /* the last changed or non-blank frame */

@@ -43,6 +43,17 @@ bool ChangeSampler::changed(const uint8_t *y)
 
 void FreezeWatch::frame(int64_t now_ms, bool changed, bool blank)
 {
+    if (live_) {
+        add(now_ms, changed, blank);
+        return;
+    }
+    before_.push_back(Seen{now_ms, changed, blank});
+    while (now_ms - before_.front().ms > kLiveLagMs)
+        before_.pop_front();
+}
+
+void FreezeWatch::add(int64_t now_ms, bool changed, bool blank)
+{
     framed_ = true;
     pictured_ = pictured_ || !blank;
     if (!blank)
@@ -59,15 +70,21 @@ void FreezeWatch::frame(int64_t now_ms, bool changed, bool blank)
         times_.pop_front();
 }
 
-void FreezeWatch::live(bool on)
+void FreezeWatch::live(bool on, int64_t now_ms)
 {
     if (on == live_)
         return;
     live_ = on;
-    /* Frames since the last stream ended are the next one's, so the frame
-     * that makes the stream live counts. */
+    reset();
     if (on)
-        return;
+        for (const Seen &s : before_)
+            if (now_ms - s.ms <= kLiveLagMs)
+                add(s.ms, s.changed, s.blank);
+    before_.clear();
+}
+
+void FreezeWatch::reset()
+{
     framed_ = pictured_ = false;
     blank_since_ms_ = -1;
     unchanged_since_ms_ = -1;

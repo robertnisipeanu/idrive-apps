@@ -379,10 +379,10 @@ bool VideoProducer::take(std::vector<uint8_t> *frame, uint64_t *id)
     return true;
 }
 
-void VideoProducer::set_live(bool on)
+void VideoProducer::set_live(bool on, int64_t now_ms)
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    freeze_.live(on);
+    freeze_.live(on, now_ms);
 }
 
 bool VideoProducer::frozen(int64_t now_ms) const

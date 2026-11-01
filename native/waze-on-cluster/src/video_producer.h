@@ -106,7 +106,7 @@ public:
     Picture picture(int64_t now_ms) const;
     /* Whether CarPlay's cluster stream is live (FreezeWatch::live). Main
      * thread. */
-    void set_live(bool on);
+    void set_live(bool on, int64_t now_ms);
     /* When the last frame of the decode size was decoded; -1 for none. */
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
     /* The last minute's pictures of the decode size, how many of them

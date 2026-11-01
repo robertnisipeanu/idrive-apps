@@ -263,7 +263,7 @@ int serve(const Config &cfg)
             alt_read_ms = now;
         }
         const bool live = liveness.live(alt_state, producer.last_frame_ms(), now);
-        producer.set_live(live);
+        producer.set_live(live, now);
         feed.set_stream(live, producer.frozen(now), producer.picture(now));
         feed.poll(now);
         producer.retry_sources(now);

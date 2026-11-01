@@ -99,11 +99,12 @@ once (retrying every second until the AVB bridge is up), and decodes from the
 stream's first SPS whether or not the map is shown. The app need not be open.
 
 The map comes up at the stream's first non-blank picture in the native
-central-map slot `0x100` (scene `0x010004f0`, 1088x480), under the gauges, and
-stays while the stream is live: while carplay holds the phone's connection for the cluster
-stream, TCP port 6031 owned by carplay's uid 13002 in `/proc/net/tcp6`,
-however few frames come (how often a static map sends a frame depends on the
-phone: one about every ten seconds, another about 30 a second).
+central-map slot `0x100` (scene `0x010004f0`, 1088x480), under the gauges,
+and stays while the stream is live: while carplay holds the phone's
+connection for the cluster stream, TCP port 6031 owned by carplay's uid
+13002 in `/proc/net/tcp6`, however few frames come (how often a static map
+sends a frame depends on the phone: one about every ten seconds, another
+about 30 a second).
 When that connection ends (the phone unplugged, the session or the stream
 ended) the map is taken down at the next check, once a second, and the slot
 returns to the cluster's own content; the next stream maps it again. No
@@ -142,11 +143,14 @@ both at 10 s they come together. The map is back with the next non-blank
 picture. A stream that has shown no picture yet is frozen only after three
 times as long (30 s), frames still coming: a phone starting its stream
 sends the same blank picture for a couple of seconds and pauses. A stream
-ends when CarPlay's cluster stream stops being live; the frames from then
-on, the one that makes it live again among them, are the next stream's. Blank: all
-but one in a thousand of the sampled luma values within 17 levels. A static
-map is never frozen, however many frames the phone sends: some phones send
-one about every ten seconds, others keep their full rate.
+is CarPlay's cluster stream while it is live: its frames are those decoded
+while it is live and those decoded at most 2 s before it became live (the
+frame that made it live, or a first frame decoded before the connection
+was read, which is read once a second). An older frame, such as the last
+stream's still on its way after it ended, does not count. Blank: all but
+one in a thousand of the sampled luma values within 17 levels. A static map
+is never frozen, however many frames the phone sends: some phones send one
+about every ten seconds, others keep their full rate.
 
 A render that missed the stream's start decodes nothing until a new stream:
 reconnect the phone.

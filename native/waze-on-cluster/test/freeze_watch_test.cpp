@@ -20,9 +20,10 @@
  * blank_ms, at full rate (as it freezes) or after a single blank frame; a
  * picture again at the next non-blank frame; nothing again for a new
  * stream. A stream ends when it stops being live: the frame that makes it
- * live again counts (live through a recent frame, a static map's frame
- * every 10 s shows at once each time), while the ended stream's frames do
- * not. */
+ * live counts (live through a recent frame, a static map's frame every
+ * 10 s shows at once each time), and so does any frame decoded within
+ * kLiveLagMs before it; the ended stream's frames do not, nor a frame of it
+ * decoded after it ended, seconds before the next stream is live. */
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -43,7 +44,7 @@ int main()
     FreezeConfig cfg;   /* 10 s, 3 frames a second */
 
     FreezeWatch f(cfg);
-    f.live(true);
+    f.live(true, 0);
     f.frame(0, true, false);
     int64_t t = 0;
     for (; t < 9900; t += 66)
@@ -58,7 +59,7 @@ int main()
     /* The car: a stream's first 93 frames the same blank picture in about
      * 2 s, then a pause. */
     FreezeWatch fc(cfg);
-    fc.live(true);
+    fc.live(true, 0);
     fc.frame(0, true, true);
     bool never = true;
     for (int k = 1; k < 93; k++)
@@ -68,7 +69,7 @@ int main()
     ok("the car's start: 93 blank frames in 2 s, then nothing for 60 s: never frozen", never);
 
     FreezeWatch st(cfg);
-    st.live(true);
+    st.live(true, 0);
     st.frame(0, true, true);
     for (int64_t u = 66; u <= 29900; u += 66)
         st.frame(u, false, true);
@@ -80,9 +81,9 @@ int main()
     for (int64_t u = 60132; u <= 71000; u += 66)
         st.frame(u, false, true);
     ok("a picture, then 10 s of the same blank one: frozen", st.frozen(71000));
-    st.live(false);
+    st.live(false, 71000);
     ok("the stream ending ends it", !st.frozen(71000));
-    st.live(true);
+    st.live(true, 71000);
     st.frame(71066, true, true);
     for (int64_t u = 71132; u <= 90000; u += 66)
         st.frame(u, false, true);
@@ -93,18 +94,21 @@ int main()
     ok("until it shows a picture and goes blank for 10 s", st.frozen(101000));
 
     FreezeWatch s(cfg);
+    s.live(true, 0);
     s.frame(0, true, false);
     for (int64_t u = 11000; u <= 120000; u += 11000)
         s.frame(u, false, false);
     ok("a static map, one frame in 11 s for 2 minutes: never frozen", !s.frozen(120000) && !s.frozen(125000));
 
     FreezeWatch m(cfg);
+    m.live(true, 0);
     m.frame(0, true, false);
     for (int64_t u = 66; u <= 120000; u += 66)
         m.frame(u, false, false);
     ok("a static map at 15 fps for 2 minutes: never frozen", !m.frozen(120000));
 
     FreezeWatch n(cfg);
+    n.live(true, 0);
     n.frame(0, true, false);
     for (int64_t u = 66; u <= 12000; u += 66)
         n.frame(u, false, true);
@@ -119,6 +123,7 @@ int main()
     ok("and frozen past 10 s after it", n.frozen(22200));
 
     FreezeWatch g(cfg);
+    g.live(true, 0);
     g.frame(0, true, false);
     for (int64_t u = 66; u <= 12000; u += 66)
         g.frame(u, false, true);
@@ -126,13 +131,14 @@ int main()
     ok("not frozen 10 s after they stopped", !g.frozen(22100));
 
     FreezeWatch off(FreezeConfig{0, 3});
+    off.live(true, 0);
     off.frame(0, true, false);
     for (int64_t u = 66; u <= 30000; u += 66)
         off.frame(u, false, true);
     ok("ms 0: never frozen", !off.frozen(30000));
 
     FreezeWatch pw(cfg);
-    pw.live(true);
+    pw.live(true, 0);
     ok("picture: nothing before a frame", pw.picture(0) == Picture::None);
     pw.frame(0, true, true);
     bool blank = true;
@@ -176,8 +182,8 @@ int main()
     pw.frame(b0 + 21000, false, true);
     ok("picture: one blank frame, then nothing: a picture until blank_ms after it",
        pw.picture(b0 + 30999) == Picture::Shown && pw.picture(b0 + 31000) == Picture::Blank && !pw.frozen(b0 + 31000));
-    pw.live(false);
-    pw.live(true);
+    pw.live(false, b0 + 31000);
+    pw.live(true, b0 + 31000);
     ok("picture: a new stream has nothing to show until its frames", pw.picture(b0 + 31000) == Picture::None);
     pw.frame(b0 + 31100, true, true);
     ok("picture: and its blank start is blank, whatever the last stream showed",
@@ -189,28 +195,40 @@ int main()
     bool each = true;
     for (int64_t t0 = 0; t0 < 60000; t0 += 10000) {
         fb.frame(t0, t0 == 0, false);
-        fb.live(true);
+        fb.live(true, t0);
         each = each && fb.picture(t0) == Picture::Shown;
-        fb.live(false);   /* stall_ms on */
+        fb.live(false, t0 + 6000);   /* stall_ms on */
     }
     ok("the frame that makes the stream live counts: a static map every 10 s is a picture at each", each);
     fb.frame(70000, true, true);
-    fb.live(true);
+    fb.live(true, 70000);
     ok("and so does a blank one", fb.picture(70000) == Picture::Blank);
 
     FreezeWatch tr(cfg);
-    tr.live(true);
+    tr.live(true, 0);
     for (int64_t u = 0; u <= 5000; u += 66)
         tr.frame(u, true, false);
-    tr.live(false);
-    tr.live(true);
+    tr.live(false, 5000);
+    tr.live(true, 5100);
     ok("trailing: the ended stream's pictures do not count for the next", tr.picture(5100) == Picture::None);
-    tr.frame(5200, true, false);
-    tr.live(false);
-    tr.frame(9000, true, true);
-    tr.live(true);
-    ok("trailing: a stream whose first frame is blank is blank, whatever the last one showed",
-       tr.picture(9000) == Picture::Blank);
+    tr.live(false, 5200);
+    tr.frame(5500, true, false);   /* the ended stream's last frame, still on its way */
+    tr.live(true, 9000);
+    ok("trailing: a non-blank frame decoded after the end, the next stream live 3.5 s later: nothing to show",
+       tr.picture(9000) == Picture::None && !tr.frozen(9000));
+    tr.frame(9100, true, true);
+    ok("trailing: and the next stream's blank start is blank", tr.picture(9100) == Picture::Blank);
+    tr.live(false, 20000);
+    tr.frame(21000, true, false);
+    tr.live(true, 21000 + FreezeWatch::kLiveLagMs);
+    ok("within kLiveLagMs before the stream is live: the frame counts",
+       tr.picture(21000 + FreezeWatch::kLiveLagMs) == Picture::Shown);
+    tr.live(false, 30000);
+    tr.frame(31000, true, false);
+    tr.frame(34000, true, true);
+    tr.live(true, 35000);
+    ok("only the frames within kLiveLagMs count: a blank one after an older picture is blank",
+       tr.picture(35000) == Picture::Blank);
 
     const uint32_t w = 64, h = 32;
     std::vector<uint8_t> y(w * h, 100);

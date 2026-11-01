@@ -32,6 +32,10 @@
  *   full rate from its start is frozen, the stock map showing; live
  *   through a recent frame (no connection to read), a static map's frame
  *   every 10 s takes the slot over each time it makes the stream live;
+ *   a frame of the ended stream decoded after it ended, seconds before the
+ *   next stream is live, does not take the slot for it, while one decoded
+ *   just before it is live does; the stream ending is logged once, whatever
+ *   frames still come;
  * - the status is logged when its state, reason or target changes, not for
  *   the frame rate, the page or the upload cap. */
 #include <poll.h>
@@ -49,6 +53,7 @@
 #include "test/fake_graph.h"
 #include "test/fake_port.h"
 #include "../src/map_feed.h"
+#include "src/log.h"
 
 using namespace woc;
 
@@ -75,8 +80,10 @@ struct Rig {
      * service's loop; otherwise the stream is live with a picture */
     bool watched;
     /* watched and > 0: live while a frame came within this long, as the
-     * service decides without the stream's connection; 0: always live */
+     * service decides without the stream's connection; 0: live while live
+     * is set, as the stream's connection says */
     int64_t live_stall_ms = 0;
+    bool live = true;
     int64_t last_frame_ms = -1;
     FreezeWatch watch{FreezeConfig()};
     ChangeSampler sampler{1088, 480};
@@ -96,7 +103,7 @@ struct Rig {
         fc.video.level_bits = 0;
         fc.video.stall_ms = stall_ms;
         feed.reset(new MapFeed(fc));
-        watch.live(true);
+        watch.live(true, now);
         feed->set_stream(true, false, watched ? watch.picture(now) : Picture::Shown);
     }
     void start()
@@ -123,9 +130,9 @@ struct Rig {
                 }
             }
             if (watched) {
-                const bool live = !live_stall_ms || (last_frame_ms >= 0 && now - last_frame_ms <= live_stall_ms);
-                watch.live(live);
-                feed->set_stream(live, watch.frozen(now), watch.picture(now));
+                const bool on = live_stall_ms ? last_frame_ms >= 0 && now - last_frame_ms <= live_stall_ms : live;
+                watch.live(on, now);
+                feed->set_stream(on, watch.frozen(now), watch.picture(now));
             }
             for (int round = 0; round < 400; round++) {
                 std::vector<pollfd> fds;
@@ -369,6 +376,39 @@ int main()
     }
     ok("live through a recent frame: a static map's frame every 10 s is shown each time it makes the stream live",
        every && lf.port.requests == 3);
+
+    Rig nl(true, 60000);
+    nl.port.stock_map(0x100, 0x01000101);
+    nl.pump(1500, &f1);
+    ok("reconnect: the first stream shows", nl.st().state == "showing" && nl.port.requests == 1);
+    uint64_t seq = 0;
+    std::vector<std::string> lines;
+    cld::log_lines_since(&seq, &lines);
+    lines.clear();
+    nl.live = false;   /* the connection ends */
+    nl.pump(2000);
+    nl.pump(5, &f1);   /* the ended stream's last frame, still on its way */
+    nl.pump(200, &black, 20);
+    nl.pump(3500);
+    nl.live = true;   /* the next connection */
+    nl.pump(1500);
+    const crs::SlotInfo *stock_nl = nl.port.row(0x100, 0x01000101);
+    ok("reconnect: a frame decoded after the end, the next stream live seconds later: idle, hidden, the stock map shown",
+       nl.st().state == "idle" && nl.st().reason.empty() && !nl.map_layer()->params.visible &&
+           nl.port.requests == 1 && stock_nl && stock_nl->map_status == 1);
+    cld::log_lines_since(&seq, &lines);
+    int not_live = 0;
+    for (const std::string &line : lines)
+        not_live += line.find("cluster stream is not live") != std::string::npos;
+    ok("reconnect: the stream ending is logged once, whatever frames still come", not_live == 1);
+    nl.live = false;
+    nl.pump(2000);
+    nl.pump(5, &f1);
+    nl.pump(500);
+    nl.live = true;   /* a new stream's first frame, decoded before its connection is read */
+    nl.pump(1500);
+    ok("reconnect: a frame decoded just before the stream is live takes the slot",
+       nl.st().state == "showing" && nl.port.requests == 2);
 
     StatusLog sl;
     FeedStatus a;
