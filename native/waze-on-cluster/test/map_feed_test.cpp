@@ -152,7 +152,7 @@ int main()
     ok("granted: showing, with the decoded frame in the slot's scene",
        r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
-    const std::string lost = "Stream lost — restarting CarPlay";   /* until the layer stalls */
+    const std::string lost = "Stream lost — reconnect CarPlay";   /* until the layer stalls */
     ok("showing carries the stream's reason", r.feed->status("decode", lost).state == "showing" &&
                                                   r.feed->status("decode", lost).reason == lost &&
                                                   r.feed->status("decode", lost).stream_reason);

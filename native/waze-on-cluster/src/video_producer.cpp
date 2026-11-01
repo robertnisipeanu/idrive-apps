@@ -412,16 +412,16 @@ bool VideoProducer::minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::
     return true;
 }
 
-std::string VideoProducer::stream_reason(const ResyncState &resync) const
+std::string VideoProducer::stream_reason() const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.reason(resync);
+    return health_.reason();
 }
 
-std::string VideoProducer::stream_detail(const ResyncState &resync) const
+std::string VideoProducer::stream_detail() const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.detail(resync);
+    return health_.detail();
 }
 
 bool VideoProducer::stream_lost() const
