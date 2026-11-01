@@ -350,12 +350,12 @@ function trustedBackup(target, cur) {
 }
 
 /* What a revert of `cur` (classified as `c`) writes, without --force:
- * { b, bc (the backup classified), regionWise, out } or { err }. When the locator recognises the target and the backup as the same
- * build, the backup's bytes in the edits' regions only (another tool's
- * changes stay); otherwise the whole backup. A backup with no record of the
- * original (an older release's, cut short by a power loss) is written whole
- * only when the locator reads it as the pristine build or it has the
- * target's size. */
+ * { b, bc (the backup classified), regionWise, out } or { err }. When the
+ * locator recognises the target and the backup as the same build, the
+ * backup's bytes in the edits' regions only (another tool's changes stay);
+ * otherwise the whole backup. A backup with no record of the original (an
+ * older release's, cut short by a power loss) is written whole only when the
+ * locator reads it as the pristine build or it has the target's size. */
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) return b;
