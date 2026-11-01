@@ -43,6 +43,7 @@ bool ChangeSampler::changed(const uint8_t *y)
 
 void FreezeWatch::frame(int64_t now_ms, bool changed, bool blank)
 {
+    pictured_ = pictured_ || !blank;
     if (changed || !blank || unchanged_since_ms_ < 0) {
         unchanged_since_ms_ = now_ms;
         times_.clear();
@@ -53,9 +54,19 @@ void FreezeWatch::frame(int64_t now_ms, bool changed, bool blank)
         times_.pop_front();
 }
 
+void FreezeWatch::live(bool on)
+{
+    if (on == live_)
+        return;
+    live_ = on;
+    pictured_ = false;
+    unchanged_since_ms_ = -1;
+    times_.clear();
+}
+
 bool FreezeWatch::frozen(int64_t now_ms) const
 {
-    if (!cfg_.ms || unchanged_since_ms_ < 0 || now_ms - unchanged_since_ms_ < (int64_t)cfg_.ms)
+    if (!cfg_.ms || !pictured_ || unchanged_since_ms_ < 0 || now_ms - unchanged_since_ms_ < (int64_t)cfg_.ms)
         return false;
     /* frames still coming at min_fps over the last ms: a stream that slowed
      * down or stopped is static, not frozen */

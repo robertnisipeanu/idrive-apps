@@ -64,9 +64,12 @@ public:
     /* The newest decoded frame not yet taken, swapped into *frame (its
      * buffer comes back for the next one); false when there is none. */
     bool take(std::vector<uint8_t> *frame, uint64_t *id);
-    /* Every decoded frame the same blank picture while they keep coming
-     * (freeze_watch.h). */
+    /* Every decoded frame the same blank picture while they keep coming,
+     * after the stream showed a picture (freeze_watch.h). */
     bool frozen(int64_t now_ms) const;
+    /* Whether CarPlay's cluster stream is live (FreezeWatch::live). Main
+     * thread. */
+    void set_live(bool on);
     /* When the last frame of the decode size was decoded; -1 for none. */
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
     /* The last minute's frames of the decode size, how many of them
