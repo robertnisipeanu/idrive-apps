@@ -175,6 +175,8 @@ void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason,
     st.holder = h;
     st.reason = reason;
     st.retry_ms = retry_ms;
+    if (s != TargetState::Waiting)
+        t_[i].fresh_retry = false;   /* only the fresh-retry wait may request early */
 }
 
 /* Out of the display's slot; the scene stays published. */
@@ -251,8 +253,14 @@ void SlotManager::acquire(int i, int64_t now_ms)
 {
     Target &t = t_[i];
     const TargetSpec &spec = specs_[i];
-    if (!t.scene) {
-        const int other = by_published(spec.scene_id);
+    if (scene_busy(i)) {
+        set(i, TargetState::Waiting, Holder::None, "scene id in use by another target", now_ms, now_ms);
+        return;
+    }
+    if (t.scene) {
+        scenes_->resent(spec, now_ms);
+    } else {
+        const int other = by_published(spec.scene_id);   /* released: scene_busy */
         if (other >= 0) {
             log_info("target %s: unpublishing its released scene 0x%llx for target %s", specs_[other].name.c_str(),
                      (unsigned long long)spec.scene_id, spec.name.c_str());
@@ -284,7 +292,6 @@ void SlotManager::acquire(int i, int64_t now_ms)
         released_.erase(r);
     }
     t.requested = true;
-    t.fresh_retry = false;
     t.last_request_ms = now_ms;
     port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);

@@ -218,8 +218,17 @@ void RamsesConsole::run()
         const ssize_t n = read(in_, buf + have, sizeof buf - have);
         if (n < 0 && errno == EINTR)
             continue;
-        if (n <= 0)
+        if (n <= 0) {
+            /* Nobody would drain the pipe: RAMSES's writes would block once
+             * it fills. */
+            const int err = n < 0 ? errno : 0;
+            std::fflush(stdout);
+            dup2(out_, 1);
+            log_warn("ramses: console not readable (%s); stdout back on its own, renderer subscriptions no "
+                     "longer observed",
+                     err ? std::strerror(err) : "end of file");
             break;
+        }
         have += (size_t)n;
         size_t start = 0;
         for (size_t i = 0; i < have; i++)
@@ -250,10 +259,9 @@ void RamsesConsole::feed(const char *s, size_t n, int64_t now_ms)
         return;
     }
     const bool raw = console_interesting(line, scenes_);
-    std::lock_guard<std::mutex> lock(mutex_);
-    lines_++;
     if (!event && !raw)
         return;
+    std::lock_guard<std::mutex> lock(mutex_);
     if (event) {
         e.ms = now_ms;
         events_.push_back(e);
@@ -293,10 +301,5 @@ void RamsesConsole::take(std::vector<ConsoleEvent> *events, std::vector<std::str
     raw_dropped_ = 0;
 }
 
-uint64_t RamsesConsole::lines() const
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    return lines_;
-}
 
 }  // namespace crs

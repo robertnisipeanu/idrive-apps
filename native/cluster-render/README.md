@@ -546,10 +546,10 @@ Not verified, needs the car:
     scene (verification), and the unsubscription within 1 s of a release
     (the re-request's wait). The same library logs both on the car, but
     when the KOMBI subscribes has not been seen there;
-  - that a warm scene asked for again is drawn by the KOMBI, which is the
-    change this answers: once on the car, a scene destroyed and published
-    again with the same id within a second was reported mapped and never
-    drawn.
+  - that the KOMBI draws a warm scene asked for again. Once on the car, a
+    scene destroyed and published again with the same id within a second
+    was reported mapped and never drawn; `panel` and `hud` handing their
+    shared scene id over still do that.
 
 ## Releases
 

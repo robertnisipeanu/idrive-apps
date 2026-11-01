@@ -34,8 +34,10 @@
  * kRawPerMinute a minute, so field logs show the exact formats even where
  * the parser misses one.
  * fd() is readable while something waits to be taken. If the pipe cannot be
- * set up, stdout is left as it was and nothing is ever read. It lives for
- * the process: made once, never destroyed. */
+ * set up, stdout is left as it was and nothing is ever read; if reading it
+ * fails, the original stdout goes back onto fd 1 (so RAMSES never blocks on
+ * a full pipe) and nothing more is read. It lives for the process: made
+ * once, never destroyed. */
 #ifndef CRS_RAMSES_CONSOLE_H
 #define CRS_RAMSES_CONSOLE_H
 
@@ -82,8 +84,6 @@ public:
     /* One line as read at now_ms; forwarded or kept as above (the reader
      * thread's, and tests'). */
     void feed(const char *s, size_t n, int64_t now_ms);
-    /* RAMSES lines read so far. */
-    uint64_t lines() const;
 
 private:
     void run();
@@ -95,7 +95,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<ConsoleEvent> events_;
     std::vector<std::string> raw_;
-    uint64_t lines_ = 0, raw_dropped_ = 0;
+    uint64_t raw_dropped_ = 0;
     unsigned raw_minute_ = 0;    /* raw lines kept in the minute from raw_since_ms_ */
     int64_t raw_since_ms_ = -1;
 };

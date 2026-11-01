@@ -660,18 +660,12 @@ void Compositor::render(int64_t now_ms)
         }
         if (!wrote && !failed && !t.dirty)
             continue;
-        /* The link counts as carrying load (for the governor) from kLoadBytes
-         * a second written, whether or not the flush goes. */
-        if (now_ms - second_ms_ >= 1000) {
-            second_ms_ = now_ms;
-            second_bytes_ = 0;
-        }
+        uint64_t bytes = 0;
         for (const Layer *l : staged)
-            second_bytes_ += l->staged_bytes();
+            bytes += l->staged_bytes();
         for (const Asset *a : staged_assets)
-            second_bytes_ += a->staged_bytes();
-        if (second_bytes_ >= kLoadBytes)
-            governor_.activity(now_ms);
+            bytes += a->staged_bytes();
+        load(bytes, now_ms);
         bool ok = false;
         if (failed)
             governor_.evidence(Evidence::WriteRefused, now_ms, slots_->targets()[ti].name);
@@ -702,6 +696,38 @@ void Compositor::render(int64_t now_ms)
     }
     if (governor_.tick(now_ms))
         pacer_.set_rate(governor_.cap());
+}
+
+/* The link counts as carrying load (for the governor) from kLoadBytes a
+ * second written, whether or not the flush goes. */
+void Compositor::load(uint64_t bytes, int64_t now_ms)
+{
+    if (now_ms - second_ms_ >= 1000) {
+        second_ms_ = now_ms;
+        second_bytes_ = 0;
+    }
+    second_bytes_ += bytes;
+    if (second_bytes_ >= kLoadBytes)
+        governor_.activity(now_ms);
+}
+
+void Compositor::resent(const TargetSpec &spec, int64_t now_ms)
+{
+    const int ti = slots_->index(spec.name);
+    uint64_t bytes = 0;
+    for (const auto &kv : layers_)
+        if (kv.second.layer->target() == ti)
+            bytes += kv.second.layer->buffer_bytes();
+    for (const auto &kv : assets_)
+        if (kv.second.asset->target() == ti && kv.second.asset->attached())
+            bytes += kv.second.asset->bytes();
+    if (!bytes)
+        return;
+    pacer_.ready(now_ms);
+    pacer_.spend(bytes);
+    load(bytes, now_ms);
+    log_info("target %s: its scene goes whole to the renderer again: %llu KB charged to the upload budget",
+             spec.name.c_str(), (unsigned long long)(bytes / 1024));
 }
 
 bool Compositor::holds(const Target &t) const

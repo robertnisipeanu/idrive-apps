@@ -125,7 +125,7 @@ int main()
     ok("the reader: events with the time read, the subscription line raw, another library's line not kept",
        events.size() == 2 && events[0].kind == ConsoleEvent::Subscribed && events[0].ms == t0 &&
            events[1].kind == ConsoleEvent::ResourceRequest && events[1].ms == t0 + 5 && raw.size() == 1 &&
-           raw[0] == s && dropped == 0 && c.lines() == 2);
+           raw[0] == s && dropped == 0);
     for (int k = 0; k < 40; k++)
         c.feed(add.data(), add.size(), t0 + 100 + k);
     events.clear();

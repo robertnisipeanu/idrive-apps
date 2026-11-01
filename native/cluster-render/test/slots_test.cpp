@@ -834,6 +834,54 @@ static void warm_scenes()
        calls_are("") && r.state(1) == TargetState::Waiting && r.m.published(2));
 }
 
+/* The panel yields to the stock HMI (waiting for the slot to be free) while
+ * the HUD, with the panel's scene id, is shown: the slot coming free must not
+ * take the HUD's scene. */
+static void shared_scene_in_use()
+{
+    Rig r;
+    r.slot(kPanelSlot, 2, 0x01000101);
+    r.m.want(1, true, false);
+    r.run(100);
+    ok("the panel yields to the stock HMI, waiting for the slot",
+       r.state(1) == TargetState::Waiting && r.m.status(1).retry_ms < 0 && calls_are("slots?"));
+    r.m.want(2, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kPanelScene, r.now);
+    ok("the HUD is shown", calls_are("publish hud; request hud") && r.state(2) == TargetState::Shown);
+    r.slot(kPanelSlot, 1, 0);
+    r.run(3000);
+    ok("the slot free: the panel waits, the HUD's scene and request untouched",
+       calls_are("") && r.state(1) == TargetState::Waiting &&
+           r.m.status(1).reason == "scene id in use by another target" && r.state(2) == TargetState::Shown &&
+           r.m.published(2) && r.m.requested(2) && !r.m.requested(1));
+    r.m.want(2, false, false);
+    r.run(3100);
+    ok("the HUD released: the panel takes the scene id",
+       calls_are("release hud; unpublish hud; publish panel; request panel") && r.m.requested(1));
+}
+
+/* A fresh retry's early request goes only from its wait. */
+static void fresh_retry_cleared()
+{
+    Rig r;
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    const int64_t asked = r.now;
+    r.run(10);
+    r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+    r.m.want(0, false, false);
+    r.run(300);
+    ok("unwanted during the 250 ms retry: idle", r.state(0) == TargetState::Idle);
+    joined();
+    r.m.want(0, true, false);
+    while (r.now - asked < 990)
+        r.run(10);
+    ok("wanted again: no request within 1 s of the last", calls_are(""));
+    r.run(10);
+    ok("then requested", calls_are("request map") && r.now - asked == 1000);
+}
+
 static void release_confirmation()
 {
     Rig r;
@@ -1029,6 +1077,8 @@ int main()
     fallback_and_lock();
     wake();
     warm_scenes();
+    shared_scene_in_use();
+    fresh_retry_cleared();
     release_confirmation();
     fresh_fetch_failed();
     rendering();

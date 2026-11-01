@@ -161,6 +161,8 @@ public:
     /* A line for the status: what it wrote. */
     virtual std::string stats() const { return ""; }
     virtual WriteStats write_stats() const { return WriteStats(); }
+    /* Pixel bytes its buffers hold in the scene; 0 when not attached. */
+    virtual size_t buffer_bytes() const { return 0; }
 
 protected:
     /* After set_fade() changed the fade. */
@@ -234,6 +236,7 @@ public:
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
     WriteStats write_stats() const override;
+    size_t buffer_bytes() const override { return g_ ? (size_t)w_ * h_ * 4 : 0; }
     bool fades() const override { return true; }
 
 protected:

@@ -3,7 +3,9 @@
 /* Host test for the frozen-stream check (freeze_watch.h), with the car's
  * rates: a frozen stream at 15 frames a second, all the same blank picture
  * after a map, is frozen after 10 s and not before; a stream blank from its
- * start is never frozen, and a new stream (live again) starts so; a static
+ * start is frozen only after 30 s of it with frames still coming, so the
+ * car's start (93 blank frames in 2 s, then a pause) never is, and a new
+ * stream (live again) starts without a picture; a static
  * map is never frozen, at one frame in 11 s or at 15 a second; a stream that
  * stops is not frozen; a changed or non-blank frame ends it; a change is seen in one sample past
  * the threshold, not in noise under it or between samples; a picture is
@@ -43,14 +45,27 @@ int main()
     f.frame(10700, true, true);
     ok("a changed frame ends it", !f.frozen(10700));
 
-    /* The car: a stream's first 93 frames the same blank picture, then a
-     * pause, then the map. */
+    /* The car: a stream's first 93 frames the same blank picture in about
+     * 2 s, then a pause. */
+    FreezeWatch fc(cfg);
+    fc.live(true);
+    fc.frame(0, true, true);
+    bool never = true;
+    for (int k = 1; k < 93; k++)
+        fc.frame(k * 22, false, true);
+    for (int64_t u = 2000; u <= 62000; u += 100)
+        never = never && !fc.frozen(u);
+    ok("the car's start: 93 blank frames in 2 s, then nothing for 60 s: never frozen", never);
+
     FreezeWatch st(cfg);
     st.live(true);
     st.frame(0, true, true);
-    for (int64_t u = 66; u <= 60000; u += 66)
+    for (int64_t u = 66; u <= 29900; u += 66)
         st.frame(u, false, true);
-    ok("blank from the stream's start for 60 s at 15 fps: never frozen", !st.frozen(60000));
+    ok("blank from the stream's start at 15 fps: not frozen before 30 s", !st.frozen(29900));
+    for (int64_t u = 29966; u <= 30100; u += 66)
+        st.frame(u, false, true);
+    ok("and frozen at 30 s", st.frozen(30100));
     st.frame(60066, true, false);
     for (int64_t u = 60132; u <= 71000; u += 66)
         st.frame(u, false, true);

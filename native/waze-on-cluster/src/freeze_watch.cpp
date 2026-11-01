@@ -66,7 +66,8 @@ void FreezeWatch::live(bool on)
 
 bool FreezeWatch::frozen(int64_t now_ms) const
 {
-    if (!cfg_.ms || !pictured_ || unchanged_since_ms_ < 0 || now_ms - unchanged_since_ms_ < (int64_t)cfg_.ms)
+    const int64_t blank_ms = (int64_t)cfg_.ms * (pictured_ ? 1 : 3);
+    if (!cfg_.ms || unchanged_since_ms_ < 0 || now_ms - unchanged_since_ms_ < blank_ms)
         return false;
     /* frames still coming at min_fps over the last ms: a stream that slowed
      * down or stopped is static, not frozen */

@@ -11,11 +11,13 @@
  * previous one, and says whether the picture is blank; FreezeWatch calls the
  * stream frozen once frames have kept coming at least min_fps for ms, all of
  * them blank and none changed, and not frozen at the next changed or
- * non-blank frame. Only a stream that has shown a picture can freeze: a
- * phone starting its stream sends the same blank picture for a while (93
- * frames on the car) before the map's first. A stream starts when CarPlay's
- * cluster stream becomes live and ends when it stops being live. FrameTally
- * sums the same verdicts a minute at a time for the log. */
+ * non-blank frame. Until the stream has shown a picture it takes three
+ * times as long: a phone starting its stream sends the same blank picture
+ * for a while (93 frames in about 2 s on the car, then a pause) before the
+ * map's first, while one that starts blank and stays so (a reconnect that
+ * did not take) keeps sending it. A stream starts when CarPlay's cluster
+ * stream becomes live and ends when it stops being live. FrameTally sums
+ * the same verdicts a minute at a time for the log. */
 #ifndef WOC_FREEZE_WATCH_H
 #define WOC_FREEZE_WATCH_H
 

@@ -24,7 +24,8 @@
  * - warm scenes: a target released or taken by the display keeps its
  *   scene, writes and flushes nothing while released, and asked for again
  *   flushes in the same tick, a video writing only the tiles that changed
- *   since the scene's last flush;
+ *   since the scene's last flush; the renderer's resend of the whole scene
+ *   is charged to the byte budget, a new scene's not;
  * - layers keep their content across their target's scene going and
  *   coming back (another target with the same scene id taking it);
  * - effects compile or are refused at creation; uniforms and u_time;
@@ -557,6 +558,49 @@ static void refusals_lower_the_cap()
 
 static const char *const kFill = "#version 100\nprecision mediump float;\nuniform vec4 u_color;\n"
                                  "void main() { gl_FragColor = u_color; }";
+
+/* Steps until the target's flushes carry more bytes; the ms it took. */
+static int64_t until_written(Rig &r, FakeGraph *g, int64_t limit = 3000)
+{
+    const uint64_t b0 = g->flushed_bytes;
+    const int64_t t0 = r.now;
+    while (g->flushed_bytes == b0 && r.now - t0 < limit)
+        r.step(10);
+    return r.now - t0;
+}
+
+static void warm_scene_charged()
+{
+    const uint64_t rate = 2000 * 1024;   /* a 250 ms burst: 512,000 B */
+    Rig r(rate);
+    std::string err;
+    VideoParams vp;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H), true), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    std::vector<uint8_t> a = frame(1);
+    vl->offer(a.data(), r.now);
+    r.step(10);
+    FakeGraph *g = r.g("map");
+    const size_t atlas = (size_t)W * AH, banks = 2 * crk::block_bytes(W, H);
+    ok("a new scene: its first frame written whole at once", g && g->flushed_bytes == atlas);
+    r.slots.on_shown(0x010004f0, r.now);
+    a[0] += 40;
+    vl->offer(a.data(), r.now);
+    const int64_t fresh = until_written(r, g);
+    /* (783,360 - 512,000) B of debt at 2,048,000 B/s: 133 ms. */
+    ok("its debt is the frame's alone: the next write within 140 ms", fresh >= 120 && fresh <= 140);
+    r.run(2000);
+    r.slots.on_lost(0x010004f0, "fetch removed", r.now);
+    a[W * 300] += 40;
+    vl->offer(a.data(), r.now);
+    while (r.port.requests < 2)
+        r.step(10);
+    /* Asked for again with a full burst: the resend of atlas and banks
+     * (1,305,600 B) leaves 793,600 B of debt, 388 ms. */
+    const int64_t warm = until_written(r, g);
+    ok("a warm scene asked for again: its resend charged, the next write after 380-400 ms",
+       atlas + banks == 1305600 && warm >= 380 && warm <= 400);
+}
 
 static void stack_and_lifecycle()
 {
@@ -1303,6 +1347,7 @@ int main()
     refusals_lower_the_cap();
     stack_and_lifecycle();
     warm_scene();
+    warm_scene_charged();
     republish_keeps_content();
     effects();
     limits();

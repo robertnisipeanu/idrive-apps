@@ -97,10 +97,11 @@ A frozen stream, frames still coming (on the car 15-21 a second) but all the
 same blank picture, is taken down after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
 and the app shows `Map frozen — reconnect CarPlay`. The map is back with the
-first changed frame. Only a stream that has shown a picture can freeze: a
-phone starting its stream sends the same blank picture for a while first.
-A stream starts when CarPlay's cluster stream becomes live and ends when it
-stops being live. Blank: all but one in a thousand of the sampled luma
+first changed frame. A stream that has shown no picture yet is frozen only
+after three times as long (30 s), frames still coming: a phone starting its
+stream sends the same blank picture for a couple of seconds and pauses
+before the map's first. A stream starts when CarPlay's cluster stream
+becomes live and ends when it stops being live. Blank: all but one in a thousand of the sampled luma
 values within 17 levels. A static map is never frozen, however many frames
 the phone sends: some phones send one about every ten seconds, others keep
 their full rate.

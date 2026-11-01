@@ -159,6 +159,9 @@ public:
     virtual ~Scenes() {}
     virtual bool publish(const TargetSpec &t, std::string *err) = 0;
     virtual void unpublish(const TargetSpec &t) = 0;
+    /* t's published scene is requested again: the renderer that subscribes
+     * gets it whole. */
+    virtual void resent(const TargetSpec &, int64_t) {}
 };
 
 enum class TargetState { Idle, Acquiring, Parked, Shown, Lingering, Waiting, Unavailable };
