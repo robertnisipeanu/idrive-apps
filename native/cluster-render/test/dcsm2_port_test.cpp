@@ -11,7 +11,11 @@
  * when the KOMBI promotes it; a parked scene unmapped is lost; a take-over
  * is an unmap of the stock HMI's content with the HMI's handle, whose reply
  * matches no request of ours: fetch and map replies still go to the oldest
- * fetch and map.
+ * fetch and map. A release is confirmed by the REMOVED answering its
+ * unfetch when the content was fetched, otherwise by the unfetch's reply,
+ * or by a reply refusing the unfetch; the next request of the scene waits
+ * for it. FETCH FAILED right after the publication is asked again after
+ * 250 ms.
  *
  * The field-log diagnostics: an undecoded notification is logged with its
  * start in hex at most every 10 s per event id, with the number not logged
@@ -418,12 +422,73 @@ static void diagnostics()
                                                                        "no answer yet\n"));
 }
 
+static void confirmation()
+{
+    Rig r;
+    const TargetSpec &map = r.m.targets()[0];
+    r.map_asked(false);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    r.m.want(0, false, false);
+    while (r.m.status(0).state != TargetState::Idle)
+        r.tick();
+    ok("released: unmapped and unfetched, not confirmed yet",
+       calls_are("unmap 0x10004f0; unfetch 0x10004f0") && !r.port.confirmed(map));
+    r.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_map_status(kMap, 1, 0, r.now);
+    r.m.want(0, true, false);
+    r.tick();
+    ok("the replies alone do not confirm a fetched content's release: wanted again, not asked for",
+       !r.port.confirmed(map) && calls_are(""));
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, r.now);
+    r.tick();
+    ok("the REMOVED answering the unfetch confirms it: asked for at once, no loss",
+       r.port.confirmed(map) && calls_are("fetch 0x10004f0") && r.m.status(0).state == TargetState::Acquiring);
+
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FAILED, r.now);
+    ok("a fetch failed: unfetched", calls_are("unfetch 0x10004f0") && !r.port.confirmed(map));
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    ok("nothing was fetched: the unfetch's reply confirms it", r.port.confirmed(map));
+
+    Rig e;
+    const TargetSpec &emap = e.m.targets()[0];
+    e.map_asked(false);
+    e.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, e.now);
+    e.port.on_map_status(kMap, 1, dcsm::E_MAP_STATUS_UNMAPPED, e.now);
+    ok("unmapped by the KOMBI: lost, unfetched", calls_are("unfetch 0x10004f0") && !e.port.confirmed(emap));
+    e.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_CONTENTID_UNKNOWN, "E_DCSM_CONTENTID_UNKNOWN",
+                    e.now);
+    ok("an unfetch the KOMBI refuses removes nothing: its reply confirms the release", e.port.confirmed(emap));
+}
+
+static void fresh_fetch_failed()
+{
+    Rig r;
+    r.m.want(0, true, false);
+    r.tick();
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.now += 12;
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FAILED, r.now);   /* 12 ms after the publication (the car) */
+    const int64_t at = r.now;
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    calls.clear();
+    while (r.now - at < 240)
+        r.tick();
+    ok("FETCH FAILED right after the publication: nothing for 240 ms", calls_are(""));
+    r.tick();
+    r.tick();
+    ok("then fetched again, 250 ms after the failure", calls_are("fetch 0x10004f0") && r.now - at <= 260);
+}
+
 int main()
 {
     basics();
     parked();
     take_over();
     diagnostics();
+    confirmation();
+    fresh_fetch_failed();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

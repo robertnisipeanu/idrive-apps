@@ -15,8 +15,9 @@
  * refused without harm; on a KOMBI that parks a map behind the one it
  * shows: the map parked behind the stock map, which is unmapped as the HMI,
  * then shown and faded in, the stock map parked behind it; when the stream
- * ends the map fades out, is released and the stock map is shown again; a
- * target that does not take over stays parked, with no timeout, reported
+ * ends the map fades out, is released and the stock map is shown again; the
+ * stream back at once, the map is asked for again in the same scene as soon
+ * as the KOMBI confirms the release; a target that does not take over stays parked, with no timeout, reported
  * as parked behind the stock HMI, and is shown when the stock content goes. */
 #include <poll.h>
 #include <signal.h>
@@ -275,10 +276,25 @@ static void take_over_and_fall_back()
     const float mid = atlas_opacity(r.gpu.graph("map"));
     ok("the stream ended: the map fades out, the slot still ours", ea.target["map"] == "shown" && mid > 0.0f &&
                                                                        mid < 1.0f);
-    r.pump(200);
+    for (int k = 0; k < 60 && ea.target["map"] != "idle"; k++)
+        r.pump(5);
     hmi = r.port.row(0x100, kHmiMap);
     ok("then released: idle, the stock map shown again", ea.target["map"] == "idle" && hmi && hmi->map_status == 1 &&
                                                              !r.port.row(0x100, 0x010004f0));
+    const int scenes = r.gpu.scenes, requests = r.port.requests;
+    lo.visible = true;
+    a.set(map, lo);
+    a.frame(map, f.data(), f.size(), 100);
+    r.pump(100);
+    const int64_t after = r.port.last_request_ms - r.port.last_release_ms;
+    ok("the stream back at once: asked for again in the same scene once the KOMBI confirms the release",
+       r.port.requests == requests + 1 && r.gpu.scenes == scenes && after >= r.port.confirm_ms &&
+           after < r.port.confirm_ms + 20);
+    lo.visible = false;
+    a.set(map, lo);
+    r.pump(500);
+    ok("and released again", ea.target["map"] == "idle");
+    const size_t overs = r.port.taken_over.size();
 
     /* The panel does not take over: parked until the stock content goes. */
     cr::LayerOptions pl;
@@ -290,9 +306,12 @@ static void take_over_and_fall_back()
     r.pump(7000);
     const std::string text = r.svc->server().status_text(r.now);
     ok("a target that does not take over: parked, no timeout, in the events and the status",
-       ea.target["panel"] == "parked" && ea.holder["panel"] == "stock" && r.port.taken_over.size() == 1 &&
+       ea.target["panel"] == "parked" && ea.holder["panel"] == "stock" && r.port.taken_over.size() == overs &&
            text.find("target panel: slot 0x203 scene 0x1000400 1920x720: parked (stock) parked behind stock") !=
                std::string::npos);
+    ok("the status: the map's released scene still published, subscriptions not observable",
+       text.find("target map: slot 0x100 scene 0x10004f0 1088x480: idle; scene published") != std::string::npos &&
+           text.find("renderer: subscription not observable") != std::string::npos);
     r.port.stock_unmap(0x203, 0x01000401);
     r.pump(50);
     ok("the stock content gone: shown", ea.target["panel"] == "shown");

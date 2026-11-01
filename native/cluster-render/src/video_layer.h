@@ -71,6 +71,7 @@ public:
     bool holds_flush() const override { return parked_ && drawn_; }
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
+    WriteStats write_stats() const override;
     bool fades() const override { return true; }
 
 protected:

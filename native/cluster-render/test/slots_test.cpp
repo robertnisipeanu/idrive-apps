@@ -15,7 +15,16 @@
  * content unmaps it as the HMI, spaced 3, 10, 30 s, the count starting over
  * after 60 s shown or a release, never foreign content, never without a contending
  * layer, never in another slot; a released target is idle; a locked slot
- * coming back is asked for at once. */
+ * coming back is asked for at once. Warm scenes: a target's scene is
+ * published once and kept across releases, losses and the display service
+ * going; a target with the same scene id takes it down only when it needs
+ * the id. After a release the next request waits for the display's
+ * confirmation, at most 1 s; a fetch failing right after the publication is
+ * asked again after 250 ms, three times, then on the ladder. Rendering: a
+ * shown scene its renderer subscribed to is verified; one not subscribed
+ * 1.5 s after it was shown, or after the renderer unsubscribed, is released
+ * and asked for again at once, then on the ladder, its scene kept; with no
+ * subscription seen since start, nothing is verified or done. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -52,7 +61,9 @@ static bool calls_are(const std::string &want)
 
 struct FakePort : Port {
     bool up = true;
+    bool confirm = true;
     bool available() const override { return up; }
+    bool confirmed(const TargetSpec &) const override { return confirm; }
     void request(const TargetSpec &t) override { calls.push_back("request " + t.name); }
     void release(const TargetSpec &t) override { calls.push_back("release " + t.name); }
     void take_over(const TargetSpec &t, uint64_t content) override
@@ -154,8 +165,8 @@ static void refcount_and_linger()
     r.run(1990);
     ok("not released before linger_ms", r.state(0) == TargetState::Lingering && calls_are(""));
     r.run(20);
-    ok("released after linger_ms: release, unpublish", calls_are("release map; unpublish map") &&
-                                                          r.state(0) == TargetState::Idle && !r.m.published(0));
+    ok("released after linger_ms: released, its scene kept published", calls_are("release map") &&
+           r.state(0) == TargetState::Idle && !r.m.requested(0) && r.m.published(0));
 }
 
 static void timeout_and_ladder()
@@ -168,22 +179,22 @@ static void timeout_and_ladder()
     ok("no answer: still acquiring before 5 s", r.state(0) == TargetState::Acquiring);
     r.run(20);
     ok("no answer for 5 s: taken down, waiting 2 s",
-       calls_are("release map; unpublish map") && r.state(0) == TargetState::Waiting &&
+       calls_are("release map") && r.state(0) == TargetState::Waiting &&
            r.m.status(0).retry_ms == r.now + 2000 - 10);
     r.run(1980);
     ok("nothing before the 2 s retry", calls_are(""));
     r.run(20);
-    ok("requested again after 2 s", calls_are("publish map; request map"));
+    ok("requested again after 2 s", calls_are("request map"));
     r.m.on_refused(kMapScene, Refusal::Config, "E_DCSM_SLOTID_UNKNOWN", r.now);
     ok("a configuration refusal retries on the ladder (5 s)",
-       calls_are("release map; unpublish map") && r.m.status(0).retry_ms == r.now + 5000 &&
+       calls_are("release map") && r.m.status(0).retry_ms == r.now + 5000 &&
            r.m.status(0).holder == Holder::None);
     const int64_t at = r.now;
     r.run(4000);
     r.m.on_shown(kMapScene, r.now);
     ok("a late answer to a request taken down is ignored", r.state(0) == TargetState::Waiting);
     r.run(1000);
-    ok("next request at the 5 s step", calls_are("publish map; request map") && r.now - at == 5000);
+    ok("next request at the 5 s step", calls_are("request map") && r.now - at == 5000);
 }
 
 static void stock_yield()
@@ -197,7 +208,7 @@ static void stock_yield()
     r.slot(kPanelSlot, 2, 0x01000400 + 1);
     r.m.on_lost(kPanelScene, "fetch removed", r.now);
     ok("taken by the stock HMI: down, waiting for the slot to be free",
-       calls_are("release panel; unpublish panel") && r.state(1) == TargetState::Waiting &&
+       calls_are("release panel") && r.state(1) == TargetState::Waiting &&
            r.m.status(1).holder == Holder::Stock && r.m.status(1).retry_ms == -1);
     r.run(60000);
     const std::string polled = joined();
@@ -206,7 +217,7 @@ static void stock_yield()
            polled.size() <= std::string("slots?; ").size() * 12);
     r.slot(kPanelSlot, 1, 0);
     r.m.tick(r.now);
-    ok("requested again once the slot is free", calls_are("publish panel; request panel"));
+    ok("requested again once the slot is free", calls_are("request panel"));
 }
 
 static void stock_contend()
@@ -226,7 +237,7 @@ static void stock_contend()
         r.run(step - 10);
         ladder = ladder && calls_are("");
         r.run(10);
-        ladder = ladder && calls_are("publish map; request map") && r.now - at == step;
+        ladder = ladder && calls_are("request map") && r.now - at == step;
         r.m.on_shown(kMapScene, r.now);
         r.run(1000);
     }
@@ -279,7 +290,7 @@ static void busy_refusal_unknown_holder()
     joined();
     r.m.on_refused(kPanelScene, Refusal::Busy, "E_DCSM_PRIOTOOLOW", r.now);
     ok("a busy refusal with no table: held by the stock HMI, yield",
-       calls_are("release panel; unpublish panel") && r.m.status(1).holder == Holder::Stock &&
+       calls_are("release panel") && r.m.status(1).holder == Holder::Stock &&
            r.m.status(1).retry_ms == -1);
     r.run(100);
     ok("the slot table is asked for", calls_are("slots?"));
@@ -295,8 +306,8 @@ static void availability()
     r.port.up = false;
     r.m.on_availability(false, r.now);
     r.m.tick(r.now);
-    ok("display service gone: unpublished, nothing sent, unavailable",
-       calls_are("unpublish map") && r.state(0) == TargetState::Unavailable);
+    ok("display service gone: nothing sent, the scene kept, unavailable",
+       calls_are("") && r.state(0) == TargetState::Unavailable && r.m.published(0) && !r.m.requested(0));
     r.run(10000);
     ok("nothing while it is gone", calls_are(""));
     r.port.up = true;
@@ -305,7 +316,7 @@ static void availability()
     r.run(990);
     ok("back: nothing during the settle time", calls_are("") && r.state(0) == TargetState::Idle);
     r.run(20);
-    ok("requested again after it", calls_are("publish map; request map") && r.now - at >= 1000);
+    ok("requested again after it", calls_are("request map") && r.now - at >= 1000);
     r.m.want(1, false, false);
     ok("an unwanted target stays idle throughout", r.state(1) == TargetState::Idle);
 }
@@ -325,7 +336,7 @@ static void shared_scene_id()
     r.run(3100);
     const std::string c = joined();
     ok("and is requested once the first is idle",
-       c.find("release panel; unpublish panel") != std::string::npos &&
+       c.find("release panel") != std::string::npos &&
            c.find("publish hud; request hud") != std::string::npos);
 }
 
@@ -341,7 +352,7 @@ static void request_gap()
     r.m.want(0, true, false);
     r.m.tick(r.now);
     ok("after a refusal the ladder is not bypassed by the demand flapping",
-       calls_are("publish map; request map") && r.now >= 100000 + 2000);
+       calls_are("request map") && r.now >= 100000 + 2000);
     r.m.on_refused(kMapScene, Refusal::Transient, "E_FETCH_STATUS_FAILED", r.now);
     joined();
     r.m.want(0, false, false);
@@ -361,7 +372,7 @@ static void lost_while_lingering()
     r.m.tick(r.now);
     joined();
     r.m.on_lost(kMapScene, "fetch removed", r.now);
-    ok("lost while lingering: down and idle, no retry", calls_are("release map; unpublish map") &&
+    ok("lost while lingering: down and idle, no retry", calls_are("release map") &&
                                                            r.state(0) == TargetState::Idle);
 }
 
@@ -407,7 +418,7 @@ static void lost_to_our_own_id()
     a.m.on_lost(kPanelScene, "fetch removed", a.now);
     ok("lost while the table names our id: undecided, the table asked for, no evidence yet",
        a.m.status(1).state == TargetState::Waiting && evidence.empty() &&
-           joined() == "release panel; unpublish panel; slots?");
+           joined() == "release panel; slots?");
     a.slot(kPanelSlot, 2, kPanelScene);   /* after our unfetch it still names that id */
     a.m.tick(a.now);
     ok("the next report still names it: the stock HMI's (the speech dialog), yielded to, no evidence",
@@ -625,7 +636,7 @@ static void parked_then_shown()
                                                             calls_are("slots?") && r.m.published(0));
     r.m.want(0, false, false);
     r.m.tick(r.now);
-    ok("parked and nobody wants it: released at once, idle", calls_are("release map; unpublish map") &&
+    ok("parked and nobody wants it: released at once, idle", calls_are("release map") &&
                                                                 r.state(0) == TargetState::Idle);
 
     Rig u;
@@ -745,7 +756,7 @@ static void fallback_and_lock()
     r.m.want(0, false, false);
     r.run(2010);
     ok("the stream ended: released after the linger, idle (the display shows the parked stock map)",
-       calls_are("release map; unpublish map") && r.state(0) == TargetState::Idle);
+       calls_are("release map") && r.state(0) == TargetState::Idle);
     r.rows(kMapSlot, 2, {{kHmiMap, 1}});
     r.m.want(0, true, false);
     r.m.tick(r.now);
@@ -766,18 +777,18 @@ static void fallback_and_lock()
                                                  joined().find("request") == std::string::npos);
     l.rows(kMapSlot, 1, {{kHmiMap, 0}});
     l.run(600);
-    ok("the lock gone: asked for at once", calls_are("publish map; request map") && l.m.status(0).retry_ms < 0);
+    ok("the lock gone: asked for at once", calls_are("request map") && l.m.status(0).retry_ms < 0);
 
     Rig q;
     park(q, false);
     joined();
     q.rows(kMapSlot, 0, {{kHmiMap, 0}, {kMapScene, 0}});
     q.m.on_lost(kMapScene, "unmapped", q.now);
-    ok("a lock while parked: down and waiting", calls_are("release map; unpublish map") &&
+    ok("a lock while parked: down and waiting", calls_are("release map") &&
                                                    q.state(0) == TargetState::Waiting);
     q.rows(kMapSlot, 1, {{kHmiMap, 0}});
     q.run(1100);
-    ok("free again: asked for at once", calls_are("publish map; request map"));
+    ok("free again: asked for at once", calls_are("request map"));
 }
 
 static void wake()
@@ -791,6 +802,178 @@ static void wake()
     r.m.want(0, false, false);
     r.m.tick(r.now);
     ok("lingering wakes at its end", r.m.wake_in_ms(r.now) == 2000);
+}
+
+static const std::string kRenderer = "00000000-0000-0000-0000-000000000001";
+
+static void warm_scenes()
+{
+    Rig r;
+    r.m.want(1, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kPanelScene, r.now);
+    joined();
+    r.m.want(1, false, false);
+    r.run(3100);
+    ok("released after its linger: the panel's scene stays published",
+       calls_are("release panel") && r.m.published(1) && !r.m.requested(1));
+    r.m.want(1, true, false);
+    r.m.tick(r.now);
+    ok("wanted again: requested, nothing published", calls_are("request panel") && r.m.requested(1));
+    r.m.on_shown(kPanelScene, r.now);
+    r.m.want(1, false, false);
+    r.run(3100);
+    joined();
+    r.m.want(2, true, false);
+    r.m.tick(r.now);
+    ok("the HUD (the panel's scene id) wanted: the panel's released scene unpublished, then the HUD's published",
+       calls_are("unpublish panel; publish hud; request hud") && !r.m.published(1) && r.m.published(2));
+    r.m.want(1, true, false);
+    r.run(100);
+    ok("the panel wanted while the HUD is requested: it waits, the HUD's scene untouched",
+       calls_are("") && r.state(1) == TargetState::Waiting && r.m.published(2));
+}
+
+static void release_confirmation()
+{
+    Rig r;
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.port.confirm = false;
+    r.m.want(0, false, false);
+    while (r.state(0) != TargetState::Idle)
+        r.run(10);
+    const int64_t released = r.now;
+    r.m.want(0, true, false);
+    r.run(500);
+    ok("wanted again before the display confirms the release: not asked for", calls_are("release map"));
+    ok("woken when the wait for the confirmation ends", r.m.wake_in_ms(r.now) == released + 1000 - r.now);
+    r.port.confirm = true;
+    r.m.tick(r.now);
+    ok("confirmed: asked for at once", calls_are("request map"));
+
+    r.m.on_shown(kMapScene, r.now);
+    r.port.confirm = false;
+    r.m.want(0, false, false);
+    while (r.state(0) != TargetState::Idle)
+        r.run(10);
+    const int64_t again = r.now;
+    joined();
+    r.m.want(0, true, false);
+    r.run(990);
+    ok("never confirmed: nothing for 1 s", calls_are(""));
+    r.run(10);
+    ok("then asked for anyway", calls_are("request map") && r.now - again == 1000);
+}
+
+static void fresh_fetch_failed()
+{
+    Rig r;
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    joined();
+    bool quick = true;
+    for (int k = 0; k < SlotManager::kFreshRetries; k++) {
+        r.run(10);
+        r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+        const int64_t at = r.now;
+        quick = quick && calls_are("release map");
+        r.run(240);
+        quick = quick && calls_are("");
+        r.run(10);
+        quick = quick && calls_are("request map") && r.now - at == 250;
+    }
+    ok("a fetch failing right after the publication: asked again after 250 ms, three times", quick);
+    r.run(10);
+    r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+    int64_t at = r.now;
+    joined();
+    r.run(1990);
+    ok("the fourth: the ladder", calls_are(""));
+    r.run(10);
+    ok("its first step, 2 s", calls_are("request map") && r.now - at == 2000);
+    r.m.on_shown(kMapScene, r.now);
+    r.run(40000);
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    r.run(2000);
+    joined();
+    r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+    at = r.now;
+    joined();
+    r.run(4990);
+    ok("a fetch failing long after the publication: the ladder at once", calls_are(""));
+    r.run(10);
+    ok("its next step, 5 s", calls_are("request map") && r.now - at == 5000);
+}
+
+static void rendering()
+{
+    Rig n;
+    n.m.want(0, true, false);
+    n.m.tick(n.now);
+    n.m.on_shown(kMapScene, n.now);
+    joined();
+    n.run(10000);
+    ok("no subscription line since start: shown, not observable, nothing done",
+       n.m.status(0).rendering == Rendering::Unobservable && n.state(0) == TargetState::Shown && calls_are("") &&
+           n.m.renderer_text().find("not observable") != std::string::npos);
+
+    Rig r;
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    r.run(100);
+    r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
+    r.run(300);
+    ok("subscribed at the fetch, before the map: not counted yet", r.m.status(0).rendering == Rendering::None);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    ok("shown: verified at once", r.m.status(0).rendering == Rendering::Verified);
+    r.run(10000);
+    ok("and kept, nothing done", calls_are("") && r.state(0) == TargetState::Shown &&
+                                    r.m.status(0).rendering == Rendering::Verified);
+    r.m.on_subscription(kMapScene, false, false, kRenderer, r.now);
+    r.m.tick(r.now);
+    ok("the renderer unsubscribing while shown: checking", r.m.status(0).rendering == Rendering::Checking &&
+                                                               r.m.wake_in_ms(r.now) == SlotManager::kVerifyMs);
+    r.run(1000);
+    r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
+    r.run(1000);
+    ok("subscribed again within 1.5 s: verified, nothing done",
+       r.m.status(0).rendering == Rendering::Verified && calls_are(""));
+    r.m.on_renderer_gone(kRenderer, r.now);
+    r.m.tick(r.now);
+    r.run(1490);
+    ok("the renderer gone: not subscribed for 1.49 s, still shown",
+       calls_are("") && r.state(0) == TargetState::Shown && r.m.status(0).rendering == Rendering::Checking);
+    r.run(20);
+    ok("at 1.5 s: released and asked for again at once, the scene kept",
+       calls_are("release map; request map") && r.m.published(0) && r.state(0) == TargetState::Acquiring);
+    r.run(200);
+    r.m.on_shown(kMapScene, r.now);
+    const int64_t shown = r.now;
+    r.run(1510);
+    ok("shown again, still not subscribed: released, on the ladder (2 s) this time",
+       calls_are("release map") && r.state(0) == TargetState::Waiting &&
+           r.m.status(0).retry_ms == shown + SlotManager::kVerifyMs + 2000);
+    r.run(2000);
+    ok("asked for again at the step", calls_are("request map"));
+    r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
+    r.run(100);
+    r.m.on_shown(kMapScene, r.now);
+    ok("subscribed: verified", r.m.status(0).rendering == Rendering::Verified && r.m.published(0));
+
+    Rig u;
+    u.m.on_subscription(0x01000300, true, false, kRenderer, u.now);   /* no target of ours publishes it */
+    u.m.want(0, true, false);
+    u.m.tick(u.now);
+    u.m.on_shown(kMapScene, u.now);
+    u.m.on_subscription(kMapScene, true, true, kRenderer, u.now);     /* a scene the client does not know */
+    joined();
+    u.run(1600);
+    ok("a subscription line of any scene makes subscriptions observable; one the client did not know is not ours",
+       calls_are("release map; request map"));
 }
 
 int main()
@@ -816,6 +999,10 @@ int main()
     take_over();
     fallback_and_lock();
     wake();
+    warm_scenes();
+    release_confirmation();
+    fresh_fetch_failed();
+    rendering();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

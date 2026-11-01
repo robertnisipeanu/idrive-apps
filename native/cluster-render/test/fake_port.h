@@ -8,7 +8,8 @@
  * a slot from us, the slot coming free and the display service going away;
  * a take-over unmaps the HMI's content, which the HMI maps again (parked).
  * Every change of the table is reported, as the KOMBI reports every slot on
- * each arbitration. */
+ * each arbitration. A release is confirmed confirm_ms after it (the car:
+ * about 35 ms). */
 #ifndef CRS_FAKE_PORT_H
 #define CRS_FAKE_PORT_H
 
@@ -25,7 +26,10 @@ public:
     SlotManager *m = nullptr;
     bool up = true;
     int64_t grant_ms = 50;
+    int64_t confirm_ms = 35;
     int requests = 0, releases = 0;
+    int64_t last_request_ms = -1, last_release_ms = -1;
+    std::map<uint64_t, int64_t> releasing;   /* scene -> when its release is confirmed */
     std::vector<uint64_t> taken_over;      /* contents a take-over unmapped, in order */
     std::map<uint64_t, int64_t> pending;   /* scene -> when it is answered */
     std::vector<uint64_t> promoted;        /* scenes of ours shown since, told at the next tick */
@@ -36,12 +40,21 @@ public:
     void request(const TargetSpec &t) override
     {
         requests++;
+        last_request_ms = now;
+        releasing.erase(t.scene_id);
         pending[t.scene_id] = now + grant_ms;
         slot_of[t.scene_id] = t.slot;
+    }
+    bool confirmed(const TargetSpec &t) const override
+    {
+        auto it = releasing.find(t.scene_id);
+        return it == releasing.end() || now >= it->second;
     }
     void release(const TargetSpec &t) override
     {
         releases++;
+        last_release_ms = now;
+        releasing[t.scene_id] = now + confirm_ms;
         pending.erase(t.scene_id);
         if (unmap(t.slot, t.scene_id))
             report();

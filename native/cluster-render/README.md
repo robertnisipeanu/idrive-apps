@@ -80,6 +80,15 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   stays mapped, empty and transparent, so a client that comes back within
   it is shown at once. The map's linger is 0: it is unmapped as soon as its
   video has stopped and faded out.
+- **Warm scenes.** A target's scene is published at its first request and
+  stays published while the target is released, taken by the display,
+  refused or not answered: only the Dcsm2 fetch and map cycle. A released
+  target stages and flushes nothing, and its writes are not upload
+  activity. Asked for again, its layers continue from what they hold: a
+  renderer that subscribes gets the scene as it was last flushed, so a
+  video writes only the tiles that differ from it. The scenes go at exit,
+  and when a target needs a scene id another target's released scene has
+  (`panel` and `hud`).
 - **The KOMBI's queue** (VERIFIED on the car, slot 0x100, class 0,
   [dcsm/DCSM.md](dcsm/DCSM.md)):
   - The KOMBI never takes a slot from the content it shows. The first
@@ -133,7 +142,30 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
   asks again on the ladder too. Requests to a slot are at least 1 s apart,
-  with one outstanding.
+  with one outstanding. A fetch failed within 2 s of the scene's
+  publication (the renderer not having seen it yet) is asked again after
+  250 ms, three times, before the ladder.
+- **Releases confirmed.** After a release, the next request of that scene
+  id waits until the KOMBI confirms the release: the replies to the unmap
+  and the unfetch, and the REMOVED of the fetch when there was one (about
+  35 ms on the car). Without a confirmation within 1 s it goes anyway, and
+  the log says so. Every request after a release logs how long after it
+  went and whether it was confirmed.
+- **Rendering verified.** The service reads the RAMSES client's console
+  (`src/ramses_console.h`), where the library logs each renderer
+  subscribing to or unsubscribing from our scenes, and writes those lines
+  to its log. A shown target is `verified` once the renderer is subscribed
+  to its scene, which it normally is before the display shows it. Once any
+  subscription has been seen since start, a shown target whose scene is not
+  subscribed 1.5 s after the display showed it (or after the renderer
+  unsubscribed) is logged (`the display reports scene 0x10004f0 mapped but
+  its renderer is not subscribed`), unmapped and unfetched, and asked for
+  again once the KOMBI confirms that, at once the first time and on the
+  ladder after that; its scene stays published. Until a subscription has
+  been seen, nothing is verified and the status says `renderer subscription
+  not observable`. The state is in each `target` event (`rendering`:
+  `none`, `checking`, `verified`, `unobservable`) and in the status's target
+  lines.
 - **Fades.** A target's video and image layers are drawn at their own
   opacity times the target's fade. The fade is 0 until the target is shown
   and rises to 1 over `fade_ms` (250) once it is. When nothing wants the
@@ -146,18 +178,21 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   everything on SIGTERM.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
-  and `hud`) are never up at once.
+  and `hud`) are never requested at once; the second's request unpublishes
+  the first's released scene and publishes its own.
 - **Our own id in the slot.** A target can be lost while the table still
   names its scene id. That is a report from before the loss, or the stock
   HMI's content with the same id (0x01000400 is also the speech dialog). The
   next report after our unfetch decides: still named, it is the stock HMI's;
   other content, its holder's; free, or no report within 1 s, the loss was
   ours. The ladder counts from the loss either way.
-- **Recovery.** Dcsm2 going away takes every target down. When it comes
-  back, the targets still wanted are asked for again after 1 s. A scene the
-  display removes is asked for again on the ladder, starting from what each
-  layer last showed: the video's newest frame, written whole and exact as
-  soon as the budget allows, its bytes charged to the budget as debt.
+- **Recovery.** Dcsm2 going away takes every target down; the scenes stay
+  published. When it comes back, the targets still wanted are asked for
+  again after 1 s. A scene the display removes is asked for again on the
+  ladder, in the same scene, its layers continuing from what they hold. In
+  a new scene each layer starts from what it last showed: the video's
+  newest frame, written whole and exact as soon as the budget allows, its
+  bytes charged to the budget as debt.
 
 ## Upload budget
 
@@ -197,6 +232,10 @@ The cap and why it is what it is are in the status
 (`cluster-render status`, `/run/cluster-render/status.txt`: `upload: cap
 5500 KB/s (ceiling 6000, floor 2000): lowered from 6000 KB/s: in 30 s, 2 x
 scene removed`). Every client also gets a `budget` event when it changes.
+Once a minute, each shown target logs what its layers wrote since its last
+such line, and whether it is rendered: `target map: in the last 60 s its
+layers wrote 1800 frames, 52000 KB, 0 failed, 12 budget holds; rendered:
+renderer 00000000-0000-0000-0000-000000000001 subscribed for 412 s`.
 
 ## Layers
 
@@ -381,6 +420,12 @@ The host tests:
   path that cannot be opened;
 - `slots_test`: arbitration, on slot tables of one row per mapping as the
   car reports them: parked targets, take-overs and their spacing, locks;
+  warm scenes and a shared scene id, requests waiting for a release's
+  confirmation, quick retries of a fetch failed after the publication, and
+  the rendering verdicts and their recovery;
+- `ramses_console_test`: the RAMSES console lines the car's libramses
+  prints (subscriptions, unsubscriptions, a renderer gone, resource
+  requests), which lines are kept raw, and the raw lines' rate limit;
 - `governor_test`: the budget's steps, cooldown, recovery and probation;
 - `compositor_test`: layers on a fake renderer that keeps pending and
   flushed state apart. It covers dirty, packed and exact writes, failure
@@ -390,15 +435,16 @@ The host tests:
   while sampled), mesh parts and their looks, geometry paced and replaced
   at most once a second, passes following the stack with an exclusive
   layer, turns, uniform arrays, animations, and a scene published again
-  rebuilding all of it; fades in and out and their timing, and a parked
-  target staging nothing;
+  rebuilding all of it; fades in and out and their timing, a parked
+  target staging nothing, and a released target's warm scene;
 - `dcsm2_port_test`: the Dcsm2 request sequence, parked and promoted
   mappings, take-overs, reply matching and refusal kinds; the undecoded
   notifications' rate limit, subscription answers, the no-answer line and
-  the status text;
+  the status text; releases confirmed by REMOVED or the unfetch's reply;
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
-  over from the stock map and falling back to it),
+  over from the stock map and falling back to it, and asked for again in
+  the same scene once the KOMBI confirms its release),
   including a restart under the client that makes assets, binds, uniform
   arrays, mesh parts, geometry and animations again, and malformed or
   oversized mesh messages and bad keys refused;

@@ -37,6 +37,16 @@ const char *holder_name(Holder h)
     }
 }
 
+const char *rendering_name(Rendering r)
+{
+    switch (r) {
+    case Rendering::Checking: return "checking";
+    case Rendering::Verified: return "verified";
+    case Rendering::Unobservable: return "unobservable";
+    default: return "none";
+    }
+}
+
 const char *target_state_name(TargetState s)
 {
     switch (s) {
@@ -70,9 +80,18 @@ int SlotManager::index(const std::string &name) const
 
 int SlotManager::by_scene(uint64_t scene_id) const
 {
-    /* A scene id belongs to at most one published target (scene_busy). */
+    /* A scene id belongs to at most one requested target (scene_busy). */
     for (size_t i = 0; i < specs_.size(); i++)
-        if (specs_[i].scene_id == scene_id && t_[i].published)
+        if (specs_[i].scene_id == scene_id && t_[i].requested)
+            return (int)i;
+    return -1;
+}
+
+int SlotManager::by_published(uint64_t scene_id) const
+{
+    /* and to at most one published target (acquire) */
+    for (size_t i = 0; i < specs_.size(); i++)
+        if (specs_[i].scene_id == scene_id && t_[i].scene)
             return (int)i;
     return -1;
 }
@@ -80,7 +99,7 @@ int SlotManager::by_scene(uint64_t scene_id) const
 bool SlotManager::scene_busy(int i) const
 {
     for (size_t j = 0; j < specs_.size(); j++)
-        if ((int)j != i && specs_[j].scene_id == specs_[i].scene_id && t_[j].published)
+        if ((int)j != i && specs_[j].scene_id == specs_[i].scene_id && t_[j].requested)
             return true;
     return false;
 }
@@ -158,15 +177,39 @@ void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason,
     st.retry_ms = retry_ms;
 }
 
-void SlotManager::take_down(int i)
+/* Out of the display's slot; the scene stays published. */
+void SlotManager::take_down(int i, int64_t now_ms)
 {
     Target &t = t_[i];
-    if (!t.published)
+    if (!t.requested)
         return;
-    if (port_->available())
+    if (port_->available()) {
         port_->release(specs_[i]);
+        released_[specs_[i].scene_id] = now_ms;
+    }
+    t.requested = false;
+    t.status.rendering = Rendering::None;
+}
+
+void SlotManager::drop_scene(int i)
+{
+    if (!t_[i].scene)
+        return;
     scenes_->unpublish(specs_[i]);
-    t.published = false;
+    subs_.erase(specs_[i].scene_id);
+    t_[i].scene = false;
+}
+
+void SlotManager::unpublish_all()
+{
+    for (size_t i = 0; i < t_.size(); i++)
+        drop_scene((int)i);
+}
+
+bool SlotManager::settled(int i, int64_t now_ms) const
+{
+    auto r = released_.find(specs_[i].scene_id);
+    return r == released_.end() || port_->confirmed(specs_[i]) || now_ms - r->second >= kConfirmMs;
 }
 
 /* Released because nothing wants it: the stock HMI's content is shown again
@@ -175,7 +218,7 @@ void SlotManager::take_down(int i)
 void SlotManager::release(int i, int64_t now_ms)
 {
     Target &t = t_[i];
-    take_down(i);
+    take_down(i, now_ms);
     t.ladder = 0;
     t.takeovers = 0;
     t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
@@ -200,14 +243,39 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
 void SlotManager::acquire(int i, int64_t now_ms)
 {
     Target &t = t_[i];
-    std::string err;
-    if (!scenes_->publish(specs_[i], &err)) {
-        wait(i, Holder::None, true, "scene: " + err, now_ms);
-        return;
+    const TargetSpec &spec = specs_[i];
+    if (!t.scene) {
+        const int other = by_published(spec.scene_id);
+        if (other >= 0) {
+            log_info("target %s: unpublishing its released scene 0x%llx for target %s", specs_[other].name.c_str(),
+                     (unsigned long long)spec.scene_id, spec.name.c_str());
+            drop_scene(other);
+        }
+        std::string err;
+        if (!scenes_->publish(spec, &err)) {
+            wait(i, Holder::None, true, "scene: " + err, now_ms);
+            return;
+        }
+        t.scene = true;
+        t.scene_ms = now_ms;
+        t.fresh_retries = 0;
+        subs_[spec.scene_id] = Subscribers();
     }
-    t.published = true;
+    auto r = released_.find(spec.scene_id);
+    if (r != released_.end()) {
+        if (port_->confirmed(spec))
+            log_info("target %s: asking for scene 0x%llx %lld ms after its release, which the display confirmed",
+                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second));
+        else
+            log_warn("target %s: asking for scene 0x%llx %lld ms after its release, which the display did not "
+                     "confirm",
+                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second));
+        released_.erase(r);
+    }
+    t.requested = true;
+    t.fresh_retry = false;
     t.last_request_ms = now_ms;
-    port_->request(specs_[i]);
+    port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);
 }
 
@@ -221,14 +289,13 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
         return;
     }
     available_since_ms_ = -1;
+    released_.clear();
     for (Target &t : t_)
         t.verdict = false;
     /* The display is gone, and with it every mapping: nothing to release. */
     for (size_t i = 0; i < t_.size(); i++) {
-        if (t_[i].published) {
-            scenes_->unpublish(specs_[i]);
-            t_[i].published = false;
-        }
+        t_[i].requested = false;
+        t_[i].status.rendering = Rendering::None;
         set((int)i, t_[i].wanted ? TargetState::Unavailable : TargetState::Idle, Holder::None,
             t_[i].wanted ? "display service not available" : "", now_ms);
     }
@@ -246,6 +313,8 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
         log_info("target %s: shown, after %lld ms parked", specs_[i].name.c_str(),
                  (long long)(now_ms - t_[i].since_ms));
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
+    t_[i].shown_ms = t_[i].check_ms = now_ms;
+    verify(i, now_ms);
 }
 
 void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
@@ -270,6 +339,7 @@ void SlotManager::park(int i, int64_t now_ms)
     log_info("target %s: %s in slot 0x%llx", specs_[i].name.c_str(), parked_reason(h).c_str(),
              (unsigned long long)specs_[i].slot);
     set(i, TargetState::Parked, h, parked_reason(h), now_ms);
+    t_[i].status.rendering = Rendering::None;
     port_->refresh_slots();
 }
 
@@ -303,13 +373,24 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
     if (i < 0 || t_[i].status.state != TargetState::Acquiring)
         return;
     /* Who holds the slot, read while our scene still counts as ours. */
+    Target &t = t_[i];
+    if (r == Refusal::FetchFailed && now_ms - t.scene_ms <= kFreshSceneMs && t.fresh_retries < kFreshRetries) {
+        t.fresh_retries++;
+        log_info("target %s: fetch failed %lld ms after its scene was published; asking again in %lld ms (%d of %d)",
+                 specs_[i].name.c_str(), (long long)(now_ms - t.scene_ms), (long long)kFreshRetryMs,
+                 t.fresh_retries, kFreshRetries);
+        take_down(i, now_ms);
+        t.fresh_retry = true;
+        set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kFreshRetryMs);
+        return;
+    }
     Holder h = Holder::None;
     if (r == Refusal::Busy) {
         h = other_holder(i);
         if (h == Holder::None)
             h = Holder::Stock;   /* held by someone the table has not named yet */
     }
-    take_down(i);
+    take_down(i, now_ms);
     if (h == Holder::Foreign || (h == Holder::Stock && !t_[i].contend))
         wait(i, h, false, "refused: " + why, now_ms);
     else
@@ -327,7 +408,7 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
         return;
     const bool ours_named = named(i);
     const Holder h = other_holder(i);
-    take_down(i);
+    take_down(i, now_ms);
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */
@@ -440,7 +521,7 @@ void SlotManager::tick(int64_t now_ms)
 
         if (!up) {
             if (s != TargetState::Idle && s != TargetState::Unavailable) {
-                take_down(i);
+                take_down(i, now_ms);
                 set(i, t.wanted ? TargetState::Unavailable : TargetState::Idle, Holder::None,
                     t.wanted ? "display service not available" : "", now_ms);
             } else if (s == TargetState::Idle && t.wanted) {
@@ -466,7 +547,7 @@ void SlotManager::tick(int64_t now_ms)
                 poll_slots = true;
                 break;
             }
-            if (now_ms - t.last_request_ms < kMinRequestGapMs)
+            if (now_ms - t.last_request_ms < gap(i) || !settled(i, now_ms))
                 break;
             acquire(i, now_ms);
             break;
@@ -474,7 +555,7 @@ void SlotManager::tick(int64_t now_ms)
         case TargetState::Acquiring:
             if (now_ms - t.since_ms >= kStartTimeoutMs) {
                 port_->no_answer(spec, now_ms);
-                take_down(i);
+                take_down(i, now_ms);
                 wait(i, Holder::None, true, "no answer from the display", now_ms);
             }
             break;
@@ -495,12 +576,16 @@ void SlotManager::tick(int64_t now_ms)
                 t.ladder = 0;
             if (now_ms - t.since_ms >= kTakeOverResetMs)
                 t.takeovers = 0;
+            verify(i, now_ms);
             break;
         case TargetState::Lingering:
             if (t.wanted) {
                 set(i, TargetState::Shown, Holder::Us, "", now_ms);
+                verify(i, now_ms);
             } else if (now_ms - t.since_ms >= spec.linger_ms) {
                 release(i, now_ms);
+            } else {
+                verify(i, now_ms);
             }
             break;
         case TargetState::Waiting: {
@@ -538,7 +623,7 @@ void SlotManager::tick(int64_t now_ms)
                 set(i, TargetState::Idle, Holder::None, "", now_ms);
                 break;
             }
-            if (settling || now_ms - t.last_request_ms < kMinRequestGapMs)
+            if (settling || now_ms - t.last_request_ms < gap(i) || !settled(i, now_ms))
                 break;
             if (yields(i, now_ms)) {
                 poll_slots = true;
@@ -581,19 +666,166 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
         case TargetState::Lingering: at(t.since_ms + specs_[i].linger_ms); break;
         case TargetState::Waiting:
             if (t.status.retry_ms >= 0)
-                at(std::max(t.status.retry_ms, t.last_request_ms + kMinRequestGapMs));
+                at(std::max(t.status.retry_ms, t.last_request_ms + gap((int)i)));
             else
                 at(slot_poll_ms_);
             break;
         case TargetState::Idle:
             if (t.wanted)
-                at(t.last_request_ms + kMinRequestGapMs);
+                at(t.last_request_ms + gap((int)i));
+            break;
+        case TargetState::Shown:
+            if (t.status.rendering == Rendering::Checking)
+                at(t.check_ms + kVerifyMs);
             break;
         default:
             break;
         }
+        auto r = released_.find(specs_[i].scene_id);
+        if (t.wanted && r != released_.end() && !port_->confirmed(specs_[i]))
+            at(r->second + kConfirmMs);
     }
     return best;
+}
+
+void SlotManager::verify(int i, int64_t now_ms)
+{
+    Target &t = t_[i];
+    TargetStatus &st = t.status;
+    const TargetSpec &spec = specs_[i];
+    auto s = subs_.find(spec.scene_id);
+    const bool subscribed = s != subs_.end() && !s->second.empty();
+    const Rendering r = subscribed ? Rendering::Verified : sub_lines_ ? Rendering::Checking : Rendering::Unobservable;
+    if (r != st.rendering) {
+        if (r == Rendering::Verified) {
+            const auto &first = *s->second.begin();
+            const int64_t d = t.shown_ms - first.second.since_ms;
+            log_info("target %s: rendered: renderer %s subscribed to scene 0x%llx %lld ms %s it was shown",
+                     spec.name.c_str(), first.first.c_str(), (unsigned long long)spec.scene_id,
+                     (long long)(d >= 0 ? d : -d), d >= 0 ? "before" : "after");
+            t.recoveries = 0;
+        } else if (r == Rendering::Checking && st.rendering != Rendering::None) {
+            t.check_ms = now_ms;
+            log_warn("target %s: shown, and its renderer is not subscribed to scene 0x%llx", spec.name.c_str(),
+                     (unsigned long long)spec.scene_id);
+        } else if (r == Rendering::Unobservable && !unobservable_logged_) {
+            unobservable_logged_ = true;
+            log_warn("target %s: renderer subscription not observable: no RAMSES subscription line read since "
+                     "start; shown targets are not verified",
+                     spec.name.c_str());
+        }
+        st.rendering = r;
+    }
+    if (r != Rendering::Checking || st.state != TargetState::Shown || now_ms - t.check_ms < kVerifyMs)
+        return;
+    /* The display shows the scene, and nothing draws it: out of the slot and
+     * back in, at once the first time; the scene stays published. */
+    t.recoveries++;
+    const std::string reason = "not rendered: the renderer is not subscribed";
+    log_warn("target %s: the display reports scene 0x%llx mapped but its renderer is not subscribed (%lld ms); "
+             "unmapping, unfetching and asking again%s",
+             spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - t.check_ms),
+             t.recoveries == 1 ? " at once" : " on the ladder");
+    take_down(i, now_ms);
+    if (t.recoveries == 1)
+        set(i, TargetState::Waiting, Holder::None, reason, now_ms, now_ms);
+    else
+        wait(i, Holder::None, true, reason, now_ms);
+}
+
+std::string SlotManager::timing(int i, int64_t now_ms) const
+{
+    const Target &t = t_[i];
+    char b[160];
+    const TargetState s = t.status.state;
+    if (s == TargetState::Shown || s == TargetState::Lingering)
+        std::snprintf(b, sizeof b, ", %lld ms after the fetch, %lld ms after the map, target %s",
+                      (long long)(now_ms - t.last_request_ms), (long long)(now_ms - t.shown_ms),
+                      target_state_name(s));
+    else if (t.requested)
+        std::snprintf(b, sizeof b, ", %lld ms after the fetch, target %s", (long long)(now_ms - t.last_request_ms),
+                      target_state_name(s));
+    else
+        std::snprintf(b, sizeof b, ", target %s (released)", target_state_name(s));
+    return b;
+}
+
+void SlotManager::on_subscription(uint64_t scene, bool subscribed, bool unknown, const std::string &guid,
+                                  int64_t now_ms)
+{
+    sub_lines_++;
+    const int i = by_published(scene);
+    const std::string who = guid.empty() ? std::string("(no guid)") : guid;
+    const char *what = subscribed ? "subscribed to" : "unsubscribed from";
+    if (unknown || i < 0) {
+        log_warn("renderer %s: %s scene 0x%llx, which %s", who.c_str(), what, (unsigned long long)scene,
+                 unknown ? "the RAMSES client does not know" : "no target publishes");
+        return;
+    }
+    Subscribers &subs = subs_[scene];
+    if (subscribed) {
+        Subscriber &sub = subs[who];
+        sub.since_ms = now_ms;
+        sub.asked = false;
+    } else {
+        subs.erase(who);
+    }
+    log_info("renderer %s: %s scene 0x%llx (target %s)%s", who.c_str(), what, (unsigned long long)scene,
+             specs_[i].name.c_str(), timing(i, now_ms).c_str());
+}
+
+void SlotManager::on_renderer_gone(const std::string &guid, int64_t now_ms)
+{
+    for (auto &kv : subs_)
+        if (kv.second.erase(guid)) {
+            const int i = by_published(kv.first);
+            log_warn("renderer %s: gone, and with it its subscription to scene 0x%llx%s", guid.c_str(),
+                     (unsigned long long)kv.first, i >= 0 ? timing(i, now_ms).c_str() : "");
+        }
+}
+
+void SlotManager::on_resource_request(const std::string &guid, unsigned resources, int64_t now_ms)
+{
+    for (auto &kv : subs_) {
+        auto sub = kv.second.find(guid);
+        if (sub == kv.second.end() || sub->second.asked)
+            continue;
+        sub->second.asked = true;
+        const int i = by_published(kv.first);
+        log_info("renderer %s: requested %u resources, the first request since it subscribed to scene 0x%llx %lld ms "
+                 "ago%s",
+                 guid.c_str(), resources, (unsigned long long)kv.first, (long long)(now_ms - sub->second.since_ms),
+                 i >= 0 ? timing(i, now_ms).c_str() : "");
+    }
+}
+
+std::string SlotManager::rendering_text(int i, int64_t now_ms) const
+{
+    const Target &t = t_[i];
+    char b[160];
+    switch (t.status.rendering) {
+    case Rendering::Verified: {
+        auto s = subs_.find(specs_[i].scene_id);
+        if (s == subs_.end() || s->second.empty())
+            return "rendered";
+        const auto &first = *s->second.begin();
+        std::snprintf(b, sizeof b, "rendered: renderer %s subscribed for %lld s", first.first.c_str(),
+                      (long long)((now_ms - first.second.since_ms) / 1000));
+        return b;
+    }
+    case Rendering::Checking:
+        std::snprintf(b, sizeof b, "renderer not subscribed for %lld ms", (long long)(now_ms - t.check_ms));
+        return b;
+    case Rendering::Unobservable: return "renderer subscription not observable";
+    default: return t.scene && !t.requested ? "scene published" : "";
+    }
+}
+
+std::string SlotManager::renderer_text() const
+{
+    if (!sub_lines_)
+        return "renderer: subscription not observable: no RAMSES subscription line read since start\n";
+    return "renderer: " + std::to_string(sub_lines_) + " subscription lines read since start\n";
 }
 
 }  // namespace crs

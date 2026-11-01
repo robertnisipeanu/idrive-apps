@@ -620,9 +620,10 @@ void Compositor::render(int64_t now_ms)
     now_ms_ = now_ms;
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
-        /* Parked: nothing of it is on screen, and the link carries the
-         * HMI's content too. It stages again once shown. */
-        if (!t.graph || slots_->status((int)ti).state == TargetState::Parked)
+        /* Released: nothing of it is asked for. Parked: nothing of it is
+         * on screen, and the link carries the HMI's content too. It stages
+         * again once shown. */
+        if (!t.graph || !slots_->requested((int)ti) || slots_->status((int)ti).state == TargetState::Parked)
             continue;
         /* A layer whose failed write left its buffer half written holds the
          * target: only its whole rewrite stages, and nothing flushes until
@@ -721,7 +722,8 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             best = w;
     };
     for (const auto &kv : layers_)
-        at(kv.second.layer->wake_in_ms(now_ms));
+        if (slots_->requested(kv.second.layer->target()))
+            at(kv.second.layer->wake_in_ms(now_ms));
     for (const Target &t : targets_)
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
@@ -764,6 +766,21 @@ std::vector<const Layer *> Compositor::layers() const
     for (const auto &kv : layers_)
         out.push_back(kv.second.layer.get());
     return out;
+}
+
+WriteStats Compositor::write_stats(int target) const
+{
+    WriteStats sum;
+    for (const auto &kv : layers_) {
+        if (kv.second.layer->target() != target)
+            continue;
+        const WriteStats w = kv.second.layer->write_stats();
+        sum.frames += w.frames;
+        sum.bytes += w.bytes;
+        sum.failed += w.failed;
+        sum.holds += w.holds;
+    }
+    return sum;
 }
 
 std::vector<const Asset *> Compositor::assets() const

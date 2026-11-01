@@ -19,8 +19,8 @@
  * Seen from the slot manager (slots.h):
  * - a refused fetch or map, or FETCH FAILED, is a refusal: PRIOTOOLOW and
  *   ALREADYMAPPED say the slot is busy, an unknown slot, scene or client is
- *   the configuration, the rest (no valid reply, the fetch removed before
- *   it showed) is transient;
+ *   the configuration, FETCH FAILED is its own, the rest (no valid reply,
+ *   the fetch removed before it showed) is transient;
  * - a mapped scene the KOMBI maps invisible is parked; parked, then shown,
  *   is shown;
  * - a shown or parked scene the KOMBI unmaps or whose fetch it removes is
@@ -28,7 +28,12 @@
  *   transition, seen on the car; a locked slot unmaps every mapping in it);
  * - Dcsm2 going away loses every scene at once;
  * - the REMOVED that answers our own unfetch is not a loss, even when the
- *   same scene id was asked for again since (panel and HUD share one).
+ *   same scene id was asked for again since (panel and HUD share one);
+ * - a release is confirmed once the replies to its unfetch (matched in a
+ *   queue of their own) have come and, when the content was fetched, the
+ *   REMOVED that answers it, or a reply saying the unfetch failed, after
+ *   which none comes. Seen on the car: the unmap's reply, the unfetch's,
+ *   then REMOVED, within about 35 ms.
  *
  * For the field logs it counts what the KOMBI sends (fetch, map and slot
  * events, notifications that did not decode, replies), logs undecoded
@@ -81,6 +86,7 @@ public:
     bool available() const override { return up_; }
     void request(const TargetSpec &t) override;
     void release(const TargetSpec &t) override;
+    bool confirmed(const TargetSpec &t) const override { return !pending_.count(t.scene_id); }
     void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override { wire_->slots(); }
     void no_answer(const TargetSpec &t, int64_t now_ms) override;
@@ -113,6 +119,7 @@ private:
         TargetSpec spec;
         Phase phase = Phase::Fetching;
         bool map_asked = false;   /* a map went out and was not refused */
+        bool fetched = false;     /* FETCHED, and not removed since */
     };
 
     /* What the KOMBI sent since the service started. */
@@ -138,6 +145,18 @@ private:
         uint64_t scene = 0, handle = 0;   /* handle 0: ours */
     };
     std::deque<Unmap> unmaps_;
+    struct Unfetch {
+        uint64_t scene = 0;
+        bool removal = false;   /* the content was fetched: a REMOVED answers it */
+    };
+    std::deque<Unfetch> unfetches_;
+    /* Releases not confirmed yet, by scene id: unfetch replies and REMOVEDs
+     * still to come. */
+    struct Pending {
+        int replies = 0, removals = 0;
+    };
+    std::map<uint64_t, Pending> pending_;
+    void settle(uint64_t scene, Pending &p);
     std::map<std::pair<uint64_t, uint64_t>, SlotInfo> slots_;   /* (slot, content): as last logged */
 
     Counts total_;
