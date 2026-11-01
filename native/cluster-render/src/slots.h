@@ -50,7 +50,9 @@
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
- *   (Port::confirmed), at most kConfirmMs. A fetch the display fails within
+ *   (Port::confirmed) and, when subscriptions are observable, the renderer
+ *   has unsubscribed from the scene (in the emulator about 150 ms after the
+ *   display's confirmation), at most kConfirmMs. A fetch the display fails within
  *   kFreshSceneMs of the scene's publication (its renderer not having seen
  *   the publication yet) is asked again after kFreshRetryMs, up to
  *   kFreshRetries times; then the ladder.
@@ -300,9 +302,10 @@ private:
     void acquire(int i, int64_t now_ms);
     void take_down(int i, int64_t now_ms);
     void drop_scene(int i);
-    /* The last release of the target's scene id is confirmed, or no longer
-     * awaited. */
+    /* The last release of the target's scene id is confirmed by the display
+     * and its renderer has unsubscribed, or neither is awaited any longer. */
     bool settled(int i, int64_t now_ms) const;
+    bool subscribed(uint64_t scene_id) const;
     int64_t gap(int i) const { return t_[i].fresh_retry ? kFreshRetryMs : kMinRequestGapMs; }
     /* Moves the rendering state on; a shown target not rendered is
      * released and asked for again. */

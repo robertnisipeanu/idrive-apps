@@ -148,9 +148,11 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
 - **Releases confirmed.** After a release, the next request of that scene
   id waits until the KOMBI confirms the release: the replies to the unmap
   and the unfetch, and the REMOVED of the fetch when there was one (about
-  35 ms on the car). Without a confirmation within 1 s it goes anyway, and
-  the log says so. Every request after a release logs how long after it
-  went and whether it was confirmed.
+  35 ms on the car). When subscriptions are observable (below) it also
+  waits for the renderer to unsubscribe from the scene, which in the
+  emulator follows the REMOVED by 150-170 ms. Without both within 1 s it
+  goes anyway, and the log says which was missing. Every request after a
+  release logs how long after it went.
 - **Rendering verified.** The service reads the RAMSES client's console
   (`src/ramses_console.h`), where the library logs each renderer
   subscribing to or unsubscribing from our scenes, and writes those lines
@@ -495,6 +497,16 @@ client under the guest's Node 8.
 - **Frames stopping.** The video stalled after 6 s and the map was released
   after its linger.
 - **Shutdown.** SIGTERM shut down cleanly.
+- **Warm scenes and rendering** (the car's libramses build, a video client
+  on `map` wanted for 12 s and gone for 10 s, three times): the scene was
+  published once and unpublished only at SIGTERM. Each time the client came
+  back the service asked again (the KOMBI stand-in had confirmed the
+  release), the renderer subscribed 45-105 ms after the fetch, and the
+  service logged the map rendered 200-400 ms before the display showed it.
+  Screenshots showed the client's frame each time. After each release the
+  renderer unsubscribed 150-170 ms after the REMOVED. RAMSES's console was
+  at info, its lines left stdout, and the subscription lines reached the
+  service's log.
 - **3D and the rest** (`js/showcase.js` on `panel` and `map`, and one-off
   check clients for depth, the cut view, angles and mat4 order, checked on
   screenshots):
@@ -528,7 +540,16 @@ Not verified, needs the car:
   - how a flush's duration and the heartbeat replies behave as the link
     fills, which sets `slow_flush_ms`;
   - the governor's steps on a real drive;
-  - the Waze map and other clients through the service at once.
+  - the Waze map and other clients through the service at once;
+  - the KOMBI's renderer subscribing to and unsubscribing from our scenes
+    as the stand-in does: the subscription before the display shows the
+    scene (verification), and the unsubscription within 1 s of a release
+    (the re-request's wait). The same library logs both on the car, but
+    when the KOMBI subscribes has not been seen there;
+  - that a warm scene asked for again is drawn by the KOMBI, which is the
+    change this answers: once on the car, a scene destroyed and published
+    again with the same id within a second was reported mapped and never
+    drawn.
 
 ## Releases
 

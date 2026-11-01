@@ -206,10 +206,17 @@ void SlotManager::unpublish_all()
         drop_scene((int)i);
 }
 
+bool SlotManager::subscribed(uint64_t scene_id) const
+{
+    auto s = subs_.find(scene_id);
+    return s != subs_.end() && !s->second.empty();
+}
+
 bool SlotManager::settled(int i, int64_t now_ms) const
 {
     auto r = released_.find(specs_[i].scene_id);
-    return r == released_.end() || port_->confirmed(specs_[i]) || now_ms - r->second >= kConfirmMs;
+    return r == released_.end() || now_ms - r->second >= kConfirmMs ||
+           (port_->confirmed(specs_[i]) && !subscribed(specs_[i].scene_id));
 }
 
 /* Released because nothing wants it: the stock HMI's content is shown again
@@ -263,13 +270,17 @@ void SlotManager::acquire(int i, int64_t now_ms)
     }
     auto r = released_.find(spec.scene_id);
     if (r != released_.end()) {
-        if (port_->confirmed(spec))
-            log_info("target %s: asking for scene 0x%llx %lld ms after its release, which the display confirmed",
-                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second));
+        const bool confirmed = port_->confirmed(spec), unsubscribed = !subscribed(spec.scene_id);
+        if (confirmed && unsubscribed)
+            log_info("target %s: asking for scene 0x%llx %lld ms after its release, which the display confirmed%s",
+                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second),
+                     sub_lines_ ? " and its renderer unsubscribed" : "");
         else
-            log_warn("target %s: asking for scene 0x%llx %lld ms after its release, which the display did not "
-                     "confirm",
-                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second));
+            log_warn("target %s: asking for scene 0x%llx %lld ms after its release, without %s",
+                     spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - r->second),
+                     !confirmed && !unsubscribed ? "the display's confirmation or its renderer unsubscribing"
+                     : !confirmed                ? "the display's confirmation"
+                                                 : "its renderer unsubscribing");
         released_.erase(r);
     }
     t.requested = true;
@@ -682,7 +693,7 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
             break;
         }
         auto r = released_.find(specs_[i].scene_id);
-        if (t.wanted && r != released_.end() && !port_->confirmed(specs_[i]))
+        if (t.wanted && r != released_.end() && !settled((int)i, now_ms))
             at(r->second + kConfirmMs);
     }
     return best;
@@ -694,8 +705,7 @@ void SlotManager::verify(int i, int64_t now_ms)
     TargetStatus &st = t.status;
     const TargetSpec &spec = specs_[i];
     auto s = subs_.find(spec.scene_id);
-    const bool subscribed = s != subs_.end() && !s->second.empty();
-    const Rendering r = subscribed ? Rendering::Verified : sub_lines_ ? Rendering::Checking : Rendering::Unobservable;
+    const Rendering r = subscribed(spec.scene_id) ? Rendering::Verified : sub_lines_ ? Rendering::Checking : Rendering::Unobservable;
     if (r != st.rendering) {
         if (r == Rendering::Verified) {
             const auto &first = *s->second.begin();

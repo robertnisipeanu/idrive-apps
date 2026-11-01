@@ -19,7 +19,7 @@
  * published once and kept across releases, losses and the display service
  * going; a target with the same scene id takes it down only when it needs
  * the id. After a release the next request waits for the display's
- * confirmation, at most 1 s; a fetch failing right after the publication is
+ * confirmation and the renderer's unsubscription, at most 1 s; a fetch failing right after the publication is
  * asked again after 250 ms, three times, then on the ladder. Rendering: a
  * shown scene its renderer subscribed to is verified; one not subscribed
  * 1.5 s after it was shown, or after the renderer unsubscribed, is released
@@ -866,6 +866,35 @@ static void release_confirmation()
     ok("never confirmed: nothing for 1 s", calls_are(""));
     r.run(10);
     ok("then asked for anyway", calls_are("request map") && r.now - again == 1000);
+
+    /* Subscriptions observable: the renderer's unsubscription is awaited
+     * too (it follows the display's confirmation by about 150 ms). */
+    r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
+    r.m.on_shown(kMapScene, r.now);
+    r.port.confirm = true;
+    r.m.want(0, false, false);
+    while (r.state(0) != TargetState::Idle)
+        r.run(10);
+    const int64_t third = r.now;
+    joined();
+    r.m.want(0, true, false);
+    r.run(150);
+    ok("confirmed, the renderer still subscribed: not asked for", calls_are(""));
+    r.m.on_subscription(kMapScene, false, false, kRenderer, r.now);
+    r.m.tick(r.now);
+    ok("the renderer unsubscribed: asked for at once", calls_are("request map") && r.now - third == 150);
+    r.m.on_shown(kMapScene, r.now);
+    r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
+    r.m.want(0, false, false);
+    while (r.state(0) != TargetState::Idle)
+        r.run(10);
+    const int64_t fourth = r.now;
+    joined();
+    r.m.want(0, true, false);
+    r.run(990);
+    ok("a renderer that stays subscribed: nothing for 1 s", calls_are(""));
+    r.run(10);
+    ok("then asked for anyway", calls_are("request map") && r.now - fourth == 1000);
 }
 
 static void fresh_fetch_failed()
