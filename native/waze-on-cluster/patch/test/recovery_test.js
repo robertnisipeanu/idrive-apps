@@ -364,6 +364,28 @@ test('realRestore reports a remount failure instead of leaving / writable silent
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
 
+test('the service stays up without a patch to watch, and stops on SIGTERM', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-idle-'));
+    try {
+        const tgt = path.join(dir, 'carplay');
+        fs.writeFileSync(tgt, 'not a carplay build\n');
+        fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-idle\n');
+        const child = cp.spawn(process.execPath, [RECOVERY_PATH], {
+            env: Object.assign({}, process.env, {
+                WOC_CARPLAY: tgt, WOC_RECOVERY_STATE: path.join(dir, 'state.json'), WOC_BOOT_ID: path.join(dir, 'boot_id'),
+            }),
+            stdio: 'ignore',
+        });
+        let exit = null;
+        child.on('exit', (code, signal) => { exit = { code, signal }; });
+        await new Promise((r) => setTimeout(r, 2000));
+        assert.strictEqual(exit, null, 'still running 2 s after start: ' + JSON.stringify(exit));
+        child.kill('SIGTERM');
+        await new Promise((r) => setTimeout(r, 1000));
+        assert(exit && exit.code === 0, 'a SIGTERM ends it cleanly: ' + JSON.stringify(exit));
+    } finally { cp.execFileSync('rm', ['-rf', dir]); }
+});
+
 async function main() {
     let failed = 0;
     for (const t of tests) {
