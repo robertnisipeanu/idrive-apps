@@ -211,7 +211,7 @@ public:
     /* The answer to request_status(): the service's status text. */
     std::function<void(const std::string &text)> on_status;
     void request_status();
-    /* The service's hello: its backend ("id7") and targets ("map:1088x480,..."). */
+    /* The service's hello: its backend ("id7", "id8") and targets ("map:1088x480,..."). */
     std::string backend, targets;
 
 private:

@@ -99,11 +99,14 @@
 
 namespace crs {
 
-/* Where a target's scene goes: its slot, content class and scene. */
+/* Where a target's scene goes: its slot, content class and scene. On
+ * iDrive 8 the slot is a DCSM category and the scene goes as the content
+ * offered in it (dcsm27_port.h). */
 struct TargetSpec {
     std::string name;
     uint64_t slot = 0;
     uint32_t content_class = 0;
+    uint64_t content = 0;   /* iDrive 8 */
     uint64_t scene_id = 0;
     uint32_t width = 0, height = 0;   /* scene size in pixels */
     int linger_ms = 2000;             /* kept mapped this long after the last layer stops wanting it */
@@ -135,7 +138,8 @@ enum class Refusal {
     Transient,    /* no valid reply, the fetch removed before it showed */
 };
 
-/* The display's placement service (iDrive 7: Dcsm2 fetch and map). */
+/* The display's placement service (iDrive 7: Dcsm2 fetch and map; iDrive
+ * 8: RAMSES 27's DCSM offer). */
 class Port {
 public:
     virtual ~Port() {}

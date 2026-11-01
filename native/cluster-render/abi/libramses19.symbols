@@ -4,7 +4,7 @@
 # (BuildID 51549f9a62e9e317b6d3786f731b894baacbf39c): RAMSES (https://github.com/bmwcarit/ramses),
 # BMW Car IT GmbH, MPL-2.0.
 # BMW's own text API (ramses::text, TextFont, text effects and iterators) is left out.
-# Regenerate: tools/ramses19_abi.py dump-symbols <lib>, then leave the text API out.
+# Regenerate: tools/ramses_abi.py dump-symbols <lib>, then leave the text API out.
 _ZN6ramses10Appearance11setDrawModeENS_9EDrawModeE FUNC 2610
 _ZN6ramses10Appearance11unbindInputERKNS_12UniformInputE FUNC 2372
 _ZN6ramses10Appearance13setDepthWriteEb FUNC 2933

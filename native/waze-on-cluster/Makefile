@@ -99,9 +99,10 @@ $(BUILD)/host/udp_probe_test: test/udp_probe_test.cpp src/udp_source.cpp src/udp
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/udp_probe_test.cpp src/udp_source.cpp src/framing_probe.cpp $(CR)/src/log.cpp -lpthread
 
 # The map feed against the shared renderer's service on fake display
-# backends, over its socket: every service source but the unit's backends
-# and its main.
-CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp graph_ramses19.cpp dcsm2_link.cpp config.cpp log.cpp), \
+# backends, over its socket: every service source but the units' backends,
+# the starter and its main.
+CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp graph_ramses19.cpp dcsm2_link.cpp config.cpp log.cpp \
+                         unit_idrive7.cpp unit_idrive8.cpp graph_ramses27.cpp launch.cpp generation.cpp), \
           $(wildcard $(CR)/src/*.cpp)) $(wildcard $(KIT)/*.cpp)
 $(BUILD)/host/map_feed_test: test/map_feed_test.cpp src/map_feed.cpp src/map_feed.h $(CR_CORE) $(CR_SRC) \
 		$(CR)/src/log.cpp $(wildcard $(CR)/src/*.h $(CR)/include/cluster_render/*.h $(CR)/test/*.h)
@@ -142,22 +143,22 @@ target-in-docker: $(T)/waze-on-cluster
 # SONAME, so the binary records the right DT_NEEDED.
 $(T)/stub/libmfxhw64.so: abi/libmfx.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/mfx_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/mfx_stub.c
 	gcc -shared -Wl,-soname,libmfxhw64.so -o $@ $(@D)/mfx_stub.c
 
 $(T)/stub/libva.so.1: abi/libva.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/va_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/va_stub.c
 	gcc -shared -Wl,-soname,libva.so.1 -o $@ $(@D)/va_stub.c
 
 $(T)/stub/libva-drm.so.1: abi/libva-drm.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/va_drm_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/va_drm_stub.c
 	gcc -shared -Wl,-soname,libva-drm.so.1 -o $@ $(@D)/va_drm_stub.c
 
 $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1: abi/libias_avb.symbols
 	mkdir -p $(@D)
-	$(PYTHON) $(CR)/tools/ramses19_abi.py stub-source $< > $(@D)/ias_avb_stub.c
+	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/ias_avb_stub.c
 	gcc -shared -Wl,-soname,libias-media_transport-avb_ufipc_bridge.so.1 -o $@ $(@D)/ias_avb_stub.c
 
 STUBS = $(T)/stub/libmfxhw64.so $(T)/stub/libva.so.1 $(T)/stub/libva-drm.so.1 \
