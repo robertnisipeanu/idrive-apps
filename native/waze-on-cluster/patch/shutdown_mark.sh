@@ -23,8 +23,10 @@ out="$DIR/shutdown.show"
 pid=$!
 ( sleep "$WAIT"; kill "$pid" 2>/dev/null ) &
 guard=$!
-wait "$pid" || { rm -f "$out"; exit 0; }
+wait "$pid"
+status=$?
 kill "$guard" 2>/dev/null
+[ "$status" -eq 0 ] || { rm -f "$out"; exit 0; }
 show=$(cat "$out")
 rm -f "$out"
 case "$show" in
