@@ -359,6 +359,16 @@ int64_t VideoLayer::wake_in_ms(int64_t now_ms) const
     return w > 0 ? w : -1;
 }
 
+WriteStats VideoLayer::write_stats() const
+{
+    WriteStats w;
+    w.frames = sent_;
+    w.bytes = bytes_;
+    w.failed = failed_;
+    w.holds = held_budget_;
+    return w;
+}
+
 std::string VideoLayer::stats() const
 {
     char b[256];

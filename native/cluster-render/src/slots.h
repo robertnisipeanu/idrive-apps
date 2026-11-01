@@ -48,11 +48,33 @@
  *   content mapped, and then free again (a door-open warning come and
  *   gone), is asked for at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
- *   request is outstanding per slot.
+ *   request is outstanding per slot. After a release, the next request of
+ *   the scene waits until the display confirms the release
+ *   (Port::confirmed) and, when subscriptions are observable, the renderer
+ *   has unsubscribed from the scene (in the emulator about 150 ms after the
+ *   display's confirmation), at most kConfirmMs. A fetch the display fails within
+ *   kFreshSceneMs of the scene's publication (its renderer not having seen
+ *   the publication yet) is asked again after kFreshRetryMs, up to
+ *   kFreshRetries times; then the ladder.
+ * - Warm scenes: a target's scene is published at its first request and
+ *   stays published while the target is released, lost, refused or timed
+ *   out; only the display's fetch and map cycle. A released target stages
+ *   and flushes nothing. The scene goes only when another target needs its
+ *   scene id: two targets with one scene id cannot both be requested (the
+ *   second waits until the first is released), and the second's request
+ *   takes the first's scene down before it publishes its own.
  * - The display service going away takes every target down; when it comes
- *   back, the targets still wanted are requested again after kSettleMs.
- * - Two targets with one scene id cannot both be up: the second waits until
- *   the first is idle.
+ *   back, the targets still wanted are requested again after kSettleMs. The
+ *   scenes stay published: RAMSES publication does not go through Dcsm2,
+ *   and a renderer that subscribes gets the scene as it was last flushed.
+ * - Rendering: the display's renderer subscribes to a scene it is to draw,
+ *   which the RAMSES client logs (ramses_console.h). A target the display
+ *   shows counts as rendered once its renderer is subscribed to its scene.
+ *   Once any subscription has been seen in this process, a shown target
+ *   whose scene is not subscribed kVerifyMs after the display showed it
+ *   (or after the renderer unsubscribed) is released and asked for again,
+ *   at once the first time and on the ladder after that, with its scene
+ *   kept. Before any subscription has been seen nothing is verified.
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -99,9 +121,10 @@ struct SlotInfo {
 
 /* Why a request was not granted. */
 enum class Refusal {
-    Busy,       /* the slot is held: E_DCSM_PRIOTOOLOW, E_DCSM_CONTENT_ALREADYMAPPED */
-    Config,     /* the slot, scene or client is unknown to the display */
-    Transient,  /* fetch failed, no valid reply */
+    Busy,         /* the slot is held: E_DCSM_PRIOTOOLOW, E_DCSM_CONTENT_ALREADYMAPPED */
+    Config,       /* the slot, scene or client is unknown to the display */
+    FetchFailed,  /* E_FETCH_STATUS_FAILED */
+    Transient,    /* no valid reply, the fetch removed before it showed */
 };
 
 /* The display's placement service (iDrive 7: Dcsm2 fetch and map). */
@@ -114,6 +137,9 @@ public:
     virtual void request(const TargetSpec &t) = 0;
     /* Take it out of its slot. No answer is awaited. */
     virtual void release(const TargetSpec &t) = 0;
+    /* The display has confirmed every release of t's scene id since it was
+     * last requested. */
+    virtual bool confirmed(const TargetSpec &) const { return true; }
     /* Unmap content of the stock HMI shown in t's slot, as the HMI, so the
      * display shows t's parked scene. No answer is awaited. */
     virtual void take_over(const TargetSpec &t, uint64_t content) = 0;
@@ -126,16 +152,26 @@ public:
     virtual std::string status_text(int64_t) const { return std::string(); }
 };
 
-/* Builds, publishes and takes down each target's scene (the compositor). */
+/* Builds, publishes and takes down each target's scene (the compositor). A
+ * published scene stays published until unpublish(). */
 class Scenes {
 public:
     virtual ~Scenes() {}
     virtual bool publish(const TargetSpec &t, std::string *err) = 0;
     virtual void unpublish(const TargetSpec &t) = 0;
+    /* t's published scene is requested again: the renderer that subscribes
+     * gets it whole. */
+    virtual void resent(const TargetSpec &, int64_t) {}
 };
 
 enum class TargetState { Idle, Acquiring, Parked, Shown, Lingering, Waiting, Unavailable };
 const char *target_state_name(TargetState s);
+
+/* Whether the display's renderer draws a shown or lingering target: its
+ * scene subscribed (Verified), not yet (Checking), or no subscription seen
+ * in this process to tell (Unobservable). None otherwise. */
+enum class Rendering { None, Checking, Verified, Unobservable };
+const char *rendering_name(Rendering r);
 
 /* A target's state as clients see it. */
 struct TargetStatus {
@@ -144,6 +180,7 @@ struct TargetStatus {
     std::string reason;
     int64_t retry_ms = -1;          /* Waiting on a timer: when it asks again (or decides a loss); -1: when
                                        the slot is free */
+    Rendering rendering = Rendering::None;
 };
 
 class SlotManager {
@@ -159,11 +196,22 @@ public:
      * kTakeOverResetMs shown. */
     static const int64_t kTakeOverMs[3];
     static const int64_t kTakeOverResetMs = 60000;
+    /* A release's confirmation is awaited this long. */
+    static const int64_t kConfirmMs = 1000;
+    /* A shown scene's renderer subscribes within this long. It normally has
+     * by the time the display shows the scene (it subscribes at the fetch);
+     * the margin covers the console pipe and the loop's tick. */
+    static const int64_t kVerifyMs = 1500;
+    static const int64_t kFreshSceneMs = 2000;
+    static const int64_t kFreshRetryMs = 250;
+    static const int kFreshRetries = 3;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
      * targets). Before the first tick. */
     void set_scenes(Scenes *scenes) { scenes_ = scenes; }
+    /* Unpublishes every scene, for a clean exit. */
+    void unpublish_all();
 
     /* Targets are fixed at start (the configuration). */
     void add(const TargetSpec &t);
@@ -185,10 +233,24 @@ public:
 
     void tick(int64_t now_ms);
 
+    /* What the display's renderer reports about our scenes, from the RAMSES
+     * console (ramses_console.h): a subscription or unsubscription of
+     * scene by the renderer guid (unknown: the client did not know the
+     * scene), a renderer gone, a renderer's resource request. */
+    void on_subscription(uint64_t scene, bool subscribed, bool unknown, const std::string &guid, int64_t now_ms);
+    void on_renderer_gone(const std::string &guid, int64_t now_ms);
+    void on_resource_request(const std::string &guid, unsigned resources, int64_t now_ms);
+
     const TargetStatus &status(int target) const { return t_[target].status; }
-    /* True when the target's scene is published (Acquiring, Parked, Shown,
-     * Lingering): its layers are drawn and flushed. */
-    bool published(int target) const { return t_[target].published; }
+    /* True when the target is requested (Acquiring, Parked, Shown,
+     * Lingering): its layers are staged and flushed. */
+    bool requested(int target) const { return t_[target].requested; }
+    /* True when the target's scene is published, requested or warm. */
+    bool published(int target) const { return t_[target].scene; }
+    /* The rendering state and its evidence; empty: none. */
+    std::string rendering_text(int target, int64_t now_ms) const;
+    /* Whether subscriptions are observable, for the status text. */
+    std::string renderer_text() const;
     /* Milliseconds until the next timer of any target; -1: none. */
     int64_t wake_in_ms(int64_t now_ms) const;
 
@@ -206,7 +268,14 @@ private:
     struct Target {
         TargetStatus status;
         bool wanted = false, contend = false;
-        bool published = false;
+        bool requested = false;
+        bool scene = false;          /* published */
+        int64_t scene_ms = 0;        /* when it was published */
+        int fresh_retries = 0;       /* fetch failures since, asked again after kFreshRetryMs */
+        bool fresh_retry = false;    /* the next request may go kFreshRetryMs after the last */
+        int64_t shown_ms = 0;        /* the display showed it */
+        int64_t check_ms = 0;        /* Checking since */
+        int recoveries = 0;          /* releases for not rendering since it was last rendered */
         int64_t since_ms = 0;        /* entered the current state */
         int64_t last_request_ms = -1000000;
         int ladder = 0;
@@ -224,9 +293,30 @@ private:
         int64_t takeover_ms = 0, takeover_sent_ms = -kTakeOverResetMs;
     };
 
+    /* The renderers subscribed to one of our scenes since it was published:
+     * guid -> since when, and whether it requested resources since. */
+    struct Subscriber {
+        int64_t since_ms = 0;
+        bool asked = false;
+    };
+    typedef std::map<std::string, Subscriber> Subscribers;
+
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);
     void acquire(int i, int64_t now_ms);
-    void take_down(int i);
+    void take_down(int i, int64_t now_ms);
+    void drop_scene(int i);
+    /* The last release of the target's scene id is confirmed by the display
+     * and its renderer has unsubscribed, or neither is awaited any longer. */
+    bool settled(int i, int64_t now_ms) const;
+    bool subscribed(uint64_t scene_id) const;
+    int64_t gap(int i) const { return t_[i].fresh_retry ? kFreshRetryMs : kMinRequestGapMs; }
+    /* Moves the rendering state on; a shown target not rendered is
+     * released and asked for again. */
+    void verify(int i, int64_t now_ms);
+    /* ", N ms after the fetch, M ms after the map, target <state>". */
+    std::string timing(int i, int64_t now_ms) const;
+    /* The target whose published scene is scene_id; -1: none. */
+    int by_published(uint64_t scene_id) const;
     void release(int i, int64_t now_ms);
     /* Waiting; on the ladder, the retry counts from from_ms (-1: now_ms). */
     void wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms = -1);
@@ -260,6 +350,10 @@ private:
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
     int64_t slot_poll_ms_ = 0;
+    std::map<uint64_t, int64_t> released_;   /* scene id -> its release not yet followed by a request */
+    std::map<uint64_t, Subscribers> subs_;   /* by published scene id */
+    uint64_t sub_lines_ = 0;                 /* subscription lines seen, any scene */
+    bool unobservable_logged_ = false;
 };
 
 }  // namespace crs

@@ -8,7 +8,8 @@
 # pacing, the frame clock and the map-area geometry.
 #
 #   make test                 every host test: the kit, slot arbitration, the
-#                             upload governor, the stack, layers and compositor
+#                             RAMSES console reader, the upload governor, the
+#                             stack, layers and compositor
 #                             on a fake renderer, the service over its socket
 #                             with the C++ client, and the Node client
 #   make test-kit             the kit's tests alone (for producers that link it)
@@ -42,7 +43,7 @@ H = $(BUILD)/host
 KIT_SRC  = kit/dirty_tiles.cpp kit/yuv_atlas.cpp kit/block_pack.cpp
 CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/layer.cpp src/video_layer.cpp src/mesh_layer.cpp \
            src/asset.cpp src/compositor.cpp \
-           src/server.cpp src/service.cpp src/dcsm2_port.cpp client/protocol.cpp src/log.cpp
+           src/server.cpp src/service.cpp src/dcsm2_port.cpp src/ramses_console.cpp client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
 UNIT_SRC = src/main.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
@@ -53,9 +54,11 @@ all: test
 
 test: test-kit test-cpp test-js
 
-test-cpp: $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test
+test-cpp: $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test $(H)/dcsm2_port_test \
+		$(H)/ramses_console_test
 	$(H)/log_test
 	$(H)/slots_test
+	$(H)/ramses_console_test
 	$(H)/governor_test
 	$(H)/compositor_test
 	$(H)/dcsm2_port_test
@@ -88,6 +91,10 @@ $(H)/log_test: test/log_test.cpp src/log.cpp src/log.h
 $(H)/slots_test: test/slots_test.cpp src/slots.cpp src/slots.h src/governor.cpp src/governor.h src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/slots_test.cpp src/slots.cpp src/governor.cpp src/log.cpp -lpthread
+
+$(H)/ramses_console_test: test/ramses_console_test.cpp src/ramses_console.cpp src/ramses_console.h src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(HOSTINC) -o $@ test/ramses_console_test.cpp src/ramses_console.cpp src/log.cpp -lpthread
 
 $(H)/governor_test: test/governor_test.cpp src/governor.cpp src/governor.h src/log.cpp
 	mkdir -p $(@D)

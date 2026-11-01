@@ -7,6 +7,8 @@
 
 #include <algorithm>
 
+#include "log.h"
+
 namespace crs {
 
 Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), slots_(port, nullptr)
@@ -40,7 +42,7 @@ int Service::timeout_ms(int64_t now_ms) const
 {
     bool active = false;
     for (size_t i = 0; i < slots_.targets().size(); i++)
-        active = active || slots_.published((int)i);
+        active = active || slots_.requested((int)i);
     /* Idle: four times a second, so a stalled layer's state, a slot poll and
      * the status file stay current. */
     int64_t t = active ? 1000 / std::max(1, cfg_.fps) : 250;
@@ -57,6 +59,10 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
     slots_.tick(now_ms);
     comp_->render(now_ms);
     server_->report(now_ms);
+    if (now_ms - minute_ms_ >= kMinuteMs) {
+        minute_ms_ = now_ms;
+        log_minute(now_ms);
+    }
     if (!cfg_.status_path.empty() && now_ms - status_ms_ >= 1000) {
         status_ms_ = now_ms;
         const std::string tmp = cfg_.status_path + ".tmp";
@@ -73,6 +79,29 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
     }
 }
 
+void Service::log_minute(int64_t now_ms)
+{
+    stats_.resize(slots_.targets().size());
+    stats_ms_.resize(slots_.targets().size(), now_ms);
+    for (size_t i = 0; i < slots_.targets().size(); i++) {
+        if (slots_.status((int)i).state != TargetState::Shown)
+            continue;
+        const WriteStats w = comp_->write_stats((int)i), &last = stats_[i];
+        /* A layer gone since takes its counts with it. */
+        auto since = [](uint64_t now, uint64_t then) { return now >= then ? now - then : now; };
+        const std::string rendering = slots_.rendering_text((int)i, now_ms);
+        log_info("target %s: in the last %lld s its layers wrote %llu frames, %llu KB, %llu failed, %llu budget holds; "
+                 "%s",
+                 slots_.targets()[i].name.c_str(), (long long)((now_ms - stats_ms_[i]) / 1000),
+                 (unsigned long long)since(w.frames, last.frames),
+                 (unsigned long long)(since(w.bytes, last.bytes) / 1024),
+                 (unsigned long long)since(w.failed, last.failed), (unsigned long long)since(w.holds, last.holds),
+                 rendering.c_str());
+        stats_[i] = w;
+        stats_ms_[i] = now_ms;
+    }
+}
+
 void Service::shutdown(int64_t now_ms)
 {
     for (size_t i = 0; i < slots_.targets().size(); i++)
@@ -80,6 +109,7 @@ void Service::shutdown(int64_t now_ms)
     /* Lingering targets are released at once: past every linger. */
     slots_.tick(now_ms);
     slots_.tick(now_ms + 3600 * 1000);
+    slots_.unpublish_all();
 }
 
 }  // namespace crs

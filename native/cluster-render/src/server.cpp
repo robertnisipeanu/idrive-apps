@@ -939,7 +939,8 @@ void Server::report(int64_t now_ms)
         for (size_t t = 0; t < slots_->targets().size(); t++) {
             const TargetStatus &s = slots_->status((int)t);
             const std::string line = std::string(target_state_name(s.state)) + "\n" + holder_name(s.holder) + "\n" +
-                                     s.reason + "\n" + std::to_string(s.retry_ms);
+                                     s.reason + "\n" + std::to_string(s.retry_ms) + "\n" +
+                                     rendering_name(s.rendering);
             std::string &sent = c.target_sent[slots_->targets()[t].name];
             if (line == sent)
                 continue;
@@ -950,7 +951,8 @@ void Server::report(int64_t now_ms)
                                      {"holder", cr::json_quote(holder_name(s.holder))},
                                      {"reason", cr::json_quote(s.reason)},
                                      {"retry_in_ms", std::to_string(s.retry_ms >= 0 ? std::max<int64_t>(0, s.retry_ms - now_ms)
-                                                                                   : -1)}}));
+                                                                                   : -1)},
+                                     {"rendering", cr::json_quote(rendering_name(s.rendering))}}));
         }
         const Governor &gov = comp_->governor();
         const std::string budget = std::to_string(gov.cap()) + "\n" + gov.reason();
@@ -993,13 +995,16 @@ std::string Server::status_text(int64_t now_ms) const
     for (size_t t = 0; t < slots_->targets().size(); t++) {
         const TargetSpec &spec = slots_->targets()[t];
         const TargetStatus &st = slots_->status((int)t);
-        std::snprintf(line, sizeof line, "target %s: slot 0x%llx scene 0x%llx %ux%u: %s%s%s%s%s\n", spec.name.c_str(),
-                      (unsigned long long)spec.slot, (unsigned long long)spec.scene_id, spec.width, spec.height,
-                      target_state_name(st.state), st.holder != Holder::None ? " (" : "",
+        const std::string rendering = slots_->rendering_text((int)t, now_ms);
+        std::snprintf(line, sizeof line, "target %s: slot 0x%llx scene 0x%llx %ux%u: %s%s%s%s%s%s%s\n",
+                      spec.name.c_str(), (unsigned long long)spec.slot, (unsigned long long)spec.scene_id, spec.width,
+                      spec.height, target_state_name(st.state), st.holder != Holder::None ? " (" : "",
                       st.holder != Holder::None ? holder_name(st.holder) : "", st.holder != Holder::None ? ")" : "",
-                      st.reason.empty() ? "" : (" " + st.reason).c_str());
+                      st.reason.empty() ? "" : (" " + st.reason).c_str(), rendering.empty() ? "" : "; ",
+                      rendering.c_str());
         s += line;
     }
+    s += slots_->renderer_text();
     s += slots_->port().status_text(now_ms);
     for (const Client &c : clients_)
         for (const auto &kv : c.assets)

@@ -188,7 +188,8 @@ int main()
        l && l->target() == 1 && l->params.rect.x == 416 && l->params.rect.y == 120 && l->params.rect.w == 1088 &&
            r.st().state == "showing" && r.st().target == "panel");
     r.pump(1600);
-    ok("the map target, no longer wanted, is released after its linger", r.port.releases >= 1 && !r.gpu.graph("map"));
+    ok("the map target, no longer wanted, is released after its linger",
+       r.port.releases >= 1 && !r.port.row(0x100, 0x010004f0));
     r.feed->set_target("sail");
     r.pump(1200, &f3);
     ok("sail is the map slot", r.map_layer() && r.map_layer()->target() == 0 && r.st().state == "showing");
@@ -197,7 +198,8 @@ int main()
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
     r.pump(2000);   /* the fade out, then the linger */
-    ok("and the slot is released after the linger", r.port.releases > releases && !r.gpu.graph("map"));
+    ok("and the slot is released after the linger",
+       r.port.releases > releases && !r.port.row(0x100, 0x010004f0));
 
     r.svc.reset();
     r.pump(100);
@@ -238,7 +240,7 @@ int main()
     stock = r.port.row(0x100, 0x01000101);
     ok("the stream not live: the layer hidden, idle, and the slot released, the parked stock map shown",
        r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
-           !r.gpu.graph("map") && !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
+           !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
     r.feed->set_stream(true, false);
     r.pump(1200, &f1);
     ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");

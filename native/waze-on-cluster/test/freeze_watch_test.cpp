@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 /* Host test for the frozen-stream check (freeze_watch.h), with the car's
- * rates: a frozen stream at 15 frames a second, all the same blank picture,
- * is frozen after 10 s and not before; a static map is never frozen, at one
- * frame in 11 s or at 15 a second; a stream that stops is not frozen; a
- * changed or non-blank frame ends it; a change is seen in one sample past
+ * rates: a frozen stream at 15 frames a second, all the same blank picture
+ * after a map, is frozen after 10 s and not before; a stream blank from its
+ * start is frozen only after 30 s of it with frames still coming, so the
+ * car's start (93 blank frames in 2 s, then a pause) never is, and a new
+ * stream (live again) starts without a picture; a static
+ * map is never frozen, at one frame in 11 s or at 15 a second; a stream that
+ * stops is not frozen; a changed or non-blank frame ends it; a change is seen in one sample past
  * the threshold, not in noise under it or between samples; a picture is
  * blank with up to one sample in a thousand off its band, not with a road
  * across it. The minute's tally: nothing before a minute from its first
@@ -30,7 +33,8 @@ int main()
     FreezeConfig cfg;   /* 10 s, 3 frames a second */
 
     FreezeWatch f(cfg);
-    f.frame(0, true, true);
+    f.live(true);
+    f.frame(0, true, false);
     int64_t t = 0;
     for (; t < 9900; t += 66)
         f.frame(t + 66, false, true);
@@ -40,6 +44,43 @@ int main()
     ok("and frozen past 10 s", f.frozen(10600));
     f.frame(10700, true, true);
     ok("a changed frame ends it", !f.frozen(10700));
+
+    /* The car: a stream's first 93 frames the same blank picture in about
+     * 2 s, then a pause. */
+    FreezeWatch fc(cfg);
+    fc.live(true);
+    fc.frame(0, true, true);
+    bool never = true;
+    for (int k = 1; k < 93; k++)
+        fc.frame(k * 22, false, true);
+    for (int64_t u = 2000; u <= 62000; u += 100)
+        never = never && !fc.frozen(u);
+    ok("the car's start: 93 blank frames in 2 s, then nothing for 60 s: never frozen", never);
+
+    FreezeWatch st(cfg);
+    st.live(true);
+    st.frame(0, true, true);
+    for (int64_t u = 66; u <= 29900; u += 66)
+        st.frame(u, false, true);
+    ok("blank from the stream's start at 15 fps: not frozen before 30 s", !st.frozen(29900));
+    for (int64_t u = 29966; u <= 30100; u += 66)
+        st.frame(u, false, true);
+    ok("and frozen at 30 s", st.frozen(30100));
+    st.frame(60066, true, false);
+    for (int64_t u = 60132; u <= 71000; u += 66)
+        st.frame(u, false, true);
+    ok("a picture, then 10 s of the same blank one: frozen", st.frozen(71000));
+    st.live(false);
+    ok("the stream ending ends it", !st.frozen(71000));
+    st.live(true);
+    st.frame(71066, true, true);
+    for (int64_t u = 71132; u <= 90000; u += 66)
+        st.frame(u, false, true);
+    ok("a new stream blank from its start: not frozen, whatever the last showed", !st.frozen(90000));
+    st.frame(90066, true, false);
+    for (int64_t u = 90132; u <= 101000; u += 66)
+        st.frame(u, false, true);
+    ok("until it shows a picture and goes blank for 10 s", st.frozen(101000));
 
     FreezeWatch s(cfg);
     s.frame(0, true, false);
@@ -54,9 +95,10 @@ int main()
     ok("a static map at 15 fps for 2 minutes: never frozen", !m.frozen(120000));
 
     FreezeWatch n(cfg);
-    n.frame(0, true, true);
+    n.frame(0, true, false);
     for (int64_t u = 66; u <= 12000; u += 66)
         n.frame(u, false, true);
+    ok("frozen", n.frozen(12000));
     n.frame(12066, false, false);
     ok("a non-blank frame ends it", !n.frozen(12066));
     for (int64_t u = 12132; u <= 21000; u += 66)
@@ -67,14 +109,14 @@ int main()
     ok("and frozen past 10 s after it", n.frozen(22200));
 
     FreezeWatch g(cfg);
-    g.frame(0, true, true);
+    g.frame(0, true, false);
     for (int64_t u = 66; u <= 12000; u += 66)
         g.frame(u, false, true);
     ok("frozen while the frames come", g.frozen(12000));
     ok("not frozen 10 s after they stopped", !g.frozen(22100));
 
     FreezeWatch off(FreezeConfig{0, 3});
-    off.frame(0, true, true);
+    off.frame(0, true, false);
     for (int64_t u = 66; u <= 30000; u += 66)
         off.frame(u, false, true);
     ok("ms 0: never frozen", !off.frozen(30000));

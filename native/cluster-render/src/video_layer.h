@@ -71,6 +71,11 @@ public:
     bool holds_flush() const override { return parked_ && drawn_; }
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
+    WriteStats write_stats() const override;
+    size_t buffer_bytes() const override
+    {
+        return g_ ? atlas_bytes_ + (p_.pan_blocks ? 2 * packed_.size() : 0) : 0;
+    }
     bool fades() const override { return true; }
 
 protected:

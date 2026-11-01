@@ -11,8 +11,13 @@
  * previous one, and says whether the picture is blank; FreezeWatch calls the
  * stream frozen once frames have kept coming at least min_fps for ms, all of
  * them blank and none changed, and not frozen at the next changed or
- * non-blank frame. FrameTally sums the same verdicts a minute at a time for
- * the log. */
+ * non-blank frame. Until the stream has shown a picture it takes three
+ * times as long: a phone starting its stream sends the same blank picture
+ * for a while (93 frames in about 2 s on the car, then a pause) before the
+ * map's first, while one that starts blank and stays so (a reconnect that
+ * did not take) keeps sending it. A stream starts when CarPlay's cluster
+ * stream becomes live and ends when it stops being live. FrameTally sums
+ * the same verdicts a minute at a time for the log. */
 #ifndef WOC_FREEZE_WATCH_H
 #define WOC_FREEZE_WATCH_H
 
@@ -50,10 +55,15 @@ class FreezeWatch {
 public:
     explicit FreezeWatch(const FreezeConfig &cfg) : cfg_(cfg) {}
     void frame(int64_t now_ms, bool changed, bool blank);
+    /* Whether CarPlay's cluster stream is live; each change starts a new
+     * stream, with no picture shown yet. */
+    void live(bool on);
     bool frozen(int64_t now_ms) const;
 
 private:
     FreezeConfig cfg_;
+    bool live_ = false;
+    bool pictured_ = false;             /* the stream has shown a non-blank picture */
     int64_t unchanged_since_ms_ = -1;   /* the last changed or non-blank frame */
     std::deque<int64_t> times_;         /* unchanged blank frames within ms */
 };
