@@ -171,8 +171,8 @@ public:
     virtual ~Scenes() {}
     virtual bool publish(const TargetSpec &t, std::string *err) = 0;
     virtual void unpublish(const TargetSpec &t) = 0;
-    /* t's published scene is requested again: the renderer that subscribes
-     * gets it whole. */
+    /* The display took t's published scene again (parked or shown): the
+     * renderer that subscribed to it at the fetch got it whole. */
     virtual void resent(const TargetSpec &, int64_t) {}
 };
 
