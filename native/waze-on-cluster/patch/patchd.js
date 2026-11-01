@@ -354,50 +354,21 @@ function remountRo(tries, cb) {
     });
 }
 
-/* Restarting carplay is safe only while recmgr treats its death as expected:
- * recmgr reboots the head unit when a service its restart list does not name
- * stops, and it reads the list (/etc/recmgr-restartlist.conf) only at boot. So
- * carplay is killed and started only when "carplay" is in both [Whitelist] and
- * [WhitelistExitSuccess] of the list as it stood at boot — the file itself while
- * it is older than the boot, else the copy mgu-deploy saved before this boot's
- * first write (recmgr-at-boot.json) — the rule mgu-deploy uses.
- * On a unit with the stock list a change is left to take effect at the next
- * head-unit start. */
-var RECMGR_CONF = process.env.WOC_RECMGR_CONF || '/etc/recmgr-restartlist.conf';
-var RECMGR_AT_BOOT = process.env.WOC_RECMGR_AT_BOOT || '/var/opt/mgu-deploy/recmgr-at-boot.json';
-var PROC_STAT = process.env.WOC_PROC_STAT || '/proc/stat';
-var BOOT_ID = process.env.WOC_BOOT_ID || '/proc/sys/kernel/random/boot_id';
-
-function recmgrHas(text, name) {
-    var has = { Whitelist: false, WhitelistExitSuccess: false }, section = '';
-    text.split('\n').forEach(function (line) {
-        line = line.trim();
-        if (/^\[.*\]$/.test(line)) { section = line.slice(1, -1); return; }
-        if (has.hasOwnProperty(section) && line === name) has[section] = true;
-    });
-    return has.Whitelist && has.WhitelistExitSuccess;
-}
+/* Restarting carplay is safe only while recmgr treats its death as expected,
+ * so carplay is killed and started only when recmgr loaded its entry this boot
+ * (recmgr_list.js). On a unit whose list recmgr loaded without it a change is
+ * left to take effect at the next head-unit start. */
+var recmgrLoaded = require('./recmgr_list.js').recmgrLoaded;
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return null; } }
-
-/* recmgr loaded name's entry this boot. */
-function recmgrLoaded(name) {
-    var cur = readText(RECMGR_CONF);
-    if (cur === null || !recmgrHas(cur, name)) return false;
-    var at = null;
-    try { at = JSON.parse(readText(RECMGR_AT_BOOT)); } catch (e) {}
-    var boot = (readText(BOOT_ID) || '').trim();
-    if (at && at.boot && at.boot === boot) return recmgrHas(at.text || '', name);
-    var btime = /^btime (\d+)$/m.exec(readText(PROC_STAT) || '');
-    if (!btime) return false;
-    try { return fs.statSync(RECMGR_CONF).mtime.getTime() < parseInt(btime[1], 10) * 1000; } catch (e) { return false; }
-}
 
 /* A change written while carplay could not be restarted, and which one:
  * {"action":"apply"|"revert","reason":...}. The marker sits next to the
  * socket in /dev/shm, which the next head-unit start clears; until then
  * status reports it instead of the binary's state. */
 var PENDING = path.join(path.dirname(SOCK), 'activation-pending');
+/* The PID restartCarplay kills, for recovery.js. */
+var KILLED = path.join(path.dirname(SOCK), 'carplay-killed');
 var PENDING_REASON = {
     apply: 'patch written; takes effect at the next head-unit start',
     revert: 'patch removed; the original carplay runs from the next head-unit start'
@@ -417,6 +388,8 @@ function restartCarplay(cb) {
         var pid = parseInt(((out || '') + '').trim(), 10);
         if (!(pid > 0)) { cb(new Error('carplay restart: carplay.service has no main PID (MainPID=' + ((out || '') + '').trim() + '); not restarted')); return; }
         log('restarting carplay: SIGKILL main PID ' + pid + ', then systemctl start');
+        /* The boot-recovery watcher takes this death for patchd's, not a crash. */
+        try { fs.writeFileSync(KILLED, pid + '\n'); } catch (e) { log('recording the killed PID failed: ' + e.message); }
         try { process.kill(pid, 'SIGKILL'); }
         catch (e) { if (e.code !== 'ESRCH') { cb(new Error('carplay restart: SIGKILL ' + pid + ': ' + e.message)); return; } }
         waitCarplayGone(pid, RESTART_TRIES, function (gErr) {

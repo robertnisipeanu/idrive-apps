@@ -144,9 +144,9 @@ self-start rel32 are computed from the functions' virtual addresses.
 **Exception risk.** `ShowUI` and `ForceKeyframe` are each followed by a
 result check (`0x18189b`, `0x1818da`) that calls the throw helper `0x250980`
 on error, and the call site has only a cleanup handler. An uncaught throw
-would kill CarPlay, which on a stock restart list reboots the head unit, and
-could repeat at every phone connection. Disable map, or boot recovery
-(below), restores the stock call path, which has no throw.
+would kill CarPlay, which on a restart list without `carplay` reboots the
+head unit, and could repeat at every phone connection. Disable map, or boot
+recovery (below), restores the stock call path, which has no throw.
 
 ### Keyframe cadence
 
@@ -240,7 +240,9 @@ recmgr reboots it when a service its restart list (read only at boot) does
 not name dies. So `patchd` restarts CarPlay itself only when `carplay` is in both
 `[Whitelist]` and `[WhitelistExitSuccess]` of `/etc/recmgr-restartlist.conf` as recmgr loaded it this boot
 (the file while it is older than the boot, else the deploy tool's copy taken
-at boot): it SIGKILLs the main PID, waits for systemd to reap it, runs
+at boot; `recmgr_list.js`): it records the main PID in
+`/dev/shm/waze-on-cluster/carplay-killed` (boot recovery does not count that
+death as a crash), SIGKILLs it, waits for systemd to reap it, runs
 `systemctl start carplay.service` and waits for `is-active`. No main PID, a
 failed start or a unit that stays inactive is an error, never a fallback to
 stop or restart.
@@ -332,25 +334,84 @@ binary it does not recognise. Every write is an atomic rename.
 
 ## Boot recovery
 
-On a stock restart list a CarPlay crash reboots the head unit with the
-patched binary still on disk: a boot loop with no HMI to turn the map off.
-The tool's `carplay` entry on recmgr's restart list (README) prevents that
-from the head-unit start that first runs the patched CarPlay; the recovery
-below covers a list that recmgr has not loaded with it.
-`recovery.js` (`waze-on-cluster-recovery.service`, root) breaks it with the
-same `carplay_patch.js revert` Disable map uses. **It never kills, restarts
-or reboots anything**; it only replaces the binary on disk, keeping the
-running one linked as `<target>.woc-running`.
+Where recmgr has not loaded a `carplay` entry, a CarPlay crash reboots the
+head unit with the patched binary still on disk: a boot loop with no HMI to
+turn the map off. The tool's `carplay` entry (README) and the patch are both
+written at install and both take effect at the next head-unit start, so the
+first start that runs the patched CarPlay already has the entry; recmgr then
+neither reboots for a crash nor starts CarPlay again. Boot recovery restores
+the original binary after repeated crashes, starts CarPlay again where the
+entry is loaded, and is the backstop where a crash still reboots the unit.
 
-A counter in `/var/opt/waze-on-cluster/boot-recovery.json` (fsync'd) arms each
-boot that comes up patched. A boot that neither reaches a healthy CarPlay
-(active for 60 s continuously) nor shuts down cleanly (SIGTERM) counts as
-failed at the next boot; after 2 in a row the next boot restores the
-original. A healthy CarPlay clears the counter. It acts only on a recognised
-patched form of the backup's build with a verified backup; a stock or
-firmware-replaced binary is left alone and the counter cleared. A shared
-remount lock (`remount_lock.js`) keeps it and `patchd` from remounting `/` at
-once; recovery yields to `patchd`.
+**How the head unit goes down.** recmgr (and crashhandler, for a core dump)
+asks the NodeStateManager for a fast shutdown; it runs
+`var-opt-ro.service`, which syncs and remounts `/var/opt` read-only, and the
+IOC then resets the SoC. systemd stops no service: there is no SIGTERM, no
+`ExecStop` and no `shutdown.target`. A switch-off takes the same path. So no
+service sees a crash reboot, or a switch-off, as a stop.
+
+**What is recorded.** `/var/opt/waze-on-cluster/boot-recovery.json`, written
+with fsync:
+
+- `fails`: crashes of the patched CarPlay since the last head-unit start in
+  which CarPlay ran and did not crash;
+- `arm`: this start's record, `{boot, crashes, confirmed, clean}`, kept
+  while our backup `<target>.woc-orig` exists;
+- `starts`: the CarPlay starts made this boot.
+
+`shutdown_mark.sh`, run by a drop-in for `var-opt-ro.service`
+(`50-waze-on-cluster.conf`) before `/var/opt` goes read-only, writes
+`<boot id> running|failed|stopped` to `/var/opt/waze-on-cluster/shutdown`
+from `carplay.service`'s `ActiveState` and `Result`; `failed` is any
+`Result` other than `success`.
+
+**The boot step** (`recovery.js boot`, `waze-on-cluster-boot.service`, a
+oneshot wanted by `multi-user.target`, `Before=carplay.service`, which
+`late.target` starts after `multi-user.target`). The previous start adds its
+`crashes`, or one when its shutdown record says `failed` and none were seen.
+With none, it clears the counter if CarPlay ran 60 s continuously, keeps it
+if CarPlay was running or stopped at the shutdown, or was stopped by an
+orderly shutdown (SIGTERM while the system stops), and otherwise adds one (it
+ended with no record, e.g. power lost). Without our backup it clears the
+counter and exits; below the threshold (2) it arms this start and exits.
+Neither reads the 3.5 MB binary, so CarPlay waits about the time Node takes
+to start. At the threshold it classifies the binary and restores the
+original before CarPlay starts. CarPlay does not require the step: it starts
+when the step has exited, failed or hit its 30 s `TimeoutStartSec`. The step
+exits 0 whatever happens, and it is in recmgr's lists, so a timeout does not
+reboot the unit.
+
+**The watcher** (`recovery.js`, `waze-on-cluster-recovery.service`, after
+the boot step). Every second it checks that CarPlay's main PID is still in
+`/proc`, and every 5 s it asks systemd. A main PID gone with a `Result`
+other than `success` is a crash, unless `patchd` killed it to activate a
+change or the system is stopping. The crash is written to `arm` at once,
+before anything else, since the next moment can be the reboot. For a
+patched binary, at `fails` plus this start's crashes ≥ 2 it restores the
+original. Where recmgr loaded `carplay`'s entry this boot it then starts
+CarPlay with `systemctl start carplay.service`, 5 s, 15 s and 60 s after a
+crash, at most three times per head-unit start, only while CarPlay is down,
+the system is not stopping and `patchd` does not hold the remount lock.
+Without the entry it starts nothing. CarPlay active with one PID for 60 s
+marks the start healthy. The watcher also runs the boot step's logic at its
+own start, so a start whose boot step did not run or finish is counted, and
+a restore it left undone is retried.
+
+**Restoring** is the `carplay_patch.js revert` Disable map uses (verified
+backup, refuses a binary it does not recognise as a patched form of the
+backup's build), with `/` read-write only for the write and read-only again
+after. It acts only on a recognised patched build with a verified backup; a
+stock or firmware-replaced binary is left alone and the counter cleared. A
+patched binary a process runs is kept linked as `<target>.woc-running`. A
+shared remount lock (`remount_lock.js`) keeps it and `patchd` from remounting
+`/` at once; recovery yields to `patchd`. Recovery never stops, kills,
+restarts or reboots anything; its only action on a service is the start
+above.
+
+**By hand.** Keep the phone from connecting (unplug it, or turn off its
+Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over SSH run
+`sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and restart the
+head unit.
 
 ## Tests
 
@@ -374,5 +435,8 @@ repository carries no BMW binary.
   both activation branches, every row of the install table, the marker, the
   link's lifetime, `/` read-only after every path, and no `systemctl`, `kill`
   or `reboot` from the hooks.
-- `recovery_test.js`: the boot counter, the remount lock and a real restore
-  on a copy.
+- `recovery_test.js`: the counter across crash loops with orderly and fast
+  shutdowns, the boot step's restore before CarPlay starts and its fast
+  path, the in-boot crash, restore and start with and without recmgr's
+  entry, what is not a crash, `shutdown_mark.sh`, the boot unit's ordering,
+  the remount lock and a real restore on a copy.

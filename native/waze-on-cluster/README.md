@@ -62,10 +62,26 @@ loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
 otherwise the app shows **Restart head unit**, a normal system reboot.
 
 The tool puts `carplay` on recmgr's restart list (the deploy tool writes it
-into both sections at install and takes it out at removal), so from the next
-head-unit start a CarPlay crash no longer restarts the whole head unit. The
-patched CarPlay first runs at that same start, so it never runs without the
-entry.
+into both sections at install and takes it out at removal), so recmgr takes
+a CarPlay crash for an expected stop and does not restart the head unit for it.
+The entry and the patch are both written at install and both take effect at
+the next head-unit start, so the first start that runs the patched CarPlay
+already has the entry.
+
+**When CarPlay crashes.** recmgr does not start CarPlay again; the recovery
+service does, at most three times per head-unit start, 5 s, 15 s and 60 s
+after a crash. At the second crash of the patched CarPlay with no crash-free
+head-unit start in between, it first restores the original binary, so
+CarPlay comes back without the map until Enable map. Where a crash still
+restarts the head unit (recmgr had not loaded the entry, or restarts it
+anyway), a boot step that runs before CarPlay counts the crashed start and,
+at the second, restores the original before CarPlay starts. Details:
+PATCH.md "Boot recovery".
+
+To break a loop by hand: keep the phone from connecting (unplug it, or turn
+off its Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over
+SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and
+restart the head unit.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
@@ -115,9 +131,7 @@ the phone sends: some phones send one about every ten seconds, others keep
 their full rate.
 
 A render that missed the stream's start decodes nothing until a new stream:
-reconnect the phone. If a patched CarPlay crash-loops,
-`waze-on-cluster-recovery.service` restores the original binary on disk
-(PATCH.md "Boot recovery").
+reconnect the phone.
 
 **Losses.** The phone sends a keyframe only at the start of its stream, so
 the render decodes through a lost packet:
@@ -209,8 +223,9 @@ For a report, run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
 `/tmp/woc-logs-<UTC date and time>.tar.gz` and prints its path. The archive
 holds both tools' log files (cluster-render's too), the files in
-`/run/cluster-render/` and the three above, this boot's journal of the
-render, `patchd`, the recovery service, cluster-render and carplay, the list
+`/run/cluster-render/` and the three above, boot recovery's counter and
+shutdown record, this boot's journal of the render, `patchd`, the boot step,
+the recovery service, cluster-render and carplay, the list
 of boots, `ls -l` of both tools' folders, their `*.local.conf`, the date and
 the uptime.
 
@@ -313,6 +328,12 @@ binary it does not recognise as a patched form of the backup
   commands; no value reaches a shell or a path. It checks `/` is read-only
   again after every write. It applies no patch and restarts nothing on its
   own. `reboot` is honoured only while a change is pending.
+- Boot recovery (`recovery.js`, root) changes the binary only through the
+  same revert as Disable map, and only a recognised patch of ours with a
+  verified backup. Its one action on a service is `systemctl start
+  carplay.service` after a crash, bounded, where recmgr loaded `carplay`'s
+  entry this boot; it never stops, kills or restarts anything. Its shutdown
+  record is a drop-in for `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
 - Nothing is mapped on the cluster before the first decoded frame or after
   the frames stop. The map never alters the gauges' data.

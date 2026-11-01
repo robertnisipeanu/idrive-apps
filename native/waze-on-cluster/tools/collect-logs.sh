@@ -38,6 +38,8 @@ for tool in cluster-render waze-on-cluster; do
     done
     copy "/var/opt/$tool/$tool.local.conf" "$tool.local.conf"
 done
+copy /var/opt/waze-on-cluster/boot-recovery.json boot-recovery.json
+copy /var/opt/waze-on-cluster/shutdown boot-recovery-shutdown
 
 for f in /run/cluster-render/*; do
     copy "$f" "run-cluster-render-${f##*/}"
@@ -47,7 +49,7 @@ for f in status.json probe.txt; do
 done
 
 if command -v journalctl >/dev/null 2>&1; then
-    for unit in cluster-render waze-on-cluster waze-on-cluster-patchd waze-on-cluster-recovery carplay; do
+    for unit in cluster-render waze-on-cluster waze-on-cluster-patchd waze-on-cluster-boot waze-on-cluster-recovery carplay; do
         journalctl -b -o short-precise --no-pager -u "$unit" > "$DIR/journal-$unit.txt" 2>/dev/null
     done
     journalctl --list-boots --no-pager > "$DIR/boots.txt" 2>/dev/null

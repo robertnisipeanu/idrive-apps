@@ -252,6 +252,8 @@ async function main() {
     calls = newCalls();
     ok('apply: patched, udp, carplay restarted', r.state === 'patched' && r.mode === 'udp' && r.panel === 'high', JSON.stringify(r));
     ok('apply: the carplay main process got SIGKILL', await diedWithin(dummy) === 'SIGKILL');
+    ok('apply: the killed PID is recorded for boot recovery',
+        fs.readFileSync(path.join(path.dirname(SOCK), 'carplay-killed'), 'utf8') === dummy.pid + '\n');
     ok('apply: MainPID read, then start once it was gone, then is-active',
         calls.length === 3 && calls[0] === 'show carplay.service -p MainPID --value' &&
         calls[1] === 'start carplay.service killed-pid-alive=false' && calls[2] === 'is-active carplay.service', JSON.stringify(calls));
