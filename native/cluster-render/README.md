@@ -395,13 +395,18 @@ the library):
     `contentRelease` park it again and keep the offer. The cluster takes a
     shown widget back on every layout change and shows it again 1 to 7 s
     later (VERIFIED on the car).
-  - A release is `requestStopOfferContent`. The scene stays published, as
-    last flushed, until the cluster accepts the stop: unpublished at once,
-    the emulator's stand-in cluster logged errors unassigning it. The
-    library refuses a new offer of the content until then (even from inside
-    `stopOfferAccepted`), so no new scene with that id is built and a
-    request in between waits on the ladder. At shutdown the service waits
-    1 s for the stop.
+  - A release is `requestStopOfferContent`, confirmed once the cluster
+    accepts the stop. The library refuses a new offer of the content until
+    then (even from inside `stopOfferAccepted`), so the next request waits
+    for the confirmation (at most 1 s, as on iDrive 7), and one that comes
+    anyway is refused and waits on the ladder. The scene stays published,
+    warm, as on iDrive 7. A scene taken down while its offer stands or is
+    stopping stays published until the stop is accepted (unpublished at
+    once, the emulator's stand-in cluster logged errors unassigning it), and
+    no new scene with its id is built meanwhile. At shutdown the service
+    waits 1 s for the stops.
+  - Rendering is not verified: the RAMSES 27 console is not read, so the
+    status says the renderer's subscription is not observable.
   - A refused offer (another provider has the content) waits on the
     ladder. There is no slot table, no take-over and no heartbeat: parked
     behind other content and the take-over are Dcsm2's. A cluster that
@@ -426,7 +431,7 @@ by the cluster):
 |---|---|---|---|---|
 | `map` | `Ca_ComCenter_IC` 43100201 | 43204041 | 874x749, all shown | the middle of the cluster, between the gauges; the cluster draws its media placeholder over it |
 | `hud` | `Ca_ComCenter_HUD` 43100202 | 43204012 | 353x203, all shown | the HUD, above its speed bar |
-| `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, the safe rect shown | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
+| `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, most of it shown (below) | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
 
 - Target names are iDrive 7's where the place matches, so a client asking
   for `map` gets the cluster's middle. waze-on-cluster stays iDrive 7 only:
@@ -437,13 +442,20 @@ by the cluster):
   cluster's layout (layout 4: 630x570 at 805,125; layout 5: 612x527 at
   814,170; VERIFIED on the car). The journal logs it; clients are not told
   it yet.
+- The widget's canvas is the whole cluster, and far more of it than the
+  safe rect is shown: behind the gauges, dimmed by the cluster's own gauge
+  panels and bottom bar, as the stock navigation map is. Shown, in canvas
+  coordinates: about x 400-1720, y 143-765 in the normal layout and x
+  690-1530, y 185-700 in the M layout, with a black notch at the top middle
+  down to about y 167 (VERIFIED on the car with a grid drawn over the whole
+  canvas).
 - Content ids the head unit offers itself (`C_NaviMap_IC` 43200501,
   `C_Media_IC` 43202120, ...) are never offered: two providers of one
   content fight. Scene ids are `0x4d4755……` ("MGU"), allowed by
   `id8_scene_ids_allowed`.
 
-VERIFIED on the car with the service itself, run by hand as `hmi_5000`
-with `showcase.js all` on `map` and on `widget`:
+VERIFIED on the car with the service itself (before 0.2.2 was merged),
+run by hand as `hmi_5000` with `showcase.js all` on `map` and on `widget`:
 - `map` offered, parked and shown within 1 s; every layer kind drawn:
   plasma, dial and needle, the lit cube, glyph text, the video and the
   exclusive alert;
@@ -452,9 +464,14 @@ with `showcase.js all` on `map` and on `widget`:
 - a release and a request 30 ms later: the cluster accepted the stop
   within about 30 ms, and the next offer followed after the 1 s request
   gap and was shown;
-- SIGTERM: the offers stopped, exit 0, the head unit kept running.
+- SIGTERM: the offers stopped, exit 0, the head unit kept running;
+- with the same build, a video client drew a camera stream in `widget`,
+  hardware-decoded, at 15 fps.
 
 CAR-ONLY on iDrive 8:
+- the release since 0.2.2 (host-tested only, not in the emulator): the
+  scene kept published, warm, and the next request waiting for the stop's
+  acceptance;
 - the `hud` target, and how the upload budget fits the cluster's link
   over a long run;
 - how long the cluster shows the middle and the HUD, and what takes them
@@ -692,7 +709,8 @@ and renderer on the unit's libramses, for one category: no KOMBI):
   renderer", order 50) and shown.
 - **Release and shutdown.** The client gone, the offer stopped and
   accepted, then the scene unpublished, with no error from the stand-in;
-  SIGTERM exited 0.
+  SIGTERM exited 0. (Before 0.2.2's warm scenes were merged: a released
+  scene now stays published until shutdown.)
 
 Not verified, needs the car (iDrive 8): the CAR-ONLY list of "iDrive 8".
 
