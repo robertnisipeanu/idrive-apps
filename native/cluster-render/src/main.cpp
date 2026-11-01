@@ -81,7 +81,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("id8_widget_order", "50");
     cfg->define("id8_widget_preview", "");
     cfg->define("fade_ms", "250");
-    cfg->define("upload_kb_per_s", "6000");
+    cfg->define("upload_kb_per_s", "5500");
     cfg->define("upload_floor_kb_per_s", "2000");
     cfg->define("upload_step_kb_per_s", "500");
     cfg->define("upload_burst_ms", "250");

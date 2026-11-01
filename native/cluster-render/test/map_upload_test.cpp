@@ -525,13 +525,13 @@ static void test_pacer()
                     (unsigned long long)rate);
     ok("pacer: 30 fps of whole frames keeps to the byte rate", bounded);
 
-    /* The default 6000 KB/s against raw writes: a whole 1088x480 atlas is
+    /* The default 5500 KB/s against raw writes: a whole 1088x480 atlas is
      * 783,360 B, and a partial write of 320 KB is about what the car's
      * synthetic motion wrote (8.2 MB/s at 26 updates a second). Offered at
      * 30 a second, counted over 20 s after the first 5 (past the starting
-     * allowance), whole writes go at 6000 x 1024 / 783360 = 7.8 a second,
-     * 320 KB ones at 6000 / 320 = 18.75. */
-    const uint64_t def = 6000 * 1024;
+     * allowance), whole writes go at 5500 x 1024 / 783360 = 7.2 a second,
+     * 320 KB ones at 5500 / 320 = 17.2. */
+    const uint64_t def = 5500 * 1024;
     for (uint64_t size : {uint64_t(783360), uint64_t(320 * 1024)}) {
         UploadPacer d(def, 250);
         int offered = 0, gone = 0;
@@ -545,9 +545,9 @@ static void test_pacer()
         }
         const double ups = gone / 20.0;
         char name[112];
-        std::snprintf(name, sizeof name, "pacer: 6000 KB/s passes %u KB writes at %.1f of %.1f a second",
+        std::snprintf(name, sizeof name, "pacer: 5500 KB/s passes %u KB writes at %.1f of %.1f a second",
                       (unsigned)(size / 1024), ups, offered / 20.0);
-        ok(name, size == 783360 ? ups >= 7.0 && ups <= 8.5 : ups >= 18.0 && ups <= 19.5);
+        ok(name, size == 783360 ? ups >= 6.5 && ups <= 7.8 : ups >= 16.5 && ups <= 18.0);
     }
 }
 
