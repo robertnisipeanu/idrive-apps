@@ -1,17 +1,67 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Robert Nisipeanu
-# Every test, the head-unit builds and the reproducibility check.
+# Every test, the head-unit builds and the reproducibility check, as parallel
+# jobs.
 name: Test
 
+# A pull request runs once, on its merge commit; main runs on every push.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# a new push to a pull request cancels its run in progress; each push to main
+# runs in a group of its own
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  cluster-render:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+      - run: make -C native/cluster-render test
+
+  # the unit's toolchain (gcc 7.5) in Docker, preinstalled on the runner
+  cluster-render-x86:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make -C native/cluster-render test-x86
+
+  waze-on-cluster:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+      - run: make -C native/waze-on-cluster test
+      - run: node apps/robertn_waze_cluster/tools/test_control.js
+      - run: node apps/robertn_waze_cluster/tools/test_page.js
+
+  waze-on-cluster-x86:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make -C native/waze-on-cluster test-x86
+
+  release:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -19,17 +69,11 @@ jobs:
           # release.js check: SOURCE_DATE_EPOCH comes from each component's last commit
           fetch-depth: 0
           persist-credentials: false
-
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.12.0
-
-      # the head-unit builds and test-x86 run in Docker, preinstalled on the runner
-      - run: make -C native/cluster-render test
-      - run: make -C native/cluster-render test-x86 target
-      - run: make -C native/waze-on-cluster test
-      - run: make -C native/waze-on-cluster test-x86 target
-      - run: node apps/robertn_waze_cluster/tools/test_control.js
-      - run: node apps/robertn_waze_cluster/tools/test_page.js
       - run: node release/test/release_test.js
+      # Builds every component twice from a clean export of HEAD and compares
+      # the artifacts. A tool's build is its `make target`: the head-unit
+      # binaries in Docker, every import checked against the unit's libraries.
       - run: node release/release.js check
