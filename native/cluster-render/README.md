@@ -1,12 +1,13 @@
 # cluster-render
 
-The one renderer every app on a BMW iDrive 7 head unit (MGU) draws through
-on the instrument cluster and the HUD: maps and video, widgets, overlays,
-2D and 3D, and whole-cluster content. Apps and native producers are its
-clients ([PROTOCOL.md](PROTOCOL.md)); it is the head unit's one custom
-RAMSES participant and Dcsm2 client, shares the display slots between its
-clients, and spends one upload budget for all of them. `kit/` is the pixel
-path it shares with producers that prepare frames.
+The one renderer every app on a BMW iDrive 7 or iDrive 8 head unit (MGU)
+draws through on the instrument cluster and the HUD: maps and video,
+widgets, overlays, 2D and 3D, and whole-cluster content. Apps and native
+producers are its clients ([PROTOCOL.md](PROTOCOL.md)); it is the head
+unit's one custom RAMSES participant and display client (Dcsm2 on
+iDrive 7, RAMSES 27's DCSM on iDrive 8, "iDrive 8"), shares the display
+slots between its clients, and spends one upload budget for all of them.
+`kit/` is the pixel path it shares with producers that prepare frames.
 
 Labels: **VERIFIED** (seen in the unit's binaries or configuration, or
 observed running), **INFERRED** (reasoned from verified facts),
@@ -32,10 +33,10 @@ So the shape is a hybrid:
 | Part | What | Who links it |
 |---|---|---|
 | `kit/` | the proven pixel path: 4:2:0 atlas, dirty tiles, packed blocks, SIMD conversion and rounding, pacer, frame clock, map geometry | the service, and any producer that prepares frames |
-| `src/` | the service: slot arbitration, the layer stack, layers, the upload governor, the iDrive 7 backends, the socket | — (one process, `hmi_5000`) |
+| `src/` | the service: slot arbitration, the layer stack, layers, the upload governor, the iDrive 7 and iDrive 8 backends, the socket | — (one process, `hmi_5000`) |
 | `include/`, `client/` | the C++ client and protocol, `libcluster_render_client.a` on the unit | native producers |
 | `js/cluster_render_client.js` | the Node 8 client | OAP apps |
-| `dcsm/`, `abi/`, `tools/`, `docker/` | the Dcsm2 client, the unit's RAMSES 19 and vsomeip ABI, the ABI checks and the unit's toolchain | the service's build |
+| `dcsm/`, `abi/`, `tools/`, `docker/` | the Dcsm2 client, the units' RAMSES 19, RAMSES 27 and vsomeip ABI, the ABI checks and the unit's toolchain | the service's build |
 
 What it costs:
 - frames cross a socket. A whole 1088x480 frame is 783 KB, so 30 a second
@@ -49,7 +50,7 @@ What it gives:
 - one budget, steered by what the link shows;
 - clients that need no `hmi_5000`;
 - a renderer crash in one app takes nothing else down;
-- one place to port to iDrive 8.
+- one place to port to iDrive 8, and ported there ("iDrive 8").
 
 ```
  app / producer                     cluster-render (hmi_5000)                      KOMBI / HUD
@@ -67,6 +68,8 @@ A **target** is one slot with one scene: `map` (0x100, the central map
 area under the gauges, 1088x480), `panel` (0x203, the whole cluster over
 the gauges, 1920x720), `hud` (0x323, 800x480). Every client's layers on a
 target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
+This section is iDrive 7's KOMBI; on iDrive 8 a target is a content the
+cluster is offered, and what differs is in "iDrive 8".
 
 - **Layered stack.** Every layer is drawn at once, bottom to top by class
   (ambient, content, overlay, alert), then the client's `z`, then the newest
@@ -298,9 +301,12 @@ share a 2D pass, and the passes' render order follows the stack exactly
 801, vsomeip application `cluster-demo` and clientID `"\0cluster"`: the
 identity proven on the car. A standalone renderer with the same identity
 (`cluster-demo.service`) cannot run beside it, so the service conflicts
-with it (`Conflicts=`).
-`component.json` makes it a Store tool for iDrive 7 (`mguHmi: ["ID7"]`),
-with the Node client shipped beside it for apps
+with it (`Conflicts=`). iDrive 8 takes the same uid and participant
+("iDrive 8"), so one systemd unit serves both: it runs `cluster-render`,
+which starts `cluster-render-idrive7` or `cluster-render-idrive8` in its
+place.
+`component.json` makes it a Store tool for iDrive 7 and iDrive 8
+(`mguHmi: ["ID7", "ID8"]`), with the Node client shipped beside it for apps
 (`/var/opt/cluster-render/current/cluster_render_client.js`).
 
 ## Install
@@ -309,10 +315,11 @@ From the Store ([robertnisipeanu/mgu-store](https://github.com/robertnisipeanu/m
 on the head unit: add the GitHub source `robertnisipeanu/idrive-apps`
 (a private repository also needs a GitHub token the Store holds). The Store
 reads the `catalog` release's `catalog.json` and installs the newest
-version as a root tool, after the deploy tool it requires: the binary, its
-settings and the Node client in `/var/opt/cluster-render/`,
+version as a root tool, after the deploy tool it requires: the binaries,
+its settings and the Node client in `/var/opt/cluster-render/`,
 `cluster-render.socket` enabled. The first client starts the service. The
-Store can remove it again.
+Store can remove it again. The same kit installs on iDrive 7 and iDrive 8;
+the service tells which it runs on.
 
 For development, the deploy tool of mgu-store installs a kit built from the
 working tree over SSH (from the repository's root):
@@ -325,8 +332,10 @@ node release/tool_artifact.js native/cluster-render --out /tmp/kit   # runs make
 ## Configure
 
 [`cluster-render.conf`](cluster-render.conf) lists every setting with its
-built-in default: the identity, the targets (slot, content class, scene id,
-size, linger), the upload budget and the tick. A unit's own settings go in
+built-in default: the generation (`auto`, `7` or `8`), the identity, the
+targets (slot, content class, scene id, size, linger; on iDrive 8 the
+`id8_` ones: category, content, scene id, size, linger, and the widget's
+menu entry), the upload budget and the tick. A unit's own settings go in
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
 line overrides both. `cluster-render status` prints the targets, Dcsm2's
@@ -348,30 +357,131 @@ since it and the last slot table.
 ## iDrive 8
 
 iDrive 8 draws its cluster and HUD with RAMSES 27 (`.so.27.0`). That
-library has DCSM built in over RemoteContentManager (0xB0A3): the head unit
-offers content in a category, and the cluster decides when to show it. On
-iDrive 8, uid 5000 has no Dcsm2 and no RAMSES 19 services. Participant 801
-has no counterpart there. Nothing on the unit links the RAMSES 19 library
-it also ships.
+library has DCSM built in over SOME/IP RemoteContentManager (0xB0A3),
+beside RamsesService (0xB0BE): the head unit offers content in a category,
+and the cluster decides when to show it. On iDrive 8, uid 5000 has no Dcsm2
+and no RAMSES 19 services, and nothing on the unit links the RAMSES 19
+library it also ships. So the service has a second pair of backends, and
+everything above them stays the same ([abi/ABI27.md](abi/ABI27.md) has
+the library):
 
-So iDrive 8 needs two implementations:
-- a RAMSES 27 `Gpu`/`Graph` (`src/graph.h`: its texture buffers take
-  `updateData`, its flush takes only a tag);
-- a `Port` on its `DcsmProvider` (`src/slots.h`): request is
-  `offerContent`, release is `requestStopOfferContent`, shown and lost come
-  from the consumer's content states. Parked and the take-over are
-  iDrive 7's Dcsm2 and have no counterpart known there.
+- **Two programs and a starter** (`src/unit.h`). The two libramses export
+  the same names, so they cannot share a process, and an iDrive 7 unit has
+  no RAMSES 27. `cluster-render`, which links neither, starts
+  `cluster-render-idrive7` (RAMSES 19, Dcsm2) or `cluster-render-idrive8`
+  (RAMSES 27, DCSM) from its own folder with its own arguments, in its own
+  process (exec). `generation` (`auto`, `7`, `8`) decides; `auto` tells the
+  unit as mgu-store's deploy tool does: MainApp's folder
+  (`/usr/lib/oap-mainapp` iDrive 7, `/usr/lib/oap-mainapp21` iDrive 8), and
+  with both (as on the iDrive 8 unit, VERIFIED) or neither, the running HMI
+  (`HmiMain3D`, `Hmi8`). Not known yet (at boot), it asks again every 5 s,
+  and `cluster-render-idrive8` tries a failed connect again every 5 s:
+  neither exits for systemd to restart it (CAR-ONLY below).
+- **The graph** (`src/graph_ramses27.h`): the same scenes as on iDrive 7,
+  on RAMSES 27's API: effects and array resources per scene, texture
+  buffers written with `updateData`, a flush with only a tag. No pass
+  clears colour: the cluster draws the scene into its own area (VERIFIED on
+  the car with icwidget, a test widget of ours whose moving text left no
+  trail).
+- **The port** (`src/dcsm27_port.h`) on the library's `DcsmProvider`. A
+  target's slot is a category and `<target>_content` the content offered
+  in it, as the target's scene:
+  - A request is an offer (with metadata for a widget). Accepted, the
+    target is `parked`: offered, not shown, with no timeout. The cluster
+    shows some categories by itself (the middle, the HUD) and a widget once
+    it is picked in its widget menu (VERIFIED on the car).
+  - `contentReadyRequested` is answered at once (the scene is published
+    before the offer); `contentShow` is shown; `contentHide` and
+    `contentRelease` park it again and keep the offer. The cluster takes a
+    shown widget back on every layout change and shows it again 1 to 7 s
+    later (VERIFIED on the car).
+  - A release is `requestStopOfferContent`, confirmed once the cluster
+    accepts the stop. The library refuses a new offer of the content until
+    then (even from inside `stopOfferAccepted`), so the next request waits
+    for the confirmation (at most 1 s, as on iDrive 7), and one that comes
+    anyway is refused and waits on the ladder. The scene stays published,
+    warm, as on iDrive 7. A scene taken down while its offer stands or is
+    stopping stays published until the stop is accepted (unpublished at
+    once, the emulator's stand-in cluster logged errors unassigning it), and
+    no new scene with its id is built meanwhile. At shutdown the service
+    waits 1 s for the stops.
+  - Rendering is not verified: the RAMSES 27 console is not read, so the
+    status says the renderer's subscription is not observable.
+  - A refused offer (another provider has the content) waits on the
+    ladder. There is no slot table, no take-over and no heartbeat: parked
+    behind other content and the take-over are Dcsm2's. A cluster that
+    goes away takes its assignments back (`contentRelease`), and the offer
+    is there when it comes back.
+  - The area the cluster gives each content (canvas, category rect, safe
+    rect, layout) is logged when it changes, and a canvas other than the
+    target's size as a warning.
+- **The identity** is iDrive 7's: `hmi_5000` and participant 801. On
+  iDrive 8, 801 is the communication user `MGUTestUser_1` (RamsesService
+  instance 7, DCSM 5), and its offers reach the cluster (VERIFIED on the
+  car). The unit's vsomeip policies let uid 5000 (as Hmi8 runs) and 6031
+  (`nav_didui`, DidUi's) offer both services, and not root (VERIFIED). As
+  `hmi_5000` the service connected and its offers were shown, in the
+  emulator and on the car (VERIFIED, run by hand).
 
-Everything above them stays the same. Detecting the generation: the `Hmi8`
-process or `/usr/lib/oap-mainapp21` (as mgu-store's deploy tool does).
-`component.json` declares iDrive 7 only, so the Store does not install it
-on iDrive 8.
+The targets on iDrive 8 (the `id8_` settings), each VERIFIED on the car
+with this category, content, size and scene id (offered as user 801, shown
+by the cluster):
+
+| Target | Category | Content | Size | Where |
+|---|---|---|---|---|
+| `map` | `Ca_ComCenter_IC` 43100201 | 43204041 | 874x749, all shown | the middle of the cluster, between the gauges; the cluster draws its media placeholder over it |
+| `hud` | `Ca_ComCenter_HUD` 43100202 | 43204012 | 353x203, all shown | the HUD, above its speed bar |
+| `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, most of it shown (below) | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
+
+- Target names are iDrive 7's where the place matches, so a client asking
+  for `map` gets the cluster's middle. waze-on-cluster stays iDrive 7 only:
+  its map is 1088x480, not the middle's 874x749. iDrive 8 has no
+  `panel`: a layer on it is refused as on any unknown target. The hello
+  names the backend (`id8`) and the targets with their sizes.
+- The widget's safe rect is in canvas coordinates and moves with the
+  cluster's layout (layout 4: 630x570 at 805,125; layout 5: 612x527 at
+  814,170; VERIFIED on the car). The journal logs it; clients are not told
+  it yet.
+- The widget's canvas is the whole cluster, and far more of it than the
+  safe rect is shown: behind the gauges, dimmed by the cluster's own gauge
+  panels and bottom bar, as the stock navigation map is. Shown, in canvas
+  coordinates: about x 400-1720, y 143-765 in the normal layout and x
+  690-1530, y 185-700 in the M layout, with a black notch at the top middle
+  down to about y 167 (VERIFIED on the car with a grid drawn over the whole
+  canvas).
+- Content ids the head unit offers itself (`C_NaviMap_IC` 43200501,
+  `C_Media_IC` 43202120, ...) are never offered: two providers of one
+  content fight. Scene ids are `0x4d4755……` ("MGU"), allowed by
+  `id8_scene_ids_allowed`.
+
+VERIFIED on the car with the service itself (before 0.2.2 was merged),
+run by hand as `hmi_5000` with `showcase.js all` on `map` and on `widget`:
+- `map` offered, parked and shown within 1 s; every layer kind drawn:
+  plasma, dial and needle, the lit cube, glyph text, the video and the
+  exclusive alert;
+- `widget` listed in the cluster's widget menu without a picture, picked
+  and shown, with the same layers;
+- a release and a request 30 ms later: the cluster accepted the stop
+  within about 30 ms, and the next offer followed after the 1 s request
+  gap and was shown;
+- SIGTERM: the offers stopped, exit 0, the head unit kept running;
+- with the same build, a video client drew a camera stream in `widget`,
+  hardware-decoded, at 15 fps.
 
 CAR-ONLY on iDrive 8:
-- the cluster and HUD categories and content ids;
-- which communication user and uid are admitted;
-- whether RemoteContentManager has a watchdog;
-- the R8 upload limits.
+- the release since 0.2.2 (host-tested only, not in the emulator): the
+  scene kept published, warm, and the next request waiting for the stop's
+  acceptance;
+- the `hud` target, and how the upload budget fits the cluster's link
+  over a long run;
+- how long the cluster shows the middle and the HUD, and what takes them
+  away (guidance, media, a call);
+- whether RemoteContentManager has a watchdog (none seen in the library: an
+  offer stands while the participant is connected);
+- what the unit does when `cluster-render.service` exits or is restarted:
+  on the car, stopping a service restarted the head unit. The service
+  waits for the generation and for RAMSES instead of exiting; a
+  configuration fault or a refused communication user still exits 1.
 
 ## Clients
 
@@ -401,9 +511,10 @@ In `native/cluster-render`:
 ```sh
 make test                       # every host test (below)
 make test-x86                   # the C++ tests with the unit's gcc 7.5 in Docker (SSE2 paths)
-make target                     # build/target/cluster-render and libcluster_render_client.a,
-                                # every import checked against the unit's libraries
+make target                     # build/target/cluster-render, cluster-render-idrive7, cluster-render-idrive8
+                                # and libcluster_render_client.a, every import checked against the units' libraries
 make test-ramses ROOTFS=…       # every layer kind on the unit's own libramses
+make test-ramses27 ROOTFS=…     # the same on an iDrive 8 unit's libramses 27
 ```
 
 The host tests need a C++14 compiler and Node; the rest need Docker
@@ -412,10 +523,13 @@ The host tests need a C++14 compiler and Node; the rest need Docker
 repository.
 
 In an emulator of the unit whose stand-in KOMBI has no slot 0x100, run the
-binary as `hmi_5000` with `-s map_slot=0x201`.
+binary as `hmi_5000` with `-s map_slot=0x201`. In an emulator of an
+iDrive 8 unit with a stand-in cluster for a category, run `cluster-render`
+as `hmi_5000`: it starts the iDrive 8 service.
 `js/showcase.js` puts content of every layer kind on a target through
 the service and prints every event: `node showcase.js [--socket PATH]
-[all|cube|text|needle|plasma|alert|video] [--target panel|map|hud]`.
+[all|cube|text|needle|plasma|alert|video] [--target panel|map|hud|widget]
+[--size WxH]` (iDrive 8's `map`: `--size 874x749`).
 
 The host tests:
 - `log_test`: the log file's timestamps, start line, rotation to `.1` and a
@@ -443,6 +557,11 @@ The host tests:
   mappings, take-overs, reply matching and refusal kinds; the undecoded
   notifications' rate limit, subscription answers, the no-answer line and
   the status text; releases confirmed by REMOVED or the unfetch's reply;
+- `dcsm27_port_test`: iDrive 8's offers under the slot manager: parked
+  offers, ready, show, hide and release, a stop and its scene kept until it
+  is accepted, a request while it is not, refusals, two targets;
+- `generation_test`: telling iDrive 7 from iDrive 8 by MainApp's folders and
+  the running HMI;
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
   over from the stock map and falling back to it, and asked for again in
@@ -551,6 +670,50 @@ Not verified, needs the car:
     was reported mapped and never drawn; `panel` and `hud` handing their
     shared scene id over still do that.
 
+On iDrive 8 ("iDrive 8"), verified on the car with icwidget, a test widget
+of ours on the same calls (RAMSES 27 scene, DCSM offer, user 801), as
+`nav_didui`, 2026-10-25 and 27:
+- the cluster takes offers from user 801: the widget in its widget menu,
+  and in `Ca_ComCenter_IC`, `Ca_ComCenter_HUD` and the other categories of
+  the table, shown by the cluster by itself;
+- the areas: canvas, category rect and safe rect (canvas coordinates) per
+  layout; the widget taken back and shown again on a layout change;
+- a scene of ours drawn in the widget with no colour clear: moving text
+  left no trail;
+- the stop: offer stopped, accepted, the scene unpublished, the process
+  gone without a crash (any crash on the unit restarts the head unit, so
+  `cluster-render-idrive8` leaves with `_exit()` once the offers are
+  stopped).
+
+Verified off the car:
+- **The unit's own libramses 27.0.116r1** (`make test-ramses27`, on the
+  emulator's copy of the unit's root filesystem): every check of
+  `make test-ramses` passes, nothing logged as an error.
+- **The target binary** loads with the unit's own loader and libraries,
+  every symbol bound (`LD_BIND_NOW`).
+- **iDrive 7 unchanged:** its program builds from the same sources with
+  the same checks, and `make test-ramses` passes on the iDrive 8 unit's own
+  copy of libramses 19 too (another build than iDrive 7's).
+
+Verified in an emulator of the iDrive 8 unit (its root filesystem with
+Hmi8 running, its vsomeip and policies; a stand-in cluster, a DCSM consumer
+and renderer on the unit's libramses, for one category: no KOMBI):
+- **Start.** `cluster-render` found iDrive 8 (both MainApp folders, Hmi8
+  running) and started `cluster-render-idrive8`, which connected as user
+  801 as `hmi_5000`.
+- **`map`.** Offered in `Ca_ComCenter_IC`, parked, asked for, ready and
+  shown about 125 ms after the offer; `js/showcase.js all` on it drawn by
+  the stand-in (plasma, dial and needle, the lit cube with depth, text over
+  a glyph atlas, video, then the exclusive alert); checked on a screenshot.
+- **`widget`.** Offered with its menu entry (the stand-in got "Cluster
+  renderer", order 50) and shown.
+- **Release and shutdown.** The client gone, the offer stopped and
+  accepted, then the scene unpublished, with no error from the stand-in;
+  SIGTERM exited 0. (Before 0.2.2's warm scenes were merged: a released
+  scene now stays published until shutdown.)
+
+Not verified, needs the car (iDrive 8): the CAR-ONLY list of "iDrive 8".
+
 ## Releases
 
 A version is `component.json` `version` (`x.y.z`), published once: a
@@ -581,7 +744,7 @@ The repository's catalog (schema 2) lists cluster-render with `requires`,
 { "id": "cluster-render", "kind": "tool", "title": "Cluster renderer", "description": "…", "version": "0.1.0",
   "artifact": { "name": "cluster-render@0.1.0.tgz", "size": 2242698, "sha256": "…",
                 "url": "https://api.github.com/repos/robertnisipeanu/idrive-apps/releases/assets/<id>" },
-  "requires": { "mgu-deploy": "0.4.0" }, "uninstallable": true, "mguHmi": ["ID7"] }
+  "requires": { "mgu-deploy": "0.4.0" }, "uninstallable": true, "mguHmi": ["ID7", "ID8"] }
 ```
 
 mgu-deploy checks the kit's `mguHmi` from 0.3.0 and, from 0.4.0, applies
@@ -597,6 +760,8 @@ or copy, `include/`, `client/`, `kit/`, `js/cluster_render_client.js` and
 can use them; they reach the service over a socket. `abi/include/ramses19/`
 declares the API of RAMSES (BMW Car IT, MPL-2.0) and the symbol lists name
 the exports of RAMSES and vsomeip, so they are MPL-2.0 too;
+`abi/include/ramses27/` is RAMSES 27.0.116's own headers, unchanged, with
+their notices (BMW Car IT, MPL-2.0);
 `dcsm/third_party/vsomeip/` is COVESA's vsomeip, MPL-2.0, with its own
 notices. Source, script and build files name their license in an SPDX
 header; the rest is GPL-3.0-or-later.

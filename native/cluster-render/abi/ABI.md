@@ -25,17 +25,17 @@ client of the same library.
 RAMSES19_SONAME = libramses-shared-lib-wayland-ivi-egl-es-3-0.so.19.0
 $(BUILD)/stub/$(RAMSES19_SONAME): abi/libramses19.symbols
 	mkdir -p $(@D)
-	python3 tools/ramses19_abi.py stub-source $< > $(@D)/ramses19_stub.c
+	python3 tools/ramses_abi.py stub-source $< > $(@D)/ramses19_stub.c
 	gcc -shared -Wl,-soname,$(RAMSES19_SONAME) -o $@ $(@D)/ramses19_stub.c
 # link: g++ -Iabi/include -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 ... $(BUILD)/stub/$(RAMSES19_SONAME)
-# then: python3 tools/ramses19_abi.py check-imports BIN abi/libramses19.symbols
+# then: python3 tools/ramses_abi.py check-imports BIN abi/libramses19.symbols
 ```
 
 - `#include "ramses19/ramses.h"`, namespace `ramses`.
 - **Toolchain:** the service builds with gcc 7.5 and libstdc++ (`../Makefile`, `../docker/Dockerfile`), because libvsomeip3 needs them (`../dcsm/DCSM.md`). The smoke test builds with `zig c++` and static libc++, which is also viable for the RAMSES part alone:
   - VERIFIED: the smoke binary runs in one process with the unit's libstdc++, which libramses pulls in.
   - INFERRED: this is safe because no `std::` type crosses the boundary. No API in the reconstructed set takes a `std::` type; the export that does (`ramses::RamsesFramework::setSomeIPICServerAndClientManager`) is not declared.
-  - Zig 0.16 rejects `-Wl,--dynamic-linker`, so a zig build links without it and rewrites PT_INTERP with `ramses19_abi.py set-interp`.
+  - Zig 0.16 rejects `-Wl,--dynamic-linker`, so a zig build links without it and rewrites PT_INTERP with `ramses_abi.py set-interp`.
 - **`check-imports`** fails the build if any `ramses` import is missing from the unit's export list.
 - **Object classes:**
   - Library-owned objects (Scene, Node, …) are declared with deleted constructors and destructors. Release them with `Scene::destroy` or `RamsesClient::destroy`.

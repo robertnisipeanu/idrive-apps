@@ -5,7 +5,7 @@ Tools and apps for the iDrive 7 head unit (MGU) of a BMW, installed from the
 
 | Path | |
 |---|---|
-| [`native/cluster-render`](native/cluster-render) | the cluster renderer: one service that draws every app's layers on the instrument cluster and the HUD |
+| [`native/cluster-render`](native/cluster-render) | the cluster renderer: one service that draws every app's layers on the instrument cluster and the HUD, on iDrive 7 and iDrive 8 |
 | [`native/waze-on-cluster`](native/waze-on-cluster) | the CarPlay map (Waze, Apple Maps or Google Maps) on the instrument cluster, drawn through cluster-render |
 | [`apps/robertn_waze_cluster`](apps/robertn_waze_cluster) | the iDrive app for it: Enable map, Disable map, status |
 | [`release`](release) | builds and publishes the Store catalog |

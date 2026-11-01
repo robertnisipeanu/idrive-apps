@@ -10,16 +10,25 @@
  * parts and their geometry, every kind of animation), and through the
  * compositor a lit rotating cube, an effect sampling an R8 glyph atlas and
  * an RGBA8 sprite with a vec4 array, a turned needle and an effect on the
- * renderer's clock, published again. Run by `make test-ramses ROOTFS=<dir>`. */
+ * renderer's clock, published again. Run by `make test-ramses ROOTFS=<dir>`;
+ * built with CRS_RAMSES27 against iDrive 8's RAMSES 27 (graph_ramses27.h),
+ * by `make test-ramses27 ROOTFS=<dir>`. */
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
 #include "../src/compositor.h"
-#include "../src/graph_ramses19.h"
 #include "fake_port.h"
 #include "log.h"
+#ifdef CRS_RAMSES27
+#include "../src/graph_ramses27.h"
+#include "ramses-client-api/RamsesClient.h"
+#include "ramses-framework-api/RamsesFramework.h"
+#include "ramses-framework-api/RamsesFrameworkConfig.h"
+#else
+#include "../src/graph_ramses19.h"
 #include "ramses19/ramses.h"
+#endif
 
 using namespace crs;
 
@@ -165,7 +174,7 @@ static Animation keyed(Animated prop, uint32_t width, std::vector<uint32_t> t, s
 
 /* The backend's answers to every 3D, asset and animation call, on a scene
  * of its own. */
-static void backend(Ramses19Gpu &gpu)
+static void backend(Gpu &gpu)
 {
     std::string err;
     TargetSpec t;
@@ -274,6 +283,17 @@ static void backend(Ramses19Gpu &gpu)
 int main()
 {
     cld::log_name = "ramses_check";
+#ifdef CRS_RAMSES27
+    ramses::RamsesFramework::SetConsoleLogLevel(ramses::ELogLevel::Warn);
+    ramses::RamsesFrameworkConfig fwc;
+    ramses::RamsesFramework framework(fwc);
+    ramses::RamsesClient *client = framework.createClient("ramses_check");
+    if (!client || framework.connect() != ramses::StatusOK) {
+        std::printf("FAIL connect\n");
+        return 1;
+    }
+    Ramses27Gpu gpu(*client);
+#else
     const char *args[] = {"ramses_check"};
     ramses::RamsesFrameworkConfig fwc(1, args);
     ramses::RamsesFramework framework(fwc);
@@ -283,6 +303,7 @@ int main()
         return 1;
     }
     Ramses19Gpu gpu(client);
+#endif
     std::string err;
     ok("the unit quad", gpu.init(&err));
 
