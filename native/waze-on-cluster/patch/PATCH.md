@@ -222,7 +222,8 @@ one `movabs rdx` (the mm pair) before `mov [rdi+0x10],rdx ; movabs rax ; mov
 [rdi+8],rax ; mov [rdi+0x18],rax ; movabs rax ; mov [rdi+0x20],rax ; movabs
 rax ; mov [rdi+0x28],rax`. The IC_HIGH builder is the one called on
 the true branch of the constructor's call to its IC_HIGH check, a small
-function doing `mov eax,[rdi] ; test eax,eax ; sete al`; the `test al,al` and
+function doing `mov eax,[rdi] ; test eax,eax ; sete al` (or
+`cmp dword [rdi],0 ; sete al`); the `test al,al` and
 `je` or `jne` after that call give the branch.
 
 This tool's geometry has its 138x61 mm physical size, the view area at (0,0)

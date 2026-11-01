@@ -213,9 +213,18 @@ function cmdStatus(target) {
     header(target, buf, c);
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
-    line('known', bad.length ? 'NO — ' + brief(bad) : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
+    /* A backup apply and revert would refuse (another build's original, or
+     * not the original recorded) makes the build one this tool cannot patch. */
+    var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
+    if (hasBak && !bad.length) {
+        var b = checkedBackup(target);
+        bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original (' + b.err + ')'
+            : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
+    }
+    line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
+        : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
     EDITS.forEach(function (e) { line(e, describe(e, c[e])); });
-    line('backup', fs.existsSync(backupPath(target)) ? backupPath(target) : 'none');
+    line('backup', hasBak ? bak : 'none');
 }
 
 /* Where each edit sits and how it reads, and whether the patcher can apply
