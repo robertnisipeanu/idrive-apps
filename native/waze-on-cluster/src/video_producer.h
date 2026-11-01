@@ -21,9 +21,20 @@
  * datagram into a bounded queue (packet_queue.h, kQueuePackets or
  * kQueueBytes, about 4 s of the stream) and return, at nice kReceiveNice
  * where the unit allows it (LimitNICE in the service); one decode thread
- * depacketises and decodes them in order at the process's own priority, so
- * a slow decode only delays the picture. The FIFO reader, a byte stream
- * whose writer waits while the pipe is full, decodes on its own thread.
+ * depacketises and decodes them in order at the process's own priority. The
+ * FIFO reader, a byte stream whose writer waits while the pipe is full,
+ * decodes on its own thread.
+ *
+ * Catch-up (backlog.h). Every frame must be decoded, since each refers to
+ * the one before, but only the newest needs a picture. The receiver marks
+ * each RTP timestamp's first packet; while a later frame's first packet is
+ * still queued behind the packet being depacketised, a whole newer frame is
+ * waiting, so the frames that packet completes are decoded without a
+ * picture: no VPP, packing, level rounding, change sampling or hand-off.
+ * The newest frame, with nothing complete behind it, gets the full output.
+ * A decode slower than the stream thus skips pictures instead of falling
+ * behind; the queue's waits, the frames skipped and a decoder that falls
+ * behind even so go to the log and probe.txt.
  *
  * Losses (stream_health.h). A lost packet costs only the NAL unit it was in
  * (rtp_h264.h); the decoder decodes through it and the frames it flags
@@ -41,6 +52,7 @@
 #include <vector>
 
 #include "avb_source.h"
+#include "backlog.h"
 #include "decoder_msdk.h"
 #include "freeze_watch.h"
 #include "frame_clock.h"
@@ -95,11 +107,13 @@ public:
     void set_live(bool on);
     /* When the last frame of the decode size was decoded; -1 for none. */
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
-    /* The last minute's frames of the decode size, how many of them
+    /* The last minute's pictures of the decode size, how many of them
      * changed and whether the last was blank (FrameTally), once a minute
-     * while frames come, with the stream's losses and corrupted frames and
-     * the receive queue's overflows since the last time. Main thread. */
-    bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, uint64_t *overflows);
+     * while pictures come, with the stream's losses and corrupted frames,
+     * the queue's waits and the frames decoded without a picture, and the
+     * receive queue's overflows since the last time. Main thread. */
+    bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, Backlog::Minute *b,
+                uint64_t *overflows);
     /* The stream's status reason and its detail for the log and probe.txt
      * (stream_health.h), and whether it is lost. */
     std::string stream_reason(const ResyncState &resync) const;
@@ -150,7 +164,8 @@ private:
     bool start_decoder(std::string *err);
     void decode(const uint8_t *data, size_t len, bool end_of_au);
     /* Decoder callback: rounds the decoder's atlas in place, then swaps it
-     * with back_ under lock. Runs on the feeding thread inside decode(). */
+     * with back_ under lock; a frame without a picture is only counted.
+     * Runs on the feeding thread inside decode(). */
     void on_frame(const VideoFrame &f);
 
     VideoConfig cfg_;
@@ -189,6 +204,8 @@ private:
     uint32_t decode_errs_ = 0;
     StreamHealth health_;            /* frame_mutex_ */
     uint64_t overflows_seen_ = 0;    /* the queue's overflows at the last minute (frame_mutex_) */
+    Backlog backlog_;                /* frame_mutex_ */
+    int64_t rtp_ts_[3] = {-1, -1, -1};   /* each source's last RTP timestamp, its receive thread's */
 
     std::atomic<uint64_t> decoded_total_{0};
     std::atomic<int64_t> last_frame_ms_{-1};

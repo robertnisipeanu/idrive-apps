@@ -212,9 +212,9 @@ cluster is offered, and what differs is in "iDrive 8".
 ## Upload budget
 
 Every layer of every client writes within one budget (`src/governor.h`,
-`kit/upload_pacer.h`). Its ceiling, `upload_kb_per_s`, is 6000 KB/s: the
-rate waze-on-cluster ran stably on the car. At 8000 KB/s the cluster
-flashed black. The cap follows what the link shows while writes go (64 KB
+`kit/upload_pacer.h`). Its ceiling, `upload_kb_per_s`, is 5500 KB/s: on the
+car the cluster flashed black at 8000 KB/s, and once removed a shown map
+after a minute averaging 5774 KB/s. The cap follows what the link shows while writes go (64 KB
 or more written within the last second, whether or not the flush went);
 evidence at other times is logged, not counted:
 
@@ -228,7 +228,7 @@ evidence at other times is logged, not counted:
 - At 6 points the cap steps down 500 KB/s, to the 2000 KB/s floor at most,
   and the window starts empty. A removal reaches 6 alone: on the car the
   KOMBI removed a shown map, with healthy heartbeats and no lock, after the
-  busiest minute of upload (5.8 MB/s with a 1.3 MB whole-scene resend). No
+  busiest minute of upload (5774 KB/s with a 1.3 MB whole-scene resend). No
   other single event does, so one transient error of another kind never
   lowers the cap.
 - Another step down waits 15 s.
@@ -237,7 +237,7 @@ evidence at other times is logged, not counted:
   one not answered is arbitration, not evidence.
 - The cap steps back up 500 KB/s after each minute of healthy upload (at
   least 64 KB a second written, nothing in the window), to the ceiling
-  `upload_kb_per_s` (6000). Idle time neither counts nor resets that minute.
+  `upload_kb_per_s` (5500). Idle time neither counts nor resets that minute.
 - A step down within a minute of a step up doubles the minute (up to
   10 min); 10 min without a step down restores it.
 
@@ -248,7 +248,7 @@ comes back when the budget allows, and only the newest frame waits.
 
 The cap and why it is what it is are in the status
 (`cluster-render status`, `/run/cluster-render/status.txt`: `upload: cap
-5500 KB/s (ceiling 6000, floor 2000): lowered from 6000 KB/s: in 30 s, 2 x
+5000 KB/s (ceiling 5500, floor 2000): lowered from 5500 KB/s: in 30 s, 2 x
 scene removed`). Every client also gets a `budget` event when it changes.
 Once a minute, each shown target logs what its layers wrote since its last
 such line, and whether it is rendered: `target map: in the last 60 s its

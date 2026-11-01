@@ -31,7 +31,7 @@ is a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.6.0); this tool requires `cluster-render` 0.3.1 and
+app requires this tool (0.6.0); this tool requires `cluster-render` 0.3.2 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 
@@ -120,13 +120,23 @@ the render decodes through a lost packet:
 
 - The AVB bridge's callback and the UDP reader only copy each packet into a
   queue of 4096 packets or 6 MB (about 4 s of the stream) and return; one
-  decode thread depacketises and decodes them in order. A decode that falls
-  behind delays the picture; past the queue's headroom the oldest packets
-  are dropped, and counted. A slot keeps a buffer of at most 2 KB once its
-  packet is out, so large datagrams leave no memory behind. The receive
-  threads run at nice -5 (the unit file's `LimitNICE`), the decode thread
-  at the service's nice 0. The FIFO reader, a byte stream that holds its
+  decode thread depacketises and decodes them in order. Past the queue's
+  headroom the oldest packets are dropped, and counted. A slot keeps a
+  buffer of at most 2 KB once its packet is out, so large datagrams leave
+  no memory behind. The receive threads run at nice -5 (the unit file's
+  `LimitNICE`), the decode thread at the service's nice 0. The FIFO reader, a byte stream that holds its
   writer back, decodes on its own thread.
+- Every frame is decoded, since each builds on the one before, but only the
+  newest gets a picture. While a later frame's first packet (a new RTP
+  timestamp) is already queued, the frames decoded meanwhile skip the
+  picture: no scaling, packing, level rounding or hand-off. A decode slower
+  than the phone's frame rate thus skips pictures instead of falling
+  behind; the wait in the queue stays within about one picture's output
+  and a few frames' decoding. A decoder slower than the stream even
+  without the pictures is logged when every packet has waited over 200 ms
+  for 5 s (`waze: the decoder is behind the stream: …`), and again when a
+  packet waits under 100 ms (`waze: the decoder caught up with the stream
+  after 37 s behind it (packets waited at most 2400 ms)`).
 - A sequence gap drops only the NAL unit it cut (an FU-A); every slice after
   it goes to the decoder, which conceals what is missing. The frames are
   shown as decoded: the map can show smudges until the phone codes those
@@ -171,11 +181,13 @@ frozen or error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
 sources, the depacketiser (`rtp: packets nals aus seq_gaps lost dropped bad`),
 the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
-held`), the stream (`stream: whole` or the detail above), the
-decoder, the late-join verdict, the noise filter's tile differences and the
-renderer's own status; and `stream.json`, for `patchd`'s resync. `patchd`
-answers `{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own
-log.
+held`), its backlog (`backlog: the oldest packet waiting N ms, the longest
+wait M ms; K frames decoded without a picture to catch up`, with `; the
+decoder is behind the stream` while it is), the stream (`stream: whole` or
+the detail above), the decoder, the late-join verdict, the noise filter's
+tile differences and the renderer's own status; and `stream.json`, for
+`patchd`'s resync. `patchd` answers `{"cmd":"logs"}` with CarPlay, AVB and
+DLT marker lines and its own log.
 
 Every line the render logs also goes to
 `/var/opt/waze-on-cluster/log/waze-on-cluster.log` (`log_file`) with its UTC
@@ -183,13 +195,16 @@ time, so it outlives the journal's few minutes on the unit, restarts and
 reboots; past `log_file_kb` (512) the file becomes `waze-on-cluster.log.1`.
 The service makes the directory, owned by `hmi_5000`, at each start; the
 deploy tool removes it with the rest of `/var/opt/waze-on-cluster`. The log
-has the status when its state, reason or target changes, each loss (above),
-and once a minute while frames come, how many were decoded, changed and
-flagged corrupted, whether the last picture was blank, the losses and the
-packets they cost, and the packets the receive queue dropped:
-`waze: 1840 frames decoded in the last minute, 1 changed, 0 corrupted; the
-last picture is not blank; 0 losses (0 packets), 0 dropped by the receive
-queue`.
+has the status when its state, reason or target changes, each loss and a
+decoder behind the stream (above), and once a minute while frames come, how
+many were decoded, how many of those without a picture, changed and flagged
+corrupted, whether the last picture was blank, the losses and the packets
+they cost, the packets the receive queue dropped, and how long the decoded
+packets waited in it:
+`waze: 1840 frames decoded in the last minute, 12 without a picture to
+catch up, 1 changed, 0 corrupted; the last picture is not blank; 0 losses
+(0 packets), 0 dropped by the receive queue; packets waited 2.4 ms on
+average, 61 ms at most`.
 
 For a report, run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
@@ -235,17 +250,20 @@ quarter second later, brings the exact picture back. `waze-on-cluster
 bench-pack <I420 file>` times the packing on the unit.
 
 **Rate.** `target_fps` (30) is a ceiling on an exact grid; only the newest
-frame waits, so the map skips ahead and never shows a backlog. Real Waze sent
-up to about 16 frames a second on the car.
+frame waits, so the map skips ahead and never shows a backlog, and the
+decoder skips the pictures of frames it is behind on ("Losses"). Real Waze
+sent up to about 16 frames a second on the car.
 
 **Upload budget.** The budget belongs to cluster-render and is shared by all
-its clients: a 6000 KB/s ceiling, stepping down by 500 KB/s to 2000 KB/s on
+its clients: a 5500 KB/s ceiling, stepping down by 500 KB/s to 2000 KB/s on
 sustained congestion and recovering slowly. Set it with `upload_kb_per_s` in
 `/var/opt/cluster-render/cluster-render.local.conf`. This tool's own
 `upload_kb_per_s` and `upload_burst_ms` keys are accepted and ignored with a
 warning naming that file. On the car 8000 KB/s made the cluster flash black;
-6000 KB/s stayed smooth with packed motion and no failed writes, and real
-Waze transitions peaked at about 3.2 MB/s. Every head-unit participant shares
+6000 KB/s stayed smooth with packed motion and no failed writes, but the
+cluster once removed a shown map after a minute averaging 5774 KB/s, so the
+ceiling sits below that. Real Waze
+transitions peaked at about 3.2 MB/s. Every head-unit participant shares
 the link to the cluster, so an upload that outruns it can drop other contents
 too. Details: the cluster-render README.
 

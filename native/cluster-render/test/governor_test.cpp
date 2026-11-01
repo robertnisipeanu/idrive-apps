@@ -52,9 +52,9 @@ static void no_single_error()
     for (Evidence e : all) {
         r.g.evidence(e, r.now);
         r.run(31000, true);
-        held = held && r.kb() == 6000;
+        held = held && r.kb() == 5500;
     }
-    ok("starts at 6000 KB/s; no single event of another kind than a removal lowers it", held && !r.changed);
+    ok("starts at 5500 KB/s; no single event of another kind than a removal lowers it", held && !r.changed);
 }
 
 static void removal_steps_down()
@@ -62,13 +62,13 @@ static void removal_steps_down()
     Rig r;
     r.g.evidence(Evidence::Removal, r.now, "map: taken: fetch removed");
     r.run(100, true);
-    ok("one removal while writes go: one step down at once, to 5500", r.kb() == 5500);
-    ok("the reason names it", r.g.reason() == "lowered from 6000 KB/s: in 30 s, 1 x scene removed");
+    ok("one removal while writes go: one step down at once, to 5000", r.kb() == 5000);
+    ok("the reason names it", r.g.reason() == "lowered from 5500 KB/s: in 30 s, 1 x scene removed");
     r.g.evidence(Evidence::Removal, r.now);
     r.run(14000, true);
-    ok("another within the 15 s cooldown waits for it", r.kb() == 5500);
+    ok("another within the 15 s cooldown waits for it", r.kb() == 5000);
     r.run(1100, true);
-    ok("then steps once more", r.kb() == 5000);
+    ok("then steps once more", r.kb() == 4500);
 }
 
 static void evidence_adds_up()
@@ -78,35 +78,35 @@ static void evidence_adds_up()
     r.run(20000, true);
     r.g.evidence(Evidence::FlushFailure, r.now);
     r.run(100, true);
-    ok("a heartbeat silence and a refused flush 20 s apart: still one short", r.kb() == 6000);
+    ok("a heartbeat silence and a refused flush 20 s apart: still one short", r.kb() == 5500);
     r.g.evidence(Evidence::SlowFlush, r.now);
     r.run(100, true);
-    ok("a slow flush makes 6: one step down, to 5500", r.kb() == 5500);
+    ok("a slow flush makes 6: one step down, to 5000", r.kb() == 5000);
     ok("the reason names the evidence", r.g.reason().find("1 x heartbeat replies silent") != std::string::npos &&
-                                            r.g.reason().find("from 6000") != std::string::npos);
+                                            r.g.reason().find("from 5500") != std::string::npos);
     for (int i = 0; i < 6; i++)
         r.g.evidence(Evidence::SlowFlush, r.now);
     r.run(14000, true);
-    ok("within the 15 s cooldown it holds", r.kb() == 5500);
+    ok("within the 15 s cooldown it holds", r.kb() == 5000);
     r.run(1100, true);
-    ok("after it, the evidence still in the window steps it again", r.kb() == 5000);
+    ok("after it, the evidence still in the window steps it again", r.kb() == 4500);
     r.g.evidence(Evidence::SlowFlush, r.now);
     r.run(29000, true);
     r.g.evidence(Evidence::SlowFlush, r.now);
     r.run(2000, true);
-    ok("events further apart than the window do not add up", r.kb() == 5000);
+    ok("events further apart than the window do not add up", r.kb() == 4500);
     Rig q;
     q.g.evidence(Evidence::FlushFailure, q.now);
     q.g.evidence(Evidence::WriteRefused, q.now);
     q.g.evidence(Evidence::FlushFailure, q.now);
     q.run(100, true);
-    ok("three failures together step it down", q.kb() == 5500);
+    ok("three failures together step it down", q.kb() == 5000);
     Rig s;
     s.g.evidence(Evidence::LinkStall, s.now);
     s.run(5000, true);
     s.g.evidence(Evidence::LinkStall, s.now);
     s.run(100, true);
-    ok("two heartbeat silences step it down", s.kb() == 5500);
+    ok("two heartbeat silences step it down", s.kb() == 5000);
 }
 
 static void floor()
@@ -127,19 +127,19 @@ static void recovery()
     r.run(100, true);
     r.g.evidence(Evidence::Removal, r.now);
     r.run(15100, true);
-    ok("stepped down twice", r.kb() == 5000);
+    ok("stepped down twice", r.kb() == 4500);
     /* A step down starts the window empty: the healthy time counts from it. */
     r.run(58900, true);
-    ok("no step up before 60 s of healthy upload", r.kb() == 5000);
+    ok("no step up before 60 s of healthy upload", r.kb() == 4500);
     r.run(1100, true);
-    ok("one step up after it", r.kb() == 5500 && r.g.reason().find("raised from 5000") != std::string::npos);
+    ok("one step up after it", r.kb() == 5000 && r.g.reason().find("raised from 4500") != std::string::npos);
     r.run(30000, false);   /* writes stop: the first second after them still counts */
     r.run(58000, true);
-    ok("idle time does not count toward it", r.kb() == 5500);
+    ok("idle time does not count toward it", r.kb() == 5000);
     r.run(2100, true);
-    ok("and does not reset it: the next step after another 60 s of upload", r.kb() == 6000);
+    ok("and does not reset it: the next step after another 60 s of upload", r.kb() == 5500);
     r.run(600000, true);
-    ok("never above the ceiling", r.kb() == 6000);
+    ok("never above the ceiling", r.kb() == 5500);
 }
 
 static void evidence_resets_health()
@@ -148,14 +148,14 @@ static void evidence_resets_health()
     r.g.evidence(Evidence::Removal, r.now);
     r.run(100, true);
     r.run(70000, true);
-    ok("recovered once", r.kb() == 6000);
+    ok("recovered once", r.kb() == 5500);
     r.g.evidence(Evidence::Removal, r.now);
     r.run(100, true);
     r.run(30100, true);   /* the window empties */
     r.run(40000, true);
     r.g.evidence(Evidence::SlowFlush, r.now);
     r.run(35000, true);
-    ok("a single event resets the healthy time without lowering", r.kb() == 5500);
+    ok("a single event resets the healthy time without lowering", r.kb() == 5000);
 }
 
 static void probation()
@@ -164,15 +164,15 @@ static void probation()
     r.g.evidence(Evidence::Removal, r.now);
     r.run(100, true);
     r.run(30000 + 60000 + 200, true);
-    ok("stepped down and back up", r.kb() == 6000 && r.g.recover_ms() == 60000);
+    ok("stepped down and back up", r.kb() == 5500 && r.g.recover_ms() == 60000);
     r.g.evidence(Evidence::Removal, r.now);
     r.run(100, true);
     ok("the raised level failing within a minute doubles the wait to 120 s",
-       r.kb() == 5500 && r.g.recover_ms() == 120000);
+       r.kb() == 5000 && r.g.recover_ms() == 120000);
     r.run(100000, true);
-    ok("so it is not tried again after 60 s", r.kb() == 5500);
+    ok("so it is not tried again after 60 s", r.kb() == 5000);
     r.run(25000, true);
-    ok("but after 120 s", r.kb() == 6000);
+    ok("but after 120 s", r.kb() == 5500);
     r.run(600000, true);
     ok("ten minutes with no step down restores the 60 s wait", r.g.recover_ms() == 60000);
 }
@@ -184,11 +184,11 @@ static void idle_link()
     for (int i = 0; i < 4; i++)
         r.g.evidence(Evidence::Removal, r.now);
     r.run(100, false);
-    ok("evidence with no upload going is not counted", r.kb() == 6000 && r.g.score(r.now) == 0);
+    ok("evidence with no upload going is not counted", r.kb() == 5500 && r.g.score(r.now) == 0);
     r.run(100, true);
     r.g.evidence(Evidence::Removal, r.now);
     r.run(100, true);
-    ok("while writes go it is", r.kb() == 5500);
+    ok("while writes go it is", r.kb() == 5000);
 }
 
 static void unlimited()

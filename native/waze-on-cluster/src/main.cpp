@@ -310,12 +310,15 @@ int serve(const Config &cfg)
         if (now - last_status_write > 1000) {
             FrameTally::Minute m;
             StreamHealth::Minute sm;
+            Backlog::Minute bm;
             uint64_t overflows = 0;
-            if (producer.minute(now, &m, &sm, &overflows))
-                log_info("waze: %u frames decoded in the last minute, %u changed, %u corrupted; the last picture is %s; "
-                         "%u losses (%u packets), %llu dropped by the receive queue",
-                         m.frames, m.changed, sm.corrupted, m.blank ? "blank" : "not blank", sm.losses, sm.lost,
-                         (unsigned long long)overflows);
+            if (producer.minute(now, &m, &sm, &bm, &overflows))
+                log_info("waze: %u frames decoded in the last minute, %u without a picture to catch up, %u changed, "
+                         "%u corrupted; the last picture is %s; %u losses (%u packets), %llu dropped by the receive "
+                         "queue; packets waited %.1f ms on average, %lld ms at most",
+                         m.frames + bm.skipped, bm.skipped, m.changed, sm.corrupted, m.blank ? "blank" : "not blank",
+                         sm.losses, sm.lost, (unsigned long long)overflows, bm.wait_us.mean() / 1000.0,
+                         (long long)(bm.wait_us.max / 1000));
             producer.track_keyframe_wait(now);
             resync = read_resync(resync_file);
             const std::string detail = producer.stream_detail(resync);

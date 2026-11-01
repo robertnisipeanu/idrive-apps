@@ -58,8 +58,8 @@ async function main() {
     ovl.connect();
     ok('hello: ready, backend and targets', await until(() => ew.ready && eo.ready, 2000) &&
         waze.backend === 'host' && waze.targets.indexOf('map:1088x480') === 0);
-    ok('the budget event: 6000 KB/s of 6000', await until(() => ew.budget, 1000) &&
-        ew.budget.cap === 6000 && ew.budget.max === 6000);
+    ok('the budget event: 5500 KB/s of 5500', await until(() => ew.budget, 1000) &&
+        ew.budget.cap === 5500 && ew.budget.max === 5500);
 
     const map = waze.video({ target: 'map', contend: true });
     ok('a video layer without frames is stalled', await until(() => ew.layer[map] === 'stalled', 1000));

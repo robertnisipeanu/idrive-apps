@@ -224,9 +224,9 @@ int main()
     r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
     r.pump(100, &f1);
     ok("a lowered shared upload cap shows on the status line",
-       r.st().page.find("upload cap 5500 KB/s") != std::string::npos);
+       r.st().page.find("upload cap 5000 KB/s") != std::string::npos);
     ok("the status carries the cap and why",
-       r.st().upload_cap_kb == 5500 && r.st().upload_reason.find("lowered from 6000 KB/s") == 0 &&
+       r.st().upload_cap_kb == 5000 && r.st().upload_reason.find("lowered from 5500 KB/s") == 0 &&
            r.st().upload_reason.find("scene removed") != std::string::npos);
     /* A minute of healthy upload raises it back to the ceiling, which the
      * status line leaves out. */
@@ -235,8 +235,8 @@ int main()
         r.pump(1000, &f1);
     }
     ok("back at the ceiling after healthy upload: the cap leaves the status line, its reason stays",
-       r.st().upload_cap_kb == 6000 && r.st().page.find("upload cap") == std::string::npos &&
-           r.st().upload_reason.find("raised from 5500 KB/s") == 0);
+       r.st().upload_cap_kb == 5500 && r.st().page.find("upload cap") == std::string::npos &&
+           r.st().upload_reason.find("raised from 5000 KB/s") == 0);
     /* the stream's liveness drives the layer, whatever the frames do */
     const int before = r.port.releases;
     r.feed->set_stream(false, false);
