@@ -1004,7 +1004,7 @@ std::string Server::status_text(int64_t now_ms) const
                       rendering.c_str());
         s += line;
     }
-    s += slots_->renderer_text();
+    s += slots_->renderer_text(now_ms);
     s += slots_->port().status_text(now_ms);
     for (const Client &c : clients_)
         for (const auto &kv : c.assets)

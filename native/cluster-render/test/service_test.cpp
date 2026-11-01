@@ -731,12 +731,11 @@ int main()
         lr.pump(50);
         lr.svc->compositor().governor().activity(lr.now);   /* evidence counts while writes go */
         lr.svc->compositor().governor().evidence(Evidence::Removal, lr.now);
-        lr.svc->compositor().governor().evidence(Evidence::Removal, lr.now);
         lr.pump(50);
         c.request_status();
         lr.pump(50);
         ok("the C++ client hears the cap at hello and when the governor lowers it, and gets the status",
-           budgets == 2 && cap == 5500 && why.find("2 x scene removed") != std::string::npos &&
+           budgets == 2 && cap == 5500 && why.find("1 x scene removed") != std::string::npos &&
                status.find("upload: cap 5500 KB/s") != std::string::npos);
     }
 

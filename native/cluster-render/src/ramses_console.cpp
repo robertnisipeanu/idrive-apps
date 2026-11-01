@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <thread>
 
@@ -70,6 +71,19 @@ bool has_word(const std::string &s, const std::string &what)
             return true;
     }
     return false;
+}
+
+/* "ramses.Client" from "<time> [ Info  ] ramses.Client        | ..."; "other"
+ * for a line that names no RAMSES context. */
+std::string line_context(const std::string &line)
+{
+    const size_t p = line.find(" ramses.");
+    if (p == std::string::npos)
+        return "other";
+    size_t q = p + 1;
+    while (q < line.size() && line[q] != ' ' && line[q] != '|')
+        q++;
+    return line.substr(p + 1, q - p - 1);
 }
 
 void write_all(int fd, const char *p, size_t n)
@@ -253,15 +267,23 @@ void RamsesConsole::feed(const char *s, size_t n, int64_t now_ms)
     const std::string line = strip_colours(s, n);
     ConsoleEvent e;
     const bool event = parse_console_line(line, &e);
-    if (!event && !ramses_line(line)) {
-        if (out_ >= 0)
-            write_all(out_, s, n);
+    const bool ramses = event || ramses_line(line);
+    if (!ramses && out_ >= 0)
+        write_all(out_, s, n);
+    const std::string context = ramses ? line_context(line) : "other";
+    std::lock_guard<std::mutex> lock(mutex_);
+    contexts_[contexts_.count(context) || contexts_.size() < kMaxContexts ? context : "other"]++;
+    lines_++;
+    last_ms_ = now_ms;
+    if (!ramses)
         return;
+    bool raw = console_interesting(line, scenes_);
+    if (context != "ramses.Periodic" && first_ < kFirstLines) {
+        first_++;
+        raw = true;
     }
-    const bool raw = console_interesting(line, scenes_);
     if (!event && !raw)
         return;
-    std::lock_guard<std::mutex> lock(mutex_);
     if (event) {
         e.ms = now_ms;
         events_.push_back(e);
@@ -299,6 +321,22 @@ void RamsesConsole::take(std::vector<ConsoleEvent> *events, std::vector<std::str
     raw_.clear();
     *raw_dropped = raw_dropped_;
     raw_dropped_ = 0;
+}
+
+std::string RamsesConsole::counts_text(int64_t now_ms) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!lines_)
+        return "no line read since start";
+    std::vector<std::pair<uint64_t, std::string>> by;
+    for (const auto &kv : contexts_)
+        by.push_back({kv.second, kv.first});
+    std::sort(by.begin(), by.end(), [](const std::pair<uint64_t, std::string> &a,
+                                       const std::pair<uint64_t, std::string> &b) { return a.first > b.first; });
+    std::string s = std::to_string(lines_) + " lines (";
+    for (size_t i = 0; i < by.size(); i++)
+        s += (i ? ", " : "") + by[i].second + " " + std::to_string(by[i].first);
+    return s + "), the last " + std::to_string((now_ms - last_ms_) / 1000) + " s ago";
 }
 
 

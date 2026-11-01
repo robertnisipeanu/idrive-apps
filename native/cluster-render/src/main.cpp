@@ -234,6 +234,7 @@ int serve(const cld::Config &cfg)
     Service service(&gpu, &port, sc);
     port.set_manager(&service.slots());
     port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
+    service.slots().console_text = [console](int64_t now_ms) { return console->counts_text(now_ms); };
     Governor *gov = &service.compositor().governor();
     port.on_link = [gov](bool silent, int64_t now_ms) {
         if (silent)

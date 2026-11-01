@@ -141,10 +141,14 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
 - **Refusals, failed fetches and no answer** (neither shown nor parked
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
-  asks again on the ladder too. Requests to a slot are at least 1 s apart,
-  with one outstanding. A fetch failed within 2 s of the scene's
-  publication (the renderer not having seen it yet) is asked again after
-  250 ms, three times, before the ladder.
+  (not locked, not our release) asks again on the ladder too, but no sooner
+  than 5 s after the removal: on the car the KOMBI failed a fetch 2 s after
+  one and took it 7 s after. A fetch that fails within 300 ms of a request
+  made within 10 s of such a removal is the display not ready yet: asked
+  again after 1.5 s, three times, before the ladder. Requests to a slot are
+  at least 1 s apart, with one outstanding. A fetch failed within 2 s of the
+  scene's publication (the renderer not having seen it yet) is asked again
+  after 250 ms, three times, before the ladder.
 - **Releases confirmed.** After a release, the next request of that scene
   id waits until the KOMBI confirms the release: the replies to the unmap
   and the unfetch, and the REMOVED of the fetch when there was one (about
@@ -167,7 +171,13 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
   been seen, nothing is verified and the status says `renderer subscription
   not observable`. The state is in each `target` event (`rendering`:
   `none`, `checking`, `verified`, `unobservable`) and in the status's target
-  lines.
+  lines. The reader counts every console line by its context and the
+  status says so (`renderer console: 1290 lines (ramses.Periodic 960,
+  ramses.Client 3, ramses.Framework 1, other 326), the last 1 s ago`), so a
+  console that goes quiet is told from a renderer whose subscriptions are
+  not logged. The first 20 RAMSES lines other than the 2-second statistics
+  (`ramses.Periodic`) go to the log as they are, within the 30 raw lines a
+  minute.
 - **Fades.** A target's video and image layers are drawn at their own
   opacity times the target's fade. The fade is 0 until the target is shown
   and rises to 1 over `fade_ms` (250) once it is. When nothing wants the
@@ -191,7 +201,7 @@ target are drawn in that target's scene (`src/stack.h`, `src/slots.h`).
 - **Recovery.** Dcsm2 going away takes every target down; the scenes stay
   published. When it comes back, the targets still wanted are asked for
   again after 1 s. A scene the display removes is asked for again on the
-  ladder, in the same scene, its layers continuing from what they hold. In
+  ladder (at least 5 s after the removal), in the same scene, its layers continuing from what they hold. In
   a new scene each layer starts from what it last showed: the video's
   newest frame, written whole and exact as soon as the budget allows, its
   bytes charged to the budget as debt.
@@ -207,14 +217,17 @@ evidence at other times is logged, not counted:
 
 | Evidence in the last 30 s | Points |
 |---|---|
-| a shown scene removed by the display, with no other content in its slot and the slot not locked | 5 |
+| a shown scene removed by the display, with no other content in its slot and the slot not locked | 6 |
 | heartbeat replies silent after replies came (the link stalled) | 3 |
 | a flush or a setData refused | 2 |
 | a flush that took `slow_flush_ms` (150) or longer | 1 |
 
 - At 6 points the cap steps down 500 KB/s, to the 2000 KB/s floor at most,
-  and the window starts empty. No single event reaches 6, so one transient
-  error never lowers it.
+  and the window starts empty. A removal reaches 6 alone: on the car the
+  KOMBI removed a shown map, with healthy heartbeats and no lock, after the
+  busiest minute of upload (5.8 MB/s with a 1.3 MB whole-scene resend). No
+  other single event does, so one transient error of another kind never
+  lowers the cap.
 - Another step down waits 15 s.
 - The stock HMI or another app taking a slot, the display locking it (the
   slot reported disabled, as for a door-open warning), a refused request or

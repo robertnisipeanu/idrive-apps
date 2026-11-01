@@ -247,8 +247,9 @@ static void basics()
                                                   r.evidence[0].find("scene removed map") == 0);
     calls.clear();
 
-    /* Now the stock map takes it: arbitration, not evidence. */
-    r.now += 3000;
+    /* Now the stock map takes it: arbitration, not evidence. The removal
+     * is asked for again 5 s after it. */
+    r.now += 5000;
     r.tick();
     r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
     r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, r.now);
