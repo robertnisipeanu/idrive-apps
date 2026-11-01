@@ -312,11 +312,11 @@ function runMain() {
     rec.startBoot(function () {
         starting = false;
         if (stopping) { finish(); return; }   /* a stop arrived mid-restore: let it complete, then exit */
-        /* Without the patch on disk there is nothing to watch, but the
-         * service stays up: Restart=always would otherwise start it again
-         * every few seconds, and the deploy tool's health check takes that
-         * for a crash loop. */
-        timer = rec.patchActive ? setInterval(function () { rec.tick(); }, POLL_MS) : setInterval(function () {}, 3600000);
+        /* Polled even with nothing to watch (tick skips then): the service
+         * stays up, since Restart=always would otherwise start it again every
+         * few seconds and the deploy tool's health check takes that for a
+         * crash loop. */
+        timer = setInterval(function () { rec.tick(); }, POLL_MS);
     });
     function stop() { stopping = true; if (!starting) finish(); }   /* else finish() runs when startBoot returns */
     process.on('SIGTERM', stop);
