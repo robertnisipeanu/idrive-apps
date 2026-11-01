@@ -5,8 +5,9 @@
  * receive. A push copies the datagram and returns; a pop hands the oldest one
  * over by swapping buffers, so with datagrams of the stream's size (RTP at
  * most an MTU) nothing is allocated once every slot has a buffer. A buffer
- * that comes back larger than kKeepBytes is freed, so the slots hold at most
- * kKeepBytes each besides the packets waiting.
+ * larger than kKeepBytes that comes back, or whose packet is dropped, is
+ * freed, so the slots hold at most kKeepBytes each besides the packets
+ * waiting.
  *
  * Bounded by a packet count and a byte total. A push that would exceed
  * either drops the oldest packets until it fits (a datagram larger than the
@@ -124,6 +125,8 @@ private:
     {
         Packet &p = slots_[head_];
         bytes_ -= p.data.size();
+        if (p.data.capacity() > kKeepBytes)
+            std::vector<uint8_t>().swap(p.data);
         carry_ += p.dropped + 1;
         overflows_++;
         head_ = (head_ + 1) % slots_.size();

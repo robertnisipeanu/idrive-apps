@@ -14,7 +14,8 @@
  * sequence (decoder_msdk.h) until it starts a new one. A sequence jump
  * followed by an SPS is a new stream, not a loss.
  *
- * The status reason is short operator text; the detail, with the times and
+ * Only a lost stream has a status reason, short operator text; the map
+ * shows through a loss. The detail, with when the episode began and
  * patchd's resync state, is for the log and probe.txt. Each loss, new stream
  * and return to a clean picture is a log line, at most kLinesPerMinute a
  * minute; the minute line counts them all. Not thread-safe. */
@@ -26,12 +27,13 @@
 
 namespace woc {
 
-/* patchd's resync record (its resync.json): read, and why it would hold a
- * resync ("" when it would restart CarPlay). */
+/* patchd's resync record (its resync.json): read; whether patchd has
+ * decided for the current wait of the stream ("waiting"), and why it would
+ * hold the resync ("" when it would restart CarPlay). */
 struct ResyncState {
-    bool read = false;
+    bool read = false, waiting = false;
     std::string held;
-    bool restarts() const { return read && held.empty(); }
+    bool restarts() const { return read && waiting && held.empty(); }
 };
 
 class StreamHealth {
@@ -60,12 +62,17 @@ public:
      * to log for a new one after a wait, or empty. */
     std::string waiting(int64_t now_ms, int64_t wall_ms, bool on);
 
-    /* Lost: the decoder gave up, or keyframe_wait_ms reached kLostMs. */
-    bool lost(int64_t keyframe_wait_ms) const;
-    /* The status reason; empty while the stream is whole. */
-    std::string reason(int64_t keyframe_wait_ms, const ResyncState &resync) const;
-    /* The same with when it began and patchd's resync state. */
-    std::string detail(int64_t wall_ms, int64_t keyframe_wait_ms, const ResyncState &resync) const;
+    /* The keyframe wait (keyframe_wait.h) as sampled at wall_ms: from
+     * kLostMs the stream is lost, since wall_ms - keyframe_wait_ms. */
+    void keyframe_wait(int64_t wall_ms, int64_t keyframe_wait_ms);
+
+    /* The decoder gave up, or the keyframe wait reached kLostMs. */
+    bool lost() const;
+    /* The status reason: empty unless the stream is lost. */
+    std::string reason(const ResyncState &resync) const;
+    /* What the stream is, with when the episode began and patchd's resync
+     * state; empty while it is whole. */
+    std::string detail(const ResyncState &resync) const;
     /* The counts since the last call. */
     Minute take_minute();
 
@@ -75,6 +82,7 @@ private:
 
     State state_ = Whole;
     std::string since_;            /* the episode's start, "HH:MM:SS" UTC */
+    std::string arriving_since_;   /* the keyframe wait's, once it reached kLostMs; empty below */
     int64_t loss_ms_ = 0, waiting_ms_ = 0;
     uint32_t corrupted_since_ = 0;
     Minute minute_;

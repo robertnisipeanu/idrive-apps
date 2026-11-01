@@ -4,9 +4,7 @@
 
 While CarPlay's stream is live but shows no map, the status says why, from
 waze-on-cluster 0.7.2 on: "Stream lost — reconnect CarPlay", or "Stream
-lost — restarting CarPlay" where the tool restarts CarPlay itself. A map
-decoding through a lost part of the stream shows "Showing: … — Lost part of
-the stream — decoding through it".
+lost — restarting CarPlay" where the tool restarts CarPlay itself.
 
 ## 0.4.0
 

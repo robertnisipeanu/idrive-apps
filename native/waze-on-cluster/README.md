@@ -144,18 +144,20 @@ the render decodes through a lost packet:
   it and the first clean one begun after it (`waze: the picture is clean
   again 150 ms after the loss at 12:39:50 (3 corrupted frames)`), at most
   10 such lines a minute.
-- The status's `reason`, which the app shows, is `Lost part of the stream —
-  decoding through it` from a loss until that clean frame. It is `Stream
-  lost — reconnect CarPlay`, or `Stream lost — restarting CarPlay` where
-  `patchd` will restart it (its resync record says it holds no resync),
-  while the stream arrives with nothing decoded for 2 s (a render started
+- Decoding through a loss, the map shows and the status has no reason
+  for it; `probe.txt`'s `stream:` line says `lost part of the stream at
+  12:39:50; decoding through it` until that clean frame. The status's
+  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`, or
+  `Stream lost — restarting CarPlay` once `patchd` has decided for this
+  wait that it will restart CarPlay (PATCH.md "Stream resync"), while the
+  stream arrives with nothing decoded for 2 s (a render started
   mid-stream, or a loss the decoder does not decode through) and while the
-  decoder has given up its sequence. The detail, with the times and
+  decoder has given up its sequence. The detail, with when that began and
   `patchd`'s reason for holding the resync, is in the log (`waze: stream
   lost: the stream arrives with nothing decoded since 12:40:50; resync
   held: recmgr did not load a carplay restart entry this boot`) and in
-  `probe.txt`'s `stream:` line. A status line whose only change is the
-  stream's reason is logged at most once every 10 s.
+  `probe.txt`. A status line whose only change is the stream's reason is
+  logged at most once every 10 s.
 
 From a shell, `waze-on-cluster -c <conf> run map|panel|hud` (`sail` is an
 alias of `map`) sets the target until the service restarts and prints the

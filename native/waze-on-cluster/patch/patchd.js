@@ -465,10 +465,12 @@ function waitCarplayActive(tries, cb) {
  * RESYNC_MAX a head-unit start. The counts sit next to the socket, so a
  * patchd restart keeps them and a head-unit start clears them;
  * RESYNC_RESET_MS without a wait sets the spacing back to its first step.
- * The record also holds why a resync would wait while the stream waits for
- * a keyframe ("held", null when it would go), which the render shows; patchd
- * rewrites it at start, so it never carries a previous process's reason. The report is in the render's own directory, so it is read as a small
- * regular file, never through a link and never blocking. */
+ * The record also says whether patchd has decided for the current wait
+ * ("waiting") and why a resync would wait ("held", null when it would go),
+ * which the render shows; both are cleared when the wait ends, and patchd
+ * rewrites the record at start, so it never carries a previous process's
+ * decision. The report is in the render's own directory, so it is read as a
+ * small regular file, never through a link and never blocking. */
 var STREAM_STATE = process.env.WOC_STREAM_STATE || path.join(path.dirname(FIFO), 'stream.json');
 var STREAM_STALE_MS = 5000;   /* older: the render is not reporting */
 var RESYNC_FILE = process.env.WOC_RESYNC_FILE || path.join(path.dirname(SOCK), 'resync.json');
@@ -482,10 +484,11 @@ try {
     var saved = JSON.parse(fs.readFileSync(RESYNC_FILE, 'utf8'));
     if (saved.total > 0) resync = { attempts: saved.attempts || 0, last: typeof saved.last === 'number' ? saved.last : null, total: saved.total };
 } catch (e) {}
-var calmSince = null, resyncHeld = null, resyncing = false;
+var calmSince = null, resyncWaiting = false, resyncHeld = null, resyncing = false;
 
 function saveResync() {
-    try { fs.writeFileSync(RESYNC_FILE, JSON.stringify(Object.assign({ held: resyncHeld }, resync)) + '\n'); } catch (e) { log('resync state: ' + e.message); }
+    var record = Object.assign({ waiting: resyncWaiting, held: resyncHeld }, resync);
+    try { fs.writeFileSync(RESYNC_FILE, JSON.stringify(record) + '\n'); } catch (e) { log('resync state: ' + e.message); }
 }
 
 function streamWait() {
@@ -504,11 +507,12 @@ function streamWait() {
     }
 }
 
-/* Logs and records why a due resync waits, once per reason; null: it does
- * not. */
-function holdResync(reason) {
-    if (resyncHeld === reason) return;
-    if (reason) log('resync held: ' + reason);
+/* Records whether there is a wait patchd has decided for, and why a
+ * resync would wait (null: it would go, or no wait); logs each new reason. */
+function decideResync(waiting, reason) {
+    if (resyncWaiting === waiting && resyncHeld === reason) return;
+    if (reason && reason !== resyncHeld) log('resync held: ' + reason);
+    resyncWaiting = waiting;
     resyncHeld = reason;
     saveResync();
 }
@@ -520,7 +524,8 @@ function resyncHold(now) {
     if (resync.attempts > 0) {
         if (now < resync.last) resync.last = now;   /* the clock went back: a full spacing from now */
         var spacing = RESYNC_SPACING_MS[Math.min(resync.attempts, RESYNC_SPACING_MS.length) - 1];
-        if (now - resync.last < spacing) return 'attempt ' + (resync.attempts + 1) + ' waits ' + Math.round(spacing / 1000) + ' s after the last';
+        if (now - resync.last < spacing)
+            return 'attempt ' + (resync.attempts + 1) + ' waits ' + Math.round(spacing / 1000) + ' s after the last';
     }
     if (!recmgrLoaded('carplay')) return 'recmgr did not load a carplay restart entry this boot';
     return null;
@@ -531,7 +536,7 @@ function checkResync() {
     var now = Date.now(), wait = streamWait();
     if (wait === null) return;
     if (wait === 0) {
-        holdResync(null);
+        decideResync(false, null);
         if (calmSince === null) calmSince = now;
         if (resync.attempts > 0 && now - calmSince >= RESYNC_RESET_MS) {
             resync.attempts = 0;
@@ -543,7 +548,7 @@ function checkResync() {
     calmSince = null;
     /* Decided from the wait's start, so the render can say at once whether
      * CarPlay will be restarted. */
-    holdResync(resyncHold(now));
+    decideResync(true, resyncHold(now));
     if (resyncHeld || wait < RESYNC_AFTER_MS) return;
     resync = { attempts: resync.attempts + 1, last: now, total: resync.total + 1 };
     saveResync();

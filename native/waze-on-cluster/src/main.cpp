@@ -128,9 +128,10 @@ private:
 };
 
 /* Whether patchd would restart CarPlay for a new stream (PATCH.md "Stream
- * resync"): "held" in the resync record it keeps next to its socket, root's
- * and world-readable, null or why it would not. Unread without the record
- * or its "held". */
+ * resync"), from the resync record it keeps next to its socket, root's and
+ * world-readable: "waiting" true once it decided for the current wait, and
+ * "held", null or why it would not. Unread without the record or its
+ * "held". */
 ResyncState read_resync(const std::string &path)
 {
     ResyncState r;
@@ -152,6 +153,7 @@ ResyncState read_resync(const std::string &path)
     r.read = end || std::strncmp(p, "null", 4) == 0;
     if (end)
         r.held.assign(p + 1, end);
+    r.waiting = std::strstr(buf, "\"waiting\":true") != nullptr;
     return r;
 }
 
@@ -297,7 +299,7 @@ int serve(const Config &cfg)
         feed.set_stream(live, producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
-        const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason(now, resync));
+        const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason(resync));
         const std::string status = status_line(fs);
         /* The frame rate changes the status every second; the log keeps
          * to its state, reason and target, so the app's last lines are not
@@ -314,9 +316,10 @@ int serve(const Config &cfg)
                          "%u losses (%u packets), %llu dropped by the receive queue",
                          m.frames, m.changed, sm.corrupted, m.blank ? "blank" : "not blank", sm.losses, sm.lost,
                          (unsigned long long)overflows);
+            producer.track_keyframe_wait(now);
             resync = read_resync(resync_file);
-            const std::string detail = producer.stream_detail(now, resync);
-            if (producer.stream_lost(now) && detail != last_detail)
+            const std::string detail = producer.stream_detail(resync);
+            if (producer.stream_lost() && detail != last_detail)
                 log_warn("waze: stream lost: %s", detail.c_str());
             last_detail = detail;
             /* New decode errors, at most once a minute. */
@@ -330,7 +333,6 @@ int serve(const Config &cfg)
             write_sibling_file(cfg.str("fifo_path"), "status.json", status);
             /* The framing probe and the renderer's own status (targets, the
              * map layer's writes, the upload cap), for the diagnostics. */
-            producer.track_keyframe_wait(now);
             write_sibling_file(cfg.str("fifo_path"), "probe.txt",
                                producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" +
                                    feed.report());

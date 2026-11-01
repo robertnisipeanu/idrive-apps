@@ -111,6 +111,17 @@ int main()
         ok("stream-sized ones keep their buffers", popped && q.held_bytes() >= 1400);
     }
     {
+        /* Three 60 KB datagrams, then one of 150 KB that only fits once all
+         * three are dropped: the dropped slots keep nothing large. */
+        PacketQueue q(64, 200000);
+        push_n(q, 0, 3, 60000, 1);
+        push_n(q, 3, 1, 150000, 1);
+        PacketQueue::Packet p;
+        ok("an overflow of large datagrams frees the dropped slots' buffers",
+           q.overflows() == 3 && q.held_bytes() < 150000 + 4 * PacketQueue::kKeepBytes && q.pop(&p, 0) && id(p) == 3 &&
+               p.dropped == 3);
+    }
+    {
         PacketQueue q(8, 1 << 20);
         bool popped = true;
         std::thread waiter([&] {

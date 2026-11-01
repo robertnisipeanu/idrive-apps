@@ -209,7 +209,6 @@ void VideoProducer::feed_datagram(const PacketQueue::Packet &p)
     feed_fifo(data, len);
 }
 
-
 void VideoProducer::feed_fifo(const uint8_t *data, size_t len)
 {
     probe_.record(data, len);
@@ -380,28 +379,30 @@ bool VideoProducer::minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::
     return true;
 }
 
-std::string VideoProducer::stream_reason(int64_t now_ms, const ResyncState &resync) const
+std::string VideoProducer::stream_reason(const ResyncState &resync) const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.reason(keyframe_wait_ms(now_ms), resync);
+    return health_.reason(resync);
 }
 
-std::string VideoProducer::stream_detail(int64_t now_ms, const ResyncState &resync) const
+std::string VideoProducer::stream_detail(const ResyncState &resync) const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.detail(wall_ms(), keyframe_wait_ms(now_ms), resync);
+    return health_.detail(resync);
 }
 
-bool VideoProducer::stream_lost(int64_t now_ms) const
+bool VideoProducer::stream_lost() const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.lost(keyframe_wait_ms(now_ms));
+    return health_.lost();
 }
 
 void VideoProducer::track_keyframe_wait(int64_t now_ms)
 {
     keyframe_wait_.sample(now_ms, source_.bytes() + udp_source_.packets() + avb_source_.packets(),
                           decoded_total_.load(), probe_.keyframes());
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    health_.keyframe_wait(wall_ms(), keyframe_wait_.wait_ms(now_ms));
 }
 
 /* "123 B" / "45 KB" / "6.7 MB", for the status line. */

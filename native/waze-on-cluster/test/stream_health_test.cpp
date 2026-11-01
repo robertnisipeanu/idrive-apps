@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* Host test for the stream's health after a loss (stream_health.h): the
- * status reason and its detail while decoding through a loss, while the
- * stream arrives with nothing decoded (a render started mid-stream) and
- * while the decoder waits for a keyframe, with patchd restarting CarPlay or
- * not; which frames end a decode-through episode; a new stream; the log
- * lines and their limit; the minute's counts. */
+/* Host test for the stream's health after a loss (stream_health.h): no
+ * status reason while decoding through a loss, only its detail; the status
+ * reason and its detail while the stream arrives with nothing decoded (a
+ * render started mid-stream) and while the decoder waits for a keyframe,
+ * "restarting CarPlay" only once patchd decided a resync would go for this
+ * wait; the episode's start fixed once; which frames end a decode-through
+ * episode; a new stream; the log lines and their limit; the minute's
+ * counts. */
 #include <cstdio>
 #include <string>
 
@@ -25,28 +27,28 @@ static const int64_t kWall = 1793536790000LL;
 
 int main()
 {
-    ResyncState restarts, held, unread;
-    restarts.read = held.read = true;
+    ResyncState restarts, held, calm, unread;
+    restarts.read = held.read = calm.read = true;
+    restarts.waiting = held.waiting = true;
     held.held = "recmgr did not load a carplay restart entry this boot";
 
     StreamHealth h;
-    ok("a whole stream has no reason", h.reason(0, restarts).empty() && h.detail(kWall, 0, restarts).empty() &&
+    ok("a whole stream has no reason", h.reason(restarts).empty() && h.detail(restarts).empty() &&
                                            h.frame(10, 0, true).empty());
 
     const std::string l = h.loss(1000, kWall, "avb", 1235, 1240, 5, 0);
     ok("a loss is logged with the jump and the source",
        l == "waze: lost 5 packets of the stream from avb (sequence 1240, expected 1235); decoding through it");
-    ok("then the reason says it decodes through it, the detail when",
-       h.reason(0, held) == "Lost part of the stream — decoding through it" &&
-           h.detail(kWall, 0, held) == "lost part of the stream at 12:39:50; decoding through it");
+    ok("decoding through it: no status reason, the detail says when",
+       h.reason(held).empty() && !h.lost() && h.detail(held) == "lost part of the stream at 12:39:50; decoding through it");
     ok("a clean frame of the picture the loss cut short does not end it",
-       h.frame(1010, 0, false).empty() && h.reason(0, held) == "Lost part of the stream — decoding through it");
+       h.frame(1010, 0, false).empty() && !h.detail(held).empty());
     ok("the first corrupted frame after the loss is logged with its flags",
        h.frame(1050, 0x10, true) == "waze: the first frame after the loss is corrupted (decoder flags 0x10)");
     ok("later ones are not", h.frame(1083, 0x10, true).empty() && h.frame(1116, 0x10, true).empty());
     ok("the first clean frame begun after the loss ends it, logged",
        h.frame(1150, 0, true) == "waze: the picture is clean again 150 ms after the loss at 12:39:50 (3 corrupted frames)" &&
-           h.reason(0, held).empty());
+           h.detail(held).empty());
 
     const std::string q = h.loss(5000, kWall + 4000, "udp", 9, 12, 3, 3);
     ok("a loss the receive queue caused says so",
@@ -54,37 +56,49 @@ int main()
             "decoding through it");
     h.loss(5200, kWall + 4200, "avb", 15, 16, 1, 0);
     ok("a further loss in the same episode keeps its start",
-       h.detail(kWall + 4300, 0, held) == "lost part of the stream at 12:39:54; decoding through it");
-    ok("nothing decoded for 2 s: lost; patchd restarts CarPlay",
-       !h.lost(1999) && h.lost(2000) && h.reason(2000, restarts) == "Stream lost — restarting CarPlay" &&
-           h.detail(kWall + 9000, 2000, restarts) ==
-               "the stream arrives with nothing decoded since 12:39:57; patchd restarts CarPlay for a new stream");
-    ok("or holds its resync: reconnect, the reason only in the detail",
-       h.reason(2000, held) == "Stream lost — reconnect CarPlay" &&
-           h.detail(kWall + 9000, 2000, held) == "the stream arrives with nothing decoded since 12:39:57; resync held: "
-                                                 "recmgr did not load a carplay restart entry this boot");
-    ok("without patchd's record: reconnect", h.reason(2000, unread) == "Stream lost — reconnect CarPlay");
+       h.detail(held) == "lost part of the stream at 12:39:54; decoding through it");
+    h.keyframe_wait(kWall + 8000, 1999);
+    ok("nothing decoded for under 2 s: not lost", !h.lost());
+    h.keyframe_wait(kWall + 9000, 2000);
+    ok("from 2 s: lost; a record from the calm before the wait says reconnect",
+       h.lost() && h.reason(calm) == "Stream lost — reconnect CarPlay" &&
+           h.detail(calm) == "the stream arrives with nothing decoded since 12:39:57; patchd has not decided on a resync yet");
+    ok("patchd decided a resync would go: restarting",
+       h.reason(restarts) == "Stream lost — restarting CarPlay" &&
+           h.detail(restarts) == "the stream arrives with nothing decoded since 12:39:57; patchd restarts CarPlay for a new stream");
+    ok("or holds it: reconnect, the reason only in the detail",
+       h.reason(held) == "Stream lost — reconnect CarPlay" &&
+           h.detail(held) == "the stream arrives with nothing decoded since 12:39:57; resync held: "
+                             "recmgr did not load a carplay restart entry this boot");
+    ok("without patchd's record: reconnect", h.reason(unread) == "Stream lost — reconnect CarPlay");
+    h.keyframe_wait(kWall + 10400, 3001);   /* sampled a little off the second */
+    ok("the episode's start is fixed once", h.detail(held).find("since 12:39:57;") != std::string::npos);
+    h.keyframe_wait(kWall + 11000, 0);
+    ok("a frame decoded: no longer lost", !h.lost());
 
     ok("a new stream ends the episode, logged",
        h.new_stream(6000, "avb", 17, 40000) == "waze: a new stream from avb (sequence 40000, expected 17)" &&
-           h.reason(0, held).empty());
+           h.detail(held).empty());
 
     StreamHealth mid;   /* a render started mid-stream: no loss, no frame */
-    ok("started mid-stream: whole until the wait reaches 2 s, then lost", mid.reason(1000, held).empty() &&
-                                                                          mid.reason(2000, held) == "Stream lost — reconnect CarPlay");
+    mid.keyframe_wait(kWall, 1000);
+    const bool whole = mid.reason(held).empty();
+    mid.keyframe_wait(kWall + 1000, 2000);
+    ok("started mid-stream: whole until the wait reaches 2 s, then lost",
+       whole && mid.reason(held) == "Stream lost — reconnect CarPlay");
 
     h.waiting(8000, kWall + 7000, true);
     ok("the decoder giving up: lost whatever the wait",
-       h.lost(0) && h.reason(0, restarts) == "Stream lost — restarting CarPlay" &&
-           h.detail(kWall + 9000, 0, held) == "the decoder gave up its sequence at 12:39:57 and waits for a keyframe; "
+       h.lost() && h.reason(restarts) == "Stream lost — restarting CarPlay" &&
+           h.detail(held) == "the decoder gave up its sequence at 12:39:57 and waits for a keyframe; "
                                                "resync held: recmgr did not load a carplay restart entry this boot");
     ok("a loss while waiting keeps it waiting",
        h.loss(9500, kWall + 8500, "avb", 20, 22, 2, 0) ==
                "waze: lost 2 packets of the stream from avb (sequence 22, expected 20); the decoder waits for a keyframe" &&
-           h.lost(0));
+           h.lost());
     ok("a new sequence is whole, logged",
        h.waiting(11000, kWall + 10000, false) == "waze: decoding again from a keyframe after 3 s waiting" &&
-           h.reason(0, held).empty());
+           h.reason(held).empty());
     ok("a sequence that starts without a wait logs nothing", h.waiting(12000, kWall + 11000, false).empty());
 
     const StreamHealth::Minute m = h.take_minute();

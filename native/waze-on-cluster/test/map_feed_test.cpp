@@ -152,10 +152,10 @@ int main()
     ok("granted: showing, with the decoded frame in the slot's scene",
        r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
-    const std::string through = "Lost part of the stream — decoding through it";
-    ok("showing carries the stream's reason", r.feed->status("decode", through).state == "showing" &&
-                                                  r.feed->status("decode", through).reason == through &&
-                                                  r.feed->status("decode", through).stream_reason);
+    const std::string lost = "Stream lost — restarting CarPlay";   /* until the layer stalls */
+    ok("showing carries the stream's reason", r.feed->status("decode", lost).state == "showing" &&
+                                                  r.feed->status("decode", lost).reason == lost &&
+                                                  r.feed->status("decode", lost).stream_reason);
 
     r.port.steal(r.sc.targets[0]);
     r.pump(20, &f1);
@@ -276,13 +276,13 @@ int main()
     a.upload_cap_kb = 5500;
     a.upload_reason = "slow flushes";
     ok("status log: not for the page or the upload cap", !sl.due(a, t));
-    a.reason = "Lost part of the stream — decoding through it";
+    a.reason = "Stream lost — reconnect CarPlay";
     a.stream_reason = true;
     ok("status log: the stream's reason", sl.due(a, t));
     a.reason.clear();
     a.stream_reason = false;
     ok("status log: the stream whole again within 10 s waits", !sl.due(a, t + 2000));
-    a.reason = "Lost part of the stream — decoding through it";
+    a.reason = "Stream lost — reconnect CarPlay";
     a.stream_reason = true;
     ok("status log: so does its next loss; the logged reason is the same, nothing to log",
        !sl.due(a, t + 4000) && !sl.due(a, t + 10000));

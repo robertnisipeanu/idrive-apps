@@ -95,27 +95,36 @@ std::string StreamHealth::waiting(int64_t now_ms, int64_t wall_ms, bool on)
            " s waiting";
 }
 
-bool StreamHealth::lost(int64_t keyframe_wait_ms) const
+void StreamHealth::keyframe_wait(int64_t wall_ms, int64_t keyframe_wait_ms)
 {
-    return state_ == Waiting || keyframe_wait_ms >= kLostMs;
+    if (keyframe_wait_ms < kLostMs)
+        arriving_since_.clear();
+    else if (arriving_since_.empty())
+        arriving_since_ = hhmmss(wall_ms - keyframe_wait_ms);
 }
 
-std::string StreamHealth::reason(int64_t keyframe_wait_ms, const ResyncState &resync) const
+bool StreamHealth::lost() const
 {
-    if (lost(keyframe_wait_ms))
-        return resync.restarts() ? "Stream lost — restarting CarPlay" : "Stream lost — reconnect CarPlay";
-    return state_ == Through ? "Lost part of the stream — decoding through it" : std::string();
+    return state_ == Waiting || !arriving_since_.empty();
 }
 
-std::string StreamHealth::detail(int64_t wall_ms, int64_t keyframe_wait_ms, const ResyncState &resync) const
+std::string StreamHealth::reason(const ResyncState &resync) const
 {
-    const std::string patchd = resync.restarts() ? "patchd restarts CarPlay for a new stream"
-                               : resync.read     ? "resync held: " + resync.held
-                                                 : "patchd's resync record not readable";
+    if (!lost())
+        return std::string();
+    return resync.restarts() ? "Stream lost — restarting CarPlay" : "Stream lost — reconnect CarPlay";
+}
+
+std::string StreamHealth::detail(const ResyncState &resync) const
+{
+    const std::string patchd = resync.restarts()                 ? "patchd restarts CarPlay for a new stream"
+                               : !resync.read                    ? "patchd's resync record not readable"
+                               : resync.waiting                  ? "resync held: " + resync.held
+                                                                 : "patchd has not decided on a resync yet";
     if (state_ == Waiting)
         return "the decoder gave up its sequence at " + since_ + " and waits for a keyframe; " + patchd;
-    if (keyframe_wait_ms >= kLostMs)
-        return "the stream arrives with nothing decoded since " + hhmmss(wall_ms - keyframe_wait_ms) + "; " + patchd;
+    if (!arriving_since_.empty())
+        return "the stream arrives with nothing decoded since " + arriving_since_ + "; " + patchd;
     return state_ == Through ? "lost part of the stream at " + since_ + "; decoding through it" : std::string();
 }
 

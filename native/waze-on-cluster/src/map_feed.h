@@ -25,8 +25,7 @@
  * and while the renderer starts, showing with the frames handed over a
  * second, error when the renderer refused the layer or stays unreachable.
  * Showing, and idle while the stream is live, carry the stream's own reason
- * (stream_health.h: a loss decoded through, the stream lost) when it has
- * one. */
+ * (stream_health.h: the stream lost) when it has one. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 

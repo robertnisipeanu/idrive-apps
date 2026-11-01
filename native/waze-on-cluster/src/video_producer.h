@@ -100,12 +100,11 @@ public:
      * while frames come, with the stream's losses and corrupted frames and
      * the receive queue's overflows since the last time. Main thread. */
     bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, uint64_t *overflows);
-    /* Why the picture is not whole, as the status's short reason and as
-     * the detail for the log and probe.txt (stream_health.h); empty when it
-     * is. Main thread (the keyframe wait). */
-    std::string stream_reason(int64_t now_ms, const ResyncState &resync) const;
-    std::string stream_detail(int64_t now_ms, const ResyncState &resync) const;
-    bool stream_lost(int64_t now_ms) const;
+    /* The stream's status reason and its detail for the log and probe.txt
+     * (stream_health.h), and whether it is lost. */
+    std::string stream_reason(const ResyncState &resync) const;
+    std::string stream_detail(const ResyncState &resync) const;
+    bool stream_lost() const;
     /* Decode errors so far, and the last one's text in *last. */
     uint32_t decode_errors(std::string *last) const;
     /* Readable once a frame waits to be taken. */
@@ -124,8 +123,8 @@ public:
     std::string decode_status() const;
 
     /* The keyframe wait (keyframe_wait.h), sampled by track_keyframe_wait
-     * about once a second from the main loop; patchd reads it (stream.json)
-     * to resync. */
+     * about once a second from the main loop, which also tells the stream's
+     * health; patchd reads it (stream.json) to resync. */
     int64_t keyframe_wait_ms(int64_t now_ms) const { return keyframe_wait_.wait_ms(now_ms); }
     void track_keyframe_wait(int64_t now_ms);
 
@@ -142,7 +141,6 @@ private:
      * taken as raw Annex-B. Recorded for the framing probe either way. On the
      * decode thread. */
     void feed_datagram(const PacketQueue::Packet &p);
-
     /* One FIFO read (raw Annex-B), on the FIFO thread. */
     void feed_fifo(const uint8_t *data, size_t len);
     /* Depacketiser output: one NAL unit, or an access unit end. Brings the
