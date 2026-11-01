@@ -63,10 +63,9 @@ otherwise the app shows **Restart head unit**, a normal system reboot.
 
 The tool puts `carplay` on recmgr's restart list (the deploy tool writes it
 into both sections at install and takes it out at removal), so recmgr takes
-a CarPlay crash for an expected stop and does not restart the head unit for it.
-The entry and the patch are both written at install and both take effect at
-the next head-unit start, so the first start that runs the patched CarPlay
-already has the entry.
+a CarPlay crash for an expected stop and does not restart the head unit for
+it, from the next head-unit start after the install. On a fresh install the
+patched CarPlay first runs at that same start.
 
 **When CarPlay crashes.** recmgr does not start CarPlay again; the recovery
 service does, at most three times per head-unit start, 5 s, 15 s and 60 s

@@ -336,12 +336,11 @@ binary it does not recognise. Every write is an atomic rename.
 
 Where recmgr has not loaded a `carplay` entry, a CarPlay crash reboots the
 head unit with the patched binary still on disk: a boot loop with no HMI to
-turn the map off. The tool's `carplay` entry (README) and the patch are both
-written at install and both take effect at the next head-unit start, so the
-first start that runs the patched CarPlay already has the entry; recmgr then
-neither reboots for a crash nor starts CarPlay again. Boot recovery restores
-the original binary after repeated crashes, starts CarPlay again where the
-entry is loaded, and is the backstop where a crash still reboots the unit.
+turn the map off. The tool's `carplay` entry (README) is written at install
+and loaded from the next head-unit start; from then recmgr neither reboots
+for a crash nor starts CarPlay again. Boot recovery restores the original
+binary after repeated crashes, starts CarPlay again where the entry is
+loaded, and is the backstop where a crash still reboots the unit.
 
 **How the head unit goes down.** recmgr (and crashhandler, for a core dump)
 asks the NodeStateManager for a fast shutdown; it runs
