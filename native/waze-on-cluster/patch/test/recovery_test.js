@@ -790,17 +790,25 @@ test('the service stays up without a patch to watch, and stops on SIGTERM', asyn
         const tgt = path.join(dir, 'carplay');
         fs.writeFileSync(tgt, 'not a carplay build\n');
         fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-idle\n');
+        /* systemctl logs each call: the first tick asks for carplay's state */
+        const calls = path.join(dir, 'calls');
+        const sc = path.join(dir, 'systemctl');
+        fs.writeFileSync(sc, '#!/bin/sh\necho "$*" >> "' + calls + '"\n');
+        fs.chmodSync(sc, 0o755);
         child = cp.spawn(process.execPath, [RECOVERY_PATH], {
             env: Object.assign({}, process.env, {
                 WOC_CARPLAY: tgt, WOC_RECOVERY_STATE: path.join(dir, 'state.json'), WOC_BOOT_ID: path.join(dir, 'boot_id'),
-                WOC_SYSTEMCTL: path.join(dir, 'no-systemctl'),
+                WOC_SYSTEMCTL: sc, WOC_RECOVERY_TICK_MS: '50',
             }),
             stdio: 'ignore',
         });
         let exit = null;
         const exited = new Promise((r) => child.on('exit', (code, signal) => { exit = { code, signal }; r(); }));
-        await new Promise((r) => setTimeout(r, 500));
-        assert.strictEqual(exit, null, 'still running 0.5 s after start: ' + JSON.stringify(exit));
+        const probed = () => fs.existsSync(calls) && /^show carplay\.service/m.test(fs.readFileSync(calls, 'utf8'));
+        for (let t = Date.now(); !probed() && exit === null && Date.now() - t < 3000;) await new Promise((r) => setTimeout(r, 20));
+        assert(probed(), 'the first tick ran: ' + JSON.stringify(exit));
+        await new Promise((r) => setTimeout(r, 300));   /* about six more ticks */
+        assert.strictEqual(exit, null, 'still running after its ticks: ' + JSON.stringify(exit));
         child.kill('SIGTERM');
         await Promise.race([exited, new Promise((r) => setTimeout(r, 2000))]);
         assert(exit && exit.code === 0, 'a SIGTERM ends it cleanly: ' + JSON.stringify(exit));
