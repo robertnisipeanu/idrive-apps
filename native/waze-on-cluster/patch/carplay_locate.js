@@ -280,8 +280,9 @@ function locateSink(buf) {
  * merged string a rewrite would change). `refs` holds the slot's offsets. */
 function sinkRefs(s, refs) {
     if (!s.ok) return s;
-    if (refs[s.offset].length !== 1) return { ok: false, reason: 'sink: URL slot loaded ' + refs[s.offset].length + ' times (want 1)' };
-    for (var i = 1; i < s.len; i++) if (refs[s.offset + i].length) return { ok: false, reason: 'sink: another string inside the URL slot' };
+    function loads(o) { return (refs[o] || []).length; }
+    if (loads(s.offset) !== 1) return { ok: false, reason: 'sink: URL slot loaded ' + loads(s.offset) + ' times (want 1)' };
+    for (var i = 1; i < s.len; i++) if (loads(s.offset + i)) return { ok: false, reason: 'sink: another string inside the URL slot' };
     return s;
 }
 
@@ -444,16 +445,17 @@ function locateRes(im, str, refs) {
     if (Math.abs(high.to - ctor.off) > NEAR || Math.abs(mid.to - ctor.off) > NEAR) return { ok: false, reason: 'resolution: builders far from the constructor' };
     if (!layoutRead(im, ctor)) return { ok: false, reason: 'resolution: geometry getters not found' };
     var b = builders[high.to];
-    return { ok: true, builder: high.to, mid: mid.to, mm: b.mm, px: b.px, safe1: b.safe1, safe2: b.safe2 };
+    return { ok: true, builder: high.to, mm: b.mm, px: b.px, safe1: b.safe1, safe2: b.safe2 };
 }
 
 /* ---- relocations and version -------------------------------------------- */
 
-/* The edits the loader would rewrite: all of them with text relocations,
- * else those of `regions` ([edit, off, len]) that a relocation's 8 bytes
- * (RELA or PLT) overlap. { all, edits } */
+/* The edits the loader would rewrite: all of them with text relocations or
+ * relocations this cannot read (REL, RELR, or a table outside the file), else
+ * those of `regions` ([edit, off, len]) that a relocation's 8 bytes (RELA or
+ * PLT) overlap. { all: why or null, edits } */
 function relocated(im, regions) {
-    var out = { all: false, edits: [] };
+    var out = { all: null, edits: [] };
     if (!im.dyn) return out;
     var buf = im.buf, d = {}, rel = [];
     for (var o = im.dyn.off; o + 16 <= im.dyn.off + im.dyn.size; o += 16) {
@@ -461,12 +463,15 @@ function relocated(im, regions) {
         if (tag === 0) break;
         if (tag !== null) d[tag] = u64(buf, o + 8);
     }
-    if (d[22] !== undefined || (d[30] & 4)) { out.all = true; return out; }    /* DT_TEXTREL, DF_TEXTREL */
+    if (d[22] !== undefined || (d[30] & 4)) { out.all = 'text relocations'; return out; }      /* DT_TEXTREL, DF_TEXTREL */
+    if (d[17] !== undefined || d[36] !== undefined) { out.all = 'relocations not readable'; return out; }   /* DT_REL, DT_RELR */
     [[7, 8], [23, 2]].forEach(function (t) {                                  /* DT_RELA/RELASZ, DT_JMPREL/PLTRELSZ */
-        var at = d[t[0]] ? im.off(d[t[0]]) : null, n = d[t[1]] || 0;
-        if (at === null || at + n > buf.length) return;
+        if (d[t[0]] === undefined) return;
+        var at = d[t[0]] === null ? null : im.off(d[t[0]]), n = d[t[1]] || 0;
+        if (at === null || at + n > buf.length) { out.all = 'relocations not readable'; return; }
         for (var r = at; r + 24 <= at + n; r += 24) { var v = u64(buf, r); if (v !== null) rel.push(v); }
     });
+    if (out.all) return out;
     regions.forEach(function (g) {
         var va = im.va(g[1]);
         if (va !== null && rel.some(function (v) { return v + 8 > va && v < va + g[2]; }) && out.edits.indexOf(g[0]) < 0) out.edits.push(g[0]);
@@ -505,7 +510,7 @@ function locate(buf) {
     var hit = relocated(im, regions), label = { variant: 'variant', sink: 'sink', selfstart: 'self-start', res: 'resolution' };
     Object.keys(label).forEach(function (e) {
         if (out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0))
-            out[e] = { ok: false, reason: label[e] + ': ' + (hit.all ? 'text relocations' : 'a dynamic relocation over the edit') };
+            out[e] = { ok: false, reason: label[e] + ': ' + (hit.all || 'a dynamic relocation over the edit') };
     });
     var failed = [out.variant, out.sink, out.selfstart, out.res].filter(function (e) { return !e.ok; });
     out.ok = failed.length === 0;

@@ -16,8 +16,9 @@ reason names what was not found, and `patchd` reports it as a conflict
 (`not patchable: <reason>`). File offsets and virtual addresses are converted
 through the ELF program headers, and function bounds come from the
 `.eh_frame_hdr` search table; without that table no site but the sink is
-found. A site a dynamic relocation covers (or any site, in a build with text
-relocations) is refused: the loader would write over the edit.
+found. A site a dynamic relocation covers is refused, and every site in a
+build with text relocations or relocations the locator cannot read (REL,
+RELR): the loader would write over the edit.
 
 `carplay_patch.js probe [<file>]` (`woc-patch.sh probe`) reads a binary and
 prints its size, SHA-256, GNU build-id, the carplay version its debug source
@@ -336,7 +337,7 @@ pending, which the Store shows.
 | a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`) | nothing |
 | a patch of ours, any configuration | brings it to Enable map's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
 | the original with our backup (Disable map was used) | nothing: the map stays off | drops our backup |
-| a change already pending | nothing (still reports the restart); after a removal's revert, applies again | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
+| a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | nothing |
 | a proven build modified by something else, or any build with one of our edits and no backup of ours | nothing: a conflict | nothing (the patcher refuses) |

@@ -35,14 +35,16 @@ app requires this tool (0.6.0); this tool requires `cluster-render` 0.3.3 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 
-**Install.** The deploy tool runs `patchd.js activate` as root. It writes the
-patch Enable map writes, keeps the running binary linked, and never stops,
+**Install.** The deploy tool runs `patchd.js activate` as root. On a proven
+carplay build, or one Enable map patched before, it writes the patch Enable
+map writes, keeps the running binary linked, and never stops,
 kills or restarts CarPlay. The Store shows a restart pending; the app shows
 `Patch pending — reboot to activate`. One head-unit start runs the patched
 CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
 and the app says why and offers Enable map, when Disable map was used, when
 the patcher cannot find or recognise one of its edit sites in the binary or
-something else modified it, or when `carplay.service` starts another program.
+something else modified it, when the build is outside the proven list and
+Enable map has not patched it, or when `carplay.service` starts another program.
 An update brings an older patch of ours up to date.
 
 **Remove.** In the Store, remove the app, then the tool (refused while the

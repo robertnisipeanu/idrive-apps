@@ -100,6 +100,11 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
         json(reasons(loc)) === json(['variant: no function table', 'self-start: no function table', 'resolution: no function table']), json(reasons(loc)));
     loc = locator.locate(synthetic.build({ relocSink: true }).buf);
     ok('a dynamic relocation over the sink slot: refused', json(reasons(loc)) === json(['sink: a dynamic relocation over the edit']), json(reasons(loc)));
+    var rel = synthetic.build({ relocSink: true });
+    rel.buf.writeUInt32LE(17, rel.at.dyn);   /* DT_REL in place of DT_RELA */
+    loc = locator.locate(rel.buf);
+    ok('relocations it cannot read: every edit refused', json(reasons(loc)) ===
+        json(['variant: relocations not readable', 'sink: relocations not readable', 'self-start: relocations not readable', 'resolution: relocations not readable']), json(reasons(loc)));
     loc = locator.locate(Buffer.from('#!/bin/sh\nexec carplay "$@"\n'));
     ok('not an ELF', loc.elf === false && loc.reason === 'not an ELF file' && !loc.ok, json(loc));
 })();

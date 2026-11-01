@@ -990,7 +990,7 @@ function oneShot(which) {
                     return;
                 }
                 /* The patcher would not touch it: left as it is, for the user. */
-                if (refused && /refusing|requires the pristine|not a recognised|no backup/.test(refused)) {
+                if (refused && /refusing|requires the pristine|not a proven build|not a recognised|no backup/.test(refused)) {
                     result.status = 'carplay left as it is: ' + refused;
                     result.conflict = refused;
                     log(which + ': ' + result.status);

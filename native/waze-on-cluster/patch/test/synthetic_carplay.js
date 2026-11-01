@@ -181,7 +181,7 @@ function build(o) {
         at: {
             buildId: buf.toString('hex', note + 16, note + 36),
             table: labels['conv.table'], slot: labels['conv.table'] + 28, original: slot(1), high: slot(9), mid: slot(10),
-            highHandler: labels['conv.h0'], cmdCall: labels['cmd.call'], getter2c: labels.g2c,
+            highHandler: labels['conv.h0'], cmdCall: labels['cmd.call'], getter2c: labels.g2c, dyn: labels.dyn,
             sink: labels.sink0,
             call: labels.call, setStreamStatus: labels.ss, requestStream: labels.rs, onSuggestUi: labels.osu,
             callOriginal: callTo('ss'), callPatched: callTo('rs'),

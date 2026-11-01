@@ -171,6 +171,10 @@ var CASES = [
         phdrs(out).forEach(function (p) {
             out.writeUInt32LE(p.off + pad, p.hdr + 8);
             if (p.type !== 6) { out.writeUInt32LE(p.va + 0x400000, p.hdr + 16); out.writeUInt32LE(p.va + 0x400000, p.hdr + 24); }
+            /* the dynamic table's relocation-table addresses move with them */
+            if (p.type === 2) for (var o = p.off + pad; o + 16 <= p.off + pad + p.size && out.readUInt32LE(o) !== 0; o += 16) {
+                if (out.readUInt32LE(o) === 7 || out.readUInt32LE(o) === 23) out.writeUInt32LE(out.readUInt32LE(o + 8) + 0x400000, o + 8);
+            }
         });
         return out;
     }, ['correct'], shifted(0x1000)],
