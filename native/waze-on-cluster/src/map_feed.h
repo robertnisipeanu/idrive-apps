@@ -92,9 +92,13 @@ public:
      * reachable. */
     void offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms);
 
-    /* Whether CarPlay's cluster stream is live, and whether it is frozen:
-     * the layer is visible only while it is live and not frozen. */
-    void set_stream(bool live, bool frozen);
+    /* Whether CarPlay's cluster stream is live, whether it is frozen, and
+     * whether it has shown a picture yet: the layer is visible only while it
+     * is live, not frozen and pictured. A phone starts its stream with blank
+     * frames (93 in about 2 s on the car, then a pause) and sends no map
+     * until one is drawn for the cluster: shown, those took the slot from the
+     * stock map and left it black until stall_ms after the last of them. */
+    void set_stream(bool live, bool frozen, bool pictured = true);
 
     /* The status for the app, with decode the capture and decode part of
      * the line and stream why the picture is not whole (empty: it is). */
@@ -112,7 +116,7 @@ private:
     cr::Client client_;
     uint32_t layer_ = 0;
     cr::LayerOptions lo_;   /* the layer's options as last sent */
-    bool live_ = false, frozen_ = false;
+    bool live_ = false, frozen_ = false, pictured_ = true;
     std::string layer_state_ = "stalled", layer_reason_;
     std::string target_state_, holder_;
     unsigned cap_kb_ = 0, max_kb_ = 0;

@@ -59,6 +59,8 @@ public:
      * stream, with no picture shown yet. */
     void live(bool on);
     bool frozen(int64_t now_ms) const;
+    /* Whether this stream has shown a non-blank picture yet. */
+    bool pictured() const { return pictured_; }
 
 private:
     FreezeConfig cfg_;

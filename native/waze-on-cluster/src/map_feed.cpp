@@ -92,7 +92,7 @@ void MapFeed::make_layer()
     lo_.y = (int)q.y;
     lo_.w = q.w;
     lo_.h = q.h;
-    lo_.visible = live_ && !frozen_;
+    lo_.visible = live_ && !frozen_ && pictured_;
     refused_.clear();
     layer_state_ = "stalled";
     layer_reason_.clear();
@@ -156,14 +156,18 @@ void MapFeed::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
     count_second(now_ms);
 }
 
-void MapFeed::set_stream(bool live, bool frozen)
+void MapFeed::set_stream(bool live, bool frozen, bool pictured)
 {
-    if (live == live_ && frozen == frozen_)
+    if (live == live_ && frozen == frozen_ && pictured == pictured_)
         return;
-    log_info("render: CarPlay's cluster stream %s", !live ? "is not live" : frozen ? "froze" : "is live");
+    log_info("render: CarPlay's cluster stream %s", !live     ? "is not live"
+                                                    : frozen  ? "froze"
+                                                    : !pictured ? "is live, no picture yet (the stock map stays)"
+                                                                : "is live");
     live_ = live;
     frozen_ = frozen;
-    const bool visible = live && !frozen;
+    pictured_ = pictured;
+    const bool visible = live && !frozen && pictured;
     if (layer_ && lo_.visible != visible) {
         lo_.visible = visible;
         client_.set(layer_, lo_);
@@ -248,6 +252,8 @@ FeedStatus MapFeed::status(const std::string &decode, const std::string &stream)
         s.page = decode;
         s.reason = stream;
         s.stream_reason = !stream.empty();
+        if (s.reason.empty() && live_ && !pictured_)
+            s.reason = "no map picture from the phone yet";
     }
     return s;
 }
