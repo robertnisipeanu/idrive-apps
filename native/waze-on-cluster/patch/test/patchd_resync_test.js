@@ -245,6 +245,7 @@ async function main() {
     carplay = dummyCarplay();
     await waitFor(function () { return /resync held: 4 attempts/.test(patchdLog); }, 6000);
     ok('past the limit a due resync is held', restarts(newCalls()) === 0 && !died(carplay) && /resync held: 4 attempts/.test(patchdLog));
+    ok('the record says why, for the render', readResync().held === '4 attempts this head-unit start', JSON.stringify(readResync()));
 
     /* Without carplay's recmgr entry, a due resync is held, never forced. */
     fs.writeFileSync(RESYNC, JSON.stringify({ attempts: 0, last: null, total: 0 }) + '\n');
@@ -256,6 +257,10 @@ async function main() {
     await waitFor(function () { return fs.existsSync(SOCK); }, 5000);
     await waitFor(function () { return /resync held: recmgr/.test(patchdLog); }, 6000);
     ok('no recmgr entry: held, carplay left running', restarts(newCalls()) === 0 && !died(carplay) && /resync held: recmgr/.test(patchdLog));
+    ok('the record says why', readResync().held === 'recmgr did not load a carplay restart entry this boot', JSON.stringify(readResync()));
+    keepReporting(0);
+    await waitFor(function () { return readResync().held === null; }, 3000);
+    ok('a stream that decodes again clears it', readResync().held === null, JSON.stringify(readResync()));
 
     ok('the app never saw a busy patch state for a resync', !statuses.some(function (m) { return m.state === 'busy'; }),
        JSON.stringify(statuses.filter(function (m) { return m.state === 'busy'; })));

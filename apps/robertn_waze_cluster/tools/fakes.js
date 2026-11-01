@@ -124,7 +124,7 @@ class FakeRender extends LineServer {
             this._set('starting', 'sail', null, null);
             this._showTimer = setTimeout(() => this._set('showing', 'sail', RENDER_PAGE, RENDER_FPS), STEP_MS);
         } else {
-            this._set('idle', 'sail', null, 'CarPlay stream stopped');
+            this._set('idle', 'sail', null, '');
         }
     }
 

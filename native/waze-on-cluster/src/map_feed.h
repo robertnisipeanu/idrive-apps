@@ -14,7 +14,8 @@
  * CarPlay's cluster stream is live and not frozen (set_stream): hidden, the
  * renderer lets the slot go and the stock map comes back. stall_ms, which
  * releases the slot once the frames stop that long, is only a backstop,
- * since a static map can send a frame only every ten seconds. Frames handed
+ * since how often a static map sends a frame depends on the phone (one about
+ * every ten seconds, another about 30 a second). Frames handed
  * over while the renderer is not reachable are dropped; the client
  * reconnects by itself and the next frame shows.
  *
@@ -22,7 +23,9 @@
  * until the first frame or while the stream is not live, frozen while the
  * stream is, starting while the slot is asked for or held by the stock map
  * and while the renderer starts, showing with the frames handed over a
- * second, error when the renderer refused the layer or stays unreachable. */
+ * second, error when the renderer refused the layer or stays unreachable.
+ * Showing, and idle while the stream is live, carry the stream's own reason
+ * (a loss decoded through, a wait for a keyframe) when it has one. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 
@@ -87,8 +90,9 @@ public:
     void set_stream(bool live, bool frozen);
 
     /* The status for the app, with decode the capture and decode part of
-     * the line; true once per change. */
-    FeedStatus status(const std::string &decode) const;
+     * the line and stream why the picture is not whole (empty: it is);
+     * take_changed is true once per change of the feed's own part. */
+    FeedStatus status(const std::string &decode, const std::string &stream = std::string()) const;
     bool take_changed();
     /* The renderer's own status text (targets, layers, the upload cap),
      * asked for again once the last request is answered. */

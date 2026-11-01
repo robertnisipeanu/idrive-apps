@@ -152,6 +152,9 @@ int main()
     ok("granted: showing, with the decoded frame in the slot's scene",
        r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
+    const std::string through = "lost part of the stream at 12:39:50; decoding through it";
+    ok("showing carries the stream's reason", r.feed->status("decode", through).state == "showing" &&
+                                                  r.feed->status("decode", through).reason == through);
 
     r.port.steal(r.sc.targets[0]);
     r.pump(20, &f1);
@@ -197,6 +200,8 @@ int main()
     const int releases = r.port.releases;
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
+    const std::string waiting = "waiting for a keyframe since 12:40:50; resync held: recmgr did not load a carplay restart entry this boot";
+    ok("idle while the stream is live carries the stream's reason", r.feed->status("decode", waiting).reason == waiting);
     r.pump(2000);   /* the fade out, then the linger */
     ok("and the slot is released after the linger",
        r.port.releases > releases && !r.port.row(0x100, 0x010004f0));
@@ -214,10 +219,8 @@ int main()
        r.map_layer() && r.st().state == "showing");
 
     /* the governor counts evidence seen while writes go */
-    for (int i = 0; i < 2; i++) {
-        r.svc->compositor().governor().activity(r.now);
-        r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
-    }
+    r.svc->compositor().governor().activity(r.now);
+    r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
     r.pump(100, &f1);
     ok("a lowered shared upload cap shows on the status line",
        r.st().page.find("upload cap 5500 KB/s") != std::string::npos);
@@ -241,6 +244,7 @@ int main()
     ok("the stream not live: the layer hidden, idle, and the slot released, the parked stock map shown",
        r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
            !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
+    ok("and no stream reason", r.feed->status("decode", waiting).reason.empty());
     r.feed->set_stream(true, false);
     r.pump(1200, &f1);
     ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");

@@ -19,6 +19,11 @@ Group=hmi_5000
 # on the car: root could join media_transport.avb_streaming.15, hmi_5000
 # could not). tm_oap_app opens the cluster renderer's socket.
 SupplementaryGroups=mgu_ufipc tm_oap_app
+# Lets the receive threads, which only copy each packet of the phone's
+# stream into the decode queue, run at nice -5, the HMI's own level, so a
+# busy unit does not delay them; the decode thread stays at nice 0. The
+# stock media units grant LimitNICE or LimitRTPRIO the same way.
+LimitNICE=-5
 RuntimeDirectory=waze-on-cluster
 # World-traversable so the carplay uid can reach the FIFO (file group-restricted)
 # and the diagnostics uid can read status.json; the files set their own modes.

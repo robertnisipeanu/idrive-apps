@@ -209,7 +209,7 @@ bool StatusLog::due(const FeedStatus &s)
     return true;
 }
 
-FeedStatus MapFeed::status(const std::string &decode) const
+FeedStatus MapFeed::status(const std::string &decode, const std::string &stream) const
 {
     FeedStatus s;
     s.target = cfg_.target;
@@ -238,6 +238,7 @@ FeedStatus MapFeed::status(const std::string &decode) const
         char p[400];
         std::snprintf(p, sizeof p, "Waze map — %d frames/s (%s%s)", rate_, decode.c_str(), cap);
         s.page = p;
+        s.reason = stream;
     } else if (layer_state_ == "waiting" || layer_state_ == "suspended") {
         s.state = "starting";
         s.page = decode;
@@ -254,8 +255,9 @@ FeedStatus MapFeed::status(const std::string &decode) const
         s.reason = layer_reason_;
         s.page = decode;
     } else {
-        s.state = "idle";   /* stalled: no frames yet, or the stream stopped */
+        s.state = "idle";   /* stalled: no frames yet, or none for idle_ms */
         s.page = decode;
+        s.reason = stream;
     }
     return s;
 }

@@ -453,8 +453,9 @@ function waitCarplayActive(tries, cb) {
 }
 
 /* Stream resync. The phone sends SPS, PPS and an IDR only when a stream
- * starts, so a render that joined after the start (it restarted, or lost RTP
- * sync) decodes nothing until the next stream (PATCH.md "Stream resync"). The
+ * starts, so a render that joined after the start (it restarted), or whose
+ * decoder gave up its sequence, decodes nothing until the next stream
+ * (PATCH.md "Stream resync"). The
  * render reports, each second, how long the stream has arrived with no
  * keyframe and nothing decoded (STREAM_STATE); past RESYNC_AFTER_MS patchd
  * restarts carplay as it activates a patch (restartCarplay), and the phone
@@ -464,7 +465,8 @@ function waitCarplayActive(tries, cb) {
  * RESYNC_MAX a head-unit start. The counts sit next to the socket, so a
  * patchd restart keeps them and a head-unit start clears them;
  * RESYNC_RESET_MS without a wait sets the spacing back to its first step.
- * The report is in the render's own directory, so it is read as a small
+ * The record also holds why a due resync waits ("held", null when none),
+ * which the render shows in its status. The report is in the render's own directory, so it is read as a small
  * regular file, never through a link and never blocking. */
 var STREAM_STATE = process.env.WOC_STREAM_STATE || path.join(path.dirname(FIFO), 'stream.json');
 var STREAM_STALE_MS = 5000;   /* older: the render is not reporting */
@@ -482,7 +484,7 @@ try {
 var calmSince = null, resyncHeld = null, resyncing = false;
 
 function saveResync() {
-    try { fs.writeFileSync(RESYNC_FILE, JSON.stringify(resync) + '\n'); } catch (e) { log('resync state: ' + e.message); }
+    try { fs.writeFileSync(RESYNC_FILE, JSON.stringify(Object.assign({ held: resyncHeld }, resync)) + '\n'); } catch (e) { log('resync state: ' + e.message); }
 }
 
 function streamWait() {
@@ -501,10 +503,13 @@ function streamWait() {
     }
 }
 
-/* Logs why a due resync waits, once per reason. */
+/* Logs and records why a due resync waits, once per reason; null: it does
+ * not. */
 function holdResync(reason) {
-    if (resyncHeld !== reason) log('resync held: ' + reason);
+    if (resyncHeld === reason) return;
+    if (reason) log('resync held: ' + reason);
     resyncHeld = reason;
+    saveResync();
 }
 
 function checkResync() {
@@ -512,7 +517,7 @@ function checkResync() {
     var now = Date.now(), wait = streamWait();
     if (wait === null) return;
     if (wait === 0) {
-        resyncHeld = null;
+        holdResync(null);
         if (calmSince === null) calmSince = now;
         if (resync.attempts > 0 && now - calmSince >= RESYNC_RESET_MS) {
             resync.attempts = 0;

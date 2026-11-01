@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Robert Nisipeanu
 # waze-on-cluster. See README.md.
 #
-#   make test                 host build + NAL, RTP, keyframe wait, the map feed
+#   make test                 host build + NAL, RTP, receive queue, stream health, keyframe wait, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             patchd patch/install activation/DLT, capture and
 #                             boot-recovery tests
@@ -42,7 +42,7 @@ VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
 # geometry, and the shared renderer's client.
 WOC_SRC = src/main.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp \
-          src/decoder_msdk.cpp src/nal_reader.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
+          src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
 CR_SRC  = $(CR)/client/client.cpp $(CR)/client/protocol.cpp
 SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp
@@ -64,7 +64,7 @@ test: test-cpp
 
 test-cpp: $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/host/udp_probe_test \
 		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
-		$(BUILD)/host/alt_screen_test
+		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/stream_health_test
 	$(BUILD)/host/nal_reader_test
 	$(BUILD)/host/rtp_h264_test test/data/stream15_start.rtp
 	$(BUILD)/host/udp_probe_test
@@ -72,6 +72,8 @@ test-cpp: $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/hos
 	$(BUILD)/host/keyframe_wait_test
 	$(BUILD)/host/freeze_watch_test
 	$(BUILD)/host/alt_screen_test
+	$(BUILD)/host/packet_queue_test
+	$(BUILD)/host/stream_health_test
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -119,6 +121,14 @@ $(BUILD)/host/freeze_watch_test: test/freeze_watch_test.cpp src/freeze_watch.cpp
 $(BUILD)/host/alt_screen_test: test/alt_screen_test.cpp src/alt_screen.cpp src/alt_screen.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/alt_screen_test.cpp src/alt_screen.cpp
+
+$(BUILD)/host/packet_queue_test: test/packet_queue_test.cpp src/packet_queue.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/packet_queue_test.cpp -lpthread
+
+$(BUILD)/host/stream_health_test: test/stream_health_test.cpp src/stream_health.cpp src/stream_health.h $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/stream_health_test.cpp src/stream_health.cpp $(CR)/src/log.cpp -lpthread
 
 # ---- target binary (in Docker) --------------------------------------------
 target:

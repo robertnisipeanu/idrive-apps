@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+While CarPlay's stream is live but shows no map, the status says why, from
+waze-on-cluster 0.7.2 on: "Patched — waiting for a keyframe since 12:40:50;
+resync held: …". A map decoding through a lost part of the stream shows
+"Showing: … — lost part of the stream at 12:39:50; decoding through it".
+
 ## 0.4.0
 
 The page says to set Instrument cluster > Central display area to Map view:

@@ -19,7 +19,11 @@
  * to it at the next SPS, and B frames before that come out of order.
  *
  * Decoding starts at the first access unit that carries an SPS; anything
- * before it is dropped. A new SPS that needs a larger picture or more
+ * before it is dropped. Damaged or incomplete access units (a lost packet)
+ * are decoded as they are: MSDK conceals what is missing and flags the frame
+ * (VideoFrame::corrupted). An access unit that fails to decode is skipped;
+ * only kFailLimit in a row give the sequence up, and the decoder then waits
+ * for the next SPS (decoding() false). A new SPS that needs a larger picture or more
  * surfaces restarts the decoder, in a new MSDK session, from that access
  * unit. With out_w/out_h 0 the output is the size of the sequence the
  * decoder was last started for.
@@ -54,7 +58,8 @@
 namespace woc {
 
 struct VideoFrame {
-    uint32_t w, h;   /* the picture's size */
+    uint32_t w, h;        /* the picture's size */
+    uint16_t corrupted;   /* MSDK's mfxFrameData::Corrupted flags; 0: decoded whole */
     /* Its atlas, w x atlas_height(h) bytes, the decoder's buffer. The sink
      * may change it in place, or swap it for another buffer (the decoder
      * sizes what it gets back for the next frame). Valid until the next
@@ -65,6 +70,7 @@ struct VideoFrame {
 class Decoder {
 public:
     using FrameSink = std::function<void(const VideoFrame &)>;
+    static const int kFailLimit = 30;
 
     Decoder();
     ~Decoder();
@@ -78,8 +84,7 @@ public:
     /* Feeds Annex-B bytes, split anywhere; cb gets each decoded frame.
      * end_of_au: the bytes end exactly at the end of an access unit (one
      * whole frame per call), so that frame is decoded now instead of when the
-     * next one starts. Returns false on a hard decode error; the decoder then
-     * waits for the next SPS. If errors repeat, shutdown() and init() again. */
+     * next one starts. Returns false when an access unit failed to decode. */
     bool feed(const uint8_t *data, size_t len, const FrameSink &cb, std::string *err, bool end_of_au = false);
 
     /* End of stream: decodes what is buffered and delivers every remaining
@@ -87,6 +92,10 @@ public:
     void flush(const FrameSink &cb);
 
     void shutdown();
+
+    /* Initialised and holding a sequence: false before the first SPS and
+     * after a sequence was given up, until the next SPS. */
+    bool decoding() const;
 
 private:
     struct State;
