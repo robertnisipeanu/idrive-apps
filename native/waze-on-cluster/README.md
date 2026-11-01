@@ -62,10 +62,10 @@ loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
 otherwise the app shows **Restart head unit**, a normal system reboot.
 
 The tool puts `carplay` on recmgr's restart list (the deploy tool writes it
-into both sections at install and takes it out at removal), so from the next
-head-unit start a CarPlay crash no longer restarts the whole head unit. The
-patched CarPlay first runs at that same start, so it never runs without the
-entry.
+into both sections at install and takes it out at removal). From the next
+head-unit start after the install, a CarPlay crash leaves the head unit
+running instead of restarting it. On a fresh install the patched CarPlay
+first runs at that same start.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
