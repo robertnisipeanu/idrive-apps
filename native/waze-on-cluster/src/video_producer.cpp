@@ -45,7 +45,7 @@ VideoProducer::VideoProducer(const VideoConfig &cfg)
       change_(cfg.tex_width, cfg.tex_height), freeze_(cfg.freeze)
 {
     rtp_sink_ = [this](const uint8_t *d, size_t n, bool end_of_au) { on_nal(d, n, end_of_au); };
-    rtp_.on_gap = [this](const RtpH264::Gap &g) { on_gap(g); };
+    rtp_.on_gap = [this](const RtpH264::Gap &g) { gaps_.gap(g, packet_->source, packet_->dropped); };
     if (pipe2(ready_, O_NONBLOCK | O_CLOEXEC) < 0)
         ready_[0] = ready_[1] = -1;
     decode_thread_ = std::thread(&VideoProducer::decode_loop, this);
@@ -151,12 +151,12 @@ std::string VideoProducer::probe_report() const
         char line[448];
         std::snprintf(line, sizeof line,
                       "rtp: packets=%llu nals=%llu aus=%llu seq_gaps=%llu lost=%llu dropped=%llu bad=%llu\n"
-                      "queue: %llu dropped, at most %zu of %zu packets waiting\n"
+                      "queue: %llu dropped, at most %zu of %zu packets waiting, %zu KB held\n"
                       "decoder: %s (%llu frames decoded)%s\n",
                       (unsigned long long)st.packets, (unsigned long long)st.nals, (unsigned long long)st.aus,
                       (unsigned long long)st.gaps, (unsigned long long)st.lost, (unsigned long long)st.dropped,
                       (unsigned long long)st.bad, (unsigned long long)queue_.overflows(), queue_.high_water(),
-                      kQueuePackets,
+                      kQueuePackets, queue_.held_bytes() / 1024,
                       !decoder_up_ ? "waiting for the stream's first SPS" : decoding_ ? "up" : "waiting for a keyframe",
                       (unsigned long long)decoded_total_.load(), wait);
         r += line;
@@ -209,14 +209,6 @@ void VideoProducer::feed_datagram(const PacketQueue::Packet &p)
     feed_fifo(data, len);
 }
 
-void VideoProducer::on_gap(const RtpH264::Gap &g)
-{
-    std::lock_guard<std::mutex> lock(frame_mutex_);
-    const std::string line = health_.loss(cld::now_ms(), wall_ms(), source_name(packet_->source), g.expected, g.got,
-                                          g.lost, packet_->dropped);
-    if (!line.empty())
-        log_warn("%s", line.c_str());
-}
 
 void VideoProducer::feed_fifo(const uint8_t *data, size_t len)
 {
@@ -242,8 +234,23 @@ void VideoProducer::feed_fifo(const uint8_t *data, size_t len)
 
 void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
 {
-    if (len > 0)
+    if (len > 0) {
         probe_.nal(data[4]);
+        const GapSettler::Outcome o = gaps_.nal(data[4] & 0x1f);
+        if (o != GapSettler::None) {
+            const RtpH264::Gap &g = gaps_.settled();
+            const char *src = source_name(gaps_.source());
+            std::lock_guard<std::mutex> lock(frame_mutex_);
+            const std::string line = o == GapSettler::NewStream
+                                         ? health_.new_stream(cld::now_ms(), src, g.expected, g.got)
+                                         : health_.loss(cld::now_ms(), wall_ms(), src, g.expected, g.got, g.lost,
+                                                        gaps_.dropped());
+            if (!line.empty())
+                log_warn("%s", line.c_str());
+        }
+    } else {
+        gaps_.au_end();   /* decode() below delivers its frame */
+    }
     if (!decoder_up_) {
         /* The stream starts at its SPS; nothing before it decodes. A failed
          * start is retried at the next SPS. */
@@ -306,7 +313,7 @@ void VideoProducer::on_frame(const VideoFrame &f)
     const bool sized = f.w == cfg_.tex_width && f.h == cfg_.tex_height;
     const bool changed = sized && change_.changed(f.atlas->data());
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    const std::string line = health_.frame(cld::now_ms(), f.corrupted);
+    const std::string line = health_.frame(cld::now_ms(), f.corrupted, gaps_.after_loss());
     if (!line.empty())
         log_info("%s", line.c_str());
     if (sized) {
@@ -373,10 +380,22 @@ bool VideoProducer::minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::
     return true;
 }
 
-std::string VideoProducer::stream_reason(int64_t now_ms, const std::string &resync_held) const
+std::string VideoProducer::stream_reason(int64_t now_ms, const ResyncState &resync) const
 {
     std::lock_guard<std::mutex> lock(frame_mutex_);
-    return health_.reason(now_ms, resync_held);
+    return health_.reason(keyframe_wait_ms(now_ms), resync);
+}
+
+std::string VideoProducer::stream_detail(int64_t now_ms, const ResyncState &resync) const
+{
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    return health_.detail(wall_ms(), keyframe_wait_ms(now_ms), resync);
+}
+
+bool VideoProducer::stream_lost(int64_t now_ms) const
+{
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    return health_.lost(keyframe_wait_ms(now_ms));
 }
 
 void VideoProducer::track_keyframe_wait(int64_t now_ms)

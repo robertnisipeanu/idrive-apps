@@ -404,7 +404,7 @@ class WazeClusterControl extends EventEmitter {
         case 'frozen':
             return 'Map frozen — reconnect CarPlay';
         default:
-            return `Patched — ${(rs && rs.reason) || 'waiting for CarPlay'}`;
+            return (rs && rs.reason) || 'Patched — waiting for CarPlay';
         }
     }
 

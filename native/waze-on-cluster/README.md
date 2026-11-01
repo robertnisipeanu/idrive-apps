@@ -111,7 +111,9 @@ their full rate.
 A render that missed the stream's start decodes nothing until a new stream.
 Where recmgr allows a CarPlay restart, `patchd` restarts CarPlay after 15 s of
 stream with no keyframe, rate-limited (PATCH.md "Stream resync"); elsewhere,
-reconnect the phone.
+reconnect the phone. If a patched CarPlay crash-loops,
+`waze-on-cluster-recovery.service` restores the original binary on disk
+(PATCH.md "Boot recovery").
 
 **Losses.** The phone sends a keyframe only at the start of its stream, so
 the render decodes through a lost packet:
@@ -120,10 +122,11 @@ the render decodes through a lost packet:
   queue of 4096 packets or 6 MB (about 4 s of the stream) and return; one
   decode thread depacketises and decodes them in order. A decode that falls
   behind delays the picture; past the queue's headroom the oldest packets
-  are dropped, and counted. The receive threads run at nice -5 (the unit
-  file's `LimitNICE`), the decode thread at the service's nice 0. The FIFO
-  reader, a byte stream that holds its writer back, decodes on its own
-  thread.
+  are dropped, and counted. A slot keeps a buffer of at most 2 KB once its
+  packet is out, so large datagrams leave no memory behind. The receive
+  threads run at nice -5 (the unit file's `LimitNICE`), the decode thread
+  at the service's nice 0. The FIFO reader, a byte stream that holds its
+  writer back, decodes on its own thread.
 - A sequence gap drops only the NAL unit it cut (an FU-A); every slice after
   it goes to the decoder, which conceals what is missing. The frames are
   shown as decoded: the map can show smudges until the phone codes those
@@ -132,20 +135,27 @@ the render decodes through a lost packet:
   30 access units in a row that fail to decode give the sequence up; the
   decoder then waits for a keyframe as at the start, and the resync above
   applies.
-- Each loss is logged with the jump and its source, and whether the receive
-  queue dropped it (`waze: lost 5 packets of the stream from avb (sequence
-  1240, expected 1235); decoding through it`), and so are the first
-  corrupted frame after it and the first clean one (`waze: the picture is
-  clean again 150 ms after the loss at 12:39:50 (3 corrupted frames)`), at
-  most 10 such lines a minute.
-- While frames are corrupted after a loss, or missing, the status's
-  `reason` says so: `lost part of the stream at 12:39:50; decoding through
-  it` (`; nothing decoded since` when no frame has come for 2 s), or, after
-  the decoder gave up, `waiting for a keyframe since 12:40:50; resync held:
-  recmgr did not load a carplay restart entry this boot` with `patchd`'s
-  reason when it holds the resync. The app shows it after the status. If a patched CarPlay crash-loops,
-`waze-on-cluster-recovery.service` restores the original binary on disk
-(PATCH.md "Boot recovery").
+- A gap followed by an SPS is a new stream (the phone reconnected or
+  CarPlay asked for a new one), logged as `waze: a new stream from avb
+  (sequence 40000, expected 17)`, not a loss. Any other gap is a loss,
+  logged with the jump, its source and whether the receive queue dropped
+  it (`waze: lost 5 packets of the stream from avb (sequence 1240, expected
+  1235); decoding through it`), and so are the first corrupted frame after
+  it and the first clean one begun after it (`waze: the picture is clean
+  again 150 ms after the loss at 12:39:50 (3 corrupted frames)`), at most
+  10 such lines a minute.
+- The status's `reason`, which the app shows, is `Lost part of the stream —
+  decoding through it` from a loss until that clean frame. It is `Stream
+  lost — reconnect CarPlay`, or `Stream lost — restarting CarPlay` where
+  `patchd` will restart it (its resync record says it holds no resync),
+  while the stream arrives with nothing decoded for 2 s (a render started
+  mid-stream, or a loss the decoder does not decode through) and while the
+  decoder has given up its sequence. The detail, with the times and
+  `patchd`'s reason for holding the resync, is in the log (`waze: stream
+  lost: the stream arrives with nothing decoded since 12:40:50; resync
+  held: recmgr did not load a carplay restart entry this boot`) and in
+  `probe.txt`'s `stream:` line. A status line whose only change is the
+  stream's reason is logged at most once every 10 s.
 
 From a shell, `waze-on-cluster -c <conf> run map|panel|hud` (`sail` is an
 alias of `map`) sets the target until the service restarts and prints the
@@ -158,7 +168,8 @@ Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):
 frozen or error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
 sources, the depacketiser (`rtp: packets nals aus seq_gaps lost dropped bad`),
-the receive queue (`queue: N dropped, at most M of 4096 packets waiting`), the
+the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
+held`), the stream (`stream: whole` or the detail above), the
 decoder, the late-join verdict, the noise filter's tile differences and the
 renderer's own status; and `stream.json`, for `patchd`'s resync. `patchd`
 answers `{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own

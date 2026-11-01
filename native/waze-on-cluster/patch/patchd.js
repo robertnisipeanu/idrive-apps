@@ -465,8 +465,9 @@ function waitCarplayActive(tries, cb) {
  * RESYNC_MAX a head-unit start. The counts sit next to the socket, so a
  * patchd restart keeps them and a head-unit start clears them;
  * RESYNC_RESET_MS without a wait sets the spacing back to its first step.
- * The record also holds why a due resync waits ("held", null when none),
- * which the render shows in its status. The report is in the render's own directory, so it is read as a small
+ * The record also holds why a resync would wait while the stream waits for
+ * a keyframe ("held", null when it would go), which the render shows; patchd
+ * rewrites it at start, so it never carries a previous process's reason. The report is in the render's own directory, so it is read as a small
  * regular file, never through a link and never blocking. */
 var STREAM_STATE = process.env.WOC_STREAM_STATE || path.join(path.dirname(FIFO), 'stream.json');
 var STREAM_STALE_MS = 5000;   /* older: the render is not reporting */
@@ -512,6 +513,19 @@ function holdResync(reason) {
     saveResync();
 }
 
+/* Why a due resync would wait; null: it would go. */
+function resyncHold(now) {
+    if (busy || quitting || rebooting) return 'another operation is running';
+    if (resync.total >= RESYNC_MAX) return RESYNC_MAX + ' attempts this head-unit start';
+    if (resync.attempts > 0) {
+        if (now < resync.last) resync.last = now;   /* the clock went back: a full spacing from now */
+        var spacing = RESYNC_SPACING_MS[Math.min(resync.attempts, RESYNC_SPACING_MS.length) - 1];
+        if (now - resync.last < spacing) return 'attempt ' + (resync.attempts + 1) + ' waits ' + Math.round(spacing / 1000) + ' s after the last';
+    }
+    if (!recmgrLoaded('carplay')) return 'recmgr did not load a carplay restart entry this boot';
+    return null;
+}
+
 function checkResync() {
     if (resyncing) return;
     var now = Date.now(), wait = streamWait();
@@ -527,16 +541,10 @@ function checkResync() {
         return;
     }
     calmSince = null;
-    if (wait < RESYNC_AFTER_MS) return;
-    if (busy || quitting || rebooting) { holdResync('another operation is running'); return; }
-    if (resync.total >= RESYNC_MAX) { holdResync(RESYNC_MAX + ' attempts this head-unit start'); return; }
-    if (resync.attempts > 0) {
-        if (now < resync.last) resync.last = now;   /* the clock went back: a full spacing from now */
-        var spacing = RESYNC_SPACING_MS[Math.min(resync.attempts, RESYNC_SPACING_MS.length) - 1];
-        if (now - resync.last < spacing) { holdResync('attempt ' + (resync.attempts + 1) + ' waits ' + Math.round(spacing / 1000) + ' s after the last'); return; }
-    }
-    if (!recmgrLoaded('carplay')) { holdResync('recmgr did not load a carplay restart entry this boot'); return; }
-    resyncHeld = null;
+    /* Decided from the wait's start, so the render can say at once whether
+     * CarPlay will be restarted. */
+    holdResync(resyncHold(now));
+    if (resyncHeld || wait < RESYNC_AFTER_MS) return;
     resync = { attempts: resync.attempts + 1, last: now, total: resync.total + 1 };
     saveResync();
     /* Not busy: the patch state the app shows is unchanged; apply, revert
@@ -1145,6 +1153,7 @@ function main() {
         setInterval(function () {
             captureCommand('status', function (state) { send({ ev: 'capture', capture: state }); });
         }, 1000);
+        saveResync();   /* no hold reason from a previous process */
         setInterval(checkResync, RESYNC_POLL_MS);
     }); });
     server.on('error', function (e) { process.stderr.write('patchd: ' + e.message + '\n'); process.exit(1); });

@@ -84,7 +84,8 @@ public:
     /* Feeds Annex-B bytes, split anywhere; cb gets each decoded frame.
      * end_of_au: the bytes end exactly at the end of an access unit (one
      * whole frame per call), so that frame is decoded now instead of when the
-     * next one starts. Returns false when an access unit failed to decode. */
+     * next one starts. Returns false, with *err, when an access unit failed
+     * to decode or a sequence could not start, or before init(). */
     bool feed(const uint8_t *data, size_t len, const FrameSink &cb, std::string *err, bool end_of_au = false);
 
     /* End of stream: decodes what is buffered and delivers every remaining

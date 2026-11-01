@@ -89,7 +89,7 @@ $(BUILD)/host/nal_reader_test: test/nal_reader_test.cpp src/nal_reader.cpp src/n
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/nal_reader_test.cpp src/nal_reader.cpp
 
-$(BUILD)/host/rtp_h264_test: test/rtp_h264_test.cpp src/rtp_h264.cpp src/rtp_h264.h src/nal_reader.cpp src/nal_reader.h
+$(BUILD)/host/rtp_h264_test: test/rtp_h264_test.cpp src/rtp_h264.cpp src/rtp_h264.h src/gap_settler.h src/nal_reader.cpp src/nal_reader.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/rtp_h264_test.cpp src/rtp_h264.cpp src/nal_reader.cpp
 

@@ -130,9 +130,8 @@ test('the map follows the stream; the app sends the render nothing', async (rend
     assert(seen.includes('Starting map…'), `status lines rendered on change: ${JSON.stringify(seen)}`);
     render.stream(false);
     await until('stream stopped', () => c.statusText() === 'Patched — waiting for CarPlay');
-    const waiting = 'waiting for a keyframe since 12:40:50; resync held: recmgr did not load a carplay restart entry this boot';
-    render.announce('idle', waiting);
-    await until('idle with the stream\'s reason', () => c.statusText() === `Patched — ${waiting}`);
+    render.announce('idle', 'Stream lost — reconnect CarPlay');
+    await until('idle with the stream\'s reason', () => c.statusText() === 'Stream lost — reconnect CarPlay');
     assert.deepStrictEqual(render.received, [], 'no command to the render');
     assert.strictEqual(c.show, undefined);
     assert.strictEqual(c.stop, undefined);

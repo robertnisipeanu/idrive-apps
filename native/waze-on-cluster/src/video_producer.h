@@ -27,8 +27,10 @@
  *
  * Losses (stream_health.h). A lost packet costs only the NAL unit it was in
  * (rtp_h264.h); the decoder decodes through it and the frames it flags
- * corrupted are shown all the same. Each loss is logged with its source and
- * whether the receive queue dropped it. */
+ * corrupted are shown all the same. A gap is a new stream or a loss
+ * (gap_settler.h), a loss logged with its source and whether the receive
+ * queue dropped it; only a frame of an access unit begun after the latest
+ * loss can end a decode-through episode. */
 #ifndef WOC_VIDEO_PRODUCER_H
 #define WOC_VIDEO_PRODUCER_H
 
@@ -43,6 +45,7 @@
 #include "freeze_watch.h"
 #include "frame_clock.h"
 #include "framing_probe.h"
+#include "gap_settler.h"
 #include "h264_source.h"
 #include "keyframe_wait.h"
 #include "packet_queue.h"
@@ -97,8 +100,12 @@ public:
      * while frames come, with the stream's losses and corrupted frames and
      * the receive queue's overflows since the last time. Main thread. */
     bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, uint64_t *overflows);
-    /* Why the picture is not whole (stream_health.h); empty when it is. */
-    std::string stream_reason(int64_t now_ms, const std::string &resync_held) const;
+    /* Why the picture is not whole, as the status's short reason and as
+     * the detail for the log and probe.txt (stream_health.h); empty when it
+     * is. Main thread (the keyframe wait). */
+    std::string stream_reason(int64_t now_ms, const ResyncState &resync) const;
+    std::string stream_detail(int64_t now_ms, const ResyncState &resync) const;
+    bool stream_lost(int64_t now_ms) const;
     /* Decode errors so far, and the last one's text in *last. */
     uint32_t decode_errors(std::string *last) const;
     /* Readable once a frame waits to be taken. */
@@ -135,7 +142,7 @@ private:
      * taken as raw Annex-B. Recorded for the framing probe either way. On the
      * decode thread. */
     void feed_datagram(const PacketQueue::Packet &p);
-    void on_gap(const RtpH264::Gap &g);
+
     /* One FIFO read (raw Annex-B), on the FIFO thread. */
     void feed_fifo(const uint8_t *data, size_t len);
     /* Depacketiser output: one NAL unit, or an access unit end. Brings the
@@ -159,11 +166,12 @@ private:
     RtpH264 rtp_;
     RtpH264::Sink rtp_sink_;   /* built once, so a packet allocates nothing */
     /* Serialises the decode thread and the FIFO reader: guards decoder_,
-     * decoder_up_, decoding_, rtp_, packet_ and raw_retry_ms_. */
+     * decoder_up_, decoding_, rtp_, packet_, gaps_ and raw_retry_ms_. */
     mutable std::mutex decode_mutex_;
     bool decoder_up_ = false, fifo_up_ = false, udp_up_ = false, avb_up_ = false;
     bool decoding_ = false;          /* the decoder held a sequence after the last feed */
     const PacketQueue::Packet *packet_ = nullptr;   /* the datagram being depacketised */
+    GapSettler gaps_;
     int64_t raw_retry_ms_ = 0;       /* a raw feed's next decoder start attempt */
     int64_t source_retry_ms_ = 0;    /* retry_sources' next attempt */
 

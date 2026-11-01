@@ -9,7 +9,10 @@
  * the last 3 fragments of an FU-A from the previous stream, then the new
  * stream's first SPS, PPS, IDR and 4 P slices, all single NAL units. The
  * capture stops there: the next frame draws the route and street names.
- * ffmpeg decodes the depacketised stream as 1920x900 High@4.2. */
+ * ffmpeg decodes the depacketised stream as 1920x900 High@4.2. The gap
+ * settler (gap_settler.h) runs on the same packets: a new stream or a loss,
+ * and which pictures began after the loss. */
+#include "../src/gap_settler.h"
 #include "../src/nal_reader.h"
 #include "../src/rtp_h264.h"
 
@@ -362,6 +365,63 @@ static void golden_with_gaps(const char *path)
     CHECK(types == want_types);
 }
 
+/* The depacketiser into the settler, as the producer wires them: each
+ * settled gap's outcome, and for each picture end whether it began after
+ * the latest loss. */
+struct Settled {
+    std::vector<int> outcomes;
+    std::vector<bool> after;
+};
+
+static Settled settle(const std::vector<Bytes> &pkts)
+{
+    RtpH264 r;
+    GapSettler gs;
+    Settled out;
+    r.on_gap = [&](const RtpH264::Gap &g) { gs.gap(g, 1, 0); };
+    const RtpH264::Sink sink = [&](const uint8_t *d, size_t n, bool eoa) {
+        if (eoa) {
+            out.after.push_back(gs.after_loss());
+            gs.au_end();
+            return;
+        }
+        (void)n;
+        const GapSettler::Outcome o = gs.nal(d[4] & 0x1f);
+        if (o != GapSettler::None) out.outcomes.push_back(o);
+    };
+    for (const Bytes &p : pkts) r.push(p.data(), p.size(), sink);
+    return out;
+}
+
+static void gaps_settled(const char *path)
+{
+    std::vector<Bytes> pkts;
+    CHECK(read_fixture(path, &pkts));
+    if (pkts.size() != 10) return;
+
+    /* The capture: the jump to the new stream's SPS is a new stream. */
+    Settled a = settle(pkts);
+    CHECK(a.outcomes == std::vector<int>{GapSettler::NewStream});
+    CHECK(a.after == std::vector<bool>(4, true));
+
+    /* The first P slice lost: a loss; the IDR's picture, ended by the
+     * packet after the gap, is not after it; the next ones are. */
+    std::vector<Bytes> cut;
+    for (size_t k = 0; k < pkts.size(); k++)
+        if (k != 6) cut.push_back(pkts[k]);
+    Settled b = settle(cut);
+    CHECK((b.outcomes == std::vector<int>{GapSettler::NewStream, GapSettler::Loss}));
+    CHECK((b.after == std::vector<bool>{false, true, true}));
+
+    /* A slice lost inside a picture: that picture is not after the loss,
+     * though the loss settles at its next slice. */
+    const Bytes s1 = {0x41, 0x9a, 0x01}, s3 = {0x41, 0x9a, 0x03};
+    Settled c = settle({rtp(1, 1000, false, s1), rtp(3, 1000, false, s3), rtp(4, 2500, false, kP),
+                        rtp(5, 4000, false, kP)});
+    CHECK(c.outcomes == std::vector<int>{GapSettler::Loss});
+    CHECK((c.after == std::vector<bool>{false, true}));
+}
+
 int main(int argc, char **argv)
 {
     single_nal_units();
@@ -377,6 +437,7 @@ int main(int argc, char **argv)
     unsupported_types_dropped();
     golden_stream15(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
     golden_with_gaps(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
+    gaps_settled(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

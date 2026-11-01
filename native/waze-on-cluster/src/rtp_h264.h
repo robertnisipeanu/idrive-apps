@@ -65,9 +65,6 @@ public:
      * packet with a parseable H.264 payload. */
     bool push(const uint8_t *pkt, size_t len, const Sink &sink);
 
-    /* Forget the stream: the next packet starts a new one. */
-    void reset();
-
     const Stats &stats() const { return stats_; }
 
     std::function<void(const Gap &)> on_gap;

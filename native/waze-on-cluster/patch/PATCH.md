@@ -164,8 +164,8 @@ and the map shows smudges until the phone codes those areas again (README
 ### Stream resync
 
 A render that missed the start (it restarted), or whose decoder gave up its
-sequence after decode errors in a row, decodes nothing until a new stream, and nothing on the head unit asks the phone for a
-keyframe. A new CarPlay session brings a new stream, so `patchd` restarts
+sequence after decode errors in a row, decodes nothing until a new stream,
+and nothing on the head unit asks the phone for a keyframe. A new CarPlay session brings a new stream, so `patchd` restarts
 CarPlay the way it activates a patch:
 
 - About once a second the render writes `stream.json`: how long the stream
@@ -183,6 +183,11 @@ CarPlay the way it activates a patch:
   in `/dev/shm/waze-on-cluster/resync.json`, so they survive a `patchd`
   restart and clear at a head-unit start. Each attempt, and each held one
   with its reason, is in `patchd`'s log.
+- From the first report of a wait, `patchd` decides whether a resync would
+  go and records why not as `held` in the same file (null when it would
+  go; rewritten null at each `patchd` start). The render reads it each
+  second: its status says `Stream lost — restarting CarPlay` or `Stream
+  lost — reconnect CarPlay`, and its log and `probe.txt` give the reason.
 
 On the car the stream resumed after a CarPlay restart; the restart also ends
 the main-screen session until the phone reconnects. With a stock restart list

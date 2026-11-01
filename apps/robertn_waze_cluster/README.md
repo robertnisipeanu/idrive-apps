@@ -31,7 +31,7 @@ One `LT_State_Wide` page:
 
 | Row | What it does |
 |---|---|
-| status | the patch and map state: `Patch pending — reboot to activate`, `Removal pending — reboot to finish`, `Original — enable the map`, `Not patched — <reason>`, `Applying patch…`, `Patched — waiting for CarPlay`, `Patched — waiting for a keyframe since 12:40:50; resync held: …`, `Starting map…`, `Showing: Waze map — 16 frames/s …`, `Map frozen — reconnect CarPlay`, `Map error: …`, `Patch service unavailable (reboot may be needed)` |
+| status | the patch and map state: `Patch pending — reboot to activate`, `Removal pending — reboot to finish`, `Original — enable the map`, `Not patched — <reason>`, `Applying patch…`, `Patched — waiting for CarPlay`, `Stream lost — reconnect CarPlay`, `Stream lost — restarting CarPlay`, `Starting map…`, `Showing: Waze map — 16 frames/s …`, `Map frozen — reconnect CarPlay`, `Map error: …`, `Patch service unavailable (reboot may be needed)` |
 | setup | `Set Instrument cluster > Central display area to Map view`, always shown |
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |

@@ -3,7 +3,8 @@
 /* Host test for the receive queue (packet_queue.h): packets come out in
  * order; an overflow drops the oldest, is counted, and the next packet out
  * says how many went before it; a consumer that stalls for a while within
- * the queue's headroom loses nothing. */
+ * the queue's headroom loses nothing; large datagrams leave no large buffer
+ * behind. */
 #include <cstdio>
 #include <thread>
 
@@ -89,6 +90,25 @@ int main()
         }
         producer.join();
         ok("a slow consumer loses nothing within the headroom, in order", next == total && in_order && q.overflows() == 0);
+    }
+    {
+        /* Datagrams of 60 KB through a queue of the stream's bounds: the
+         * slots keep no buffer that large once the packets are out. */
+        PacketQueue q(4096, 6 << 20);
+        PacketQueue::Packet p;
+        for (int round = 0; round < 50; round++) {
+            push_n(q, 0, 100, 60000, 1);
+            while (q.pop(&p, 0)) {
+            }
+        }
+        ok("large datagrams leave at most 2 KB a slot behind", q.held_bytes() <= 4096 * PacketQueue::kKeepBytes &&
+                                                                    q.held_bytes() < 1000000 && q.overflows() == 0);
+        bool popped = true;
+        for (int k = 0; k < 2; k++) {
+            push_n(q, 0, 1, 1400, 1);
+            popped = popped && q.pop(&p, 0);
+        }
+        ok("stream-sized ones keep their buffers", popped && q.held_bytes() >= 1400);
     }
     {
         PacketQueue q(8, 1 << 20);

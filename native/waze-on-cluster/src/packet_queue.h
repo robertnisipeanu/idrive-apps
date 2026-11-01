@@ -3,8 +3,10 @@
 /* PacketQueue: datagrams from the receive threads (the AVB bridge's callback,
  * the UDP reader) to the decode thread, so a slow decode never holds up a
  * receive. A push copies the datagram and returns; a pop hands the oldest one
- * over by swapping buffers, so once every slot has grown to the largest
- * datagram nothing is allocated.
+ * over by swapping buffers, so with datagrams of the stream's size (RTP at
+ * most an MTU) nothing is allocated once every slot has a buffer. A buffer
+ * that comes back larger than kKeepBytes is freed, so the slots hold at most
+ * kKeepBytes each besides the packets waiting.
  *
  * Bounded by a packet count and a byte total. A push that would exceed
  * either drops the oldest packets until it fits (a datagram larger than the
@@ -31,6 +33,8 @@ public:
         int source = 0;          /* the pusher's tag */
         uint32_t dropped = 0;    /* packets dropped by this queue right before this one */
     };
+
+    static const size_t kKeepBytes = 2048;
 
     PacketQueue(size_t max_packets, size_t max_bytes) : slots_(max_packets), max_bytes_(max_bytes) {}
 
@@ -70,6 +74,8 @@ public:
         Packet &p = slots_[head_];
         bytes_ -= p.data.size();
         out->data.swap(p.data);
+        if (p.data.capacity() > kKeepBytes)
+            std::vector<uint8_t>().swap(p.data);
         out->source = p.source;
         out->dropped = p.dropped;
         head_ = (head_ + 1) % slots_.size();
@@ -96,6 +102,15 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return overflows_;
+    }
+    /* Bytes the slots' buffers hold, waiting or kept. */
+    size_t held_bytes() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        size_t n = 0;
+        for (const Packet &p : slots_)
+            n += p.data.capacity();
+        return n;
     }
     /* The most packets waiting at once. */
     size_t high_water() const

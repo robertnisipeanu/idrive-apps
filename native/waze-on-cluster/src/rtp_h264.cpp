@@ -140,12 +140,4 @@ void RtpH264::end_au(const Sink &sink)
     sink(nullptr, 0, true);
 }
 
-void RtpH264::reset()
-{
-    in_fu_ = false;
-    have_seq_ = have_ts_ = false;
-    au_open_ = false;
-    vcl_done_ = false;
-}
-
 }  // namespace woc

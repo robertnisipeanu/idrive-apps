@@ -8,6 +8,12 @@
 
 namespace woc {
 
+namespace {
+
+std::string hhmmss(int64_t wall_ms) { return cld::utc_time(wall_ms).substr(11, 8); }
+
+}  // namespace
+
 bool StreamHealth::line_due(int64_t now_ms)
 {
     if (lines_since_ms_ < 0 || now_ms - lines_since_ms_ >= 60000) {
@@ -22,11 +28,11 @@ std::string StreamHealth::loss(int64_t now_ms, int64_t wall_ms, const char *sour
 {
     minute_.losses++;
     minute_.lost += lost;
-    if (state_ == Clean) {
+    if (state_ == Whole) {
         state_ = Through;
-        since_ = cld::utc_time(wall_ms).substr(11, 8);
+        since_ = hhmmss(wall_ms);
         loss_ms_ = now_ms;
-        frames_since_ = corrupted_since_ = 0;
+        corrupted_since_ = 0;
     }
     if (!line_due(now_ms))
         return std::string();
@@ -38,23 +44,32 @@ std::string StreamHealth::loss(int64_t now_ms, int64_t wall_ms, const char *sour
     return line;
 }
 
-std::string StreamHealth::frame(int64_t now_ms, uint16_t corrupted)
+std::string StreamHealth::new_stream(int64_t now_ms, const char *source, uint16_t expected, uint16_t got)
+{
+    if (state_ == Through)
+        state_ = Whole;
+    if (!line_due(now_ms))
+        return std::string();
+    char line[160];
+    std::snprintf(line, sizeof line, "waze: a new stream from %s (sequence %u, expected %u)", source, got, expected);
+    return line;
+}
+
+std::string StreamHealth::frame(int64_t now_ms, uint16_t corrupted, bool after_loss)
 {
     if (corrupted)
         minute_.corrupted++;
-    if (state_ != Through)
+    if (state_ != Through || !after_loss)
         return std::string();
-    frames_since_++;
     if (corrupted) {
-        corrupted_since_++;
-        if (corrupted_since_ > 1 || !line_due(now_ms))
+        if (++corrupted_since_ > 1 || !line_due(now_ms))
             return std::string();
         char line[128];
         std::snprintf(line, sizeof line, "waze: the first frame after the loss is corrupted (decoder flags 0x%x)",
                       (unsigned)corrupted);
         return line;
     }
-    state_ = Clean;
+    state_ = Whole;
     if (!line_due(now_ms))
         return std::string();
     char line[160];
@@ -68,29 +83,40 @@ std::string StreamHealth::waiting(int64_t now_ms, int64_t wall_ms, bool on)
     if (on) {
         if (state_ != Waiting) {
             waiting_ms_ = now_ms;
-            since_ = cld::utc_time(wall_ms).substr(11, 8);
+            since_ = hhmmss(wall_ms);
         }
         state_ = Waiting;
         return std::string();
     }
     if (state_ != Waiting)
         return std::string();
-    state_ = Clean;
+    state_ = Whole;
     return "waze: decoding again from a keyframe after " + std::to_string((now_ms - waiting_ms_) / 1000) +
            " s waiting";
 }
 
-std::string StreamHealth::reason(int64_t now_ms, const std::string &resync_held) const
+bool StreamHealth::lost(int64_t keyframe_wait_ms) const
 {
-    switch (state_) {
-    case Waiting:
-        return "waiting for a keyframe since " + since_ + (resync_held.empty() ? "" : "; resync held: " + resync_held);
-    case Through:
-        return "lost part of the stream at " + since_ +
-               (frames_since_ == 0 && now_ms - loss_ms_ >= kNoFrameMs ? "; nothing decoded since" : "; decoding through it");
-    default:
-        return std::string();
-    }
+    return state_ == Waiting || keyframe_wait_ms >= kLostMs;
+}
+
+std::string StreamHealth::reason(int64_t keyframe_wait_ms, const ResyncState &resync) const
+{
+    if (lost(keyframe_wait_ms))
+        return resync.restarts() ? "Stream lost — restarting CarPlay" : "Stream lost — reconnect CarPlay";
+    return state_ == Through ? "Lost part of the stream — decoding through it" : std::string();
+}
+
+std::string StreamHealth::detail(int64_t wall_ms, int64_t keyframe_wait_ms, const ResyncState &resync) const
+{
+    const std::string patchd = resync.restarts() ? "patchd restarts CarPlay for a new stream"
+                               : resync.read     ? "resync held: " + resync.held
+                                                 : "patchd's resync record not readable";
+    if (state_ == Waiting)
+        return "the decoder gave up its sequence at " + since_ + " and waits for a keyframe; " + patchd;
+    if (keyframe_wait_ms >= kLostMs)
+        return "the stream arrives with nothing decoded since " + hhmmss(wall_ms - keyframe_wait_ms) + "; " + patchd;
+    return state_ == Through ? "lost part of the stream at " + since_ + "; decoding through it" : std::string();
 }
 
 StreamHealth::Minute StreamHealth::take_minute()
