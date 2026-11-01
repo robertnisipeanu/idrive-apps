@@ -6,7 +6,29 @@ CarPlay instrument-cluster map, at the size it displays, on a head unit coded
 `patchd.js` runs it for the app and the install hooks, `woc-patch.sh` from a
 shell.
 
-## The build
+## Builds
+
+`carplay_locate.js` finds the four edit sites in each build by its code and
+data, as each edit's "Found by" says, so the patch applies to any build in
+which every site is found exactly once and passes its checks. A build where a
+site is missing, found more than once or fails a check is not patchable; the
+reason names what was not found, and `patchd` reports it as a conflict
+(`not patchable: <reason>`). File offsets and virtual addresses are converted
+through the ELF program headers, and function bounds come from the
+`.eh_frame_hdr` search table; without that table there is no self-start or
+resolution site.
+
+`carplay_patch.js probe [<file>]` (`woc-patch.sh probe`) reads a binary and
+prints its size, SHA-256 and GNU build-id, where each site is, how it reads,
+and `patchable: yes` or `no` with every reason; it never writes.
+`collect-logs.sh` includes its output.
+
+**Proven builds**, listed by build-id in `carplay_patch.js`: the first edit
+needs the whole file to be the shipped one, and any other content reads as
+modified by something else. Another build counts as pristine when all four
+sites read stock.
+
+The offsets and bytes below are those of the build the patch was proven on:
 
 | | |
 |---|---|
@@ -14,10 +36,9 @@ shell.
 | file | `/usr/bin/carplay`, ELF x86-64 PIE, stripped |
 | size | 3 484 912 bytes |
 | sha256 | `ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50` |
+| build-id | `5de62156575d737391ea42254e778a97dbbb51f8` |
 
-File offset equals virtual address in the ranges used here. The first edit
-requires the whole-file SHA-256 above, and every edit validates anchor bytes
-around its region, so the patcher never writes a build it does not know.
+In it, file offset equals virtual address in the ranges used here.
 
 ## Edit 1 — variant (ungate the second display)
 
@@ -42,8 +63,17 @@ affected.
 | → IC_HIGH | `0x2ba4f0` | `bc f2 f7 ff` (slot 9's value) |
 | → IC_MID | `0x2ba4f0` | `0c f3 f7 ff` (slot 10's value) |
 
-`verify` cross-checks the slot against the live slot 9/10 value. The app
-applies IC_HIGH; IC_MID (`--panel mid`) keeps its stock 1920x720 geometry.
+**Found by** the converter's code, `cmp byte [rdi],n ; ja ; movzx eax,byte
+[rdi] ; lea rdx,[rip+table] ; movsxd rax,[rdx+rax*4] ; add rax,rdx ; jmp
+rax`. Other switches share the shape, so each table of at least 11 slots is
+decoded through its handlers (`mov dword [rsi],value`); the converter is the
+only switch mapping 9 → IC_HIGH, 10 → IC_MID, 0 → NOT_ACTIVE and every other
+value to one shared OTHER table value, with slot 7 holding that OTHER value
+(stock) or slot 9's or 10's (patched). The stock and patched slot values are
+read from the table itself.
+
+The app applies IC_HIGH; IC_MID (`--panel mid`) keeps its stock 1920x720
+geometry.
 
 ## Edit 2 — sink (where the stream goes)
 
@@ -65,9 +95,15 @@ type 96, single NAL units and FU-A; VERIFIED on a car capture). The modes:
   The projection bridge rejects a `file://` sink on the car
   (`configureProjectionBridge` fails).
 
-A replacement is NUL-padded to 59 bytes; a longer URL is refused. The 5-byte
-NUL run and the next string (`mCarPlay->GetDisplaySource(`) are anchors and
-never change. The render listens on all three sinks.
+A replacement is NUL-padded to 59 bytes; a longer URL is refused. The NUL
+run after the slot and the next string are never written. The render listens
+on all three sinks.
+
+**Found by** the string after it, `mCarPlay->GetDisplaySource( …`: the slot
+is its own NUL-terminated string ending 1 to 16 NULs before that string, and
+holds either the stock URL above or a `udp://`, `tcp://` or `file://` URL no
+longer than it. Exactly one such slot must exist. A build whose stock URL
+differs is not patchable: the render joins stream 15.
 
 ## Edit 3 — self-start
 
@@ -91,11 +127,19 @@ available and not streaming, calls `setStreamStatus(this, AVAILABLE)` at
 | original | `0x18176c` | `e8 ef fd ff ff` → `call setStreamStatus` (`0x181560`) |
 | self-start | `0x18176c` | `e8 9f 00 00 00` → `call requestStream` (`0x181810`) |
 
-Only the rel32 changes. Anchors: the 8 bytes before
-(`add rax,0x10 ; mov [rsp],rax`) and the 5 after (the stack-canary epilogue).
-NavController then receives STREAMING where stock sends AVAILABLE; it is
-inert either way, and these messages never reach the phone. Both guards make
-it one-shot per session. Every mode applies it.
+Only the rel32 changes. NavController then receives STREAMING where stock
+sends AVAILABLE; it is inert either way, and these messages never reach the
+phone. Both guards make it one-shot per session. Every mode applies it.
+
+**Found by** name. setStreamStatus, requestStream and onSuggestUi are the
+functions that load their own function-name strings (`void
+…AlternateDisplays::setStreamStatus(…`, `…::requestStream()`,
+`…::onSuggestUi()`) with a rip-relative `lea`, each string from one function
+only. requestStream must also load the `mCinemoCarPlay->ShowUI(` and
+`mCinemoCarPlay->ForceKeyframe(` checks and call setStreamStatus. The site is
+onSuggestUi's one call to either function, with AVAILABLE stored as its
+argument (`mov dword [rsp+…],1`) in the 24 bytes before it. Its stock and
+self-start rel32 are computed from the functions' virtual addresses.
 
 **Exception risk.** `ShowUI` and `ForceKeyframe` are each followed by a
 result check (`0x18189b`, `0x1818da`) that calls the throw helper `0x250980`
@@ -154,7 +198,7 @@ through unscaled.
 
 The IC_HIGH builder in `ICSafeAreaProvider` (`0x20ca30`) fills its object from
 four `movabs` immediates; only the 8 immediate bytes after each 2-byte opcode
-change, and the opcode and the store after each are anchors:
+change:
 
 | field | immediate at | stock | patched (default) |
 |---|---|---|---|
@@ -171,6 +215,21 @@ the binary carries one panel's geometry at a time. `--res WxH` (even, up to
 1920x1080) picks another pixel size at the same physical size; `--res stock`
 keeps stock. The size is negotiated at phone connection, so it applies from
 the next CarPlay session after CarPlay restarts.
+
+**Found by** the `ICSafeAreaProvider` constructor, the function that loads
+its name string. It calls exactly two geometry builders: functions holding
+one `movabs rdx` (the mm pair) before `mov [rdi+0x10],rdx ; movabs rax ; mov
+[rdi+8],rax ; mov [rdi+0x18],rax ; movabs rax ; mov [rdi+0x20],rax ; movabs
+rax ; mov [rdi+0x28],rax`. The IC_HIGH builder is the one called on
+the true branch of the constructor's call to its IC_HIGH check, a small
+function doing `mov eax,[rdi] ; test eax,eax ; sete al` (or
+`cmp dword [rdi],0 ; sete al`); the `test al,al` and
+`je` or `jne` after that call give the branch.
+
+This tool's geometry has its 138x61 mm physical size, the view area at (0,0)
+and a safe area inside the frame. A stock geometry has another physical size
+and a safe area inside the frame; any other geometry is not recognised.
+`--res stock` and `--panel mid` write the backup's stock immediates back.
 
 ### Safe area
 
@@ -259,13 +318,13 @@ pending, which the Store shows.
 | the original with our backup (Disable map was used) | nothing: the map stays off | drops our backup |
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
-| an unknown build | nothing: a conflict | nothing |
-| the known build modified by something else | nothing: a conflict | nothing (the patcher refuses) |
+| a build with an edit site not found or not recognised | nothing: a conflict | nothing |
+| a proven build modified by something else, or any build with one of our edits and no backup of ours | nothing: a conflict | nothing (the patcher refuses) |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | nothing: a conflict | reverts our patch |
 
 A conflict is not a failure: the hook exits 0 with `conflict` in its result,
 `patchd` reports it, and the app shows it with Enable map, which applies only
-on request (the patcher still refuses an unknown binary). A hook exits
+on request (the patcher still refuses a binary it cannot patch). A hook exits
 non-zero only when it changed nothing and could not do its job (`/` would not
 remount, the patcher failed), so the deploy tool rolls the install back or
 keeps the tool installed. Once the binary is written the hook exits 0, even
@@ -282,11 +341,14 @@ capture restores the DLT tracing mode as it stops.
 ## Reversibility
 
 Before the first edit the patcher copies the binary to `<target>.woc-orig`,
-checks the copy's SHA-256, and records the original SHA and version in
-`<target>.woc-orig.json`. `revert` re-checks the backup and restores only the
-edits' regions, so another tool's change elsewhere stays; it then confirms
-all four edits read original (and the whole file matches the backup when
-nothing else changed). `revert --force` writes the whole backup, also over a
+checks the copy, and records the original's SHA-256, build-id and version in
+`<target>.woc-orig.json`. `apply` and `revert` re-check the backup: its
+recorded SHA-256, a pristine build (above), and the same build as the target
+(size, build-id and every site). `revert` restores only the edits' regions
+from it, so another tool's change elsewhere stays; it then confirms all four
+edits read original (and the whole file matches the backup when nothing else
+changed). The stock geometry `apply` writes back (`--res stock`, `--panel
+mid`) is the backup's. `revert --force` writes the whole backup, also over a
 binary it does not recognise. Every write is an atomic rename.
 
 ## Boot recovery
@@ -303,7 +365,7 @@ boot that comes up patched. A boot that neither reaches a healthy CarPlay
 (active for 60 s continuously) nor shuts down cleanly (SIGTERM) counts as
 failed at the next boot; after 2 in a row the next boot restores the
 original. A healthy CarPlay clears the counter. It acts only on a recognised
-patched form of the known build with a verified backup; a stock or
+patched form of the backup's build with a verified backup; a stock or
 firmware-replaced binary is left alone and the counter cleared. A shared
 remount lock (`remount_lock.js`) keeps it and `patchd` from remounting `/` at
 once; recovery yields to `patchd`.
@@ -314,9 +376,17 @@ once; recovery yields to `patchd`.
 unit's carplay 22.28.3 (the SHA above), and are skipped without it; the
 repository carries no BMW binary.
 
-- `patch_test.js`: the SHA gate, both panels, the sink inside its slot, the
-  call retarget, region-bounded diffs, idempotence, partial patches, the
-  geometry and safe area, byte-exact revert.
+- `locate_test.js`: on synthetic builds written by `synthetic_carplay.js`
+  (no BMW bytes), every site found, also at other offsets, addresses and code
+  order and in its patched state; a signature found twice refused as
+  ambiguous; damaged sites refused with their reason; apply, verify, probe
+  and a byte-exact revert on a build outside the proven list. With
+  `CARPLAY_BIN`, the sites are the offsets above.
+- `patch_test.js`: the sites the probe reports, the SHA gate, both panels,
+  the sink inside its slot, the call retarget, region-bounded diffs,
+  idempotence, partial patches (an Edit-1-only binary among them), the
+  geometry and safe area, byte-exact revert, a build outside the proven list,
+  a backup of another build refused.
 - `patchd_patch_test.js`, `patchd_activate_test.js`: `patchd` and both hooks
   on a copy, against a fake `/proc`, `mount`, `systemctl` and recmgr list:
   both activation branches, every row of the install table, the marker, the

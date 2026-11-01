@@ -8,15 +8,16 @@
  * recmgr would allow it; the running binary stays linked and / goes read-only
  * again; a second run changes nothing; after that start the patch is left as
  * it is, a user's revert is kept, an older patch of ours is brought up to
- * date. Removal (deactivate) reverts and drops our backup: before the
- * pending start it moves carplay's running file back and leaves nothing
- * pending; while carplay runs the patch it keeps that file linked and hands
- * it to the deploy tool (removeWhenUnused); with carplay not running it keeps
- * nothing; changes another tool made elsewhere in the binary stay; an install
- * after a removal patches again. patchd removes the link once nothing runs it
- * and keeps one carplay runs (boot recovery's). An unknown binary, one
- * modified by something else and a carplay.service that starts another
- * program are left untouched (a conflict, exit 0); a remount failure before
+ * date, a stock build outside the proven list is patched like the proven
+ * one. Removal (deactivate) reverts and drops our backup: before the pending
+ * start it moves carplay's running file back and leaves nothing pending;
+ * while carplay runs the patch it keeps that file linked and hands it to the
+ * deploy tool (removeWhenUnused); with carplay not running it keeps nothing;
+ * changes another tool made elsewhere in the binary stay; an install after a
+ * removal patches again. patchd removes the link once nothing runs it and
+ * keeps one carplay runs (boot recovery's). A binary with an edit site not
+ * found, one modified by something else and a carplay.service that starts
+ * another program are left untouched (a conflict, exit 0); a remount failure before
  * any write exits non-zero. The pending marker is the world-readable JSON
  * patchd and the app read. Runs the real patchd.js and carplay_patch.js on a
  * temporary copy, with a fake /proc (carplay's process holds the inode it
@@ -405,14 +406,28 @@ async function main() {
     ok('an unused link the removal cannot drop: handed to the deploy tool', r.code === 0 && fs.existsSync(RUNNING) &&
         JSON.stringify(r.result.removeWhenUnused) === JSON.stringify([RUNNING]), JSON.stringify(r.result));
 
-    /* A binary the patcher does not know: left alone, a conflict, exit 0. */
-    var unknown = Buffer.concat([SRCBUF, Buffer.from('x')]);
+    /* A binary the patcher cannot patch (an edit site not found): left
+     * alone, a conflict naming the site, exit 0. */
+    var unknown = Buffer.from(SRCBUF);
+    unknown.writeUInt32LE(0x11223344, 0x2ba4d4);   /* the converter table's slot 0 */
     fresh(unknown);
     r = hook('activate');
-    ok('unknown binary: activate leaves it, conflict, exit 0', r.code === 0 && disk() === sha(unknown) && r.result.conflict &&
-        /not the build this patch knows/.test(r.result.conflict) && !r.result.reboot, JSON.stringify(r.result));
+    ok('unpatchable binary: activate leaves it, conflict names the site, exit 0', r.code === 0 && disk() === sha(unknown) &&
+        /^not patchable: variant: slot 0 handler not a store$/.test(r.result.conflict || '') && !r.result.reboot, JSON.stringify(r.result));
     r = hook('deactivate');
-    ok('unknown binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
+    ok('unpatchable binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
+
+    /* A build outside the proven list with every site stock: a fresh install
+     * patches it. */
+    var other = Buffer.from(SRCBUF);
+    other[other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 0xff;
+    Buffer.from('e900000000', 'hex').copy(other, 0x9f9a0);
+    fresh(other);
+    r = hook('activate');
+    ok('another build: activate writes Enable map\'s patch, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' &&
+        slot() === 'bcf2f7ff' && /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()) && ro(), JSON.stringify(r.result));
+    r = hook('deactivate');
+    ok('another build: deactivate restores it byte-exact', r.code === 0 && disk() === sha(other) && !fs.existsSync(BAK), JSON.stringify(r.result));
 
     /* The pristine build with another tool's in-place edit and no backup of
      * ours: modified by something else. */

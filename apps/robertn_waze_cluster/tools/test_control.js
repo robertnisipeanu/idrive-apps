@@ -311,7 +311,7 @@ test('a conflict the install left alone is shown, and Enable map stays the user\
     patch.announce('original', null, null);
     await until('conflict', () => c.statusText() === `Not patched — ${patch.conflict}`);
     assert.strictEqual(c.canEnable(), true);
-    patch.conflict = 'carplay is not the build this patch knows (size 3484913 != 3484912 (unrecognised build))';
+    patch.conflict = 'not patchable: self-start: onSuggestUi call not found';
     patch.announce('unknown', null, null);
     await until('unknown conflict', () => c.statusText() === `Patch state unknown — ${patch.conflict}`);
     assert.strictEqual(c.canEnable(), true);
