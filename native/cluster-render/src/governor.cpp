@@ -115,6 +115,13 @@ bool Governor::tick(int64_t now_ms)
         if (last_up_ms_ >= 0 && now_ms - last_up_ms_ < kProbationMs)
             recover_ms_ = std::min(recover_ms_ * 2, kRecoverMaxMs);
         reason_ = "lowered from " + kb(was) + ": in " + std::to_string(kWindowMs / 1000) + " s, " + summary();
+        for (const Event &e : events_) {
+            if (e.kind == Evidence::Removal) {
+                hold_until_ms_ = now_ms + kRemovalHoldMs;
+                reason_ += "; held " + std::to_string(kRemovalHoldMs / 60000) + " min";
+                break;
+            }
+        }
         log_warn("upload: cap %s, %s", kb(cap_).c_str(), reason_.c_str());
         events_.clear();
         cooldown_until_ms_ = now_ms + kCooldownMs;
@@ -129,7 +136,7 @@ bool Governor::tick(int64_t now_ms)
      * proves nothing either way. */
     if (s == 0 && last_active_ms_ >= 0 && now_ms - last_active_ms_ <= kActiveMs)
         healthy_ms_ += dt;
-    if (cap_ < cfg_.max_bps && healthy_ms_ >= recover_ms_) {
+    if (cap_ < cfg_.max_bps && healthy_ms_ >= recover_ms_ && now_ms >= hold_until_ms_) {
         const uint64_t was = cap_;
         cap_ = std::min(cap_ + cfg_.step_bps, cfg_.max_bps);
         reason_ = "raised from " + kb(was) + " after " + std::to_string(recover_ms_ / 1000) + " s healthy";

@@ -58,11 +58,11 @@
  *   kFreshRetries times; then the ladder.
  * - A shown scene the display removes (no other content in the slot, the
  *   slot not locked, not our release) is asked for again no sooner than
- *   kRemovalWaitMs after the removal, or the ladder's step if longer: on the
- *   car the KOMBI failed the fetch 2 s after such a removal and took it
- *   7 s after. A fetch that fails within kNotReadyMs of a request made
- *   within kNotReadyWindowMs of the removal is the display not ready yet:
- *   asked again after kNotReadyRetryMs, up to kNotReadyRetries times; then
+ *   kRemovalWaitMs after the removal, or the ladder's step if longer. A
+ *   fetch that fails within kNotReadyMs of a request made within
+ *   kNotReadyWindowMs of the removal is the display not ready yet: asked
+ *   again after kNotReadyRetryMs, up to kNotReadyRetries times, which
+ *   covers the 7 s the KOMBI once took to accept the scene again; then
  *   the ladder.
  * - Warm scenes: a target's scene is published at its first request and
  *   stays published while the target is released, lost, refused or timed
@@ -217,11 +217,11 @@ public:
     static const int64_t kFreshSceneMs = 2000;
     static const int64_t kFreshRetryMs = 250;
     static const int kFreshRetries = 3;
-    static const int64_t kRemovalWaitMs = 5000;
+    static const int64_t kRemovalWaitMs = 2000;
     static const int64_t kNotReadyMs = 300;
     static const int64_t kNotReadyWindowMs = 10000;
     static const int64_t kNotReadyRetryMs = 1500;
-    static const int kNotReadyRetries = 3;
+    static const int kNotReadyRetries = 4;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
