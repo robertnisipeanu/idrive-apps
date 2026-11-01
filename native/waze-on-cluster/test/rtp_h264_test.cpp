@@ -3,13 +3,16 @@
 /* Host tests for the RTP H.264 depacketiser (no GPU).
  *
  * Synthetic packets cover each payload structure and the loss rules. The
- * golden test replays real wire bytes, test/data/stream15_start.rtp: 10 RTP
+ * golden tests replay real wire bytes, test/data/stream15_start.rtp: 10 RTP
  * packets of AVB stream 15 (the phone's cluster video, captured on the car
  * with Edit 3 self-start), each behind a u32 little-endian length. They are
  * the last 3 fragments of an FU-A from the previous stream, then the new
  * stream's first SPS, PPS, IDR and 4 P slices, all single NAL units. The
  * capture stops there: the next frame draws the route and street names.
- * ffmpeg decodes the depacketised stream as 1920x900 High@4.2. */
+ * ffmpeg decodes the depacketised stream as 1920x900 High@4.2. The gap
+ * settler (gap_settler.h) runs on the same packets: a new stream or a loss,
+ * and which pictures began after the loss. */
+#include "../src/gap_settler.h"
 #include "../src/nal_reader.h"
 #include "../src/rtp_h264.h"
 
@@ -145,39 +148,57 @@ static void stap_a_pair()
     CHECK(r2.stats().bad == 1);
 }
 
-static void gap_mid_fu_resyncs_at_sps()
+static void gap_mid_fu_decodes_through()
 {
     RtpH264 r;
     Out o;
+    std::vector<RtpH264::Gap> gaps;
+    r.on_gap = [&](const RtpH264::Gap &g) { gaps.push_back(g); };
     push(r, o, rtp(10, 1000, false, {0x7c, 0x81, 0xa1}));
     push(r, o, rtp(11, 1000, false, {0x7c, 0x01, 0xa2}));
     /* seq 12 lost */
     push(r, o, rtp(13, 1000, false, {0x7c, 0x41, 0xa3}));
     CHECK(o.ev.empty());                    /* the torn FU-A is never delivered */
-    CHECK(!r.synced());
-    push(r, o, rtp(14, 2500, false, kP));   /* follows the loss: dropped */
-    CHECK(o.ev.empty());
-    push(r, o, rtp(15, 4000, true, kSps));
-    push(r, o, rtp(16, 4000, true, kPps));
-    push(r, o, rtp(17, 4000, false, kIdr));
-    push(r, o, rtp(18, 5500, false, kP));
-    std::vector<Bytes> want = {annexb(kSps), annexb(kPps), annexb(kIdr), kAuEnd, annexb(kP)};
+    push(r, o, rtp(14, 2500, false, kP));   /* the next picture is, with no keyframe */
+    std::vector<Bytes> want = {annexb(kP)};
     CHECK(o.ev == want);
-    CHECK(r.synced());
-    /* The partial FU-A, its orphaned end fragment, the P slice. */
-    CHECK(r.stats().gaps == 1 && r.stats().dropped == 3);
+    /* The partial FU-A and its orphaned end fragment. */
+    CHECK(r.stats().gaps == 1 && r.stats().lost == 1 && r.stats().dropped == 2);
+    CHECK(gaps.size() == 1 && gaps[0].expected == 12 && gaps[0].got == 13 && gaps[0].lost == 1);
 }
 
-static void gap_resyncs_at_fragmented_idr()
+static void lost_single_nal()
 {
+    /* The second of three slices of one picture is lost: the other two
+     * still make its access unit. */
+    const Bytes s1 = {0x41, 0x9a, 0x01}, s3 = {0x41, 0x9a, 0x03};
+    RtpH264 r;
+    Out o;
+    size_t reported_at = 0;
+    r.on_gap = [&](const RtpH264::Gap &) { reported_at = o.ev.size(); };
+    push(r, o, rtp(1, 1000, false, s1));
+    push(r, o, rtp(3, 1000, false, s3));
+    push(r, o, rtp(4, 2500, false, kP));
+    std::vector<Bytes> want = {annexb(s1), annexb(s3), kAuEnd, annexb(kP)};
+    CHECK(o.ev == want);
+    CHECK(r.stats().gaps == 1 && r.stats().lost == 1 && r.stats().dropped == 0);
+    CHECK(reported_at == 1);   /* before the slice that follows the gap */
+}
+
+static void gap_at_au_boundary()
+{
+    /* The packet that starts the second picture is lost, and with it the
+     * first fragment of the third picture's FU-A. */
+    const Bytes tail = {0x41, 0x9a, 0x02};
     RtpH264 r;
     Out o;
     push(r, o, rtp(1, 1000, false, kP));
-    push(r, o, rtp(3, 2500, false, kP));    /* seq 2 lost */
-    push(r, o, rtp(4, 4000, false, {0x7c, 0x85, 0xa1}));
-    push(r, o, rtp(5, 4000, false, {0x7c, 0x45, 0xa2}));
-    std::vector<Bytes> want = {annexb(kP), kAuEnd, annexb({0x65, 0xa1, 0xa2})};
+    push(r, o, rtp(3, 2500, false, tail));                 /* seq 2 lost */
+    push(r, o, rtp(5, 4000, false, {0x5c, 0x41, 0xa2}));   /* seq 4, the FU-A start, lost */
+    push(r, o, rtp(6, 5500, false, kP));
+    std::vector<Bytes> want = {annexb(kP), kAuEnd, annexb(tail), kAuEnd, annexb(kP)};
     CHECK(o.ev == want);
+    CHECK(r.stats().gaps == 2 && r.stats().lost == 2 && r.stats().dropped == 1 && r.stats().aus == 2);
 }
 
 static void timestamp_change_drops_open_fu()
@@ -194,7 +215,7 @@ static void timestamp_change_drops_open_fu()
 static void join_mid_fu()
 {
     /* A start mid-stream: fragments before the first start fragment are
-     * dropped, with no resync wait. */
+     * dropped. */
     RtpH264 r;
     Out o;
     push(r, o, rtp(100, 1000, false, {0x5c, 0x01, 0xa1}));
@@ -202,7 +223,7 @@ static void join_mid_fu()
     push(r, o, rtp(102, 2500, false, kP));
     std::vector<Bytes> want = {annexb(kP)};
     CHECK(o.ev == want);
-    CHECK(r.synced() && r.stats().dropped == 2 && r.stats().gaps == 0);
+    CHECK(r.stats().dropped == 2 && r.stats().gaps == 0);
 }
 
 static void header_fields()
@@ -307,19 +328,116 @@ static void golden_stream15(const char *path)
     }
 }
 
+/* The capture with packets taken out: each loss costs only the NAL units it
+ * carried, and the decoder's framing still gets every other picture. */
+static void golden_with_gaps(const char *path)
+{
+    std::vector<Bytes> pkts;
+    CHECK(read_fixture(path, &pkts));
+    if (pkts.size() != 10) return;
+
+    /* The first P slice (packet 6) lost: the IDR's picture ends at the next
+     * timestamp and the three other P pictures follow. */
+    RtpH264 r;
+    Out o;
+    for (size_t k = 0; k < pkts.size(); k++)
+        if (k != 6) push(r, o, pkts[k]);
+    std::vector<int> types;
+    for (const Bytes &e : o.ev) types.push_back(e.empty() ? -1 : e[4] & 0x1f);
+    std::vector<int> want_types = {7, 8, 5, -1, 1, -1, 1, -1, 1};
+    CHECK(types == want_types);
+    CHECK(r.stats().gaps == 2);
+    NalReader nr;
+    int aus = 0, idr = 0;
+    auto sink = [&](const AccessUnit &au) { aus++; idr += au.idr; };
+    for (const Bytes &e : o.ev) nr.push(e.data(), e.size(), e.empty(), sink);
+    nr.flush(sink);
+    CHECK(aus == 4 && idr == 1);
+
+    /* The IDR's packet lost: the stream goes on with its P pictures. */
+    RtpH264 r2;
+    Out o2;
+    for (size_t k = 0; k < pkts.size(); k++)
+        if (k != 5) push(r2, o2, pkts[k]);
+    types.clear();
+    for (const Bytes &e : o2.ev) types.push_back(e.empty() ? -1 : e[4] & 0x1f);
+    want_types = {7, 8, -1, 1, -1, 1, -1, 1, -1, 1};
+    CHECK(types == want_types);
+}
+
+/* The depacketiser into the settler, as the producer wires them: each
+ * settled gap's outcome, and for each picture end whether it began after
+ * the latest loss. */
+struct Settled {
+    std::vector<int> outcomes;
+    std::vector<bool> after;
+};
+
+static Settled settle(const std::vector<Bytes> &pkts)
+{
+    RtpH264 r;
+    GapSettler gs;
+    Settled out;
+    r.on_gap = [&](const RtpH264::Gap &g) { gs.gap(g, 1, 0); };
+    const RtpH264::Sink sink = [&](const uint8_t *d, size_t n, bool eoa) {
+        if (eoa) {
+            out.after.push_back(gs.after_loss());
+            gs.au_end();
+            return;
+        }
+        (void)n;
+        const GapSettler::Outcome o = gs.nal(d[4] & 0x1f);
+        if (o != GapSettler::None) out.outcomes.push_back(o);
+    };
+    for (const Bytes &p : pkts) r.push(p.data(), p.size(), sink);
+    return out;
+}
+
+static void gaps_settled(const char *path)
+{
+    std::vector<Bytes> pkts;
+    CHECK(read_fixture(path, &pkts));
+    if (pkts.size() != 10) return;
+
+    /* The capture: the jump to the new stream's SPS is a new stream. */
+    Settled a = settle(pkts);
+    CHECK(a.outcomes == std::vector<int>{GapSettler::NewStream});
+    CHECK(a.after == std::vector<bool>(4, true));
+
+    /* The first P slice lost: a loss; the IDR's picture, ended by the
+     * packet after the gap, is not after it; the next ones are. */
+    std::vector<Bytes> cut;
+    for (size_t k = 0; k < pkts.size(); k++)
+        if (k != 6) cut.push_back(pkts[k]);
+    Settled b = settle(cut);
+    CHECK((b.outcomes == std::vector<int>{GapSettler::NewStream, GapSettler::Loss}));
+    CHECK((b.after == std::vector<bool>{false, true, true}));
+
+    /* A slice lost inside a picture: that picture is not after the loss,
+     * though the loss settles at its next slice. */
+    const Bytes s1 = {0x41, 0x9a, 0x01}, s3 = {0x41, 0x9a, 0x03};
+    Settled c = settle({rtp(1, 1000, false, s1), rtp(3, 1000, false, s3), rtp(4, 2500, false, kP),
+                        rtp(5, 4000, false, kP)});
+    CHECK(c.outcomes == std::vector<int>{GapSettler::Loss});
+    CHECK((c.after == std::vector<bool>{false, true}));
+}
+
 int main(int argc, char **argv)
 {
     single_nal_units();
     marker_ends_au_on_slice();
     fu_a_three_parts();
     stap_a_pair();
-    gap_mid_fu_resyncs_at_sps();
-    gap_resyncs_at_fragmented_idr();
+    gap_mid_fu_decodes_through();
+    lost_single_nal();
+    gap_at_au_boundary();
     timestamp_change_drops_open_fu();
     join_mid_fu();
     header_fields();
     unsupported_types_dropped();
     golden_stream15(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
+    golden_with_gaps(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
+    gaps_settled(argc > 1 ? argv[1] : "test/data/stream15_start.rtp");
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

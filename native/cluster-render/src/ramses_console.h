@@ -28,11 +28,14 @@
  * one of the above) are dropped: at info they are several a second. Any
  * other line (another library's console log) goes on to the original stdout
  * unchanged. Of RAMSES's lines it keeps the parsed events, with the time
- * each was read, and, as raw text without colour codes, every line that
- * mentions one of our scene ids or contains "ubscri" (not the 2-second
- * statistics), and the levels line the logger starts with, at most
- * kRawPerMinute a minute, so field logs show the exact formats even where
- * the parser misses one.
+ * each was read, and, as raw text without colour codes, the first
+ * kFirstLines that are not the 2-second statistics (ramses.Periodic), then
+ * every line that mentions one of our scene ids or contains "ubscri" (not
+ * the statistics), at most kRawPerMinute a minute, so field logs show the
+ * exact formats even where the parser misses one. Every line read is counted
+ * by its context ("other" for another library's), with the time of the
+ * last, so the status shows whether the console stays alive while no
+ * subscription line comes.
  * fd() is readable while something waits to be taken. If the pipe cannot be
  * set up, stdout is left as it was and nothing is ever read; if reading it
  * fails, the original stdout goes back onto fd 1 (so RAMSES never blocks on
@@ -44,6 +47,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -73,6 +77,8 @@ bool console_interesting(const std::string &line, const std::vector<uint64_t> &s
 class RamsesConsole {
 public:
     static const unsigned kRawPerMinute = 30;
+    static const unsigned kFirstLines = 20;
+    static const size_t kMaxContexts = 16;
 
     explicit RamsesConsole(const std::vector<uint64_t> &scenes) : scenes_(scenes) {}
     /* Call once, before any RAMSES object exists. */
@@ -81,6 +87,9 @@ public:
     /* What was read since the last call, oldest first, and how many raw
      * lines went over kRawPerMinute since. Any thread. */
     void take(std::vector<ConsoleEvent> *events, std::vector<std::string> *raw, uint64_t *raw_dropped);
+    /* "N lines (context n, ...), the last X s ago", most frequent context
+     * first. Any thread. */
+    std::string counts_text(int64_t now_ms) const;
     /* One line as read at now_ms; forwarded or kept as above (the reader
      * thread's, and tests'). */
     void feed(const char *s, size_t n, int64_t now_ms);
@@ -98,6 +107,10 @@ private:
     uint64_t raw_dropped_ = 0;
     unsigned raw_minute_ = 0;    /* raw lines kept in the minute from raw_since_ms_ */
     int64_t raw_since_ms_ = -1;
+    unsigned first_ = 0;         /* RAMSES lines other than the statistics read so far, up to kFirstLines */
+    std::map<std::string, uint64_t> contexts_;   /* lines read, by context */
+    uint64_t lines_ = 0;
+    int64_t last_ms_ = -1;
 };
 
 }  // namespace crs

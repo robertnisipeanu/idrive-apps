@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+While CarPlay's stream is live but shows no map, the status says why, from
+waze-on-cluster 0.7.2 on: "Stream lost — reconnect CarPlay", or "Stream
+lost — restarting CarPlay" where the tool restarts CarPlay itself.
+
 ## 0.4.0
 
 The page says to set Instrument cluster > Central display area to Map view:

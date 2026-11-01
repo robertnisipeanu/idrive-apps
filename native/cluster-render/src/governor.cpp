@@ -15,7 +15,7 @@ namespace {
 int weight(Evidence e)
 {
     switch (e) {
-    case Evidence::Removal: return 5;
+    case Evidence::Removal: return Governor::kThreshold;
     case Evidence::LinkStall: return 3;
     case Evidence::FlushFailure:
     case Evidence::WriteRefused: return 2;

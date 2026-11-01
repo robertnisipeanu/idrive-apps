@@ -33,7 +33,6 @@ MapFeed::MapFeed(const FeedConfig &cfg) : cfg_(cfg), client_("waze-on-cluster", 
 {
     client_.on_ready = [this] {
         connected_ = true;
-        changed_ = true;
         /* The layer is made again on this connection, so only a refusal on it
          * counts, and no status request is outstanding on it. */
         refused_.clear();
@@ -49,7 +48,6 @@ MapFeed::MapFeed(const FeedConfig &cfg) : cfg_(cfg), client_("waze-on-cluster", 
             log_info("render: map %s%s%s", state.c_str(), reason.empty() ? "" : " - ", reason.c_str());
         layer_state_ = state;
         layer_reason_ = reason;
-        changed_ = true;
     };
     client_.on_target = [this](const std::string &t, const std::string &state, const std::string &holder,
                                const std::string &) {
@@ -57,19 +55,16 @@ MapFeed::MapFeed(const FeedConfig &cfg) : cfg_(cfg), client_("waze-on-cluster", 
             return;
         target_state_ = state;
         holder_ = holder;
-        changed_ = true;
     };
     client_.on_budget = [this](unsigned cap, unsigned max, const std::string &reason) {
         cap_kb_ = cap;
         max_kb_ = max;
         budget_reason_ = reason;
-        changed_ = true;
     };
     client_.on_error = [this](const std::string &op, uint32_t, const std::string &reason) {
         log_error("render: %s refused: %s", op.c_str(), reason.c_str());
         if (op == "layer") {
             refused_ = reason;
-            changed_ = true;
         }
     };
     client_.on_status = [this](const std::string &text) {
@@ -83,7 +78,6 @@ void MapFeed::make_layer()
     uint32_t tw = 0, th = 0;
     if (!target_size(client_.targets, cfg_.target, &tw, &th)) {
         refused_ = "the cluster renderer has no target " + cfg_.target;
-        changed_ = true;
         log_error("render: %s", refused_.c_str());
         return;
     }
@@ -105,7 +99,6 @@ void MapFeed::make_layer()
     target_state_.clear();
     holder_.clear();
     layer_ = client_.video(lo_, cfg_.video);
-    changed_ = true;
     log_info("render: map layer on %s (%ux%u), quad %ux%u at %u,%u", cfg_.target.c_str(), tw, th, q.w, q.h, q.x, q.y);
 }
 
@@ -123,7 +116,6 @@ bool MapFeed::set_target(const std::string &name)
     cfg_.target = t;
     if (client_.connected())
         make_layer();
-    changed_ = true;
     return true;
 }
 
@@ -132,7 +124,6 @@ void MapFeed::poll(int64_t now_ms)
     client_.poll(now_ms);
     if (connected_ && !client_.connected()) {
         connected_ = false;
-        changed_ = true;
         log_warn("render: the cluster renderer went away; reconnecting");
     }
     if (client_.connected()) {
@@ -141,11 +132,9 @@ void MapFeed::poll(int64_t now_ms)
         down_since_ms_ = now_ms;
     } else if (!down_long_ && now_ms - down_since_ms_ >= kUnreachableMs) {
         down_long_ = true;
-        changed_ = true;
     }
     if (client_.connected() && down_long_) {
         down_long_ = false;
-        changed_ = true;
     }
     count_second(now_ms);
 }
@@ -155,8 +144,6 @@ void MapFeed::count_second(int64_t now_ms)
     if (now_ms - second_ms_ < 1000)
         return;
     const int rate = second_ms_ ? (int)((int64_t)frames_ * 1000 / (now_ms - second_ms_)) : 0;
-    if (rate != rate_)
-        changed_ = true;
     rate_ = rate;
     frames_ = 0;
     second_ms_ = now_ms;
@@ -176,7 +163,6 @@ void MapFeed::set_stream(bool live, bool frozen)
     log_info("render: CarPlay's cluster stream %s", !live ? "is not live" : frozen ? "froze" : "is live");
     live_ = live;
     frozen_ = frozen;
-    changed_ = true;
     const bool visible = live && !frozen;
     if (layer_ && lo_.visible != visible) {
         lo_.visible = visible;
@@ -192,24 +178,26 @@ void MapFeed::request_report()
     }
 }
 
-bool MapFeed::take_changed()
+bool StatusLog::due(const FeedStatus &s, int64_t now_ms)
 {
-    const bool c = changed_;
-    changed_ = false;
-    return c;
-}
-
-bool StatusLog::due(const FeedStatus &s)
-{
-    const std::string key = s.state + '\n' + s.reason + '\n' + s.target;
-    if (logged_ && key == last_)
-        return false;
-    last_ = key;
+    const std::string state = s.state + '\n' + s.target;
+    if (logged_ && state == state_) {
+        if (s.reason == reason_)
+            return false;
+        if (s.stream_reason || stream_) {
+            if (now_ms - stream_ms_ < kStreamMs)
+                return false;
+            stream_ms_ = now_ms;
+        }
+    }
+    state_ = state;
+    reason_ = s.reason;
+    stream_ = s.stream_reason;
     logged_ = true;
     return true;
 }
 
-FeedStatus MapFeed::status(const std::string &decode) const
+FeedStatus MapFeed::status(const std::string &decode, const std::string &stream) const
 {
     FeedStatus s;
     s.target = cfg_.target;
@@ -238,6 +226,8 @@ FeedStatus MapFeed::status(const std::string &decode) const
         char p[400];
         std::snprintf(p, sizeof p, "Waze map — %d frames/s (%s%s)", rate_, decode.c_str(), cap);
         s.page = p;
+        s.reason = stream;
+        s.stream_reason = !stream.empty();
     } else if (layer_state_ == "waiting" || layer_state_ == "suspended") {
         s.state = "starting";
         s.page = decode;
@@ -254,8 +244,10 @@ FeedStatus MapFeed::status(const std::string &decode) const
         s.reason = layer_reason_;
         s.page = decode;
     } else {
-        s.state = "idle";   /* stalled: no frames yet, or the stream stopped */
+        s.state = "idle";   /* stalled: no frames yet, or none for idle_ms */
         s.page = decode;
+        s.reason = stream;
+        s.stream_reason = !stream.empty();
     }
     return s;
 }

@@ -127,6 +127,36 @@ private:
     std::string last_;
 };
 
+/* Whether patchd would restart CarPlay for a new stream (PATCH.md "Stream
+ * resync"), from the resync record it keeps next to its socket, root's and
+ * world-readable: "waiting" true once it decided for the current wait, and
+ * "held", null or why it would not. Unread without the record or its
+ * "held". */
+ResyncState read_resync(const std::string &path)
+{
+    ResyncState r;
+    char buf[1024];
+    const int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+        return r;
+    const ssize_t n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0)
+        return r;
+    buf[n] = 0;
+    const char key[] = "\"held\":";
+    const char *p = std::strstr(buf, key);
+    if (!p)
+        return r;
+    p += sizeof key - 1;
+    const char *end = *p == '"' ? std::strchr(p + 1, '"') : nullptr;
+    r.read = end || std::strncmp(p, "null", 4) == 0;
+    if (end)
+        r.held.assign(p + 1, end);
+    r.waiting = std::strstr(buf, "\"waiting\":true") != nullptr;
+    return r;
+}
+
 /* Files next to the FIFO, in the render's own RuntimeDirectory, which it can
  * write: status.json, probe.txt and stream.json, for the remote diagnostics
  * and patchd, read without taking the control socket's owner slot. 0644,
@@ -229,6 +259,10 @@ int serve(const Config &cfg)
     int64_t errs_logged_ms = -60000;
     const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
     StreamLiveness liveness(vc.stall_ms);
+    const std::string socket_path = cfg.str("socket_path");
+    const std::string resync_file = socket_path.substr(0, socket_path.find_last_of('/') + 1) + "resync.json";
+    ResyncState resync;
+    std::string last_detail;
     AltScreen::State alt_state = AltScreen::Unknown;
     int64_t alt_read_ms = 0;
     for (;;) {
@@ -265,19 +299,29 @@ int serve(const Config &cfg)
         feed.set_stream(live, producer.frozen(now));
         feed.poll(now);
         producer.retry_sources(now);
-        const FeedStatus fs = feed.status(producer.decode_status());
+        const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason(resync));
         const std::string status = status_line(fs);
         /* The frame rate changes the status every second; the log keeps
          * to its state, reason and target, so the app's last lines are not
          * all status. */
-        if (feed.take_changed() && status_log.due(fs))
+        if (status_log.due(fs, now))
             log_info("status %s", status.c_str());
         server.report(status);
         if (now - last_status_write > 1000) {
             FrameTally::Minute m;
-            if (producer.minute(now, &m))
-                log_info("waze: %u frames decoded in the last minute, %u changed; the last picture is %s", m.frames,
-                         m.changed, m.blank ? "blank" : "not blank");
+            StreamHealth::Minute sm;
+            uint64_t overflows = 0;
+            if (producer.minute(now, &m, &sm, &overflows))
+                log_info("waze: %u frames decoded in the last minute, %u changed, %u corrupted; the last picture is %s; "
+                         "%u losses (%u packets), %llu dropped by the receive queue",
+                         m.frames, m.changed, sm.corrupted, m.blank ? "blank" : "not blank", sm.losses, sm.lost,
+                         (unsigned long long)overflows);
+            producer.track_keyframe_wait(now);
+            resync = read_resync(resync_file);
+            const std::string detail = producer.stream_detail(resync);
+            if (producer.stream_lost() && detail != last_detail)
+                log_warn("waze: stream lost: %s", detail.c_str());
+            last_detail = detail;
             /* New decode errors, at most once a minute. */
             std::string last_err;
             const uint32_t errs = producer.decode_errors(&last_err);
@@ -289,8 +333,9 @@ int serve(const Config &cfg)
             write_sibling_file(cfg.str("fifo_path"), "status.json", status);
             /* The framing probe and the renderer's own status (targets, the
              * map layer's writes, the upload cap), for the diagnostics. */
-            producer.track_keyframe_wait(now);
-            write_sibling_file(cfg.str("fifo_path"), "probe.txt", producer.probe_report() + feed.report());
+            write_sibling_file(cfg.str("fifo_path"), "probe.txt",
+                               producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" +
+                                   feed.report());
             feed.request_report();
             /* For patchd's stream resync (PATCH.md "Stream resync"). */
             write_sibling_file(cfg.str("fifo_path"), "stream.json",

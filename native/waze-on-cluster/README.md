@@ -17,9 +17,10 @@ is a video pipeline:
    AVB stream `media_transport.avb_streaming.15`; the render joins it as an
    extra receiver, in-process. It also listens on a local UDP port and a FIFO,
    which other sink patches can point at.
-3. **Decode.** RTP is depacketised to H.264 Annex B (`src/rtp_h264.*`) and
-   decoded with the unit's Intel Media SDK / VAAPI on `/dev/dri/renderD128`
-   to the picture's own Y, U and V planes.
+3. **Decode.** The receive threads only queue each packet; one decode
+   thread depacketises RTP to H.264 Annex B (`src/rtp_h264.*`) and decodes it
+   with the unit's Intel Media SDK / VAAPI on `/dev/dri/renderD128` to the
+   picture's own Y, U and V planes, through any lost packets ("Losses").
 4. **Draw.** Each frame goes to the shared cluster renderer,
    [cluster-render](../cluster-render), as a
    video layer (`src/map_feed.*`). The renderer owns the RAMSES participant,
@@ -30,7 +31,7 @@ is a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.6.0); this tool requires `cluster-render` 0.2.2 and
+app requires this tool (0.6.0); this tool requires `cluster-render` 0.3.1 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 
@@ -78,7 +79,8 @@ The map comes up at the first decoded frame in the native central-map slot
 `0x100` (scene `0x010004f0`, 1088x480), under the gauges, and stays while the
 stream is live: while carplay holds the phone's connection for the cluster
 stream, TCP port 6031 owned by carplay's uid 13002 in `/proc/net/tcp6`,
-however few frames come (a static map can send one only every ten seconds).
+however few frames come (how often a static map sends a frame depends on the
+phone: one about every ten seconds, another about 30 a second).
 When that connection ends (the phone unplugged, the session or the stream
 ended) the map is taken down at the next check, once a second, and the slot
 returns to the cluster's own content; the next stream maps it again. No
@@ -113,6 +115,50 @@ reconnect the phone. If a patched CarPlay crash-loops,
 `waze-on-cluster-recovery.service` restores the original binary on disk
 (PATCH.md "Boot recovery").
 
+**Losses.** The phone sends a keyframe only at the start of its stream, so
+the render decodes through a lost packet:
+
+- The AVB bridge's callback and the UDP reader only copy each packet into a
+  queue of 4096 packets or 6 MB (about 4 s of the stream) and return; one
+  decode thread depacketises and decodes them in order. A decode that falls
+  behind delays the picture; past the queue's headroom the oldest packets
+  are dropped, and counted. A slot keeps a buffer of at most 2 KB once its
+  packet is out, so large datagrams leave no memory behind. The receive
+  threads run at nice -5 (the unit file's `LimitNICE`), the decode thread
+  at the service's nice 0. The FIFO reader, a byte stream that holds its
+  writer back, decodes on its own thread.
+- A sequence gap drops only the NAL unit it cut (an FU-A); every slice after
+  it goes to the decoder, which conceals what is missing. The frames are
+  shown as decoded: the map can show smudges until the phone codes those
+  areas again, and MSDK's per-frame `Corrupted` flags are counted. A decoder
+  that has never started still waits for the stream's first SPS. Only
+  30 access units in a row that fail to decode give the sequence up; the
+  decoder then waits for a keyframe as at the start, and the resync above
+  applies.
+- A gap followed by an SPS is a new stream (the phone reconnected or
+  CarPlay asked for a new one), logged as `waze: a new stream from avb
+  (sequence 40000, expected 17)`, not a loss. Any other gap is a loss,
+  logged with the jump, its source and whether the receive queue dropped
+  it (`waze: lost 5 packets of the stream from avb (sequence 1240, expected
+  1235); decoding through it`), and so are the first corrupted frame after
+  it and the first clean one begun after it (`waze: the picture is clean
+  again 150 ms after the loss at 12:39:50 (3 corrupted frames)`), at most
+  10 such lines a minute.
+- Decoding through a loss, the map shows and the status has no reason
+  for it; `probe.txt`'s `stream:` line says `lost part of the stream at
+  12:39:50; decoding through it` until that clean frame. The status's
+  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`, or
+  `Stream lost — restarting CarPlay` once `patchd` has decided for this
+  wait that it will restart CarPlay (PATCH.md "Stream resync"), while the
+  stream arrives with nothing decoded for 2 s (a render started
+  mid-stream, or a loss the decoder does not decode through) and while the
+  decoder has given up its sequence. The detail, with when that began and
+  `patchd`'s reason for holding the resync, is in the log (`waze: stream
+  lost: the stream arrives with nothing decoded since 12:40:50; resync
+  held: recmgr did not load a carplay restart entry this boot`) and in
+  `probe.txt`. A status line whose only change is the stream's reason is
+  logged at most once every 10 s.
+
 From a shell, `waze-on-cluster -c <conf> run map|panel|hud` (`sail` is an
 alias of `map`) sets the target until the service restarts and prints the
 status.
@@ -123,7 +169,9 @@ Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):
 `status.json`, the status the app shows (`state` idle, starting, showing,
 frozen or error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
-sources, the depacketiser (`rtp: packets nals aus seq_gaps dropped bad`), the
+sources, the depacketiser (`rtp: packets nals aus seq_gaps lost dropped bad`),
+the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
+held`), the stream (`stream: whole` or the detail above), the
 decoder, the late-join verdict, the noise filter's tile differences and the
 renderer's own status; and `stream.json`, for `patchd`'s resync. `patchd`
 answers `{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own
@@ -135,9 +183,13 @@ time, so it outlives the journal's few minutes on the unit, restarts and
 reboots; past `log_file_kb` (512) the file becomes `waze-on-cluster.log.1`.
 The service makes the directory, owned by `hmi_5000`, at each start; the
 deploy tool removes it with the rest of `/var/opt/waze-on-cluster`. The log
-has the status when its state, reason or target changes, and once a minute
-while frames come, how many were decoded, how many changed and whether the
-last picture was blank.
+has the status when its state, reason or target changes, each loss (above),
+and once a minute while frames come, how many were decoded, changed and
+flagged corrupted, whether the last picture was blank, the losses and the
+packets they cost, and the packets the receive queue dropped:
+`waze: 1840 frames decoded in the last minute, 1 changed, 0 corrupted; the
+last picture is not blank; 0 losses (0 packets), 0 dropped by the receive
+queue`.
 
 For a report, run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
@@ -281,7 +333,9 @@ in slot `0x100` under the gauges with normal colours, readable text and
 correct transitions. A 10-packet slice of a car capture is the depacketiser's
 golden test (`test/data/stream15_start.rtp`).
 
-Open: that the phone's SPS is exactly the advertised 1088x480; how packed
+Open: how the unit's hardware MSDK conceals a lost slice or picture, and
+whether it flags those frames `Corrupted` (and propagates the flag to the
+frames that reference them); that the phone's SPS is exactly the advertised 1088x480; how packed
 motion reads during a long fast pan while driving; whether the alternate
 display survives iOS and Waze updates (flag 1006 is server-side). Waze sends
 no guidance metadata, so this shows map pixels, not data-driven directions.

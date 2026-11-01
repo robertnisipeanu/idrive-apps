@@ -9,8 +9,9 @@
  * RAMSES's lines are told from other libraries'; a line is kept as raw text
  * when it names one of our scene ids (decimal or hex, not inside a longer
  * number) or a subscription, not the 2-second statistics; and the reader
- * keeps events and at most 30 raw lines a minute, counting the rest, and
- * drops the other lines. */
+ * keeps events, the first 20 RAMSES lines other than the statistics and
+ * those kept raw, at most 30 a minute, counting the rest, drops the other
+ * lines, and counts every line by its context with the time of the last. */
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -122,20 +123,42 @@ int main()
     std::vector<std::string> raw;
     uint64_t dropped = 0;
     c.take(&events, &raw, &dropped);
-    ok("the reader: events with the time read, the subscription line raw, another library's line not kept",
+    ok("the reader: events with the time read, both RAMSES lines raw (among the first), another library's line not kept",
        events.size() == 2 && events[0].kind == ConsoleEvent::Subscribed && events[0].ms == t0 &&
-           events[1].kind == ConsoleEvent::ResourceRequest && events[1].ms == t0 + 5 && raw.size() == 1 &&
-           raw[0] == s && dropped == 0);
+           events[1].kind == ConsoleEvent::ResourceRequest && events[1].ms == t0 + 5 && raw.size() == 2 &&
+           raw[0] == s && raw[1] == strip_colours(req.data(), req.size()) && dropped == 0);
     for (int k = 0; k < 40; k++)
         c.feed(add.data(), add.size(), t0 + 100 + k);
     events.clear();
     raw.clear();
     c.take(&events, &raw, &dropped);
-    ok("at most 30 raw lines in a minute, the rest counted", raw.size() == 29 && dropped == 11 && events.empty());
+    ok("at most 30 raw lines in a minute, the rest counted", raw.size() == 28 && dropped == 12 && events.empty());
     c.feed(add.data(), add.size(), t0 + 60000);
     raw.clear();
     c.take(&events, &raw, &dropped);
     ok("the next minute, kept again", raw.size() == 1 && dropped == 0);
+    ok("every line counted by context, the most frequent first, with the last one's age",
+       c.counts_text(t0 + 62000) == "44 lines (ramses.Client 43, other 1), the last 2 s ago");
+
+    RamsesConsole q(kScenes);
+    ok("before any line", q.counts_text(0) == "no line read since start");
+    const std::string periodic = "\x1b[1;37m1793493759.824 \x1b[0m\x1b[1;32m[ Info  ] \x1b[0m\x1b[1;36mramses.Periodic"
+                                 "      \x1b[0m | Client: 1 scene(s): 16778480 Subscribed\n";
+    const std::string levels = "1793536095.922 [ Info  ] ramses.Framework      | Ramses log levels: Contexts INFO, "
+                               "Console INFO, DLT INFO\n";
+    q.feed(levels.data(), levels.size(), 0);
+    for (int k = 0; k < 50; k++)
+        q.feed(periodic.data(), periodic.size(), 2000 * k);
+    const std::string plain = line(kPrefix, "ClientApplicationLogic::flush: flushing scene");
+    for (int k = 0; k < 25; k++)
+        q.feed(plain.data(), plain.size(), 100000 + k);
+    raw.clear();
+    q.take(&events, &raw, &dropped);
+    ok("the statistics counted, never kept; the first 20 other RAMSES lines kept raw",
+       raw.size() == 20 && raw[0].find("Ramses log levels") != std::string::npos &&
+           raw[19].find("flushing scene") != std::string::npos && dropped == 0);
+    ok("and the counts show the console alive with no subscription line",
+       q.counts_text(104024) == "76 lines (ramses.Periodic 50, ramses.Client 25, ramses.Framework 1), the last 4 s ago");
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

@@ -15,13 +15,29 @@
  * or open is retried every second, retry_sources), the decoder comes up at
  * the stream's first SPS (a raw Annex-B feed: at its first bytes), decodes
  * from then on whether or not the map is shown, and stays up for the service
- * lifetime; a later stream resyncs at its own SPS. */
+ * lifetime; a later stream resyncs at its own SPS.
+ *
+ * Threads. The AVB bridge's callback and the UDP reader only copy each
+ * datagram into a bounded queue (packet_queue.h, kQueuePackets or
+ * kQueueBytes, about 4 s of the stream) and return, at nice kReceiveNice
+ * where the unit allows it (LimitNICE in the service); one decode thread
+ * depacketises and decodes them in order at the process's own priority, so
+ * a slow decode only delays the picture. The FIFO reader, a byte stream
+ * whose writer waits while the pipe is full, decodes on its own thread.
+ *
+ * Losses (stream_health.h). A lost packet costs only the NAL unit it was in
+ * (rtp_h264.h); the decoder decodes through it and the frames it flags
+ * corrupted are shown all the same. A gap is a new stream or a loss
+ * (gap_settler.h), a loss logged with its source and whether the receive
+ * queue dropped it; only a frame of an access unit begun after the latest
+ * loss can end a decode-through episode. */
 #ifndef WOC_VIDEO_PRODUCER_H
 #define WOC_VIDEO_PRODUCER_H
 
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "avb_source.h"
@@ -29,9 +45,12 @@
 #include "freeze_watch.h"
 #include "frame_clock.h"
 #include "framing_probe.h"
+#include "gap_settler.h"
 #include "h264_source.h"
 #include "keyframe_wait.h"
+#include "packet_queue.h"
 #include "rtp_h264.h"
+#include "stream_health.h"
 #include "udp_source.h"
 
 namespace woc {
@@ -58,6 +77,10 @@ struct VideoConfig {
 
 class VideoProducer {
 public:
+    static const size_t kQueuePackets = 4096;
+    static const size_t kQueueBytes = 6 << 20;
+    static const int kReceiveNice = -5;
+
     explicit VideoProducer(const VideoConfig &cfg);
     ~VideoProducer();
 
@@ -74,8 +97,14 @@ public:
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
     /* The last minute's frames of the decode size, how many of them
      * changed and whether the last was blank (FrameTally), once a minute
-     * while frames come. Main thread. */
-    bool minute(int64_t now_ms, FrameTally::Minute *m);
+     * while frames come, with the stream's losses and corrupted frames and
+     * the receive queue's overflows since the last time. Main thread. */
+    bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, uint64_t *overflows);
+    /* The stream's status reason and its detail for the log and probe.txt
+     * (stream_health.h), and whether it is lost. */
+    std::string stream_reason(const ResyncState &resync) const;
+    std::string stream_detail(const ResyncState &resync) const;
+    bool stream_lost() const;
     /* Decode errors so far, and the last one's text in *last. */
     uint32_t decode_errors(std::string *last) const;
     /* Readable once a frame waits to be taken. */
@@ -94,8 +123,8 @@ public:
     std::string decode_status() const;
 
     /* The keyframe wait (keyframe_wait.h), sampled by track_keyframe_wait
-     * about once a second from the main loop; patchd reads it (stream.json)
-     * to resync. */
+     * about once a second from the main loop, which also tells the stream's
+     * health; patchd reads it (stream.json) to resync. */
     int64_t keyframe_wait_ms(int64_t now_ms) const { return keyframe_wait_.wait_ms(now_ms); }
     void track_keyframe_wait(int64_t now_ms);
 
@@ -104,11 +133,14 @@ private:
      * reason changes. Main thread. */
     void join_avb();
     void open_fifo();
+    /* A receive thread's datagram, into the queue. */
+    void receive(const uint8_t *data, size_t len, int source);
+    void decode_loop();
     /* One datagram (a UDP packet or a media-bus packet, the same RTP on the
      * wire): an RTP packet goes through the depacketiser, anything else is
-     * taken as raw Annex-B. Recorded for the framing probe either way. Runs
-     * on the source's thread. */
-    void feed_datagram(const uint8_t *data, size_t len);
+     * taken as raw Annex-B. Recorded for the framing probe either way. On the
+     * decode thread. */
+    void feed_datagram(const PacketQueue::Packet &p);
     /* One FIFO read (raw Annex-B), on the FIFO thread. */
     void feed_fifo(const uint8_t *data, size_t len);
     /* Depacketiser output: one NAL unit, or an access unit end. Brings the
@@ -118,7 +150,7 @@ private:
     bool start_decoder(std::string *err);
     void decode(const uint8_t *data, size_t len, bool end_of_au);
     /* Decoder callback: rounds the decoder's atlas in place, then swaps it
-     * with back_ under lock. Runs on the source thread inside decode(). */
+     * with back_ under lock. Runs on the feeding thread inside decode(). */
     void on_frame(const VideoFrame &f);
 
     VideoConfig cfg_;
@@ -131,10 +163,13 @@ private:
     FramingProbe probe_;
     RtpH264 rtp_;
     RtpH264::Sink rtp_sink_;   /* built once, so a packet allocates nothing */
-    /* Serialises the sources' feeds: guards decoder_, decoder_up_, rtp_ and
-     * raw_retry_ms_. */
+    /* Serialises the decode thread and the FIFO reader: guards decoder_,
+     * decoder_up_, decoding_, rtp_, packet_, gaps_ and raw_retry_ms_. */
     mutable std::mutex decode_mutex_;
     bool decoder_up_ = false, fifo_up_ = false, udp_up_ = false, avb_up_ = false;
+    bool decoding_ = false;          /* the decoder held a sequence after the last feed */
+    const PacketQueue::Packet *packet_ = nullptr;   /* the datagram being depacketised */
+    GapSettler gaps_;
     int64_t raw_retry_ms_ = 0;       /* a raw feed's next decoder start attempt */
     int64_t source_retry_ms_ = 0;    /* retry_sources' next attempt */
 
@@ -152,11 +187,16 @@ private:
     FrameTally tally_;               /* frame_mutex_ */
     std::string last_err_;           /* last decode error, for the status line and the log (frame_mutex_) */
     uint32_t decode_errs_ = 0;
+    StreamHealth health_;            /* frame_mutex_ */
+    uint64_t overflows_seen_ = 0;    /* the queue's overflows at the last minute (frame_mutex_) */
 
     std::atomic<uint64_t> decoded_total_{0};
     std::atomic<int64_t> last_frame_ms_{-1};
     KeyframeWait keyframe_wait_;            /* main thread */
     std::string udp_status_, avb_status_, fifo_status_;   /* each source's state, for the probe report */
+
+    PacketQueue queue_{kQueuePackets, kQueueBytes};
+    std::thread decode_thread_;
 };
 
 }  // namespace woc

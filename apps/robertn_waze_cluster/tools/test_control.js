@@ -8,7 +8,8 @@
  *
  * Covers: both sockets unreachable (the patch daemon not yet running);
  * Enable map / Disable map applying the one patch configuration; the map
- * following the stream with no command from the app; a page opened while the
+ * following the stream with no command from the app, and an idle status
+ * showing the stream's reason; a page opened while the
  * map is up reading its state, also when opened again;
  * the combined status line across patch and render state, ignoring extra
  * status fields and reading an unrecognised patch state as unknown; the
@@ -129,6 +130,8 @@ test('the map follows the stream; the app sends the render nothing', async (rend
     assert(seen.includes('Starting map…'), `status lines rendered on change: ${JSON.stringify(seen)}`);
     render.stream(false);
     await until('stream stopped', () => c.statusText() === 'Patched — waiting for CarPlay');
+    render.announce('idle', 'Stream lost — reconnect CarPlay');
+    await until('idle with the stream\'s reason', () => c.statusText() === 'Stream lost — reconnect CarPlay');
     assert.deepStrictEqual(render.received, [], 'no command to the render');
     assert.strictEqual(c.show, undefined);
     assert.strictEqual(c.stop, undefined);

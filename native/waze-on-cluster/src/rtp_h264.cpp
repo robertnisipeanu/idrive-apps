@@ -37,9 +37,15 @@ bool RtpH264::push(const uint8_t *pkt, size_t len, const Sink &sink)
     stats_.packets++;
 
     if (have_seq_ && seq != (uint16_t)(seq_ + 1)) {
+        Gap g;
+        g.expected = (uint16_t)(seq_ + 1);
+        g.got = seq;
+        g.lost = (uint16_t)(seq - g.expected);
         stats_.gaps++;
+        stats_.lost += g.lost;
         drop_fu();
-        synced_ = false;
+        if (on_gap)
+            on_gap(g);
     }
     seq_ = seq;
     have_seq_ = true;
@@ -111,15 +117,10 @@ void RtpH264::single(const uint8_t *nal, size_t len, const Sink &sink)
 
 void RtpH264::deliver(const uint8_t *annexb, size_t len, const Sink &sink)
 {
-    const unsigned type = annexb[4] & 0x1f;
-    if (!synced_) {
-        if (type != 7 && type != 5) { stats_.dropped++; return; }
-        synced_ = true;
-    }
     sink(annexb, len, false);
     stats_.nals++;
     au_open_ = true;
-    vcl_done_ = vcl_done_ || is_vcl(type);
+    vcl_done_ = vcl_done_ || is_vcl(annexb[4] & 0x1f);
 }
 
 void RtpH264::drop_fu()
@@ -137,15 +138,6 @@ void RtpH264::end_au(const Sink &sink)
     au_open_ = false;
     stats_.aus++;
     sink(nullptr, 0, true);
-}
-
-void RtpH264::reset()
-{
-    in_fu_ = false;
-    have_seq_ = have_ts_ = false;
-    au_open_ = false;
-    synced_ = true;
-    vcl_done_ = false;
 }
 
 }  // namespace woc

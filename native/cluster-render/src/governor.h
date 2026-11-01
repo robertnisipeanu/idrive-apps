@@ -10,7 +10,7 @@
  * compositor reports from 64 KB a second written); at other times it is
  * logged, not counted:
  *
- *   a shown scene removed by the display, not by the stock HMI    5
+ *   a shown scene removed by the display, not by the stock HMI    6
  *   heartbeat replies silent (the link stalled)                    3
  *   a flush or a setData refused                                   2
  *   a flush that took longer than slow_flush_ms                    1
@@ -20,9 +20,11 @@
  *
  * When the window (30 s) holds kThreshold points the cap steps down by
  * one step (500 KB/s), not below the floor (2000 KB/s), and the window
- * starts empty: no single event reaches the threshold, so one transient
- * error never lowers the cap. After a step down, kCooldownMs pass before
- * the next one. The cap steps back up one step at a time, each after
+ * starts empty. A removal reaches the threshold alone: on the car the
+ * KOMBI dropped a shown scene, with healthy heartbeats and no lock, after
+ * the busiest minute of upload. No other single event does, so one
+ * transient error never lowers the cap. After a step down, kCooldownMs pass
+ * before the next one. The cap steps back up one step at a time, each after
  * recover_ms of healthy upload (nothing in the window while writes go;
  * idle time neither counts nor resets). A step down within kProbationMs
  * of a step up doubles recover_ms (to at most kRecoverMaxMs), so a level

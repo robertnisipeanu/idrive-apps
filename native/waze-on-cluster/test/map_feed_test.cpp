@@ -152,6 +152,10 @@ int main()
     ok("granted: showing, with the decoded frame in the slot's scene",
        r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
+    const std::string lost = "Stream lost — restarting CarPlay";   /* until the layer stalls */
+    ok("showing carries the stream's reason", r.feed->status("decode", lost).state == "showing" &&
+                                                  r.feed->status("decode", lost).reason == lost &&
+                                                  r.feed->status("decode", lost).stream_reason);
 
     r.port.steal(r.sc.targets[0]);
     r.pump(20, &f1);
@@ -197,6 +201,8 @@ int main()
     const int releases = r.port.releases;
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
+    const std::string waiting = "Stream lost — reconnect CarPlay";
+    ok("idle while the stream is live carries the stream's reason", r.feed->status("decode", waiting).reason == waiting);
     r.pump(2000);   /* the fade out, then the linger */
     ok("and the slot is released after the linger",
        r.port.releases > releases && !r.port.row(0x100, 0x010004f0));
@@ -214,10 +220,8 @@ int main()
        r.map_layer() && r.st().state == "showing");
 
     /* the governor counts evidence seen while writes go */
-    for (int i = 0; i < 2; i++) {
-        r.svc->compositor().governor().activity(r.now);
-        r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
-    }
+    r.svc->compositor().governor().activity(r.now);
+    r.svc->compositor().governor().evidence(crs::Evidence::Removal, r.now);
     r.pump(100, &f1);
     ok("a lowered shared upload cap shows on the status line",
        r.st().page.find("upload cap 5500 KB/s") != std::string::npos);
@@ -241,6 +245,7 @@ int main()
     ok("the stream not live: the layer hidden, idle, and the slot released, the parked stock map shown",
        r.map_layer() && !r.map_layer()->params.visible && r.st().state == "idle" && r.port.releases > before &&
            !r.port.row(0x100, 0x010004f0) && stock && stock->map_status == 1);
+    ok("and no stream reason", r.feed->status("decode", waiting).reason.empty());
     r.feed->set_stream(true, false);
     r.pump(1200, &f1);
     ok("live again: visible and showing with the frames", r.map_layer()->params.visible && r.st().state == "showing");
@@ -265,19 +270,39 @@ int main()
     a.state = "showing";
     a.target = "map";
     a.page = "Waze map — 15 frames/s";
-    ok("status log: the first status", sl.due(a));
+    int64_t t = 1000000;
+    ok("status log: the first status", sl.due(a, t));
     a.page = "Waze map — 14 frames/s";
     a.upload_cap_kb = 5500;
     a.upload_reason = "slow flushes";
-    ok("status log: not for the page or the upload cap", !sl.due(a));
+    ok("status log: not for the page or the upload cap", !sl.due(a, t));
+    a.reason = "Stream lost — reconnect CarPlay";
+    a.stream_reason = true;
+    ok("status log: the stream's reason", sl.due(a, t));
+    a.reason.clear();
+    a.stream_reason = false;
+    ok("status log: the stream whole again within 10 s waits", !sl.due(a, t + 2000));
+    a.reason = "Stream lost — reconnect CarPlay";
+    a.stream_reason = true;
+    ok("status log: so does its next loss; the logged reason is the same, nothing to log",
+       !sl.due(a, t + 4000) && !sl.due(a, t + 10000));
+    a.reason.clear();
+    a.stream_reason = false;
+    ok("status log: a change still standing 10 s after the last such line is logged",
+       !sl.due(a, t + 9000) && sl.due(a, t + 10500));
+    a.state = "idle";
+    a.reason = "Stream lost — reconnect CarPlay";
+    a.stream_reason = true;
+    ok("status log: a state change is logged at once, with its reason", sl.due(a, t + 11000));
     a.state = "starting";
     a.reason = "the stock map holds the slot";
-    ok("status log: a state and reason", sl.due(a));
-    ok("status log: the same again is not", !sl.due(a));
+    a.stream_reason = false;
+    ok("status log: a state and reason", sl.due(a, t + 11100));
+    ok("status log: the same again is not", !sl.due(a, t + 11200));
     a.reason = "another app holds the slot";
-    ok("status log: a reason alone", sl.due(a));
+    ok("status log: a reason of the feed's own alone, at once", sl.due(a, t + 11300));
     a.target = "panel";
-    ok("status log: a target alone", sl.due(a));
+    ok("status log: a target alone", sl.due(a, t + 11400));
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

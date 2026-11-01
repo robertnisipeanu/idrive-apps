@@ -12,7 +12,7 @@
  *
  *   Render control socket (RENDER_PATH; read only, the app sends nothing)
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error",
- *                    "target","page","reason"}
+ *                    "target","page","reason"}   (idle's reason: why a live stream shows no map)
  *                   {"ev":"log","line"}      the backlog on connect, then each new line
  *                   {"ev":"slots",...}       ignored here
  *
@@ -404,7 +404,7 @@ class WazeClusterControl extends EventEmitter {
         case 'frozen':
             return 'Map frozen — reconnect CarPlay';
         default:
-            return 'Patched — waiting for CarPlay';
+            return (rs && rs.reason) || 'Patched — waiting for CarPlay';
         }
     }
 

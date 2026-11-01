@@ -20,7 +20,10 @@
  * going; a target with the same scene id takes it down only when it needs
  * the id. After a release the next request waits for the display's
  * confirmation and the renderer's unsubscription, at most 1 s; a fetch failing right after the publication is
- * asked again after 250 ms, three times, then on the ladder. Rendering: a
+ * asked again after 250 ms, three times, then on the ladder; a scene the
+ * display removed is asked for again no sooner than 5 s after, and a fetch
+ * failing within 300 ms of that request is asked again after 1.5 s, three
+ * times, then on the ladder. Rendering: a
  * shown scene its renderer subscribed to is verified; one not subscribed
  * 1.5 s after it was shown, or after the renderer unsubscribed, is released
  * and asked for again at once, then on the ladder, its scene kept; with no
@@ -429,8 +432,8 @@ static void lost_to_our_own_id()
     b.m.on_lost(kPanelScene, "fetch removed", b.now);
     b.slot(kPanelSlot, 1, 0);
     b.m.tick(b.now);
-    ok("the next report shows it free: the loss was ours, evidence, and the ladder",
-       evidence.size() == 1 && evidence[0] == std::string("scene removed") && b.m.status(1).retry_ms == b.now + 2000);
+    ok("the next report shows it free: the loss was ours, evidence, and a retry after the removal wait",
+       evidence.size() == 1 && evidence[0] == std::string("scene removed") && b.m.status(1).retry_ms == b.now + 5000);
 
     Rig c;
     evidence.clear();
@@ -440,7 +443,7 @@ static void lost_to_our_own_id()
     const bool waited = evidence.empty();
     c.run(20);
     ok("no report within 1 s: the loss was ours", waited && evidence.size() == 1);
-    ok("and the ladder counts from the loss", c.m.status(1).retry_ms == c.now - 1010 + 2000);
+    ok("and the wait counts from the loss", c.m.status(1).retry_ms == c.now - 1010 + 5000);
 
     Rig d;
     std::vector<std::string> ev2;
@@ -450,8 +453,8 @@ static void lost_to_our_own_id()
     d.m.on_shown(kMapScene, d.now);
     d.slot(kMapSlot, 1, kMapScene);   /* a removal: the slot available, our content still named */
     d.m.on_lost(kMapScene, "fetch removed", d.now);
-    ok("removed with the slot shown available: evidence at once, and the ladder",
-       ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 2000);
+    ok("removed with the slot shown available: evidence at once, and the removal wait",
+       ev2.size() == 1 && d.m.status(0).retry_ms == d.now + 5000);
 }
 
 static void lock_is_not_evidence()
@@ -550,9 +553,9 @@ static void slot_comes_back()
     e.m.on_lost(kMapScene, "unmapped", e.now);
     e.m.on_slots(table(1, 0, 0), e.now);
     e.run(1500);
-    ok("a stock entry listed beside ours but not mapped is not the slot away: the ladder",
+    ok("a stock entry listed beside ours but not mapped is not the slot away: the removal wait",
        joined().find("request") == std::string::npos);
-    e.run(1000);
+    e.run(3600);
     e.m.on_shown(kMapScene, e.now);
     e.m.on_slots(table(2, 0, 1), e.now);   /* the stock map mapped over ours */
     joined();
@@ -974,7 +977,8 @@ static void fresh_fetch_failed()
     r.m.on_shown(kMapScene, r.now);
     r.run(40000);
     r.m.on_lost(kMapScene, "fetch removed", r.now);
-    r.run(2000);
+    r.run(5000);
+    r.run(500);
     joined();
     r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
     at = r.now;
@@ -983,6 +987,65 @@ static void fresh_fetch_failed()
     ok("a fetch failing long after the publication: the ladder at once", calls_are(""));
     r.run(10);
     ok("its next step, 5 s", calls_are("request map") && r.now - at == 5000);
+}
+
+/* On the car: the KOMBI removed the shown map scene, failed the fetch asked
+ * 2 s later within 125 ms, and took the one asked 7 s after the removal. */
+static void removal_retry()
+{
+    Rig r;
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    r.run(40000);
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    const int64_t removed = r.now;
+    joined();
+    r.run(4990);
+    ok("a scene the display removed: not asked for again within 5 s", calls_are(""));
+    r.run(10);
+    ok("then asked for", calls_are("request map") && r.now - removed == 5000);
+    bool quick = true;
+    for (int k = 0; k < SlotManager::kNotReadyRetries; k++) {
+        r.run(130);
+        r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+        const int64_t at = r.now;
+        quick = quick && calls_are("release map") && r.m.status(0).reason == "refused: E_FETCH_STATUS_FAILED";
+        r.run(1490);
+        quick = quick && calls_are("");
+        r.run(10);
+        quick = quick && calls_are("request map") && r.now - at == 1500;
+    }
+    ok("a fetch failing within 300 ms of it: not ready, asked again after 1.5 s, three times", quick);
+    r.run(130);
+    r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
+    const int64_t at = r.now;
+    joined();
+    r.run(4990);
+    ok("the fourth: the ladder's next step", calls_are(""));
+    r.run(10);
+    ok("5 s", calls_are("request map") && r.now - at == 5000);
+
+    Rig s;   /* failing later than 300 ms after the request: a refusal, the ladder */
+    s.m.want(0, true, false);
+    s.m.tick(s.now);
+    s.m.on_shown(kMapScene, s.now);
+    s.run(40000);
+    s.m.on_lost(kMapScene, "fetch removed", s.now);
+    s.run(5000);
+    s.run(400);
+    joined();
+    s.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", s.now);
+    ok("a slow failure after a removal is not 'not ready': the ladder",
+       s.m.status(0).retry_ms == s.now + 5000);
+
+    Rig h;   /* the stock map taking the slot is not a removal by the display */
+    h.m.want(0, true, true);
+    h.m.tick(h.now);
+    h.m.on_shown(kMapScene, h.now);
+    h.slot(kMapSlot, 2, kStockMap);
+    h.m.on_lost(kMapScene, "fetch removed", h.now);
+    ok("a slot the stock HMI takes: the ladder's 2 s", h.m.status(0).retry_ms == h.now + 2000);
 }
 
 static void rendering()
@@ -995,7 +1058,7 @@ static void rendering()
     n.run(10000);
     ok("no subscription line since start: shown, not observable, nothing done",
        n.m.status(0).rendering == Rendering::Unobservable && n.state(0) == TargetState::Shown && calls_are("") &&
-           n.m.renderer_text().find("not observable") != std::string::npos);
+           n.m.renderer_text(n.now).find("not observable") != std::string::npos);
 
     Rig r;
     r.m.want(0, true, false);
@@ -1081,6 +1144,7 @@ int main()
     fresh_retry_cleared();
     release_confirmation();
     fresh_fetch_failed();
+    removal_retry();
     rendering();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

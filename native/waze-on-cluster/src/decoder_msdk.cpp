@@ -103,6 +103,7 @@ struct Decoder::State {
     NalReader nal;
     std::string error;               /* first hard error of the current call */
     bool reorder = false;            /* the stream has B slices: output in display order */
+    int failed = 0;                  /* access units in a row that failed to decode */
 
     /* The current sequence; valid while `running`. */
     bool running = false;
@@ -187,10 +188,16 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
         mfxBitstream bs;
         wrap(&bs, au);
         Result r = decode(&bs, cb);
-        if (r == Ok)
+        if (r == Ok) {
+            failed = 0;
             return;
+        }
         if (r == Failed) {
-            stop();
+            if (++failed >= kFailLimit) {
+                failed = 0;
+                stop();
+                error += "; " + std::to_string(kFailLimit) + " access units in a row failed: waiting for an SPS";
+            }
             return;
         }
         /* The access unit starts a sequence that needs a larger picture or
@@ -414,7 +421,9 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, const FrameSink &cb)
     if (pixels.size() != n)
         pixels.assign(n, 0);
     pack_nv12_atlas(vout.Data.Y, pitch, vout.Data.UV, pitch, w, h, pixels.data());
-    VideoFrame f = {w, h, &pixels};
+    /* The decode task finished before the VPP task that read its surface,
+     * so its flags are set. */
+    VideoFrame f = {w, h, in->Data.Corrupted, &pixels};
     cb(f);
     return true;
 }
@@ -494,5 +503,7 @@ void Decoder::flush(const FrameSink &cb)
 }
 
 void Decoder::shutdown() { s_.reset(); }
+
+bool Decoder::decoding() const { return s_ && s_->running; }
 
 }  // namespace woc

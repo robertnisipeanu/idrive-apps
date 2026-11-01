@@ -153,20 +153,21 @@ could repeat at every phone connection. Disable map, or boot recovery
 CarPlay forces exactly one keyframe, inside `requestStream` (`0x1818ca`, the
 binary's only `ForceKeyframe` reference). On a 90 s car capture the phone
 sent SPS, PPS and an IDR only at stream start, twice within the first second,
-then non-IDR slices only. A decoder that misses the start never syncs, and a
-lost RTP packet drops everything up to the next SPS or IDR, freezing the map
-until the stall teardown. So the render runs from boot with its sources
-listening, starts the decoder at the stream's first SPS, and decodes whether
-or not the map is shown. The UDP socket's 4 MB receive buffer keeps loopback
-lossless; `probe.txt` counts `seq_gaps` and its `late-join:` line reads
+then non-IDR slices only. A decoder that misses the start never syncs. So
+the render runs from boot with its sources listening, starts the decoder at
+the stream's first SPS, and decodes whether or not the map is shown. A lost
+RTP packet costs only the NAL unit it carried: the decoder decodes through it
+and the map shows smudges until the phone codes those areas again (README
+"Losses"). `probe.txt` counts `seq_gaps` and its `late-join:` line reads
 `RISK` on this stream.
 
 ### Stream resync
 
-A render that missed the start (it restarted, or lost RTP sync) decodes
-nothing until a new stream, and nothing on the head unit asks the phone for a
-keyframe. A new CarPlay session brings a new stream, so `patchd` restarts
-CarPlay the way it activates a patch:
+A render that missed the start (it restarted), or whose decoder gave up its
+sequence after decode errors in a row, decodes nothing until a new stream,
+and nothing on the head unit asks the phone for a keyframe. A new CarPlay
+session brings a new stream, so `patchd` restarts CarPlay the way it
+activates a patch:
 
 - About once a second the render writes `stream.json`: how long the stream
   has arrived with no frame decoded and no SPS or IDR. A decoded frame or the
@@ -183,6 +184,13 @@ CarPlay the way it activates a patch:
   in `/dev/shm/waze-on-cluster/resync.json`, so they survive a `patchd`
   restart and clear at a head-unit start. Each attempt, and each held one
   with its reason, is in `patchd`'s log.
+- From the first report of a wait, `patchd` decides whether a resync would
+  go and records it in the same file: `waiting` true and `held`, null when
+  it would go or why not. Both clear when the wait ends, and at each
+  `patchd` start. The render reads it each second: its status says `Stream
+  lost — restarting CarPlay` only with `waiting` true and `held` null, and
+  `Stream lost — reconnect CarPlay` otherwise; its log and `probe.txt` give
+  the reason.
 
 On the car the stream resumed after a CarPlay restart; the restart also ends
 the main-screen session until the phone reconnects. With a stock restart list

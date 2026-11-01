@@ -229,17 +229,19 @@ void SlotManager::release(int i, int64_t now_ms)
     Target &t = t_[i];
     take_down(i, now_ms);
     t.ladder = 0;
+    t.removed_ms = -1;
     t.takeovers = 0;
     t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
     set(i, TargetState::Idle, Holder::None, "", now_ms);
 }
 
-void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms)
+void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reason, int64_t now_ms, int64_t from_ms,
+                       int64_t min_ms)
 {
     Target &t = t_[i];
     int64_t retry = -1;
     if (use_ladder) {
-        retry = (from_ms >= 0 ? from_ms : now_ms) + kLadder[std::min(t.ladder, kLadderSteps - 1)];
+        retry = (from_ms >= 0 ? from_ms : now_ms) + std::max(kLadder[std::min(t.ladder, kLadderSteps - 1)], min_ms);
         t.ladder++;
     }
     /* A slot already reported away (the report can come before the loss)
@@ -332,6 +334,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
                  (long long)(now_ms - t_[i].since_ms));
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     t_[i].shown_ms = t_[i].check_ms = now_ms;
+    t_[i].removed_ms = -1;
     verify(i, now_ms);
 }
 
@@ -402,6 +405,17 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kFreshRetryMs);
         return;
     }
+    if (r == Refusal::FetchFailed && t.removed_ms >= 0 && t.last_request_ms - t.removed_ms <= kNotReadyWindowMs &&
+        now_ms - t.last_request_ms <= kNotReadyMs && t.not_ready < kNotReadyRetries) {
+        t.not_ready++;
+        log_info("target %s: fetch failed %lld ms after the request, %lld ms after the display removed the scene: "
+                 "not ready; asking again in %lld ms (%d of %d)",
+                 specs_[i].name.c_str(), (long long)(now_ms - t.last_request_ms), (long long)(now_ms - t.removed_ms),
+                 (long long)kNotReadyRetryMs, t.not_ready, kNotReadyRetries);
+        take_down(i, now_ms);
+        set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
+        return;
+    }
     Holder h = Holder::None;
     if (r == Refusal::Busy) {
         h = other_holder(i);
@@ -464,12 +478,16 @@ bool SlotManager::locked(int i) const
 void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms,
                               int64_t lost_ms)
 {
-    if (h == Holder::None && removal && !locked(i) && on_evidence)
+    Target &t = t_[i];
+    const bool by_display = h == Holder::None && removal && !locked(i);
+    t.removed_ms = by_display ? lost_ms : -1;
+    t.not_ready = 0;
+    if (by_display && on_evidence)
         on_evidence(Evidence::Removal, specs_[i].name + ": " + reason, lost_ms);
-    if (h == Holder::Foreign || (h == Holder::Stock && !t_[i].contend))
+    if (h == Holder::Foreign || (h == Holder::Stock && !t.contend))
         wait(i, h, false, reason, now_ms);
     else
-        wait(i, h, true, reason, now_ms, lost_ms);
+        wait(i, h, true, reason, now_ms, lost_ms, by_display ? kRemovalWaitMs : 0);
 }
 
 void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
@@ -519,7 +537,7 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         if (a->second)
             t.slot_away = true;
         else if (t.slot_away && st.retry_ms > now_ms) {
-            st.retry_ms = now_ms;
+            st.retry_ms = t.removed_ms >= 0 ? std::max(now_ms, t.removed_ms + kRemovalWaitMs) : now_ms;
             t.slot_away = false;
         }
     }
@@ -838,11 +856,12 @@ std::string SlotManager::rendering_text(int i, int64_t now_ms) const
     }
 }
 
-std::string SlotManager::renderer_text() const
+std::string SlotManager::renderer_text(int64_t now_ms) const
 {
+    const std::string console = console_text ? "renderer console: " + console_text(now_ms) + "\n" : std::string();
     if (!sub_lines_)
-        return "renderer: subscription not observable: no RAMSES subscription line read since start\n";
-    return "renderer: " + std::to_string(sub_lines_) + " subscription lines read since start\n";
+        return "renderer: subscription not observable: no RAMSES subscription line read since start\n" + console;
+    return "renderer: " + std::to_string(sub_lines_) + " subscription lines read since start\n" + console;
 }
 
 }  // namespace crs

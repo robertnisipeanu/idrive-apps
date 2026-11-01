@@ -172,6 +172,8 @@ async function main() {
     keepReporting(500);
     await sleep(800);
     ok('under the threshold: no restart', newCalls().length === 0);
+    ok('during a wait the record says patchd decided a resync would go',
+       readResync().waiting === true && readResync().held === null, JSON.stringify(readResync()));
 
     stopReporting();
     report(5000, 30);
@@ -245,17 +247,33 @@ async function main() {
     carplay = dummyCarplay();
     await waitFor(function () { return /resync held: 4 attempts/.test(patchdLog); }, 6000);
     ok('past the limit a due resync is held', restarts(newCalls()) === 0 && !died(carplay) && /resync held: 4 attempts/.test(patchdLog));
+    ok('the record says why, for the render', readResync().held === '4 attempts this head-unit start', JSON.stringify(readResync()));
 
-    /* Without carplay's recmgr entry, a due resync is held, never forced. */
-    fs.writeFileSync(RESYNC, JSON.stringify({ attempts: 0, last: null, total: 0 }) + '\n');
+    /* Without carplay's recmgr entry, a due resync is held, never forced; a
+     * previous process's reason is gone at start. */
+    fs.writeFileSync(RESYNC, JSON.stringify({ waiting: true, held: 'from before', attempts: 0, last: null, total: 0 }) + '\n');
     watcher.destroy();
     patchd.kill('SIGTERM');
     await patchd.exited;
     setRecmgr(['someone-else']);
+    keepReporting(0);
     patchd = startPatchd();
-    await waitFor(function () { return fs.existsSync(SOCK); }, 5000);
+    await waitFor(function () { return fs.existsSync(SOCK) && readResync().held !== 'from before'; }, 5000);
+    ok('a restarted patchd drops the previous decision', readResync().waiting === false && readResync().held === null,
+       JSON.stringify(readResync()));
+    keepReporting(500);
+    await waitFor(function () { return readResync().held !== null; }, 3000);
+    ok('the hold is decided while the wait is under the threshold', newCalls().length === 0 &&
+       readResync().waiting === true && readResync().held === 'recmgr did not load a carplay restart entry this boot',
+       JSON.stringify(readResync()));
+    keepReporting(5000);
     await waitFor(function () { return /resync held: recmgr/.test(patchdLog); }, 6000);
     ok('no recmgr entry: held, carplay left running', restarts(newCalls()) === 0 && !died(carplay) && /resync held: recmgr/.test(patchdLog));
+    ok('the record says why', readResync().held === 'recmgr did not load a carplay restart entry this boot', JSON.stringify(readResync()));
+    keepReporting(0);
+    await waitFor(function () { return readResync().held === null; }, 3000);
+    ok('a stream that decodes again clears both', readResync().waiting === false && readResync().held === null,
+       JSON.stringify(readResync()));
 
     ok('the app never saw a busy patch state for a resync', !statuses.some(function (m) { return m.state === 'busy'; }),
        JSON.stringify(statuses.filter(function (m) { return m.state === 'busy'; })));

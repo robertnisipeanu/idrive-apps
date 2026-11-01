@@ -96,6 +96,11 @@ emulator's stand-in every time):
 - On the car, a fetch sent in the same tick as the scene's first
   publication was answered FETCH FAILED 12 ms later; the same fetch 2 s
   later was FETCHED.
+- On the car, the KOMBI removed our shown map scene (`fetchStatusChange`
+  REMOVED with healthy heartbeats and the slot not locked) after a minute
+  of 5.8 MB/s of upload. A fetch 2 s after the removal was answered FETCH
+  FAILED 125 ms after it was sent (24 ms after FETCHING); one 7 s after the
+  removal was FETCHED and shown.
 
 ## Heartbeat
 

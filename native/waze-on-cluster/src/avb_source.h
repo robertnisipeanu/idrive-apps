@@ -10,8 +10,7 @@
  * receiver alongside the unit's own. Each bus packet is one RTP datagram
  * (VERIFIED on the car), so the sink sees the same datagrams the UDP source
  * would. Receiving in-process keeps the stream off a UDP socket, whose
- * receive buffer drops datagrams under load — and one dropped datagram
- * ends decode sync until the phone's next keyframe. */
+ * receive buffer drops datagrams under load. */
 #ifndef WOC_AVB_SOURCE_H
 #define WOC_AVB_SOURCE_H
 
@@ -25,7 +24,8 @@ namespace woc {
 
 class AvbSource {
 public:
-    /* sink is called once per bus packet, on the bridge's thread. */
+    /* sink is called once per bus packet, on the bridge's thread, which
+     * delivers no other packet while it runs. */
     using Sink = std::function<void(const uint8_t *, size_t)>;
 
     ~AvbSource();

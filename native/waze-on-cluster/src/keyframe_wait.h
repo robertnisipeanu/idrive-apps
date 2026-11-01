@@ -3,8 +3,8 @@
 /* Whether the decoder joined the phone's stream after it started.
  *
  * The phone sends SPS, PPS and an IDR only when a stream starts (PATCH.md
- * "Stream resync"), so a decoder that missed the start, or lost RTP sync,
- * decodes nothing until the next stream. Sampled about once a second: while
+ * "Stream resync"), so a decoder that missed the start, or gave up its
+ * sequence (decoder_msdk.h), decodes nothing until the next stream. Sampled about once a second: while
  * the stream keeps arriving with no frame decoded and no SPS or IDR, the wait
  * grows from the first such sample. It is 0 once a frame decodes or the
  * stream stops arriving, and from a keyframe that arrives after the last

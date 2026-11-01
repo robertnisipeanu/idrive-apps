@@ -18,11 +18,12 @@
  * access unit, so on this stream the timestamp rule frames every picture: a
  * picture is complete when the next one's first packet arrives.
  *
- * Losses. A sequence-number gap drops the FU-A in progress, then everything
- * up to the next SPS or IDR slice, so no NAL unit is delivered that is
- * missing bytes or follows a lost one. The first packet, and a fragment that
- * joins an FU-A mid-way (a start mid-stream), need no resync: the decoder
- * itself waits for an SPS.
+ * Losses. A sequence-number gap drops only the FU-A in progress, the one NAL
+ * unit missing bytes; every NAL unit after it is delivered, so the decoder
+ * keeps decoding through the loss and conceals what is missing. A fragment
+ * that joins an FU-A mid-way (after a loss, or a start mid-stream) is dropped
+ * with its FU-A. Each gap is reported (on_gap) before anything after it is
+ * delivered.
  *
  * Not thread-safe; one caller at a time. No allocation once the buffers have
  * grown to the largest NAL unit. */
@@ -43,12 +44,20 @@ public:
      * access unit. `data` is valid only during the call. */
     using Sink = std::function<void(const uint8_t *data, size_t len, bool end_of_au)>;
 
+    /* A sequence-number discontinuity: the packet expected and the one that
+     * came; lost is how many sequence numbers lie between them (mod 2^16). */
+    struct Gap {
+        uint16_t expected = 0, got = 0;
+        uint32_t lost = 0;
+    };
+
     struct Stats {
         uint64_t packets = 0;   /* RTP packets parsed */
         uint64_t nals = 0;      /* NAL units delivered */
         uint64_t aus = 0;       /* access unit ends delivered */
         uint64_t gaps = 0;      /* sequence-number discontinuities */
-        uint64_t dropped = 0;   /* NAL units or fragments discarded (loss, resync, unsupported) */
+        uint64_t lost = 0;      /* packets missing by sequence number, over all gaps */
+        uint64_t dropped = 0;   /* NAL units or fragments discarded (loss, unsupported) */
         uint64_t bad = 0;       /* datagrams that are not a parseable RTP H.264 packet */
     };
 
@@ -56,12 +65,9 @@ public:
      * packet with a parseable H.264 payload. */
     bool push(const uint8_t *pkt, size_t len, const Sink &sink);
 
-    /* Forget the stream: the next packet starts a new one. */
-    void reset();
-
     const Stats &stats() const { return stats_; }
-    /* False after a loss until the next SPS or IDR slice. */
-    bool synced() const { return synced_; }
+
+    std::function<void(const Gap &)> on_gap;
 
 private:
     void deliver(const uint8_t *annexb, size_t len, const Sink &sink);
@@ -76,7 +82,6 @@ private:
     uint16_t seq_ = 0;
     uint32_t ts_ = 0;
     bool au_open_ = false;       /* NAL units delivered since the last access unit end */
-    bool synced_ = true;
     bool vcl_done_ = false;      /* this packet completed a slice */
     Stats stats_;
 };
