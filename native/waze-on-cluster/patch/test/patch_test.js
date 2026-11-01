@@ -19,16 +19,26 @@ var cp = require('child_process');
 
 var SCRIPT = path.join(__dirname, '..', 'carplay_patch.js');
 var SRC = process.env.CARPLAY_BIN || '';
-var ORIG_SHA = 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50';
-var SLOT = 0x2ba4f0, SINK = 0x2a20b0, SINK_LEN = 59;
+/* The known builds' offsets, picked by the source's size: carplay 22.28.3
+ * and carplay 21.37.3. */
+var BUILDS = {
+    3484912: { sha: 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50', table: 0x2ba4d4, sink: 0x2a20b0,
+        call: 0x18176c, res: [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72], high: 0xfff7f2bc, mid: 0xfff7f30c },
+    3448056: { sha: 'dac7f1a63df6ea6dbffd9f5e8a10c6d8805489e362806608441d566876038aa2', table: 0x2b9614, sink: 0x29c150,
+        call: 0x18033c, res: [0x20b4c0, 0x20b4e2, 0x20b4f4, 0x20b502], high: 0xfff811cc, mid: 0xfff8121c }
+};
+var B = BUILDS[SRC && fs.existsSync(SRC) ? fs.statSync(SRC).size : 3484912] || BUILDS[3484912];
+var ORIG_SHA = B.sha;
+function le32(v) { var x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0, 0); return x.toString('hex'); }
+var SLOT = B.table + 28, SINK = B.sink, SINK_LEN = 59;
 /* Edit 3 (self-start): the 5-byte call at 0x18176c, stock -> setStreamStatus,
  * patched -> requestStream. Only its 4-byte rel32 differs. */
-var CALL = 0x18176c, CALL_LEN = 5;
+var CALL = B.call, CALL_LEN = 5;
 var CALL_STOCK = 'e8effdffff', CALL_SELF = 'e89f000000';
 function callBytes(buf) { return buf.slice(CALL, CALL + CALL_LEN).toString('hex'); }
 /* Edit 4 (resolution): the four movabs immediates of the IC_HIGH geometry
  * builder. Only the 8 immediate bytes after each 2-byte opcode change. */
-var RES_OFFS = [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72];
+var RES_OFFS = B.res;
 function resImmediates(buf) { return RES_OFFS.map(function (o) { return buf.slice(o, o + 10).toString('hex'); }); }
 var RES_STOCK = ['48baea0000006e000000', '48b88007000084030000', '48b80000000064020000', '48b80e0200000202c000'];
 /* 1088x480 at 138x61 mm, view offset (0,0), safe 504x368 at (286,72). */
@@ -40,7 +50,7 @@ function inResRegion(x) { return RES_OFFS.some(function (o) { return x >= o + 2 
  * (what the car runs today). Patches the bytes directly, bypassing the patcher. */
 function makeEdit12Only(panel, sinkUrl) {
     var b = Buffer.from(SRCBUF);
-    b.writeUInt32LE((panel === 'mid' ? 0xfff7f30c : 0xfff7f2bc) >>> 0, SLOT);
+    b.writeUInt32LE((panel === 'mid' ? B.mid : B.high) >>> 0, SLOT);
     var s = Buffer.alloc(SINK_LEN, 0); s.write(sinkUrl, 'latin1'); s.copy(b, SINK);
     return b;   /* CALL left stock */
 }
@@ -87,7 +97,7 @@ try {
     ok('avb-mode diff stays in the slot, the call rel32 and the res immediates', d.length >= 2 &&
         d.every(function (x) { return (x >= SLOT && x < SLOT + 4) || (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x); }),
         JSON.stringify(d.map(function (x){return '0x'+x.toString(16);})));
-    ok('slot = IC_HIGH (bcf2f7ff)', fs.readFileSync(tgt).slice(SLOT, SLOT + 4).toString('hex') === 'bcf2f7ff');
+    ok('slot = IC_HIGH', fs.readFileSync(tgt).slice(SLOT, SLOT + 4).toString('hex') === le32(B.high));
     ok('call retargeted to requestStream', callBytes(fs.readFileSync(tgt)) === CALL_SELF, callBytes(fs.readFileSync(tgt)));
     ok('res immediates advertise 1088x480 at 138x61mm, safe 504x368 at 286,72',
         JSON.stringify(resImmediates(fs.readFileSync(tgt))) === JSON.stringify(RES_DEFAULT), JSON.stringify(resImmediates(fs.readFileSync(tgt))));
@@ -105,7 +115,7 @@ try {
     r = run(['apply', '--target', tgt, '--panel', 'mid', '--capture', fifo, '--yes']);
     ok('apply mid + capture succeeds', r.code === 0 && /variant -> IC_MID/.test(r.out) && /sink -> file:\/\//.test(r.out), r.out);
     var b = fs.readFileSync(tgt);
-    ok('slot = IC_MID (0cf3f7ff)', b.slice(SLOT, SLOT + 4).toString('hex') === '0cf3f7ff');
+    ok('slot = IC_MID', b.slice(SLOT, SLOT + 4).toString('hex') === le32(B.mid));
     var nul = b.slice(SINK, SINK + SINK_LEN).indexOf(0);
     var url = b.slice(SINK, SINK + (nul >= 0 ? nul : SINK_LEN)).toString('latin1');
     ok('sink url redirected to the FIFO', url === 'file://' + fifo + '?mime_type=video/H264', url);
@@ -176,7 +186,7 @@ try {
      * firmware update replaced carplay and left the backup behind) */
     run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
     var mangled = Buffer.from(fs.readFileSync(tgt));
-    mangled.writeUInt32LE(0x11223344, 0x2ba4d4);   /* corrupt the converter table -> unknown variant */
+    mangled.writeUInt32LE(0x11223344, B.table);   /* corrupt the converter table -> unknown variant */
     fs.writeFileSync(tgt, mangled);
     r = run(['revert', '--target', tgt, '--yes', '--drop-backup']);
     ok('revert refuses an unrecognised current binary, keeping the backup', r.code !== 0 && /not a recognised/.test(r.out) &&
@@ -239,7 +249,7 @@ try {
     var d3 = diffs(e12buf, e12now);
     ok('edit-1/2-only: Enable changed only the call rel32 and the res immediates', d3.length >= 1 &&
         d3.every(function (x) { return (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x); }), JSON.stringify(d3.map(function (x){return '0x'+x.toString(16);})));
-    ok('edit-1/2-only: now SELF-START, variant+sink unchanged', callBytes(e12now) === CALL_SELF && e12now.slice(SLOT, SLOT + 4).toString('hex') === 'bcf2f7ff');
+    ok('edit-1/2-only: now SELF-START, variant+sink unchanged', callBytes(e12now) === CALL_SELF && e12now.slice(SLOT, SLOT + 4).toString('hex') === le32(B.high));
     r = run(['verify', '--target', e12]);
     ok('edit-1/2-only: verify now passes', r.code === 0 && /self-start on/.test(r.out), r.out);
     r = run(['revert', '--target', e12, '--yes']);
@@ -252,7 +262,7 @@ try {
     fs.writeFileSync(e123, SRCBUF);
     run(['apply', '--target', e123, '--panel', 'high', '--yes']);
     var b123 = Buffer.from(fs.readFileSync(e123));
-    [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72].forEach(function (o, i) {
+    RES_OFFS.forEach(function (o, i) {
         Buffer.from(RES_STOCK[i], 'hex').copy(b123, o);   /* geometry back to stock, the rest patched */
     });
     fs.writeFileSync(e123, b123);
@@ -305,7 +315,7 @@ try {
     fs.writeFileSync(fs1, SRCBUF);
     run(['apply', '--target', fs1, '--panel', 'high', '--yes']);
     var bfs = Buffer.from(fs.readFileSync(fs1));
-    [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72].forEach(function (o, i) {
+    RES_OFFS.forEach(function (o, i) {
         Buffer.from(RES_FULLSAFE[i], 'hex').copy(bfs, o);
     });
     fs.writeFileSync(fs1, bfs);
@@ -318,7 +328,7 @@ try {
     ok('full-frame safe: Enable writes the default safe area', r.code === 0 &&
         /resolution -> 1088x480 at 138x61mm, safe 504x368 at 286,72/.test(r.out) && !/variant ->|self-start ->|sink ->/.test(r.out), r.out);
     var d5 = diffs(bfs, fs.readFileSync(fs1));
-    var SAFE_OFFS = [0x20ca64, 0x20ca72];
+    var SAFE_OFFS = [RES_OFFS[2], RES_OFFS[3]];
     ok('full-frame safe: Enable changed only the safe-area immediates', d5.length >= 1 &&
         d5.every(function (x) { return SAFE_OFFS.some(function (o) { return x >= o + 2 && x < o + 10; }); }),
         JSON.stringify(d5.map(function (x){return '0x'+x.toString(16);})));
@@ -341,8 +351,8 @@ try {
     ok('--safe with --panel mid refused, no change', r.code !== 0 && /--panel high/.test(r.out) && sha256(fs1) === fsSha2, r.out);
     /* A safe area that overruns the frame is not this tool's geometry. */
     var bad = Buffer.from(fs.readFileSync(fs1));
-    Buffer.from('48b800000000f8010000', 'hex').copy(bad, 0x20ca64);   /* safe width 504 */
-    Buffer.from('48b870010000a0024800', 'hex').copy(bad, 0x20ca72);   /* safe x 672: 672+504 > 1088 */
+    Buffer.from('48b800000000f8010000', 'hex').copy(bad, RES_OFFS[2]);   /* safe width 504 */
+    Buffer.from('48b870010000a0024800', 'hex').copy(bad, RES_OFFS[3]);   /* safe x 672: 672+504 > 1088 */
     fs.writeFileSync(fs1, bad);
     r = run(['status', '--target', fs1]);
     ok('safe area outside the frame: status res UNKNOWN', /res:\s+UNKNOWN/.test(r.out), r.out);
@@ -350,7 +360,7 @@ try {
     ok('safe area outside the frame: apply refused, no write', r.code !== 0 && /resolution geometry/.test(r.out) && fs.readFileSync(fs1).equals(bad), r.out);
 
     /* a corrupted resolution anchor is refused before any write */
-    var badres = Buffer.from(SRCBUF); badres[0x20ca5c] ^= 0xff;   /* the store after the px movabs */
+    var badres = Buffer.from(SRCBUF); badres[RES_OFFS[1] + 10] ^= 0xff;   /* the store after the px movabs */
     var br = path.join(dir, 'carplay_badres'); fs.writeFileSync(br, badres);
     r = run(['status', '--target', br]);
     ok('bad res anchor: status reports res UNKNOWN', /res:\s+UNKNOWN/.test(r.out), r.out);

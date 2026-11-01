@@ -19,6 +19,22 @@ File offset equals virtual address in the ranges used here. The first edit
 requires the whole-file SHA-256 above, and every edit validates anchor bytes
 around its region, so the patcher never writes a build it does not know.
 
+
+### carplay 21.37.3
+
+`carplay 21.37.3+gitrAUTOINC+fd6caa8777-r0` (MGU firmware
+`K18_21w45.4-1-3`, size 3448056, sha256
+`dac7f1a63df6ea6dbffd9f5e8a10c6d8805489e362806608441d566876038aa2`) carries the
+same code at other offsets, each region with the 22.28.3 build's anchor bytes
+and stock values. `carplay_patch.js` picks the build by the binary's size.
+
+| edit | 22.28.3 | 21.37.3 |
+|---|---|---|
+| converter jump table (slot = table + 28) | `0x2ba4d4` | `0x2b9614` (entries `0xfff811fc` OTHER, `0xfff811cc` IC_HIGH, `0xfff8121c` IC_MID) |
+| sink string | `0x2a20b0` | `0x29c150` |
+| self-start call (same rel32s) | `0x18176c` | `0x18033c` (onSuggestUi `0x1802c0`, setStreamStatus `0x180130`, requestStream `0x1803e0`) |
+| IC_HIGH movabs (mm, px, safe1, safe2) | `0x20ca30` `0x20ca52` `0x20ca64` `0x20ca72` | `0x20b4c0` `0x20b4e2` `0x20b4f4` `0x20b502` |
+
 ## Edit 1 — variant (ungate the second display)
 
 CarPlay maps the raw coding value `KI_KOMBI_VARIANT` through a converter

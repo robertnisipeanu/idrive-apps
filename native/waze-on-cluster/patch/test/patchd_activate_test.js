@@ -37,7 +37,15 @@ var crypto = require('crypto');
 
 var PATCHD = path.join(__dirname, '..', 'patchd.js');
 var SRC = process.env.CARPLAY_BIN || '';
-var SLOT = 0x2ba4f0, SINK = 0x2a20b0;
+/* The known builds' offsets, picked by the binary's size: carplay 22.28.3
+ * and carplay 21.37.3. */
+var BUILDS = {
+    3484912: { table: 0x2ba4d4, sink: 0x2a20b0, call: 0x18176c, res: [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72], high: 0xfff7f2bc },
+    3448056: { table: 0x2b9614, sink: 0x29c150, call: 0x18033c, res: [0x20b4c0, 0x20b4e2, 0x20b4f4, 0x20b502], high: 0xfff811cc }
+};
+var B = BUILDS[process.env.CARPLAY_BIN && fs.existsSync(process.env.CARPLAY_BIN) ? fs.statSync(process.env.CARPLAY_BIN).size : 3484912] || BUILDS[3484912];
+function le32(v) { var x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0, 0); return x.toString('hex'); }
+var SLOT = B.table + 28, SINK = B.sink;
 
 var fails = 0;
 function ok(name, cond, detail) {
@@ -193,7 +201,7 @@ async function main() {
     r = hook('activate');
     m = marker();
     ok('fresh: activate exits 0', r.code === 0, r.out);
-    ok('fresh: Enable map\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === 'bcf2f7ff' && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
+    ok('fresh: Enable map\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === le32(B.high) && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
     ok('fresh: the patcher verifies it, 1088x480 and the default safe area',
         /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()));
     ok('fresh: the result asks for a head-unit start', /next head-unit start/.test(r.result.reboot || '') && /written/.test(r.result.status || ''), JSON.stringify(r.result));
@@ -250,7 +258,7 @@ async function main() {
     ok('after the start nothing runs the link', ino(RUNNING) === patchedIno);
     r = hook('activate');
     ok('reinstall after the start: patched again as a fresh install, pending', r.code === 0 && marker() && marker().action === 'apply' &&
-        slot() === 'bcf2f7ff' && fs.existsSync(BAK), JSON.stringify(r.result));
+        slot() === le32(B.high) && fs.existsSync(BAK), JSON.stringify(r.result));
     ok('reinstall after the start: the old unused link went in the write window, carplay\'s current file is kept, / read-only',
         ino(RUNNING) !== patchedIno && ino(RUNNING) !== null && ro());
 
@@ -335,8 +343,8 @@ async function main() {
     hook('activate');
     headUnitStart();
     var older = Buffer.from(SRCBUF);
-    older.writeUInt32LE(0xfff7f2bc >>> 0, SLOT);
-    Buffer.from('e89f000000', 'hex').copy(older, 0x18176c);
+    older.writeUInt32LE(B.high >>> 0, SLOT);
+    Buffer.from('e89f000000', 'hex').copy(older, B.call);
     fs.writeFileSync(TGT, older);
     r = hook('activate');
     ok('older patch: activate adds the missing edit, pending', r.code === 0 && marker().action === 'apply' &&

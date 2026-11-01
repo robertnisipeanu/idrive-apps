@@ -57,8 +57,8 @@ var fs = require('fs');
 var crypto = require('crypto');
 var path = require('path');
 
-/* The one build this patch is proven against: carplay 22.28.3 as shipped. */
-var KNOWN = {
+/* The build this patch was proven against: carplay 22.28.3 as shipped. */
+var BUILD_22_28_3 = {
     version: 'carplay 22.28.3+gitr624+993efc1-r0.14',
     size: 3484912,
     sha256_original: 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50',
@@ -143,10 +143,55 @@ var KNOWN = {
     safe_default: { x: 286, y: 72, w: 504, h: 368 },
 };
 
+/* carplay 21.37.3 (MGU firmware K18_21w45.4-1-3, e.g. a 2021 G30). The same
+ * code at other offsets: every region carries the 22.28.3 build's anchor
+ * bytes and stock values (the converter's jump table with the same relative
+ * entries, the same sink string between the same neighbours, onSuggestUi's
+ * setStreamStatus call with the same rel32 to requestStream, the IC_HIGH
+ * builder's four movabs with the stock 1920x900 / 234x110 geometry). */
+var BUILD_21_37_3 = Object.assign({}, BUILD_22_28_3, {
+    version: 'carplay 21.37.3+gitrAUTOINC+fd6caa8777-r0',
+    size: 3448056,
+    sha256_original: 'dac7f1a63df6ea6dbffd9f5e8a10c6d8805489e362806608441d566876038aa2',
+    table_offset: 0x2b9614,
+    table_original: [
+        0xfff8120c, 0xfff811fc, 0xfff811fc, 0xfff811fc, 0xfff811fc, 0xfff811fc,
+        0xfff811fc, 0xfff811fc, 0xfff811fc, 0xfff811cc, 0xfff8121c, 0xfff811fc,
+    ],
+    slot_offset: 0x2b9630,
+    variant_original: 0xfff811fc, /* -> OTHER handler 0x23a810 */
+    variant_high: 0xfff811cc,     /* -> IC_HIGH handler 0x23a7e0 */
+    variant_mid: 0xfff8121c,      /* -> IC_MID handler 0x23a830 */
+    sink_offset: 0x29c150,
+    selfstart_offset: 0x18033c,   /* onSuggestUi 0x1802c0; setStreamStatus 0x180130, requestStream 0x1803e0 */
+    res_mm_offset: 0x20b4c0,
+    res_px_offset: 0x20b4e2,
+    res_safe1_offset: 0x20b4f4,
+    res_safe2_offset: 0x20b502
+});
+
+/* The builds this patch knows, told apart by size; the first is the one an
+ * unrecognised binary is reported against. */
+var BUILDS = [BUILD_22_28_3, BUILD_21_37_3];
+var KNOWN = BUILDS[0];
+
 /* The byte ranges the four edits write: apply changes only these, and revert
  * restores only these, so changes another tool made elsewhere stay. */
-var REGIONS = [[KNOWN.slot_offset, 4], [KNOWN.sink_offset, KNOWN.sink_slot_len], [KNOWN.selfstart_offset, 5],
-    [KNOWN.res_mm_offset + 2, 8], [KNOWN.res_px_offset + 2, 8], [KNOWN.res_safe1_offset + 2, 8], [KNOWN.res_safe2_offset + 2, 8]];
+function regionsOf(k) {
+    return [[k.slot_offset, 4], [k.sink_offset, k.sink_slot_len], [k.selfstart_offset, 5],
+        [k.res_mm_offset + 2, 8], [k.res_px_offset + 2, 8], [k.res_safe1_offset + 2, 8], [k.res_safe2_offset + 2, 8]];
+}
+var REGIONS = regionsOf(KNOWN);
+
+/* Picks the known build the target's size names (every edit keeps the size). */
+function selectBuild(target) {
+    var size = -1;
+    try { size = fs.statSync(target).size; } catch (e) {}
+    for (var i = 0; i < BUILDS.length; i++) {
+        if (BUILDS[i].size === size) { KNOWN = BUILDS[i]; break; }
+    }
+    REGIONS = regionsOf(KNOWN);
+}
 
 function u32le(buf, off) { return buf.readUInt32LE(off) >>> 0; }
 function u16le(buf, off) { return buf.readUInt16LE(off); }
@@ -580,6 +625,7 @@ function main() {
     var a = parseArgs(process.argv.slice(2));
     var cmd = a._[0];
     var target = a.target || '/usr/bin/carplay';
+    selectBuild(target);
     if (cmd === 'status') cmdStatus(target);
     else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
