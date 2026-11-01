@@ -6,6 +6,7 @@
 # experiments. Run it deliberately, with the car parked and on stable power.
 #
 #   woc-patch.sh status
+#   woc-patch.sh probe [<file>]                 # where the edit sites are, read-only
 #   woc-patch.sh apply  high|mid                # all edits + udp:// stream sink (default)
 #   woc-patch.sh apply  high|mid --capture      # all edits + file:// FIFO sink
 #   woc-patch.sh apply  high|mid --sink <url>   # all edits + an explicit sink url
@@ -48,6 +49,7 @@ cmd=${1:-}; [ $# -gt 0 ] && shift || true
 case "$cmd" in
   status)  exec "$NODE" "$PATCHER" status --target "$TARGET" ;;
   verify)  exec "$NODE" "$PATCHER" verify --target "$TARGET" ;;
+  probe)   exec "$NODE" "$PATCHER" probe "${1:-$TARGET}" ;;
   apply)
     panel=${1:-}; [ $# -gt 0 ] && shift || true
     usage='usage: woc-patch.sh apply high|mid [--capture | --sink <url> | --avb] [--res <WxH|stock>] [--safe <WxH+X+Y|full>]'
@@ -92,6 +94,6 @@ case "$cmd" in
     echo "Reverted. $(activation)"
     ;;
   *)
-    echo "usage: woc-patch.sh status|apply high|mid [--capture|--sink <url>|--avb] [--res <WxH|stock>] [--safe <WxH+X+Y|full>]|revert|verify" >&2
+    echo "usage: woc-patch.sh status|probe [<file>]|apply high|mid [--capture|--sink <url>|--avb] [--res <WxH|stock>] [--safe <WxH+X+Y|full>]|revert|verify" >&2
     exit 2 ;;
 esac

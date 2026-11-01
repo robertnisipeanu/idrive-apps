@@ -8,15 +8,16 @@
  * recmgr would allow it; the running binary stays linked and / goes read-only
  * again; a second run changes nothing; after that start the patch is left as
  * it is, a user's revert is kept, an older patch of ours is brought up to
- * date. Removal (deactivate) reverts and drops our backup: before the
- * pending start it moves carplay's running file back and leaves nothing
- * pending; while carplay runs the patch it keeps that file linked and hands
- * it to the deploy tool (removeWhenUnused); with carplay not running it keeps
- * nothing; changes another tool made elsewhere in the binary stay; an install
- * after a removal patches again. patchd removes the link once nothing runs it
- * and keeps one carplay runs (boot recovery's). An unknown binary, one
- * modified by something else and a carplay.service that starts another
- * program are left untouched (a conflict, exit 0); a remount failure before
+ * date, a stock build outside the proven list is patched like the proven
+ * one. Removal (deactivate) reverts and drops our backup: before the pending
+ * start it moves carplay's running file back and leaves nothing pending;
+ * while carplay runs the patch it keeps that file linked and hands it to the
+ * deploy tool (removeWhenUnused); with carplay not running it keeps nothing;
+ * changes another tool made elsewhere in the binary stay; an install after a
+ * removal patches again. patchd removes the link once nothing runs it and
+ * keeps one carplay runs (boot recovery's). A binary with an edit site not
+ * found, one modified by something else and a carplay.service that starts
+ * another program are left untouched (a conflict, exit 0); a remount failure before
  * any write exits non-zero. The pending marker is the world-readable JSON
  * patchd and the app read. Runs the real patchd.js and carplay_patch.js on a
  * temporary copy, with a fake /proc (carplay's process holds the inode it
@@ -37,15 +38,7 @@ var crypto = require('crypto');
 
 var PATCHD = path.join(__dirname, '..', 'patchd.js');
 var SRC = process.env.CARPLAY_BIN || '';
-/* The known builds' offsets, picked by the binary's size: carplay 22.28.3
- * and carplay 21.37.3. */
-var BUILDS = {
-    3484912: { table: 0x2ba4d4, sink: 0x2a20b0, call: 0x18176c, res: [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72], high: 0xfff7f2bc },
-    3448056: { table: 0x2b9614, sink: 0x29c150, call: 0x18033c, res: [0x20b4c0, 0x20b4e2, 0x20b4f4, 0x20b502], high: 0xfff811cc }
-};
-var B = BUILDS[process.env.CARPLAY_BIN && fs.existsSync(process.env.CARPLAY_BIN) ? fs.statSync(process.env.CARPLAY_BIN).size : 3484912] || BUILDS[3484912];
-function le32(v) { var x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0, 0); return x.toString('hex'); }
-var SLOT = B.table + 28, SINK = B.sink;
+var SLOT = 0x2ba4f0, SINK = 0x2a20b0;
 
 var fails = 0;
 function ok(name, cond, detail) {
@@ -201,7 +194,7 @@ async function main() {
     r = hook('activate');
     m = marker();
     ok('fresh: activate exits 0', r.code === 0, r.out);
-    ok('fresh: Enable map\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === le32(B.high) && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
+    ok('fresh: Enable map\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === 'bcf2f7ff' && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
     ok('fresh: the patcher verifies it, 1088x480 and the default safe area',
         /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()));
     ok('fresh: the result asks for a head-unit start', /next head-unit start/.test(r.result.reboot || '') && /written/.test(r.result.status || ''), JSON.stringify(r.result));
@@ -258,7 +251,7 @@ async function main() {
     ok('after the start nothing runs the link', ino(RUNNING) === patchedIno);
     r = hook('activate');
     ok('reinstall after the start: patched again as a fresh install, pending', r.code === 0 && marker() && marker().action === 'apply' &&
-        slot() === le32(B.high) && fs.existsSync(BAK), JSON.stringify(r.result));
+        slot() === 'bcf2f7ff' && fs.existsSync(BAK), JSON.stringify(r.result));
     ok('reinstall after the start: the old unused link went in the write window, carplay\'s current file is kept, / read-only',
         ino(RUNNING) !== patchedIno && ino(RUNNING) !== null && ro());
 
@@ -343,8 +336,8 @@ async function main() {
     hook('activate');
     headUnitStart();
     var older = Buffer.from(SRCBUF);
-    older.writeUInt32LE(B.high >>> 0, SLOT);
-    Buffer.from('e89f000000', 'hex').copy(older, B.call);
+    older.writeUInt32LE(0xfff7f2bc >>> 0, SLOT);
+    Buffer.from('e89f000000', 'hex').copy(older, 0x18176c);
     fs.writeFileSync(TGT, older);
     r = hook('activate');
     ok('older patch: activate adds the missing edit, pending', r.code === 0 && marker().action === 'apply' &&
@@ -413,14 +406,28 @@ async function main() {
     ok('an unused link the removal cannot drop: handed to the deploy tool', r.code === 0 && fs.existsSync(RUNNING) &&
         JSON.stringify(r.result.removeWhenUnused) === JSON.stringify([RUNNING]), JSON.stringify(r.result));
 
-    /* A binary the patcher does not know: left alone, a conflict, exit 0. */
-    var unknown = Buffer.concat([SRCBUF, Buffer.from('x')]);
+    /* A binary the patcher cannot patch (an edit site not found): left
+     * alone, a conflict naming the site, exit 0. */
+    var unknown = Buffer.from(SRCBUF);
+    unknown.writeUInt32LE(0x11223344, 0x2ba4d4);   /* the converter table's slot 0 */
     fresh(unknown);
     r = hook('activate');
-    ok('unknown binary: activate leaves it, conflict, exit 0', r.code === 0 && disk() === sha(unknown) && r.result.conflict &&
-        /not the build this patch knows/.test(r.result.conflict) && !r.result.reboot, JSON.stringify(r.result));
+    ok('unpatchable binary: activate leaves it, conflict names the site, exit 0', r.code === 0 && disk() === sha(unknown) &&
+        /^not patchable: variant: slot 0 handler not a store$/.test(r.result.conflict || '') && !r.result.reboot, JSON.stringify(r.result));
     r = hook('deactivate');
-    ok('unknown binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
+    ok('unpatchable binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
+
+    /* A build outside the proven list with every site stock: a fresh install
+     * patches it. */
+    var other = Buffer.from(SRCBUF);
+    other[other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 0xff;
+    Buffer.from('e900000000', 'hex').copy(other, 0x9f9a0);
+    fresh(other);
+    r = hook('activate');
+    ok('another build: activate writes Enable map\'s patch, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' &&
+        slot() === 'bcf2f7ff' && /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()) && ro(), JSON.stringify(r.result));
+    r = hook('deactivate');
+    ok('another build: deactivate restores it byte-exact', r.code === 0 && disk() === sha(other) && !fs.existsSync(BAK), JSON.stringify(r.result));
 
     /* The pristine build with another tool's in-place edit and no backup of
      * ours: modified by something else. */

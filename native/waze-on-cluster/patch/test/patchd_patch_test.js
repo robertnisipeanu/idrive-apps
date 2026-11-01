@@ -28,15 +28,7 @@ var cp = require('child_process');
 
 var PATCHD = path.join(__dirname, '..', 'patchd.js');
 var SRC = process.env.CARPLAY_BIN || '';
-/* The known builds' offsets, picked by the binary's size: carplay 22.28.3
- * and carplay 21.37.3. */
-var BUILDS = {
-    3484912: { table: 0x2ba4d4, sink: 0x2a20b0, call: 0x18176c, res: [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72], high: 0xfff7f2bc },
-    3448056: { table: 0x2b9614, sink: 0x29c150, call: 0x18033c, res: [0x20b4c0, 0x20b4e2, 0x20b4f4, 0x20b502], high: 0xfff811cc }
-};
-var B = BUILDS[process.env.CARPLAY_BIN && fs.existsSync(process.env.CARPLAY_BIN) ? fs.statSync(process.env.CARPLAY_BIN).size : 3484912] || BUILDS[3484912];
-function le32(v) { var x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0, 0); return x.toString('hex'); }
-var SLOT = B.table + 28, SINK = B.sink, SINK_LEN = 59;
+var SLOT = 0x2ba4f0, SINK = 0x2a20b0, SINK_LEN = 59;
 var UDP_SINK = 'udp://127.0.0.1:20557?mime_type=video/H264';
 
 var fails = 0;
@@ -148,14 +140,14 @@ function newCalls() {
 
 function edit12Only() {
     var b = Buffer.from(SRCBUF);
-    b.writeUInt32LE(B.high >>> 0, SLOT);   /* IC_HIGH */
+    b.writeUInt32LE(0xfff7f2bc >>> 0, SLOT);   /* IC_HIGH */
     var s = Buffer.alloc(SINK_LEN, 0); s.write(UDP_SINK, 'latin1'); s.copy(b, SINK);
     return b;   /* self-start call left stock */
 }
 
 function edit123Only() {
     var b = edit12Only();
-    Buffer.from('e89f000000', 'hex').copy(b, B.call);   /* self-start retarget */
+    Buffer.from('e89f000000', 'hex').copy(b, 0x18176c);   /* self-start retarget */
     return b;   /* resolution immediates left stock */
 }
 
@@ -271,8 +263,8 @@ async function main() {
      * still patched at 1088x480, with its safe area reported for the app. */
     var patchedBuf = fs.readFileSync(TGT);
     var fullSafe = Buffer.from(patchedBuf);
-    Buffer.from('0000000040040000', 'hex').copy(fullSafe, B.res[2] + 2);
-    Buffer.from('e001000000000000', 'hex').copy(fullSafe, B.res[3] + 2);
+    Buffer.from('0000000040040000', 'hex').copy(fullSafe, 0x20ca66);
+    Buffer.from('e001000000000000', 'hex').copy(fullSafe, 0x20ca74);
     fs.writeFileSync(TGT, fullSafe);
     r = await status();
     ok('status: full-frame safe area is patched, res 1088x480, safe 1088x480+0+0',
@@ -312,7 +304,7 @@ async function main() {
     r = await op({ cmd: 'apply', panel: 'high', mode: 'udp' });
     calls = newCalls();
     ok('stock list: apply defers activation', r.carplay === 'deferred' && r.state === 'unknown' && /takes effect at the next head-unit start/.test(r.reason || ''), JSON.stringify(r));
-    ok('stock list: the binary is patched on disk', slot() === le32(B.high), slot());
+    ok('stock list: the binary is patched on disk', slot() === 'bcf2f7ff', slot());
     ok('stock list: carplay neither killed nor started (no systemctl call)', calls.length === 0 && dummy.exitCode === null && dummy.signalCode === null, JSON.stringify(calls));
     ok('stock list: the running binary stays linked, so / is read-only again',
         fs.statSync(TGT + '.woc-running').ino === runningIno && /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')));
