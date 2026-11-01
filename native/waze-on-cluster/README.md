@@ -271,6 +271,16 @@ Its sites:
 | selfstart | `onSuggestUi`'s `setStreamStatus(AVAILABLE)` call → `requestStream()` | rel32 at `0x18176c` |
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
 
+There is a fifth, **optional** edit: `apply --navmd <anchor>` retargets
+CarPlay's guidance-metadata forward call to a bare `ret`, so the HMI's native
+banner (Apple Maps and Google Maps send `CPManeuver` metadata; Waze sends
+none) never lands on top of the rendered map. It stays off without the flag;
+the anchor — the forwarder's own name string — must be proven per build with
+a DLT capture first (PATCH.md "Edit 5"), and a build where the anchor does
+not resolve patches exactly as without the flag. status, verify and revert
+see the edit through `--navmd` or `WOC_NAVMD_ANCHOR`; keep the anchor in the
+config once applied, and `revert` restores the stock call byte-exact.
+
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments: `status`, `probe`,
 `verify`, `revert [--force]`, and `apply high|mid` with `--avb` (the app's

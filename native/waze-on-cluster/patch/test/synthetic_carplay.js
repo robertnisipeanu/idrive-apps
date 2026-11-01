@@ -5,12 +5,14 @@
  * switch beside it, the sink URL and its next-string anchor, setStreamStatus,
  * requestStream and onSuggestUi with their name strings, and the
  * ICSafeAreaProvider constructor with its IC_HIGH/IC_MID checks and two
- * geometry builders, plus program headers, a build-id note and an
+ * geometry builders, the optional guidance-metadata forwarder with its
+ * dispatcher, plus program headers, a build-id note and an
  * .eh_frame_hdr search table. Code and data sit in two segments whose
  * addresses differ from their file offsets by different amounts.
  *
  *   build({ pad, codeVa, dataVa, dataAt, highViaJne, midFirst, twoSinks,
- *           twoConverters, noEhFrame })
+ *           twoConverters, noEhFrame, noNavmd, twoNavmdCallers,
+ *           navmdTrioCaller, navmdCallsVideo })
  *     -> { buf, at: the offsets and values the locator should report }
  */
 'use strict';
@@ -83,7 +85,23 @@ function build(o) {
     fn('rs'); lea(0x4c, 0x05, 's.rs'); lea(0x48, 0x35, 's.show'); lea(0x48, 0x35, 's.kf'); call('ss'); b(0xc3);
     fn('osu'); lea(0x48, 0x0d, 's.osu');
     b(0xc7, 0x44, 0x24, 0x08, 0x01, 0x00, 0x00, 0x00, 0x48, 0x83, 0xc0, 0x10, 0x48, 0x89, 0x04, 0x24);
-    label('call'); call('ss'); b(0x48, 0x8b, 0x44, 0x24, 0x18, 0xc3);
+    label('call'); call('ss'); b(0x48, 0x8b, 0x44, 0x24, 0x18);
+    if (o.navmdTrioCaller) { label('gmfcall'); call('gmf'); }   /* the caller is osu, on the video path */
+    b(0xc3);
+
+    /* The guidance-metadata forwarder (Edit 5, optional): loads its own name
+     * string, ends in ret (the no-op target), and is called exactly once (by
+     * gmd, a dispatcher off the video path). The option variants exist for
+     * the refusal tests. */
+    if (!o.noNavmd) {
+        fn('gmf'); lea(0x48, 0x0d, 's.gmf');
+        if (o.navmdCallsVideo) call('ss');
+        label('gmf.ret'); b(0xc3);
+        if (!o.navmdTrioCaller) {
+            fn('gmd'); label('gmfcall'); call('gmf'); b(0xc3);
+            if (o.twoNavmdCallers) { fn('gmd2'); call('gmf'); b(0xc3); }
+        }
+    }
 
     fn('isHigh'); b(0x8b, 0x07, 0x85, 0xc0, 0x0f, 0x94, 0xc0, 0xc3);
     fn('isMid'); b(0x83, 0x3f, 0x01, 0x0f, 0x94, 0xc0, 0xc3);
@@ -110,6 +128,7 @@ function build(o) {
     str('s.show', 'mCinemoCarPlay->ShowUI( url, uuid)');
     str('s.kf', 'mCinemoCarPlay->ForceKeyframe( uuid)');
     str('s.ctor', 'base::config::ICSafeAreaProvider::ICSafeAreaProvider(const KombiVariant&)');
+    if (!o.noNavmd) str('s.gmf', 'void carplay::navi_handler::GuidanceMetadata::forwardToHmi(const Maneuver&)');
     str('s.other', 'source');
     str('s.decoy', 'mCarPlay->GetDisplaySource(videoSource, uiid)');
     for (var n = 0; n < (o.twoSinks ? 2 : 1); n++) {
@@ -149,7 +168,8 @@ function build(o) {
     });
 
     function slot(i) { return buf.readUInt32LE(labels['conv.table'] + i * 4); }
-    function callTo(t) { var r = Buffer.alloc(4); r.writeInt32LE(va(labels[t]) - va(labels.call + 5), 0); return 'e8' + r.toString('hex'); }
+    function relHex(t, site) { var r = Buffer.alloc(4); r.writeInt32LE(va(labels[t]) - va(site + 5), 0); return 'e8' + r.toString('hex'); }
+    function callTo(t) { return relHex(t, labels.call); }
     return {
         buf: buf,
         at: {
@@ -161,6 +181,9 @@ function build(o) {
             callOriginal: callTo('ss'), callPatched: callTo('rs'),
             builder: labels.high, mm: labels['high.mm'], px: labels['high.px'], safe1: labels['high.safe1'], safe2: labels['high.safe2'],
             stock: STOCK_HIGH,
+            navmdCall: labels.gmfcall, navmdForwarder: labels.gmf,
+            navmdOriginal: labels.gmfcall !== undefined ? relHex('gmf', labels.gmfcall) : undefined,
+            navmdPatched: labels.gmfcall !== undefined ? relHex('gmf.ret', labels.gmfcall) : undefined,
         },
     };
 }

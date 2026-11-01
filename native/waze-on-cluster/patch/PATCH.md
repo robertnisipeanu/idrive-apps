@@ -2,9 +2,10 @@
 
 Four reversible edits to `/usr/bin/carplay` let waze-on-cluster receive the
 CarPlay instrument-cluster map, at the size it displays, on a head unit coded
-`KI_KOMBI_VARIANT` 7. `carplay_patch.js` applies, verifies and reverts them;
-`patchd.js` runs it for the app and the install hooks, `woc-patch.sh` from a
-shell.
+`KI_KOMBI_VARIANT` 7 — and an optional fifth, Edit 5, that drops the
+guidance-metadata channel when its anchor has been proven on the build.
+`carplay_patch.js` applies, verifies and reverts them; `patchd.js` runs it
+for the app and the install hooks, `woc-patch.sh` from a shell.
 
 ## Builds
 
@@ -16,7 +17,9 @@ reason names what was not found, and `patchd` reports it as a conflict
 (`not patchable: <reason>`). File offsets and virtual addresses are converted
 through the ELF program headers, and function bounds come from the
 `.eh_frame_hdr` search table; without that table there is no self-start or
-resolution site.
+resolution site. Edit 5 is opt-in (`--navmd <anchor>`) and never part of
+that gate: a build without a resolvable anchor has no navmd edit, not a
+failed one.
 
 `carplay_patch.js probe [<file>]` (`woc-patch.sh probe`) reads a binary and
 prints its size, SHA-256 and GNU build-id, where each site is, how it reads,
@@ -26,7 +29,9 @@ and `patchable: yes` or `no` with every reason; it never writes.
 **Proven builds**, listed by build-id in `carplay_patch.js`: the first edit
 needs the whole file to be the shipped one, and any other content reads as
 modified by something else. Another build counts as pristine when all four
-sites read stock.
+sites read stock — so after an apply with `--navmd`, keep using the same
+anchor (it is in the config) for status, verify and revert; a navmd-dropped
+binary without its anchor reads as stock to the other four edits.
 
 The offsets and bytes below are those of the build the patch was proven on:
 
@@ -260,6 +265,70 @@ The default safe area is **504x368 at (286, 72)** (x 286–790, y 72–440):
 full` the whole frame; `--res` scales the default. `patchd` reports `res` and
 `safe`, and the app offers Enable map when either differs from the default.
 A high-panel binary with stock geometry reads as partially patched.
+
+## Edit 5 — navmd (optional: drop the guidance metadata)
+
+CarPlay's cluster is two channels: the map arrives as the H.264 stream this
+tool renders, and the guidance arrives separately as metadata (CPManeuver,
+CPLaneGuidance on the phone). CarPlay forwards that metadata to the HMI, and
+the HMI draws its native banner on top of the cluster map — with Waze, which
+sends no metadata, nothing overlaps; with Apple Maps or Google Maps the
+banner and the map's own banner land on the same glass. Edit 5 silences the
+metadata channel: one `call` retargeted, no new bytes.
+
+**Optional and off by default.** Unlike Edits 1–4 the forwarder has no
+proven name string yet: the anchor is per-build knowledge, and a build
+without an anchor simply has no navmd edit. `apply --navmd <anchor>` turns
+it on; status, probe, verify, and revert see it through `--navmd` or the
+`WOC_NAVMD_ANCHOR` environment variable. The other four edits never depend
+on it, and a build where the anchor does not resolve patches exactly as
+before.
+
+**The anchor** names the forwarder's own function-name string, the pattern
+every other edit uses (`substring`, or `substring/regex` for a tighter
+shape): the functions that load their own name with a rip-relative `lea`.
+Candidates to try, in DLT-capture order (below): `forwardToHmi`,
+`GuidanceMetadata`, `Maneuver`/`Manoeuvre`, `LaneGuidance`, `nv_md`. A
+wrong guess cannot apply: every check below must hold first.
+
+**Found by** that string, used by exactly one function — the forwarder. The
+forwarder must not be one of the video-path trio (setStreamStatus,
+requestStream, onSuggestUi), must not call one, and its one caller in the
+whole image must not be one either: that is the video-path isolation
+checked at locate time, the guard against the unverified assumption that
+the metadata and video channels are separate. The call to it must be unique
+in the image, and the forwarder must end in a `ret` (found past the
+function's tail padding). Anything else reads as a refusal with the reason,
+and the required four edits stay findable.
+
+**The patch** retargets the call's rel32 to the forwarder's terminating
+`ret`. A call into a bare ret pushes and pops the same return address: no
+register, flag or net stack effect, and nothing the callee would have done.
+The patched site is still a call pointed at the forwarder's last byte, so
+the patched state locates (one call to the ret, none to the forwarder
+itself) and reads back to the stock rel32 — status shows DROPPED, revert
+restores byte-exact.
+
+**Recon before anchoring.** The anchor is proven on the car, not guessed at
+a desk: `patchd`'s `capture-start` records a DLT window spanning a reconnect
+while Apple Maps navigates, and a second one with Waze; the metadata
+messages exist only in the Apple Maps capture, and their context ids name
+the carplay-side code that carries them. Those context strings are the
+anchor candidates to try against the extracted `/usr/bin/carplay` with
+`probe --navmd`.
+
+**Exception risk.** Lower than Edit 3's: the call goes to a bare ret, so
+nothing new can throw, and the caller's code after the call is unchanged.
+The worst case is the metadata path stopping, which is the point. The
+banner may also stop for the phone's own reasons (a CarPlay reconnect), so
+verify on the car with an Apple Maps route, then check the map still
+renders after a disconnect-reconnect.
+
+**Known limits.** One call site, one build per anchor: a build where the
+metadata leaves through two calls is refused, not half-silenced. The
+metadata may also reach the HMI through a path this edit does not cover
+(a someip service another process forwards); the DLT capture tells, and
+`vsomeip_security.json` is the fallback there, not a fifth edit.
 
 ## Activation
 

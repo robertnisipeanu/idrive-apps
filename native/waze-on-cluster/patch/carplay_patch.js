@@ -36,19 +36,31 @@
  *            at 286,72). `--res WxH` picks another pixel size at the same
  *            physical size, `--safe` another safe area; `--res stock`, and
  *            `--panel mid`, keep the build's stock geometry.
+ *   navmd    (optional, `--navmd <anchor>`) one `call` retargeted (4-byte
+ *            rel32) to the forwarder's own terminating ret — a call into a
+ *            bare ret is a no-op, so guidance metadata (CPManeuver,
+ *            CPLaneGuidance on the phone) never reaches the HMI and its
+ *            native banner never lands on top of the cluster map, while the
+ *            video path is untouched. The forwarder is found by its own name
+ *            string, whose anchor (`substring` or `substring/regex`) must be
+ *            proven per build (PATCH.md, Edit 5): locate refuses unless the
+ *            string is unique, used by one function off the video path, with
+ *            exactly one caller. Off unless asked; status/probe report it
+ *            only with an anchor (`--navmd`, or WOC_NAVMD_ANCHOR in the
+ *            environment, which revert and verify also honor).
  *
  * The sites are found in each build by carplay_locate.js; a build where any
  * of them is not found, or reads as neither stock nor this patch, is refused.
- * All four edits are reversible from a verified full backup of the original
+ * All edits are reversible from a verified full backup of the original
  * binary.
  *
  * Node 8.16.2 on the unit, no dependencies.
  *
- *   carplay_patch.js status [--target <file>]
- *   carplay_patch.js probe  [<file>]
- *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--target <file>] [--yes]
- *   carplay_patch.js revert [--target <file>] [--yes] [--drop-backup]
- *   carplay_patch.js verify [--target <file>]
+ *   carplay_patch.js status [--target <file>] [--navmd <anchor>]
+ *   carplay_patch.js probe  [<file>] [--navmd <anchor>]
+ *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--navmd <anchor>] [--target <file>] [--yes]
+ *   carplay_patch.js revert [--target <file>] [--navmd <anchor>] [--yes] [--drop-backup]
+ *   carplay_patch.js verify [--target <file>] [--navmd <anchor>]
  *
  * Default target /usr/bin/carplay. This edits the file by atomic rename, not
  * the running process, which keeps the old binary until carplay next starts.
@@ -106,6 +118,14 @@ function selfstartState(buf, s) {
     return { state: buf.toString('hex', s.offset, s.offset + 5) === s.original ? 'original' : 'patched' };
 }
 
+function navmdState(buf, n) {
+    if (!n) return { state: 'off', reason: 'no anchor given' };
+    if (!n.ok) return { state: 'unknown', reason: n.reason };
+    var hex = buf.toString('hex', n.offset, n.offset + 5);
+    return hex === n.original ? { state: 'original' } : hex === n.patched ? { state: 'patched' }
+        : { state: 'unknown', reason: 'navmd: unexpected bytes at the call site' };
+}
+
 /* The IC_HIGH geometry in the four immediates: mm pair; px pair; view x,y
  * (u16) + safe width; safe height + safe x,y (u16). */
 function readRes(buf, r) {
@@ -140,11 +160,13 @@ function writeRes(buf, r, g) {
 function safeText(g) { return 'safe ' + g.safew + 'x' + g.safeh + ' at ' + g.safex + ',' + g.safey; }
 function geomText(g) { return g.w + 'x' + g.h + ' at ' + g.mmw + 'x' + g.mmh + 'mm, ' + safeText(g); }
 
-function classify(buf) {
-    var loc = locator.locate(buf);
+function classify(buf, navmdAnchor) {
+    var loc = locator.locate(buf, navmdAnchor);
     if (!loc.elf) return { ok: false, reason: loc.reason, loc: loc, size: buf.length };
-    return { ok: true, loc: loc, size: buf.length, variant: variantState(buf, loc.variant), sink: sinkState(buf, loc.sink),
-             selfstart: selfstartState(buf, loc.selfstart), res: resState(buf, loc.res) };
+    var c = { ok: true, loc: loc, size: buf.length, variant: variantState(buf, loc.variant), sink: sinkState(buf, loc.sink),
+              selfstart: selfstartState(buf, loc.selfstart), res: resState(buf, loc.res) };
+    if (navmdAnchor !== undefined) c.navmd = navmdState(buf, loc.navmd);
+    return c;
 }
 
 /* Why the patcher does not recognise the build: [] when every edit is found
@@ -161,6 +183,7 @@ function notPristine(c, buf) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; });
+    if (c.navmd && c.navmd.state === 'patched') edited = edited.concat(['navmd']);
     if (edited.length) return edited.join(', ') + ' edited';
     var proven = PROVEN[c.loc.buildId], hash = sha256(buf);
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
@@ -171,12 +194,13 @@ function label(c) {
     return proven ? proven.version : c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
 }
 
-/* The byte ranges the four edits write: apply changes only these, and revert
+/* The byte ranges the edits write: apply changes only these, and revert
  * restores only these, so changes another tool made elsewhere stay. */
 function regions(loc) {
-    var r = loc.res;
-    return [[loc.variant.slot, 4], [loc.sink.offset, loc.sink.len], [loc.selfstart.offset, 5],
+    var r = loc.res, out = [[loc.variant.slot, 4], [loc.sink.offset, loc.sink.len], [loc.selfstart.offset, 5],
         [r.mm, 8], [r.px, 8], [r.safe1, 8], [r.safe2, 8]];
+    if (loc.navmd && loc.navmd.ok) out.push([loc.navmd.offset, 5]);
+    return out;
 }
 
 /* Two classified images are the same build: the same size, build-id and edit
@@ -198,6 +222,9 @@ function describe(name, s) {
     if (name === 'variant') return s.state === 'original' ? 'ORIGINAL (2nd display gated off for variant 7)' : 'PATCHED -> IC_' + s.panel.toUpperCase();
     if (name === 'sink') return s.state === 'original' ? 'ORIGINAL (2nd stream -> AVB stream 15)' : 'REDIRECTED -> ' + s.url;
     if (name === 'selfstart') return s.state === 'original' ? 'ORIGINAL (waits for NavController; stream never starts)' : 'SELF-START (CarPlay starts the cluster stream itself)';
+    if (name === 'navmd') return s.state === 'original' ? 'ORIGINAL (guidance metadata reaches the HMI)'
+        : s.state === 'patched' ? 'DROPPED (guidance metadata never reaches the HMI)'
+        : 'NOT REQUESTED (pass --navmd <anchor>, or set WOC_NAVMD_ANCHOR)';
     return s.state === 'original' ? 'ORIGINAL (IC_HIGH advertises ' + s.res.w + 'x' + s.res.h + ')' : 'PATCHED (IC_HIGH advertises ' + geomText(s.res) + ')';
 }
 
@@ -208,8 +235,8 @@ function header(target, buf, c) {
     line('build-id', c.loc.buildId || 'none');
 }
 
-function cmdStatus(target) {
-    var buf = readTarget(target), c = classify(buf);
+function cmdStatus(target, anchor) {
+    var buf = readTarget(target), c = classify(buf, anchor);
     header(target, buf, c);
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
@@ -218,20 +245,21 @@ function cmdStatus(target) {
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
     if (hasBak && !bad.length) {
         var b;
-        try { b = checkedBackup(target); } catch (e) { b = { err: e.message }; }
+        try { b = checkedBackup(target, anchor); } catch (e) { b = { err: e.message }; }
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
         : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
     EDITS.forEach(function (e) { line(e, describe(e, c[e])); });
+    if (c.navmd) line('navmd', describe('navmd', c.navmd));
     line('backup', hasBak ? bak : 'none');
 }
 
 /* Where each edit sits and how it reads, and whether the patcher can apply
  * to this build. Read-only. */
-function cmdProbe(target) {
-    var buf = readTarget(target), c = classify(buf), loc = c.loc;
+function cmdProbe(target, anchor) {
+    var buf = readTarget(target), c = classify(buf, anchor), loc = c.loc;
     header(target, buf, c);
     if (!c.ok) { line('patchable', 'no — ' + c.reason); return; }
     line('proven', PROVEN[loc.buildId] ? 'yes, ' + PROVEN[loc.buildId].version : 'no');
@@ -242,8 +270,11 @@ function cmdProbe(target) {
             ' (setStreamStatus ' + hex(loc.selfstart.setStreamStatus) + ', requestStream ' + hex(loc.selfstart.requestStream) + '): ',
         res: loc.res.ok && 'immediates ' + [loc.res.mm, loc.res.px, loc.res.safe1, loc.res.safe2].map(hex).join(' ') +
             ' (builder ' + hex(loc.res.builder) + '): ',
+        navmd: loc.navmd && loc.navmd.ok && 'call ' + hex(loc.navmd.offset) + ' in caller ' + hex(loc.navmd.caller) +
+            ' -> forwarder ' + hex(loc.navmd.forwarder) + ': ',
     };
     EDITS.forEach(function (e) { line(e, (at[e] || '') + describe(e, c[e])); });
+    if (c.navmd) line('navmd', (at.navmd || '') + describe('navmd', c.navmd));
     var bad = unrecognised(c);
     line('patchable', bad.length ? 'no — ' + bad.join('; ') : 'yes');
 }
@@ -298,24 +329,28 @@ function resFor(panel, res, safe) {
 }
 
 /* The backup, checked: its SHA-256 is the one recorded when it was taken, and
- * it is a pristine build. { buf, hash, c } or { err }. */
-function checkedBackup(target) {
+ * it is a pristine build. Classified with the same navmd anchor as the
+ * target, so the edit regions (navmd included) line up. { buf, hash, c } or
+ * { err }. */
+function checkedBackup(target, anchor) {
     var orig = fs.readFileSync(backupPath(target)), hash = sha256(orig), meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
     if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
-    var c = classify(orig), why = notPristine(c, orig);
+    var c = classify(orig, anchor), why = notPristine(c, orig);
     return why ? { err: why } : { buf: orig, hash: hash, c: c };
 }
 
-function cmdApply(target, panel, capture, sink, res, safe, yes) {
+function cmdApply(target, panel, capture, sink, res, safe, yes, anchor) {
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
     var wantRes = resFor(panel, res, safe);
     var sinkUrl = sinkUrlFor(capture, sink), slotLen = locator.SINK_STOCK.length;
     if (sinkUrl !== undefined && Buffer.byteLength(sinkUrl, 'latin1') > slotLen)
         die('sink URL too long: "' + sinkUrl + '" is ' + Buffer.byteLength(sinkUrl, 'latin1') + ' bytes, slot holds ' + slotLen);
 
-    var buf = readTarget(target), c = classify(buf), bad = unrecognised(c);
+    var buf = readTarget(target), c = classify(buf, anchor), bad = unrecognised(c);
     if (bad.length) die('refusing: ' + bad.join('; '));
+    if (anchor !== undefined && c.navmd.state !== 'original' && c.navmd.state !== 'patched')
+        die('refusing: ' + c.navmd.reason);
 
     /* Back up the pristine original before the first edit; require that a
      * pre-existing backup is the pristine original of this build. */
@@ -329,7 +364,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes) {
         fs.writeFileSync(metaPath(target), JSON.stringify({ target: path.resolve(target), version: label(c), buildId: c.loc.buildId,
             sha256_original: sha256(buf), savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
     } else {
-        var b = checkedBackup(target);
+        var b = checkedBackup(target, anchor);
         if (b.err) die('existing backup ' + bak + ' is not a pristine original (' + b.err + '); refusing');
         if (!sameBuild(c, b.c)) die('existing backup ' + bak + ' is the original of another build; refusing');
         orig = b.buf;
@@ -368,15 +403,22 @@ function cmdApply(target, panel, capture, sink, res, safe, yes) {
         put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
     });
 
+    /* The optional navmd edit, only when an anchor was given: the forward call
+     * is retargeted to the forwarder's terminating ret, so guidance metadata
+     * never reaches the HMI. The video-path isolation was checked at locate
+     * time (PATCH.md, Edit 5). */
+    if (anchor !== undefined) put('navmd -> dropped', loc.navmd.offset, Buffer.from(loc.navmd.patched, 'hex'));
+
     if (changed.length === 0) { process.stdout.write('nothing to do; already in the requested state\n'); return; }
 
     /* The edited image must read as exactly the requested state, at the same
      * sites, changed only in the edit regions, before it is written. */
-    var cc = classify(out);
+    var cc = classify(out, anchor);
     var wrong = !sameBuild(c, cc) ? 'the edit sites' : cc.variant.panel !== panel ? 'variant'
         : cc.sink.state !== (sinkUrl !== undefined ? 'redirected' : 'original') ? 'sink'
         : cc.selfstart.state !== 'patched' ? 'self-start'
         : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
+        : anchor !== undefined && cc.navmd.state !== 'patched' ? 'navmd'
         : !onlyRegionsDiffer(buf, out, regions(loc)) ? 'bytes outside the edit regions' : null;
     if (wrong) die('refusing: the edited binary does not verify (' + wrong + '); no change made');
 
@@ -396,7 +438,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes) {
  * whole backup, also over a target it does not recognise. --drop-backup deletes the
  * backup once none of the edits is left in the target, for a removal of the
  * tool: nothing is left to revert. */
-function cmdRevert(target, yes, force, dropBackup) {
+function cmdRevert(target, yes, force, dropBackup, anchor) {
     function drop() {
         if (!dropBackup) return;
         [bak, metaPath(target)].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') die('dropping ' + f + ': ' + e.message); } });
@@ -404,7 +446,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     }
     var bak = backupPath(target);
     if (!fs.existsSync(bak)) die('no backup at ' + bak + '; cannot revert');
-    var b = checkedBackup(target);
+    var b = checkedBackup(target, anchor);
     if (b.err) die('backup ' + bak + ' is not a pristine original (' + b.err + '); refusing to restore an unrecognised backup');
     var orig = b.buf;
 
@@ -414,7 +456,7 @@ function cmdRevert(target, yes, force, dropBackup) {
      * backup's build. If the current file is some other binary (e.g. a
      * firmware update replaced carplay and left the old backup behind),
      * restoring would downgrade it. */
-    var c = classify(cur), bad = unrecognised(c);
+    var c = classify(cur, anchor), bad = unrecognised(c);
     var recognised = !bad.length && sameBuild(c, b.c);
     if (!recognised && !force) {
         die('current ' + target + ' is not a recognised patched build of this backup (' + (bad.length ? brief(bad) : 'another build') + ').' +
@@ -430,16 +472,17 @@ function cmdRevert(target, yes, force, dropBackup) {
     process.stdout.write('About to restore ' + (recognised && !force ? 'the edited regions of ' : '') + target + ' from ' + bak + ' (sha256 ' + b.hash + ')\n');
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
-    var after = readTarget(target), ca = classify(after);
-    if (!after.equals(out) || EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; })) die('restore verification failed');
+    var after = readTarget(target), ca = classify(after, anchor);
+    if (!after.equals(out) || EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; }) ||
+        (anchor !== undefined && ca.ok && ca.navmd && ca.navmd.state === 'patched')) die('restore verification failed');
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');
     if (dropBackup) drop();
     else process.stdout.write('You may delete the backup: ' + bak + ' and ' + metaPath(target) + '\n');
 }
 
-function cmdVerify(target) {
-    var c = classify(readTarget(target)), bad = unrecognised(c);
+function cmdVerify(target, anchor) {
+    var c = classify(readTarget(target), anchor), bad = unrecognised(c);
     if (bad.length) { process.stderr.write('FAIL: ' + bad.join('; ') + '\n'); process.exit(1); }
     /* A fully enabled build has every edit its panel needs. A variant/
      * sink-patched build with stock self-start (an Edit-1/2-only binary)
@@ -454,7 +497,8 @@ function cmdVerify(target) {
     process.stdout.write('OK: variant ' + (c.variant.state === 'original' ? 'original' : 'IC_' + c.variant.panel.toUpperCase()) +
         ', sink ' + (c.sink.state === 'original' ? 'original (AVB 15)' : c.sink.url) +
         ', self-start ' + (c.selfstart.state === 'patched' ? 'on' : 'off') +
-        ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') + '\n');
+        ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') +
+        (c.navmd ? ', navmd ' + (c.navmd.state === 'patched' ? 'dropped' : c.navmd.state === 'original' ? 'original' : c.navmd.state) : '') + '\n');
 }
 
 /* Write by atomic rename so a crash mid-write cannot leave carplay half
@@ -507,6 +551,8 @@ function parseArgs(argv) {
             a.res = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
         } else if (t === '--safe') {
             a.safe = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
+        } else if (t === '--navmd') {
+            a.navmd = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
         } else a._.push(t);
     }
     return a;
@@ -516,12 +562,18 @@ function main() {
     var a = parseArgs(process.argv.slice(2));
     var cmd = a._[0];
     var target = a.target || '/usr/bin/carplay';
-    if (cmd === 'status') cmdStatus(target);
-    else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
-    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes);
-    else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
-    else if (cmd === 'verify') cmdVerify(target);
-    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    /* The navmd anchor: --navmd, else the environment (so status, probe,
+     * revert and verify see the anchor an apply used). */
+    var anchor;
+    if (a.navmd === null) die('--navmd needs an anchor: a name-string substring, or substring/regex');
+    else if (a.navmd !== undefined) anchor = a.navmd;
+    else if (process.env.WOC_NAVMD_ANCHOR) anchor = process.env.WOC_NAVMD_ANCHOR;
+    if (cmd === 'status') cmdStatus(target, anchor);
+    else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay', anchor);
+    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, anchor);
+    else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup, anchor);
+    else if (cmd === 'verify') cmdVerify(target, anchor);
+    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--navmd <anchor>] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
 main();

@@ -340,10 +340,74 @@ function locateRes(im, str, refs) {
     return { ok: true, builder: high.to, mm: builders[high.to].mm, px: builders[high.to].px, safe1: builders[high.to].safe1, safe2: builders[high.to].safe2 };
 }
 
+/* ---- Edit 5 (optional): the guidance-metadata forward call ---------------- */
+
+/* CarPlay hands guidance metadata (CPManeuver, CPLaneGuidance on the phone) to
+ * the HMI through its own forwarder, and the HMI draws its native banner on
+ * top of the cluster map. Silencing that one forward call leaves the video
+ * path untouched. The forwarder is found by its own name string, like the
+ * self-start trio: the anchor is `substring` or `substring/regex` naming that
+ * string, proven per build (PATCH.md, Edit 5). The forwarder must not be one
+ * of the video-path trio, must not call one, and must have exactly one caller
+ * in the whole image: that `call` (5 bytes) is the edit.
+ *
+ * The patched form retargets the call to the forwarder's terminating ret. A
+ * call into a bare ret pushes and pops the same return address — no register,
+ * flag or net stack effect — so it is a no-op, and it is still a call pointed
+ * at the forwarder's last byte: the patched state locates (one call to that
+ * address, none to the forwarder itself) and reads back to the stock rel32. */
+function locateNavmd(im, anchor, trio) {
+    if (!im.starts.length) return { ok: false, reason: 'navmd: no function table' };
+    if (!anchor) return { ok: false, reason: 'navmd: no anchor given' };
+    if (trio.err) return { ok: false, reason: 'navmd: ' + trio.err };
+    var sep = anchor.indexOf('/'), re = null;
+    if (sep >= 0) {
+        try { re = new RegExp(anchor.slice(sep + 1)); }
+        catch (e) { return { ok: false, reason: 'navmd: bad anchor regex: ' + e.message }; }
+    }
+    var str = namedString(im.buf, sep < 0 ? anchor : anchor.slice(0, sep), re || /./, 'navmd: anchor');
+    if (str.err) return { ok: false, reason: str.err };
+    var refs = leaRefs(im, [str.off]), sites = refs[str.off] || [];
+    if (!sites.length) return { ok: false, reason: 'navmd: anchor string not referenced' };
+    var f = im.func(sites[0]);
+    for (var i = 1; f && i < sites.length; i++) {
+        var g = im.func(sites[i]);
+        if (!g || g.off !== f.off) return { ok: false, reason: 'navmd: anchor used by several functions' };
+    }
+    if (!f) return { ok: false, reason: 'navmd: forwarder outside the function table' };
+    /* The no-op target: the forwarder's terminating ret, found past the
+     * function's tail padding (the function-table end covers it). */
+    var e = f.end - 1;
+    while (e > f.off && (im.buf[e] === 0x00 || im.buf[e] === 0x90 || im.buf[e] === 0xcc)) e--;
+    if (im.buf[e] !== 0xc3) return { ok: false, reason: 'navmd: forwarder does not end in ret' };
+    var retVa = im.va(e);
+    if (trio.list.indexOf(f.off) >= 0) return { ok: false, reason: 'navmd: forwarder is on the video path' };
+    var inner = im.calls(f.off, f.end);
+    for (var j = 0; j < inner.length; j++)
+        if (trio.list.indexOf(inner[j].to) >= 0) return { ok: false, reason: 'navmd: forwarder calls the video path' };
+    var all = im.calls(im.exec.off, im.exec.end), toF = [], toRet = [];
+    for (var k = 0; k < all.length; k++) {
+        if (all[k].to === f.off) toF.push(all[k]);
+        if (all[k].to === e) toRet.push(all[k]);
+    }
+    var stock = toF.length === 1 && toRet.length === 0, patched = toF.length === 0 && toRet.length === 1;
+    if (!stock && !patched) return { ok: false, reason: 'navmd: forwarder called ' + (toF.length + toRet.length) + ' times (want 1)' };
+    var at = (stock ? toF : toRet)[0], caller = im.func(at.at);
+    if (!caller) return { ok: false, reason: 'navmd: caller outside the function table' };
+    if (trio.list.indexOf(caller.off) >= 0) return { ok: false, reason: 'navmd: caller is on the video path' };
+    var next = im.va(at.at + 5);
+    if (next === null) return { ok: false, reason: 'navmd: call site at the end of the image' };
+    return { ok: true, offset: at.at, caller: caller.off, forwarder: f.off,
+             original: 'e8' + hex32(im.va(f.off) - next), patched: 'e8' + hex32(retVa - next) };
+}
+
 /* All four sites: { elf: true|false, reason (not an ELF / why), buildId,
  * variant, sink, selfstart, res }, each edit { ok, reason } plus its
- * offsets and stock/patched values. ok is true when every edit was found. */
-function locate(buf) {
+ * offsets and stock/patched values. ok is true when every edit was found.
+ * With `navmdAnchor` (Edit 5), the result also carries `navmd`: an optional
+ * edit that never takes part in ok — a build without the anchor string, or
+ * without an anchor at all, simply has no navmd edit to offer. */
+function locate(buf, navmdAnchor) {
     var elf = parseElf(buf);
     var none = { ok: false, reason: 'not located' };
     if (!elf.load) return { ok: false, elf: false, reason: elf.reason, buildId: null, variant: none, sink: none, selfstart: none, res: none };
@@ -353,8 +417,13 @@ function locate(buf) {
         if (!str[k].err) offs.push(str[k].off);
     });
     var refs = leaRefs(im, offs);
+    var selfstart = locateSelfstart(im, str, refs);
     var out = { elf: true, buildId: buildId(buf, elf.notes), variant: locateVariant(im), sink: locateSink(buf),
-                selfstart: locateSelfstart(im, str, refs), res: locateRes(im, str, refs) };
+                selfstart: selfstart, res: locateRes(im, str, refs) };
+    if (navmdAnchor !== undefined && navmdAnchor !== '')
+        out.navmd = locateNavmd(im, navmdAnchor,
+            selfstart.ok ? { list: [selfstart.setStreamStatus, selfstart.requestStream, selfstart.onSuggestUi] }
+                         : { err: 'the video-path check needs the self-start sites' });
     var failed = [out.variant, out.sink, out.selfstart, out.res].filter(function (e) { return !e.ok; });
     out.ok = failed.length === 0;
     if (failed.length) out.reason = failed.map(function (e) { return e.reason; }).join('; ');

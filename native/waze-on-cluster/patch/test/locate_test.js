@@ -98,6 +98,44 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     ok('not an ELF', loc.elf === false && loc.reason === 'not an ELF file' && !loc.ok, json(loc));
 })();
 
+/* ---- Edit 5 (navmd), optional --------------------------------------------- */
+
+var NAVMD_ANCHOR = 'forwardToHmi/void [\\w:]*GuidanceMetadata::forwardToHmi\\(';
+
+(function () {
+    var s = synthetic.build({}), loc = locator.locate(s.buf, NAVMD_ANCHOR);
+    ok('navmd: found by its anchor', loc.ok && loc.navmd.ok && loc.navmd.offset === s.at.navmdCall &&
+        loc.navmd.forwarder === s.at.navmdForwarder && loc.navmd.original === s.at.navmdOriginal &&
+        loc.navmd.patched === s.at.navmdPatched, json(loc.navmd));
+    ok('navmd: shifted build, the same site', (function () {
+        var t = synthetic.build(SHIFTED), l = locator.locate(t.buf, NAVMD_ANCHOR);
+        return l.ok && l.navmd.ok && l.navmd.offset === t.at.navmdCall && l.navmd.original === t.at.navmdOriginal;
+    })());
+    ok('navmd: not requested, no state at all', locator.locate(s.buf).navmd === undefined);
+    ok('navmd: an empty anchor is not requested', locator.locate(s.buf, '').navmd === undefined);
+    ok('navmd: an anchor matching nothing, refused with the reason',
+        locator.locate(s.buf, 'nosuchstring').navmd.reason === 'navmd: anchor string not found',
+        json(locator.locate(s.buf, 'nosuchstring').navmd));
+})();
+
+[
+    ['two callers', { twoNavmdCallers: true }, 'navmd: forwarder called 2 times (want 1)'],
+    ['the caller is on the video path', { navmdTrioCaller: true }, 'navmd: caller is on the video path'],
+    ['the forwarder calls the video path', { navmdCallsVideo: true }, 'navmd: forwarder calls the video path'],
+].forEach(function (t) {
+    var loc = locator.locate(synthetic.build(t[1]).buf, NAVMD_ANCHOR);
+    ok('navmd (' + t[0] + '): refused, the required edits still found',
+        loc.ok && loc.navmd && !loc.navmd.ok && loc.navmd.reason === t[2], json(loc.navmd));
+});
+
+(function () {
+    var s = synthetic.build({}), b = Buffer.from(s.buf);
+    Buffer.from(s.at.navmdPatched, 'hex').copy(b, s.at.navmdCall);
+    var loc = locator.locate(b, NAVMD_ANCHOR);
+    ok('navmd: the patched call site found at the same offset, stock bytes read back', loc.ok && loc.navmd.ok &&
+        loc.navmd.offset === s.at.navmdCall && loc.navmd.original === s.at.navmdOriginal, json(loc.navmd));
+})();
+
 /* The patcher on a build outside the proven list. */
 var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-locate-'));
 try {
@@ -131,6 +169,27 @@ try {
         b.readUInt32LE(at.slot) === at.mid, r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+
+    /* Edit 5, opt-in via --navmd. */
+    fs.writeFileSync(tgt, orig, { mode: 0o755 });
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--navmd', NAVMD_ANCHOR, '--yes']);
+    b = fs.readFileSync(tgt);
+    ok('apply --navmd: the four edits and the retarget', r.code === 0 && /patched OK/.test(r.out) &&
+        b.toString('hex', at.navmdCall, at.navmdCall + 5) === at.navmdPatched && b.readUInt32LE(at.slot) === at.high, r.out);
+    r = run(['status', '--navmd', NAVMD_ANCHOR, '--target', tgt]);
+    ok('status --navmd: navmd DROPPED', /navmd:\s+DROPPED/.test(r.out), r.out);
+    r = run(['status', '--target', tgt]);
+    ok('status without an anchor: no navmd line, still known', !/navmd:/.test(r.out) && /known:\s+yes, modified build/.test(r.out), r.out);
+    r = run(['verify', '--navmd', NAVMD_ANCHOR, '--target', tgt]);
+    ok('verify --navmd: enabled, navmd dropped', r.code === 0 && /navmd dropped/.test(r.out), r.out);
+    r = run(['revert', '--navmd', NAVMD_ANCHOR, '--target', tgt, '--yes']);
+    ok('revert --navmd: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--navmd', 'nosuchstring', '--yes']);
+    ok('apply with a bad anchor: refused, no write', r.code !== 0 && /refusing: navmd: anchor string not found/.test(r.out) &&
+        fs.readFileSync(tgt).equals(orig), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    ok('apply without --navmd: the navmd call untouched', r.code === 0 &&
+        fs.readFileSync(tgt).toString('hex', at.navmdCall, at.navmdCall + 5) === at.navmdOriginal, r.out);
 
     var amb = synthetic.build({ twoSinks: true }).buf;
     fs.writeFileSync(tgt, amb);
