@@ -177,6 +177,8 @@ void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason,
     st.retry_ms = retry_ms;
     if (s != TargetState::Waiting)
         t_[i].fresh_retry = false;   /* only the fresh-retry wait may request early */
+    if (s == TargetState::Parked || s == TargetState::Shown)
+        t_[i].resend_charged = false;
 }
 
 /* Out of the display's slot; the scene stays published. */
@@ -260,7 +262,10 @@ void SlotManager::acquire(int i, int64_t now_ms)
         return;
     }
     if (t.scene) {
-        scenes_->resent(spec, now_ms);
+        /* Once until the display takes it: a fetch it fails sends nothing. */
+        if (!t.resend_charged)
+            scenes_->resent(spec, now_ms);
+        t.resend_charged = true;
     } else {
         const int other = by_published(spec.scene_id);   /* released: scene_busy */
         if (other >= 0) {

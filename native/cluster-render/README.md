@@ -144,8 +144,8 @@ cluster is offered, and what differs is in "iDrive 8".
 - **Refusals, failed fetches and no answer** (neither shown nor parked
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
-  (not locked, not our release) asks again on the ladder too, 2 s after the
-  removal. A fetch that fails within 300 ms of a request made within 10 s
+  (not locked, not our release) asks again on the ladder too, and no sooner
+  than 2 s after the removal. A fetch that fails within 300 ms of a request made within 10 s
   of such a removal is the display not ready yet: asked again after 1.5 s,
   four times, before the ladder (the KOMBI once took 7 s to accept the
   scene again). Requests to a slot are
@@ -240,9 +240,9 @@ evidence at other times is logged, not counted:
   `upload_kb_per_s` (5500). Idle time neither counts nor resets that minute.
 - A step down within a minute of a step up doubles the minute (up to
   10 min); 10 min without a step down restores it.
-- A step down that a removal took holds the cap for 10 min before any step
-  up: on the car the KOMBI dropped the map again within a minute of the cap
-  going back up.
+- A removal that steps the cap down, or comes at the floor, holds the cap
+  for 10 min before any step up: on the car the KOMBI dropped the map again
+  within a minute of the cap going back up.
 
 Down is quick and up is slow, so the cap does not oscillate. Within the cap,
 the top layers write first, and in a video layer a

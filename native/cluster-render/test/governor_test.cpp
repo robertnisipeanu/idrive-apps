@@ -197,6 +197,17 @@ static void removal_holds()
     s.run(100, true);
     s.run(61000, true);
     ok("a step down without a removal: up after a minute", s.kb() == 5500);
+    Rig f;
+    for (int i = 0; i < 7; i++) {
+        f.stall();
+        f.run(16000, true);
+    }
+    const bool at_floor = f.kb() == 2000;
+    f.g.evidence(Evidence::Removal, f.now);
+    f.run(100, true);
+    const bool said = f.g.reason().find("at the floor") == 0 && f.g.reason().find("held 10 min") != std::string::npos;
+    f.run(9 * 60000, true);
+    ok("a removal at the floor holds it there too", at_floor && said && f.kb() == 2000);
 }
 
 static void idle_link()

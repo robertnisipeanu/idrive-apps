@@ -290,6 +290,7 @@ private:
         bool wanted = false, contend = false;
         bool requested = false;
         bool scene = false;          /* published */
+        bool resend_charged = false; /* the warm scene's resend charged since it was last parked or shown */
         int64_t scene_ms = 0;        /* when it was published */
         int fresh_retries = 0;       /* fetch failures since, asked again after kFreshRetryMs */
         bool fresh_retry = false;    /* the next request may go kFreshRetryMs after the last */

@@ -29,9 +29,9 @@
  * idle time neither counts nor resets). A step down within kProbationMs
  * of a step up doubles recover_ms (to at most kRecoverMaxMs), so a level
  * that failed is tried less often; kSettledMs with no step down sets it
- * back to kRecoverMs. A step down that a removal took holds the cap
- * there for kRemovalHoldMs: on the car the KOMBI dropped the map again
- * within a minute of the cap going back up. Down is quick and up is slow,
+ * back to kRecoverMs. A removal that steps the cap down, or that comes at
+ * the floor, holds the cap there for kRemovalHoldMs: on the car the KOMBI
+ * dropped the map again within a minute of the cap going back up. Down is quick and up is slow,
  * so the cap does not oscillate. */
 #ifndef CRS_GOVERNOR_H
 #define CRS_GOVERNOR_H
@@ -88,6 +88,7 @@ private:
     };
     void prune(int64_t now_ms);
     std::string summary() const;
+    std::string hold(int64_t now_ms);
 
     GovernorConfig cfg_;
     uint64_t cap_;
@@ -98,7 +99,7 @@ private:
     int64_t last_active_ms_ = -1, last_tick_ms_ = -1;
     int64_t healthy_ms_ = 0;
     int64_t recover_ms_ = kRecoverMs;
-    int64_t hold_until_ms_ = -1;   /* no step up before this: a removal took the last step down */
+    int64_t hold_until_ms_ = -1;   /* no step up before this: the last removal's hold */
 };
 
 }  // namespace crs

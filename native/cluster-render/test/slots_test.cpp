@@ -87,6 +87,8 @@ struct FakeScenes : Scenes {
         return !fail;
     }
     void unpublish(const TargetSpec &t) override { calls.push_back("unpublish " + t.name); }
+    int resends = 0;
+    void resent(const TargetSpec &, int64_t) override { resends++; }
 };
 
 static const uint64_t kMapScene = 0x010004f0, kPanelScene = 0x01000400;
@@ -991,7 +993,8 @@ static void fresh_fetch_failed()
 
 /* On the car: the KOMBI removed the shown map scene, failed the fetch asked
  * 2 s later within 125 ms, and took the one asked 7 s after the removal:
- * asked at 2 s and every 1.5 s after, the fourth retry comes at 8 s. */
+ * asked at 2 s and again 1.5 s after each quick failure, the fourth retry
+ * comes at about 8.5 s. */
 static void removal_retry()
 {
     Rig r;
@@ -1018,6 +1021,7 @@ static void removal_retry()
         quick = quick && calls_are("request map") && r.now - at == 1500;
     }
     ok("a fetch failing within 300 ms of it: not ready, asked again after 1.5 s, four times", quick);
+    ok("the warm scene's resend charged once for all those requests", r.scenes.resends == 1);
     r.run(130);
     r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
     const int64_t at = r.now;
