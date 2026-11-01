@@ -798,11 +798,11 @@ test('the service stays up without a patch to watch, and stops on SIGTERM', asyn
             stdio: 'ignore',
         });
         let exit = null;
-        child.on('exit', (code, signal) => { exit = { code, signal }; });
-        await new Promise((r) => setTimeout(r, 2000));
-        assert.strictEqual(exit, null, 'still running 2 s after start: ' + JSON.stringify(exit));
+        const exited = new Promise((r) => child.on('exit', (code, signal) => { exit = { code, signal }; r(); }));
+        await new Promise((r) => setTimeout(r, 500));
+        assert.strictEqual(exit, null, 'still running 0.5 s after start: ' + JSON.stringify(exit));
         child.kill('SIGTERM');
-        await new Promise((r) => setTimeout(r, 1000));
+        await Promise.race([exited, new Promise((r) => setTimeout(r, 2000))]);
         assert(exit && exit.code === 0, 'a SIGTERM ends it cleanly: ' + JSON.stringify(exit));
     } finally {
         if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
