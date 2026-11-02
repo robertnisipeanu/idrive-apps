@@ -48,8 +48,9 @@
  *                    the next head-unit start (carplay is then deferred)
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
- *                    something else modified, a carplay.service that starts
- *                    another program)
+ *                    something else modified, a build outside the patcher's
+ *                    proven list that Enable map has not patched yet, a
+ *                    carplay.service that starts another program)
  *                  {"ev":"log","line":...}   the backlog on connect, then each new line
  *
  * Install-time activation (the deploy tool's activate and deactivate hooks,
@@ -259,6 +260,8 @@ function readState(cb) {
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
+        var proven = !/proven:\s+no/.test(text);
+        var restorable = /^restorable:\s+yes$/m.test(text);
         var backup = /backup:\s+(\S+)/.exec(text);
         var hasBackup = !!backup && backup[1] !== 'none';
         /* "patched" requires every edit: the variant gate, a known sink
@@ -296,10 +299,13 @@ function readState(cb) {
         /* What keeps the tool from writing the patch by itself: a binary the
          * patcher cannot patch (an edit site not found, or one it does not
          * recognise), one something else modified (no backup of ours, not the
-         * pristine build), or another program started as carplay. */
+         * pristine build), a build outside the proven list that Enable map has
+         * not patched (no backup of ours), or another program started as
+         * carplay. */
         var conflict = err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
+            : !hasBackup && !proven ? 'untested carplay build'
             : foreignStart();
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -308,7 +314,7 @@ function readState(cb) {
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
         cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
-                        conflict: conflict, binary: binary, known: known, backup: hasBackup };
+                        conflict: conflict, binary: binary, known: known, backup: hasBackup, restorable: restorable };
         cb(cachedState);
     });
 }
@@ -758,10 +764,12 @@ function runPatch(args, action, noRestart, done) {
  * "avb": the stock avb:// sink, the media bus the render joins (the mode the
  * app applies). "udp": Edit 2 sink -> udp://127.0.0.1:UDP_PORT, the stream
  * sink the projection bridge accepts, which this tool receives. "fifo": sink
- * -> the file:// FIFO (the bridge rejects it on the car). */
-function apply(panel, mode, noRestart, done) {
+ * -> the file:// FIFO (the bridge rejects it on the car). `unproven`: the
+ * user's Enable map, which also patches a build outside the proven list;
+ * install-time activation never does. */
+function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
-    var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'];
+    var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'].concat(unproven ? ['--unproven'] : []);
     if (mode === 'avb') {
         log('apply IC_' + panel.toUpperCase() + ', stock AVB sink (the render joins the media bus)');
     } else if (mode === 'udp') {
@@ -844,7 +852,7 @@ function handle(line, sock) {
         var mode = (msg.mode === 'avb' || msg.mode === 'udp') ? msg.mode : 'fifo';   /* capture mode; default fifo */
         busy = true;
         status({ reason: op === 'apply' ? 'applying' : 'reverting' });
-        var fn = op === 'apply' ? function (cb) { apply(panel, mode, false, cb); } : function (cb) { revert(false, false, cb); };
+        var fn = op === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); };
         /* Hold the shared remount lock so the boot-recovery service does not
          * remount / at the same time. User-driven, so it proceeds after a short
          * wait even if the lock looks stuck; recovery yields to it. */
@@ -913,17 +921,21 @@ function ensureDir(dir) {
 /* What activate and deactivate do with the binary as readState found it:
  * { op: "apply" | "revert", or none and why }. activate applies Enable map's
  * patch (high panel, the stock media-bus sink, the patcher's size and safe
- * area) to a known binary: an original no one reverted (no backup of ours) or
- * a patch of ours, any configuration of it, which the patcher brings up to
- * date or leaves as it is; an original with our backup was reverted by the
- * user and stays so, as does a pending change other than a removal's
- * revert (an install after a removal patches again). deactivate reverts a
- * patch of ours, a pending one too, and drops our backup, so a later install
+ * area) to a known binary without a conflict: a proven original (no backup of
+ * ours) or a patch of ours, any configuration of it, which the patcher brings
+ * up to date or leaves as it is; an original with our backup was reverted by
+ * the user and stays so, as does a pending change other than a removal's
+ * revert. After a removal's revert an install patches a proven build again; a
+ * build outside the proven list, its backup dropped, stays reverted (a
+ * conflict). deactivate reverts a patch of ours, a pending one too, also one
+ * the patcher no longer recognises when our verified backup of the same build
+ * differs from it (restorable), and drops our backup, so a later install
  * starts from the original as a fresh one does. */
 function plan(which, st) {
     if (st.pending && which === 'activate' && !(st.pending === 'revert' && st.pendingBy === 'removal')) {
         return { why: 'a change already waits for the next head-unit start' };
     }
+    if (which === 'deactivate' && st.restorable) return { op: 'revert' };
     if (st.conflict && (which === 'activate' || !st.known)) return { conflict: st.conflict };
     if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: 'carplay is the original' } : { op: 'revert' };
     if (st.binary === 'original' && st.backup) return { why: 'the map patch was turned off; Enable map applies it' };
@@ -969,7 +981,7 @@ function oneShot(which) {
                 return;
             }
             var before = sha(TARGET);
-            var run = p.op === 'apply' ? function (cb) { log(which + ': applying the map patch'); apply('high', 'avb', true, cb); }
+            var run = p.op === 'apply' ? function (cb) { log(which + ': applying the map patch'); apply('high', 'avb', true, false, cb); }
                 : function (cb) { log(which + ': reverting the map patch'); revert(true, true, cb); };
             run(function (pErr, roErr, activation, refused) {
                 var written = sha(TARGET) !== before;
@@ -983,7 +995,7 @@ function oneShot(which) {
                     return;
                 }
                 /* The patcher would not touch it: left as it is, for the user. */
-                if (refused && /refusing|requires the pristine|not a recognised|no backup/.test(refused)) {
+                if (refused && /refusing|requires the pristine|not a proven build|not a recognised|no backup/.test(refused)) {
                     result.status = 'carplay left as it is: ' + refused;
                     result.conflict = refused;
                     log(which + ': ' + result.status);

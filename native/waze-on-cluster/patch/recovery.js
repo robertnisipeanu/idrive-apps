@@ -35,11 +35,12 @@
  * on SIGTERM while the system stops), and otherwise adds one (it ended with no
  * record, e.g. power lost).
  *
- * The restore is the carplay_patch.js revert Disable map uses (verified
- * backup, refuses a binary it does not recognise as a patched form of the
- * backup's build), under the remount lock shared with patchd, with / read-write
- * only for the write. It acts only on a recognised patched build with a
- * verified backup; a stock or firmware-replaced binary clears the counter.
+ * The restore is the carplay_patch.js revert Disable map uses (a verified
+ * backup of the target's own build), under the remount lock shared with
+ * patchd, with / read-write only for the write. It acts when the patcher's
+ * status reads `restorable: yes` (a revert would change the binary, whatever
+ * the locator makes of it); a stock or firmware-replaced binary clears the
+ * counter.
  * Every command it runs is bounded (STEP_MS), so a restore ends within
  * RESTORE_BOUND_MS. It never kills, restarts or reboots anything; the only
  * start is `systemctl start carplay.service` after a crash, never stop or
@@ -124,16 +125,18 @@ function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
 /* ---- the real dependencies, injectable for host tests ---- */
 
 /* The on-disk carplay's state. ok is false when the status could not be read
- * (a transient spawn/timeout failure), so the counter is not disturbed. */
+ * (a transient spawn/timeout failure), so the counter is not disturbed. The
+ * patch counts as active, and restorable, when the patcher's revert would
+ * change the binary (`restorable: yes`): a verified backup of the same build
+ * differs from it in one of our edits' regions when the locator recognises
+ * both as that build, else anywhere, so a patch any version of this tool
+ * wrote is counted and restored. */
 function realClassify(cb) {
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: STEP_MS }, function (err, out) {
         var text = (out || '') + '';
         if (err || !/^size:/m.test(text)) { cb({ ok: false }); return; }
-        var patched = /variant:\s+PATCHED/.test(text);
-        var bak = /backup:\s+(\S+)/.exec(text);
-        var hasBackup = !!bak && bak[1] !== 'none';
-        var known = !/known:\s+NO/.test(text);
-        cb({ ok: true, patchActive: patched, restorable: patched && known && hasBackup });
+        var restorable = /^restorable:\s+yes$/m.test(text);
+        cb({ ok: true, patchActive: restorable, restorable: restorable });
     });
 }
 

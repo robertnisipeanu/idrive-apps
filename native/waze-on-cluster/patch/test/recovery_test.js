@@ -740,37 +740,68 @@ test('realRestore takes a link that is the target\'s own file as no reason to wa
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
 
+/* The boot step (recovery.js boot) at the threshold, with the real status and
+ * restore, on a target stage(tgt) writes. */
+function bootAtThreshold(dir, stage) {
+    const tgt = path.join(dir, 'carplay');
+    stage(tgt);
+    const mounts = path.join(dir, 'mounts');
+    fs.writeFileSync(mounts, '/dev/root / ext4 ro 0 0\n');
+    fs.writeFileSync(path.join(dir, 'mount'), '#!/bin/sh\n' + ROMOUNT(dir));
+    fs.chmodSync(path.join(dir, 'mount'), 0o755);
+    fs.mkdirSync(path.join(dir, 'proc'));
+    fs.mkdirSync(path.join(dir, 'sock'));
+    fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-B\n');
+    const state = path.join(dir, 'state.json');
+    fs.writeFileSync(state, JSON.stringify({ fails: 1, arm: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } }));
+    const r = cp.spawnSync(process.execPath, [RECOVERY_PATH, 'boot'], {
+        env: Object.assign({}, process.env, {
+            WOC_CARPLAY: tgt, WOC_MOUNT: path.join(dir, 'mount'), WOC_PROC_MOUNTS: mounts, WOC_PROC: path.join(dir, 'proc'),
+            WOC_PATCH_SOCK: path.join(dir, 'sock', 'patch.sock'), WOC_REMOUNT_LOCK: path.join(dir, 'sock', 'remount.lock'),
+            WOC_RECOVERY_STATE: state, WOC_BOOT_ID: path.join(dir, 'boot_id'),
+        }),
+        encoding: 'utf8',
+    });
+    return { r, tgt, mounts: fs.readFileSync(mounts, 'utf8'), state: readState(state) };
+}
+
 test('the boot step at the threshold restores a patched copy before carplay would start, / read-only after', () => {
     if (!fs.existsSync(CARPLAY_BIN)) { console.log('     (skipped: carplay binary not found)'); return; }
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-'));
     try {
-        const tgt = path.join(dir, 'carplay');
-        fs.copyFileSync(CARPLAY_BIN, tgt);
-        cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--target', tgt, '--yes'], { stdio: 'ignore' });
-        const mounts = path.join(dir, 'mounts');
-        fs.writeFileSync(mounts, '/dev/root / ext4 ro 0 0\n');
-        fs.writeFileSync(path.join(dir, 'mount'), '#!/bin/sh\n' + ROMOUNT(dir));
-        fs.chmodSync(path.join(dir, 'mount'), 0o755);
-        fs.mkdirSync(path.join(dir, 'proc'));
-        fs.mkdirSync(path.join(dir, 'sock'));
-        fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-B\n');
-        const state = path.join(dir, 'state.json');
-        fs.writeFileSync(state, JSON.stringify({ fails: 1, arm: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } }));
-        const r = cp.spawnSync(process.execPath, [RECOVERY_PATH, 'boot'], {
-            env: Object.assign({}, process.env, {
-                WOC_CARPLAY: tgt, WOC_MOUNT: path.join(dir, 'mount'), WOC_PROC_MOUNTS: mounts, WOC_PROC: path.join(dir, 'proc'),
-                WOC_PATCH_SOCK: path.join(dir, 'sock', 'patch.sock'), WOC_REMOUNT_LOCK: path.join(dir, 'sock', 'remount.lock'),
-                WOC_RECOVERY_STATE: state, WOC_BOOT_ID: path.join(dir, 'boot_id'),
-            }),
-            encoding: 'utf8',
+        const b = bootAtThreshold(dir, (tgt) => {
+            fs.copyFileSync(CARPLAY_BIN, tgt);
+            cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--target', tgt, '--yes'], { stdio: 'ignore' });
         });
-        assert.strictEqual(r.status, 0, r.stdout + r.stderr);
-        assert(/boot check: restored/.test(r.stdout), r.stdout);
-        assert.strictEqual(sha(fs.readFileSync(tgt)), sha(fs.readFileSync(CARPLAY_BIN)), 'carplay starts the verified stock');
-        assert(/\bro\b/.test(fs.readFileSync(mounts, 'utf8')), '/ is read-only again');
-        assert(!fs.existsSync(tgt + '.woc-running'), 'nothing ran it: no link');
-        assert.deepStrictEqual(readState(state), { fails: 0, arm: null, starts: null, ended: null });
+        assert.strictEqual(b.r.status, 0, b.r.stdout + b.r.stderr);
+        assert(/boot check: restored/.test(b.r.stdout), b.r.stdout);
+        assert.strictEqual(sha(fs.readFileSync(b.tgt)), sha(fs.readFileSync(CARPLAY_BIN)), 'carplay starts the verified stock');
+        assert(/\bro\b/.test(b.mounts), '/ is read-only again');
+        assert(!fs.existsSync(b.tgt + '.woc-running'), 'nothing ran it: no link');
+        assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
+});
+
+test('the boot step at the threshold restores what an older release patched where the locator now refuses a site', () => {
+    if (!fs.existsSync(CARPLAY_BIN) || sha(fs.readFileSync(CARPLAY_BIN)) !== 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50') {
+        console.log('     (skipped: carplay 22.28.3 not found)'); return;
+    }
+    const locator = require('../carplay_locate.js');
+    require('./carplay_mutations.js')(fs.readFileSync(CARPLAY_BIN)).oldRelease().forEach((f) => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-'));
+        try {
+            const b = bootAtThreshold(dir, (tgt) => {
+                fs.writeFileSync(tgt, f.patched, { mode: 0o755 });
+                fs.writeFileSync(tgt + '.woc-orig', f.original, { mode: 0o600 });
+                fs.writeFileSync(tgt + '.woc-orig.json', JSON.stringify({ buildId: locator.buildId(f.original), sha256_original: sha(f.original) }));
+            });
+            assert.strictEqual(b.r.status, 0, f.name + ': ' + b.r.stdout + b.r.stderr);
+            assert(/boot check: restored/.test(b.r.stdout), f.name + ': ' + b.r.stdout);
+            assert(fs.readFileSync(b.tgt).equals(f.original), f.name + ': carplay starts the original');
+            assert(/\bro\b/.test(b.mounts), f.name + ': / is read-only again');
+            assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
+        } finally { cp.execFileSync('rm', ['-rf', dir]); }
+    });
 });
 
 test('realRestore reports a remount failure instead of leaving / writable silently', () => {

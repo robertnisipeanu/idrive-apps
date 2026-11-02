@@ -4,10 +4,11 @@
 /* Proves carplay_locate.js and carplay_patch.js on synthetic builds
  * (synthetic_carplay.js): every site found where the build put it, also with
  * other offsets, addresses and code order, and in its patched state; a
- * signature found twice refused as ambiguous; a damaged site refused with the
- * reason; apply, verify, probe and revert on a build outside the proven list,
- * byte-exact. With CARPLAY_BIN, the reference build's sites are the documented
- * offsets.
+ * signature found twice refused as ambiguous; a damaged site, a broken
+ * cross-check or a relocation over an edit refused with the reason; apply
+ * (only with --unproven), verify, probe and revert on a build outside the
+ * proven list, byte-exact. With CARPLAY_BIN, the reference build's sites are
+ * the documented offsets.
  *
  *   node locate_test.js
  */
@@ -71,7 +72,7 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
 
 /* A signature found twice is ambiguous. */
 [['two sink URL slots', { twoSinks: true }, 'sink: URL slot found 2 times'],
- ['two converter switches', { twoConverters: true }, 'variant: converter switch found 2 times']].forEach(function (t) {
+ ['a second converter switch outside codingToInternal', { twoConverters: true }, 'variant: converter switch also outside codingToInternal']].forEach(function (t) {
     var loc = locator.locate(synthetic.build(t[1]).buf);
     ok(t[0] + ': refused as ambiguous, the other edits found', !loc.ok && json(reasons(loc)) === json([t[2]]), json(reasons(loc)));
 });
@@ -85,6 +86,8 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     ['onSuggestUi calls something else', function (b, at) { b.writeInt32LE(b.readInt32LE(at.call + 1) + 0x40, at.call + 1); }, 'self-start: onSuggestUi call not found'],
     ['no ForceKeyframe check', function (b) { var i = b.indexOf('ForceKeyframe'); b.write('ForceKeyFrame', i, 'latin1'); }, 'self-start: ForceKeyframe string not found'],
     ['a geometry store broken', function (b, at) { b[at.px + 8] = 0x90; }, 'resolution: 1 geometry builders (want 2)'],
+    ['requestStream only reached through onSuggestUi', function (b, at) { b.fill(0x90, at.cmdCall, at.cmdCall + 5); }, 'self-start: requestStream not called directly'],
+    ['a getter reads another field', function (b, at) { b[at.getter2c + 3] = 0x2a; }, 'resolution: geometry getters not found'],
 ].forEach(function (t) {
     var s = synthetic.build({}), b = Buffer.from(s.buf);
     t[1](b, s.at);
@@ -93,7 +96,21 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
 });
 (function () {
     var loc = locator.locate(synthetic.build({ noEhFrame: true }).buf);
-    ok('no function table: self-start and resolution say so', json(reasons(loc)) === json(['self-start: no function table', 'resolution: no function table']), json(reasons(loc)));
+    ok('no function table: variant, self-start and resolution say so',
+        json(reasons(loc)) === json(['variant: no function table', 'self-start: no function table', 'resolution: no function table']), json(reasons(loc)));
+    loc = locator.locate(synthetic.build({ relocSink: true }).buf);
+    ok('a dynamic relocation over the sink slot: refused', json(reasons(loc)) === json(['sink: a dynamic relocation over the edit']), json(reasons(loc)));
+    var rel = synthetic.build({ relocSink: true });
+    rel.buf.writeUInt32LE(17, rel.at.dyn);   /* DT_REL in place of DT_RELA */
+    loc = locator.locate(rel.buf);
+    ok('relocations it cannot read: every edit refused', json(reasons(loc)) ===
+        json(['variant: relocations not readable', 'sink: relocations not readable', 'self-start: relocations not readable', 'resolution: relocations not readable']), json(reasons(loc)));
+    rel = synthetic.build({ relocSink: true });
+    for (var ph = 64; rel.buf.readUInt32LE(ph) !== 2; ph += 56);
+    rel.buf.writeUInt32LE(rel.buf.length - 8, ph + 8);   /* PT_DYNAMIC running past the end of the file */
+    loc = locator.locate(rel.buf);
+    ok('a dynamic segment outside the file: every edit refused, no throw', json(reasons(loc)) ===
+        json(['variant: relocations not readable', 'sink: relocations not readable', 'self-start: relocations not readable', 'resolution: relocations not readable']), json(reasons(loc)));
     loc = locator.locate(Buffer.from('#!/bin/sh\nexec carplay "$@"\n'));
     ok('not an ELF', loc.elf === false && loc.reason === 'not an ELF file' && !loc.ok, json(loc));
 })();
@@ -116,7 +133,10 @@ try {
         r.out.indexOf('immediates ' + [at.mm, at.px, at.safe1, at.safe2].map(hx).join(' ')) >= 0 &&
         r.out.indexOf('build-id:  ' + at.buildId) >= 0, r.out);
 
-    r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--yes']);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    ok('apply without --unproven: refused, no write, no backup', r.code !== 0 && /is not a proven build; pass --unproven/.test(r.out) &&
+        fs.readFileSync(tgt).equals(orig) && !fs.existsSync(tgt + '.woc-orig'), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
     var b = fs.readFileSync(tgt);
     ok('apply high: all four edits written', r.code === 0 && /patched OK/.test(r.out) && b.readUInt32LE(at.slot) === at.high &&
         b.toString('hex', at.call, at.call + 5) === at.callPatched && b.toString('latin1', at.sink, at.sink + 9) === 'udp://127' &&
@@ -131,6 +151,57 @@ try {
         b.readUInt32LE(at.slot) === at.mid, r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+
+    /* A build without a GNU build-id: the same build is the same size and at
+     * most a few hundred bytes apart from the backup. */
+    var noId = Buffer.from(orig);
+    noId.writeUInt32LE(0, 0x208);   /* the build-id note's type */
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    fs.writeFileSync(tgt + '.woc-orig.tmp', 'cut short');        /* an earlier apply's, cut short */
+    fs.writeFileSync(tgt + '.woc-orig.json.tmp', '{"sha');
+    fs.writeFileSync(tgt, noId);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    ok('no build-id: apply writes the backup and its record, an earlier temporary file gone', r.code === 0 && fs.existsSync(tgt + '.woc-orig') &&
+        fs.existsSync(tgt + '.woc-orig.json') && !fs.existsSync(tgt + '.woc-orig.tmp') && !fs.existsSync(tgt + '.woc-orig.json.tmp'), r.out);
+    var noIdPatched = fs.readFileSync(tgt), mangled = Buffer.from(noIdPatched);
+    mangled[at.highHandler] = 0x90;   /* a site the locator now refuses */
+    fs.writeFileSync(tgt, mangled);
+    r = run(['status', '--target', tgt]);
+    ok('no build-id: a patch the locator refuses is restorable', /known:\s+NO/.test(r.out) && /^restorable: yes$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('no build-id: revert writes the original whole', r.code === 0 && fs.readFileSync(tgt).equals(noId), r.out);
+    fs.writeFileSync(tgt + '.woc-orig.tmp', 'cut short');
+    fs.writeFileSync(tgt + '.woc-orig.json.tmp', '{"sha');
+    r = run(['revert', '--target', tgt, '--yes', '--drop-backup']);
+    ok('a removal drops the backup, its record and any temporary file', r.code === 0 && !fs.existsSync(tgt + '.woc-orig') &&
+        !fs.existsSync(tgt + '.woc-orig.json') && !fs.existsSync(tgt + '.woc-orig.tmp') && !fs.existsSync(tgt + '.woc-orig.json.tmp'), r.out);
+    run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    var far = Buffer.from(noId);
+    for (var k = 0; k < 400; k++) far[0x300 + k] ^= 0xff;
+    fs.writeFileSync(tgt, far);
+    r = run(['status', '--target', tgt]);
+    ok('no build-id: a binary hundreds of bytes away is another build', /^restorable: no \(another build: no build-id, and more than 200 bytes differ\)$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('no build-id: revert refuses it without --force, saying why', r.code !== 0 && /another build than the backup \(no build-id, and more than 200 bytes differ\)/.test(r.out) &&
+        fs.readFileSync(tgt).equals(far), r.out);
+
+    /* A backup an older release left without its record, cut short: never
+     * written, also with --force. */
+    fs.writeFileSync(tgt, noIdPatched);
+    fs.writeFileSync(tgt + '.woc-orig', noId.slice(0, noId.length - 4096));
+    fs.unlinkSync(tgt + '.woc-orig.json');
+    r = run(['revert', '--target', tgt, '--yes', '--force']);
+    ok('a short backup with no record: revert --force refuses, no write', r.code !== 0 && /no record of the original/.test(r.out) &&
+        fs.readFileSync(tgt).equals(noIdPatched), r.out);
+
+    /* A backup whose build-id note cannot be read: status says why and goes on. */
+    var badNote = Buffer.from(orig);
+    badNote.writeUInt32LE(0x7ffffffe, 0x200);   /* the note's name size */
+    fs.writeFileSync(tgt + '.woc-orig', badNote);
+    r = run(['status', '--target', tgt]);
+    ok('a backup with a malformed note: not restorable, with the reason, status complete', r.code === 0 && /^restorable: no \(.+\)$/m.test(r.out) &&
+        /^backup: /m.test(r.out), r.out);
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
 
     var amb = synthetic.build({ twoSinks: true }).buf;
     fs.writeFileSync(tgt, amb);
