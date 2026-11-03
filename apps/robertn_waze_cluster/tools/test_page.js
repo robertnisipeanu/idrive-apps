@@ -281,7 +281,7 @@ async function main() {
         await until('logs socket open', () => lserver._clients.size === 1);
         await sleep(900);
         assert.strictEqual(inactiveReports, inactiveBefore, 'moving to the Logs page keeps the app shown');
-        /* the page's patch connection and the HUD build's profile sync (its own patchd connection,
+        /* the page's patch connection and the profile sync (its own patchd connection,
          * src/profile_sync.js): both stay open */
         assert.strictEqual(patch._clients.size, 2, 'and its sockets open');
         await until('logs state shown', () => byName.wocLogsStatus.text === 'No logs saved' &&
@@ -342,9 +342,9 @@ async function main() {
         OnlineApp.instance.emit('entryPointExecute', APP_JSON.application.entryPoints[0].uuid);
         await sleep(400);
         assert.strictEqual(lserver._clients.size, 0, 'a tile launch opens no logs socket');
-        assert.strictEqual(patch._clients.size, 2, 'the main page\'s sockets are open');   /* + the HUD build's profile sync */
+        assert.strictEqual(patch._clients.size, 2, 'the main page\'s sockets are open');   /* + the profile sync */
         console.log('ok   launched from the tile after leaving on the Logs page: the main page, no logs socket');
-        assert.strictEqual(patch._clients.size, 2, 'the main page keeps its sockets');   /* + the HUD build's profile sync */
+        assert.strictEqual(patch._clients.size, 2, 'the main page keeps its sockets');   /* + the profile sync */
         console.log('ok   leaving the Logs page closes the logs socket');
         await lserver.close();
     } finally {

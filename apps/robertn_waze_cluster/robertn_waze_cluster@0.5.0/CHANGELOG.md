@@ -1,12 +1,13 @@
 # Changelog
 
-## 0.4.3 (HUD build, wesleyredhat)
+## 0.5.0
 
-HUD support, contributed by [eroobeeroo](https://github.com/eroobeeroo). On Robert's 0.4.3 (waze-on-cluster 0.7.11,
-cluster-render 0.3.6).
+HUD support, contributed by [eroobeeroo](https://github.com/eroobeeroo). Requires waze-on-cluster 0.8.0
+(cluster-render 0.4.0).
 
-- **Show map on**: one button switches the map between the cluster and the HUD;
-  the map moves at once and the choice is kept for the next start.
+- **Show map on**: one button cycles the map between the cluster, the HUD and
+  both at once (Cluster + HUD); the map moves at once and the choice is kept
+  for the next start.
 - **HUD map size**: Standard (the fitted box, about 57 % of the HUD's width),
   70 %, 85 % (the widest: wider is cut off at the HUD's edges) and 40 %,
   resized at once and kept. Enabled while the map goes to the HUD.

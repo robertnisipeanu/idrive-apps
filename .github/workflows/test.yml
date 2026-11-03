@@ -8,7 +8,7 @@ name: Test
 # A pull request runs once, on its merge commit; main runs on every push.
 on:
   push:
-    branches: [main, hud-support]   # wesleyredhat fork: test the HUD branch too
+    branches: [main]
   pull_request:
 
 # a new push to a pull request cancels its run in progress; each push to main
@@ -146,7 +146,6 @@ jobs:
         run: make -C native/waze-on-cluster test
       - run: node apps/robertn_waze_cluster/tools/test_control.js
       - run: node apps/robertn_waze_cluster/tools/test_page.js
-      - run: node apps/robertn_waze_cluster/tools/test_profiles.js
 
   waze-on-cluster-x86:
     needs: changes

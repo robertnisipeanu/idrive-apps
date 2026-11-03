@@ -76,7 +76,7 @@ function ok(name, cond) {
     var r = await ask({ cmd: 'target', target: 'cluster+hud' });
     var conf = fs.readFileSync(CONF, 'utf8');
     ok('an unknown target is refused', !r.ok && conf === 'upload_kb_per_s = 3000\ntarget = map\ntarget_fps = 15\n');
-    /* map+hud: both at once (wesleyredhat HUD build) is a choice of its own */
+    /* map+hud: both at once is a choice of its own */
     r = await ask({ cmd: 'target', target: 'map+hud' });
     ok('map+hud (both) is saved', r.ok && r.target === 'map+hud' && /target = map\+hud\n/.test(fs.readFileSync(CONF, 'utf8')));
     r = await ask({ cmd: 'target', target: 'hud' });

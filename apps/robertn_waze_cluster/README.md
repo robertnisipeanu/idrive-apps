@@ -108,8 +108,8 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.4.3.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.4.3.tgz
+node tools/build.js                  # robertn_waze_cluster@0.5.0.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.0.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -130,7 +130,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/logs_control.js` | the logs socket client |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.4.3/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.5.0/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

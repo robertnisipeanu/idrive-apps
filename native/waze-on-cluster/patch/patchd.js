@@ -125,7 +125,7 @@ var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || 'systemctl reboot').split(' ');
  * (Cluster, HUD, both) is saved there as the render's "target". */
 var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on-cluster.local.conf';
 /* one or the other: the cluster or the HUD */
-var DISPLAY_TARGETS = ['map', 'hud', 'map+hud'];   /* map+hud: both (wesleyredhat HUD build) */
+var DISPLAY_TARGETS = ['map', 'hud', 'map+hud'];   /* map+hud: both at once */
 /* The display choice and HUD map size per driver profile (the app reports the
  * head unit's current user account): { "<account>": { target, hud_width_pct } }.
  * Each change of either is kept for the profile current at the time; a

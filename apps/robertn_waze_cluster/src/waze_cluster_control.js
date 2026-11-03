@@ -68,7 +68,7 @@ const SIZE = '1088x480';
 const SAFE = '504x368+286+72';
 /* Where the map can go, in the order the Display button steps through them:
  * the render's target and the name the page shows. */
-/* map+hud: both at once (wesleyredhat HUD build; each target its own layer, the one upload budget shared) */
+/* map+hud: both at once (each target its own layer, the one upload budget shared) */
 const DISPLAYS = [['map', 'Cluster'], ['hud', 'HUD'], ['map+hud', 'Cluster + HUD']];
 /* The HUD map's sizes, in the order the size button steps through them: its
  * width in percent of the HUD's (0: the standard fitted box, about 57 %). */
