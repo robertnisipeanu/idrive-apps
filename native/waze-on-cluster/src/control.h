@@ -3,7 +3,8 @@
 /* The control socket: newline-delimited JSON between its owner (the app, or
  * `waze-on-cluster run`) and the tool (README.md "Using it").
  *
- *   owner -> tool  {"cmd":"start","target":"sail"|"map"|"panel"|"hud"}
+ *   owner -> tool  {"cmd":"start","target":"sail"|"map"|"panel"|"hud"|"map+hud"}
+ *                  {"cmd":"hud","hud_width_pct":"0"|"20".."100"}  the HUD map's size
  *   tool -> owner  {"ev":"status",...}  {"ev":"log","line":...}
  *
  * One connection is the owner; a second one is told "busy" and closed. */

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.3 (HUD build, wesleyredhat)
+
+HUD support, contributed by [eroobeeroo](https://github.com/eroobeeroo). On Robert's 0.4.3 (waze-on-cluster 0.7.11,
+cluster-render 0.3.6).
+
+- **Show map on**: one button switches the map between the cluster and the HUD;
+  the map moves at once and the choice is kept for the next start.
+- **HUD map size**: Standard (the fitted box, about 57 % of the HUD's width),
+  70 %, 85 % (the widest: wider is cut off at the HUD's edges) and 40 %,
+  resized at once and kept. Enabled while the map goes to the HUD.
+- On the HUD the map's frames are scaled on the head unit to the size they are
+  shown at (sharper, 2-6x less data to the KOMBI), its corners are rounded, and
+  a night map's background is made black - which the HUD shows as nothing - so
+  only the roads, route and labels float there (green, such as parks, is kept).
+  Works for Waze and Google Maps.
+- The HUD map steps aside while the HUD's media and list pop-ups show, so they
+  stay in the HUD instead of moving to the cluster, and comes back after they
+  close; the status says so meanwhile.
+- **Per driver profile**: Show map on and the HUD map size are kept for each
+  driver profile, and follow the profile when the driver changes.
+
 ## 0.4.3
 
 A Logs page: Save logs saves an archive of the tools' logs, the journal

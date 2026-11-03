@@ -137,6 +137,13 @@ struct TargetSpec {
     /* A hold's: the only contents its take-overs unmap. Any other content
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
+    /* The stock HMI's pop-up slots the target gives way to (the HUD's media
+     * and list pop-ups, 0x322): while one of them shows content, the target
+     * is released and not asked for, so the pop-up keeps its place (asking
+     * again pushed it from the HUD to the cluster); yield_ms after it goes,
+     * the target is asked for again. */
+    std::vector<uint64_t> yield_slots;
+    int yield_ms = 1500;
 };
 
 /* Who the display reports in a slot. */
@@ -375,6 +382,8 @@ private:
         std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
+        /* A pop-up in one of its yield slots was last seen shown then. */
+        int64_t popup_ms = -1;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -417,6 +426,9 @@ private:
     const SlotInfo *holder_row(int i) const;
     /* The table shows the target's own scene id in its slot. */
     bool named(int i) const;
+    /* A pop-up shows in one of the target's yield slots, or went less than
+     * its yield_ms ago. */
+    bool popup_blocks(int i, int64_t now_ms);
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);

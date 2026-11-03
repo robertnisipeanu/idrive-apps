@@ -66,6 +66,13 @@ const SIZE = '1088x480';
 /* The safe area Enable map writes: where the phone keeps its guidance UI,
  * inside the part of the map the gauges leave visible. */
 const SAFE = '504x368+286+72';
+/* Where the map can go, in the order the Display button steps through them:
+ * the render's target and the name the page shows. */
+const DISPLAYS = [['map', 'Cluster'], ['hud', 'HUD']];
+/* The HUD map's sizes, in the order the size button steps through them: its
+ * width in percent of the HUD's (0: the standard fitted box, about 57 %). */
+/* 85 % is the widest the HUD shows whole (the render holds a larger saved size to it). */
+const HUD_SIZES = [[0, 'Standard'], [70, '70 %'], [85, '85 %'], [40, '40 %']];
 
 /* One newline-delimited-JSON stream socket, reconnecting while open.
  * link: 'down' | 'up' | 'absent' (ENOENT) | 'refused' (ECONNREFUSED) | 'failed'.
@@ -256,6 +263,75 @@ class WazeClusterControl extends EventEmitter {
         this.patch.send({ cmd: 'revert' });
     }
 
+    /* ---- display: cluster, HUD or both ---- */
+    /* The render's target now ("sail" is the cluster's map), or the one just
+     * asked for until the render reports it. */
+    displayTarget() {
+        if (this._askedDisplay) {
+            return this._askedDisplay;
+        }
+        const t = this.renderStatus && this.renderStatus.target;
+        return t === 'sail' ? 'map' : t || null;
+    }
+
+    displayText() {
+        /* an older saved "map+hud" shows as the cluster; the next press picks one */
+        const t = this.displayTarget() === 'map+hud' ? 'map' : this.displayTarget();
+        const d = DISPLAYS.find(([v]) => v === t);
+        return `Show map on: ${d ? d[1] : '…'}`;
+    }
+
+    canChangeDisplay() {
+        return this.render.connected();
+    }
+
+    /* ---- the HUD map's size ---- */
+    hudWidth() {
+        if (this._askedHud != null) {
+            return this._askedHud;
+        }
+        const v = this.renderStatus && this.renderStatus.hud_width_pct;
+        return typeof v === 'number' ? v : null;
+    }
+
+    hudSizeText() {
+        const d = HUD_SIZES.find(([v]) => v === this.hudWidth());
+        return `HUD map size: ${d ? d[1] : this.hudWidth() != null ? `${this.hudWidth()} %` : '…'}`;
+    }
+
+    /* Only while the map goes to the HUD. */
+    canChangeHudSize() {
+        return this.render.connected() && /hud/.test(this.displayTarget() || '');
+    }
+
+    /* The next size: the render resizes the HUD map at once, patchd saves it. */
+    cycleHudSize() {
+        if (!this.canChangeHudSize()) {
+            return;
+        }
+        const i = HUD_SIZES.findIndex(([v]) => v === this.hudWidth());
+        const next = HUD_SIZES[(i + 1) % HUD_SIZES.length][0];
+        this._askedHud = next;
+        this.render.send({ cmd: 'hud', hud_width_pct: String(next) });
+        this.patch.send({ cmd: 'hud-size', hud_width_pct: next });
+        this.emit('change');
+    }
+
+    /* The next choice: the running render moves at once (its start command),
+     * and patchd saves it for the render's next start. */
+    cycleDisplay() {
+        if (!this.canChangeDisplay()) {
+            return;
+        }
+        const cur = this.displayTarget() === 'map+hud' ? 'map' : this.displayTarget();
+        const i = DISPLAYS.findIndex(([t]) => t === cur);
+        const next = DISPLAYS[(i + 1) % DISPLAYS.length][0];
+        this._askedDisplay = next;
+        this.render.send({ cmd: 'start', target: next });
+        this.patch.send({ cmd: 'target', target: next });
+        this.emit('change');
+    }
+
     /* True while the daemon reports a written patch that takes effect only at
      * the next head-unit start (a restart is needed to activate it). On a unit
      * where carplay restarts at once this never holds, so no restart is shown. */
@@ -424,6 +500,12 @@ class WazeClusterControl extends EventEmitter {
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
+            if (this._askedDisplay && msg.target === this._askedDisplay) {
+                this._askedDisplay = null;
+            }
+            if (this._askedHud != null && msg.hud_width_pct === this._askedHud) {
+                this._askedHud = null;
+            }
             this.emit('change');
         } else if (msg.ev === 'log') {
             this._addLine('map', String(msg.line));
@@ -438,6 +520,16 @@ class WazeClusterControl extends EventEmitter {
         } else if (msg.ev === 'status') {
             this.patchStatus = msg;
             this.emit('change');
+        } else if (msg.ev === 'hud-size-reply') {
+            if (!msg.ok) {
+                this._addLine('patch', `HUD size not saved: ${msg.reason || 'refused'}`);
+                this.emit('log');
+            }
+        } else if (msg.ev === 'target-reply') {
+            if (!msg.ok) {
+                this._addLine('patch', `display choice not saved: ${msg.reason || 'refused'}`);
+                this.emit('log');
+            }
         } else if (msg.ev === 'reboot-reply') {
             /* A refused request (nothing pending, busy, or already restarting)
              * clears the asked flag so the button returns. A successful one
@@ -463,5 +555,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, MAX_LINES,
-    SIZE, SAFE
+    SIZE, SAFE, DISPLAYS, HUD_SIZES
 };

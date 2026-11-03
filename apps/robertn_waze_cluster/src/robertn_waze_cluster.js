@@ -6,7 +6,10 @@
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
  * One LT_State_Wide page: a status line combining the patch state and the
- * render state; the cluster setting the map needs; Enable map and Disable
+ * render state; the cluster setting the map needs; Show map on (Cluster or
+ * HUD; each press switches, saved for the next start);
+ * HUD map size (Standard, 70 %, 85 %, 40 %; enabled while the
+ * map goes to the HUD); Enable map and Disable
  * map, which apply and revert the carplay patch; the diagnostic capture
  * button and its status; Logs, which opens the Logs page; and a scrolling
  * list of both tools' log lines, newest first, one per LT_Label_1Row, redrawn
@@ -38,6 +41,7 @@ const logging = require('oap-sdk/src/logging/logging');
 const { WazeClusterControl, MAX_LINES } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
+const { ProfileSync } = require('./profile_sync.js');
 
 const logger = logging.getSDKLogger();
 
@@ -47,6 +51,8 @@ const SETUP_NAME = 'wocSetup';
 const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
+const DISPLAY_NAME = 'wocDisplay';
+const HUD_SIZE_NAME = 'wocHudSize';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -102,6 +108,9 @@ class WazeClusterApp extends OnlineApp {
         this._control.on('log', () => this._scheduleLists());
         this._logs = new LogsControl({ log: logger });
         this._logs.on('change', () => this._renderLogs());
+        /* the display choice per driver profile, page shown or not */
+        this._profiles = new ProfileSync({ control: this._control, log: logger });
+        this._profiles.start();
 
         this.on('initialized', () => {
             this._appInitialized()
@@ -161,8 +170,8 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state || !this._logsState) {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
-        const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS,
-            LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(ROW_NAMES, LOGS_ROW_NAMES);
+        const names = [STATUS_NAME, SETUP_NAME, DISPLAY_NAME, HUD_SIZE_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME,
+            CAPTURE_NAME, CAPTURE_STATUS, LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(ROW_NAMES, LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
         if (missing.length) {
@@ -171,6 +180,8 @@ class WazeClusterApp extends OnlineApp {
         this._bind(ENABLE_NAME, () => this._control.enableMap());
         this._bind(DISABLE_NAME, () => this._control.disableMap());
         this._bind(RESTART_NAME, () => this._control.requestRestart());
+        this._bind(DISPLAY_NAME, () => this._control.cycleDisplay());
+        this._bind(HUD_SIZE_NAME, () => this._control.cycleHudSize());
         this._bind(CAPTURE_NAME, () => this._control.capture());
         this._bind(LOGS_NAME, () => Promise.resolve(rhmi.openState(LOGS_STATE))
             .catch((err) => logger.warn(`openState ${LOGS_STATE} failed: ${err && err.message}`)));
@@ -383,6 +394,12 @@ class WazeClusterApp extends OnlineApp {
         }
         this._write(STATUS_NAME, this._control.statusText());
         this._write(SETUP_NAME, SETUP_TEXT);
+        /* Cluster, HUD, or both: each press moves the map to the next one */
+        this._write(DISPLAY_NAME, this._control.displayText());
+        this._setEnabled(DISPLAY_NAME, this._control.canChangeDisplay());
+        /* the HUD map's size: enabled while the map goes to the HUD */
+        this._write(HUD_SIZE_NAME, this._control.hudSizeText());
+        this._setEnabled(HUD_SIZE_NAME, this._control.canChangeHudSize());
         this._write(CAPTURE_NAME, this._control.captureButtonText());
         this._write(CAPTURE_STATUS, this._control.captureText());
         const patch = this._control.connectedPatch();
@@ -510,6 +527,7 @@ class WazeClusterApp extends OnlineApp {
                 /* gone already */
             }
         }
+        this._profiles.stop();
         this._shutdownPromise = Promise.resolve()
             .then(() => this.destroyBundles().catch((err) =>
                 logger.info(`destroyBundles: ${err && err.message}`)))

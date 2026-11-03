@@ -167,7 +167,7 @@ async function main() {
     const buttons = Object.entries(components).filter(([, d]) => d.type === 'button');
     const xmlButtons = [...XML.split('<container id="2"')[0].matchAll(/<component id="(\d+)" type="button"/g)].map((m) => m[1]).sort();
     assert.deepStrictEqual(buttons.map(([id]) => id).sort(), xmlButtons, 'application.xml and uiDescription agree');
-    assert.deepStrictEqual(buttons.map(([, d]) => d.name).sort(), ['wocCapture', 'wocDisable', 'wocEnable', 'wocLogs', 'wocRestart']);
+        assert.deepStrictEqual(buttons.map(([, d]) => d.name).sort(), ['wocCapture', 'wocDisable', 'wocDisplay', 'wocEnable', 'wocHudSize', 'wocLogs', 'wocRestart']);
     assert(!buttons.some(([, d]) => /^(Show|Stop)$/.test(d.rows[0].Text.value)), 'no Show or Stop button');
     /* The restart button ships hidden; it shows only while a patch is deferred. */
     assert.strictEqual(components['34'].properties.Visible.value, 0, 'wocRestart ships hidden');
@@ -208,7 +208,7 @@ async function main() {
         await until('page shows the map', () => status.text === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
-        assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocLogs', 'wocLogsSave', 'wocRestart'], 'bound buttons');
+        assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocDisplay', 'wocEnable', 'wocHudSize', 'wocLogs', 'wocLogsSave', 'wocRestart'], 'bound buttons');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
         await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Map view');
@@ -226,7 +226,8 @@ async function main() {
         console.log('ok   Disable map while patched, Enable map while not; presses go to the patch daemon, none to the render');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
-        await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);
+        /* the page's own; the driver-profile link to patchd stays (profile_sync.js) */
+        await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 1);
         console.log('ok   hiding the page closes both sockets');
 
         render.stream(false);
@@ -246,7 +247,7 @@ async function main() {
 
         /* Before the head-unit start that starts the daemon: from the marker. */
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
-        await until('closed', () => patch._clients.size === 0);
+        await until('closed', () => patch._clients.size === 1);
         await patch.close();
         fs.writeFileSync(PENDING, JSON.stringify({ action: 'apply' }) + '\n');
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: true });
