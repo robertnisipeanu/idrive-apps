@@ -146,7 +146,7 @@ test('the map follows the stream; the app sends the render nothing', async (rend
     c.close();
 });
 
-test('Show map on switches Cluster and HUD: the render moves, patchd saves it', async (render, patch) => {
+test('Show map on switches Cluster, HUD and Cluster + HUD: the render moves, patchd saves it', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedRender() && c.connectedPatch());
@@ -158,15 +158,13 @@ test('Show map on switches Cluster and HUD: the render moves, patchd saves it', 
     assert.strictEqual(c.displayText(), 'Show map on: HUD', 'shown at once, before the render answers');
     await until('render on the HUD', () => render.target === 'hud' && c.renderStatus.target === 'hud');
     c.cycleDisplay();
-    await until('back to the cluster', () => render.target === 'map' && c.displayText() === 'Show map on: Cluster');
-    assert.deepStrictEqual(render.received.map((m) => m.target), ['hud', 'map']);
-    await until('saved', () => patch.received.filter((m) => m.cmd === 'target').length === 2);
-    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'target').map((m) => m.target), ['hud', 'map']);
-    /* an older saved choice of both: shown as the cluster, the next press picks the HUD alone */
-    render._set(render.state, 'map+hud', render.page, render.reason);
-    await until('both reads as the cluster', () => c.renderStatus.target === 'map+hud' && c.displayText() === 'Show map on: Cluster');
+    await until('both', () => render.target === 'map+hud' && c.displayText() === 'Show map on: Cluster + HUD');
+    assert(c.canChangeHudSize(), 'the HUD size can change while the map is on both');
     c.cycleDisplay();
-    await until('then the HUD alone', () => render.target === 'hud');
+    await until('back to the cluster', () => render.target === 'map' && c.displayText() === 'Show map on: Cluster');
+    assert.deepStrictEqual(render.received.map((m) => m.target), ['hud', 'map+hud', 'map']);
+    await until('saved', () => patch.received.filter((m) => m.cmd === 'target').length === 3);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'target').map((m) => m.target), ['hud', 'map+hud', 'map']);
     c.close();
     assert(!c.canChangeDisplay(), 'no change while the render is not connected');
 });

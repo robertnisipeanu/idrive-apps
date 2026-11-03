@@ -73,9 +73,12 @@ function ok(name, cond) {
 
 (async function () {
     for (var t = 0; t < 5000 && !fs.existsSync(SOCK); t += 50) await sleep(50);
-    var r = await ask({ cmd: 'target', target: 'map+hud' });
+    var r = await ask({ cmd: 'target', target: 'cluster+hud' });
     var conf = fs.readFileSync(CONF, 'utf8');
-    ok('map+hud (both) is refused: one or the other', !r.ok && conf === 'upload_kb_per_s = 3000\ntarget = map\ntarget_fps = 15\n');
+    ok('an unknown target is refused', !r.ok && conf === 'upload_kb_per_s = 3000\ntarget = map\ntarget_fps = 15\n');
+    /* map+hud: both at once (wesleyredhat HUD build) is a choice of its own */
+    r = await ask({ cmd: 'target', target: 'map+hud' });
+    ok('map+hud (both) is saved', r.ok && r.target === 'map+hud' && /target = map\+hud\n/.test(fs.readFileSync(CONF, 'utf8')));
     r = await ask({ cmd: 'target', target: 'hud' });
     conf = fs.readFileSync(CONF, 'utf8');
     ok('hud is saved, replacing the earlier target, the other lines kept',

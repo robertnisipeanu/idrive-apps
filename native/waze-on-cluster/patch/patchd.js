@@ -33,7 +33,7 @@
  *                                   carplay. reboot-reply carries ok/reason.
  *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log
  *                                   (to the asker, read-only)
- *                  {"cmd":"target","target":"map"|"hud"}
+ *                  {"cmd":"target","target":"map"|"hud"|"map+hud"}
  *                                   where the map goes from the next start of the
  *                                   render on: written as "target = ..." into
  *                                   waze-on-cluster.local.conf (the app moves the
@@ -125,7 +125,7 @@ var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || 'systemctl reboot').split(' ');
  * (Cluster, HUD, both) is saved there as the render's "target". */
 var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on-cluster.local.conf';
 /* one or the other: the cluster or the HUD */
-var DISPLAY_TARGETS = ['map', 'hud'];
+var DISPLAY_TARGETS = ['map', 'hud', 'map+hud'];   /* map+hud: both (wesleyredhat HUD build) */
 /* The display choice and HUD map size per driver profile (the app reports the
  * head unit's current user account): { "<account>": { target, hud_width_pct } }.
  * Each change of either is kept for the profile current at the time; a
@@ -945,7 +945,7 @@ function handle(line, sock) {
             profiles[id] = cur;
             writeProfiles(profiles);
         }
-        if (changed) log('driver profile ' + id + ': ' + want.target + (want.target === 'hud' ? ', HUD map ' + (want.hud_width_pct || 'standard') + (want.hud_width_pct ? ' %' : '') : '') + (saved ? '' : ' (first seen: the current settings kept for it)'));
+        if (changed) log('driver profile ' + id + ': ' + want.target + (/hud/.test(want.target) ? ', HUD map ' + (want.hud_width_pct || 'standard') + (want.hud_width_pct ? ' %' : '') : '') + (saved ? '' : ' (first seen: the current settings kept for it)'));
         try { sock.write(JSON.stringify({ ev: 'profile-reply', ok: true, id: id, known: !!saved, target: want.target, hud_width_pct: want.hud_width_pct }) + '\n'); } catch (e) {}
         return;
     }
