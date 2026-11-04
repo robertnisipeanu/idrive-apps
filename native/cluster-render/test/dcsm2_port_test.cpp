@@ -508,8 +508,41 @@ static void fresh_fetch_failed()
     ok("then fetched again, 250 ms after the failure", calls_are("fetch 0x10004f0") && r.now - at <= 260);
 }
 
+/* The KOMBI reports every content's fetch status: someone else's content
+ * fetched while a target probes after a removal pulls the probe forward. */
+static void display_fetched()
+{
+    Rig r;
+    r.map_asked(true);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    r.now += 40000;
+    r.tick();
+    r.table(3, 0);
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, r.now);
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    calls.clear();
+    while (r.now - r.m.status(0).retry_ms < 0)
+        r.tick();
+    r.tick();
+    ok("removed: fetched again after the removal wait", calls_are("fetch 0x10004f0"));
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.now += 100;
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FAILED, r.now);
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    const int64_t failed = r.now;
+    calls.clear();
+    while (r.now - failed < 200)
+        r.tick();
+    r.port.on_fetch_status(0x01000311, dcsm::E_FETCH_STATUS_FETCHED, r.now);   /* the stock HMI's content */
+    r.tick();
+    r.tick();
+    ok("the stock HMI's content fetched while we wait to probe: fetched again at once",
+       calls_are("fetch 0x10004f0") && r.now - failed <= 260);
+}
+
 int main()
 {
+    display_fetched();
     basics();
     parked();
     take_over();

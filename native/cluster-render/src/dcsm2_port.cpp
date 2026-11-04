@@ -237,8 +237,11 @@ void Dcsm2Port::on_fetch_status(uint64_t scene, uint32_t status, int64_t now_ms)
             unfetched_.erase(un);   /* a later fetch: any earlier REMOVED has come */
     }
     auto it = contents_.find(scene);
-    if (it == contents_.end())
+    if (it == contents_.end()) {
+        if (status == dcsm::E_FETCH_STATUS_FETCHED && manager_)
+            manager_->on_display_fetched(now_ms);   /* someone else's: the KOMBI accepts fetches again */
         return;
+    }
     Content &c = it->second;
     switch (status) {
     case dcsm::E_FETCH_STATUS_FETCHED:

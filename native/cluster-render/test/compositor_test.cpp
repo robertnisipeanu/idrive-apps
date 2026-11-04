@@ -267,14 +267,14 @@ static void warm_scene()
     vl->offer(a.data(), r.now);
     r.step(10);
     r.slots.on_shown(0x010004f0, r.now);
-    r.run(50);
+    r.run(1050);   /* shown past the request gap */
     FakeGraph *g = r.g("map");
     r.slots.on_lost(0x010004f0, "fetch removed", r.now);
     r.step(10);
     ok("taken by the display: released, the scene kept",
        g && r.port.releases == 1 && r.g("map") == g && r.slots.status(r.map).state == TargetState::Waiting);
-    /* Frames keep coming while it waits after the removal (2 s): two tiles
-     * change. */
+    /* Frames keep coming while it waits after the removal (250 ms): two
+     * tiles change. */
     std::vector<uint8_t> c = a;
     for (uint32_t y = 0; y < 64; y++)
         for (uint32_t x = 0; x < 64; x++) {
@@ -282,7 +282,7 @@ static void warm_scene()
             c[(size_t)(y + 256) * W + x + 512] += 40;
         }
     const uint64_t f0 = g->flushes, b0 = g->flushed_bytes;
-    for (int k = 0; k < 19; k++) {
+    for (int k = 0; k < 2; k++) {
         vl->offer(c.data(), r.now);
         r.run(100);
     }
@@ -1291,7 +1291,7 @@ static void fades()
     ok("an image fades in to its own opacity", iq && opacity(pg, iq) == 0.5f);
     const uint64_t qf = pg ? pg->flushes : 0;
     q.slots.on_lost(0x01000400, "fetch removed", q.now);
-    q.run(1000);
+    q.run(200);
     ok("the display took the slot: released at once, nothing flushed, no fade",
        !q.slots.requested(q.panel) && pg && pg->flushes == qf && q.g("panel") == pg);
     q.run(4100);
