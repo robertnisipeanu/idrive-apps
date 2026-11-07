@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze au combiné",
     "description": "Affiche la carte Waze de CarPlay sur le combiné d'instruments : activez le correctif depuis l'interface du véhicule et la carte suit CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Carte sur l’affichage tête haute",
+    "description": "Une carte routière épurée autour du véhicule sur l’affichage tête haute, dessinée par le moteur de rendu du tableau de bord (prototype)"
+  },
+  "robertn_hud_map": {
+    "title": "Carte sur l’affichage tête haute",
+    "description": "Réglages de la carte tête haute, ainsi que la position du véhicule et les indications de virage qu’elle lit de la navigation BMW (prototype)"
   }
 }

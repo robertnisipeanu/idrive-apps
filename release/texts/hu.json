@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze a műszerfalon",
     "description": "A CarPlay Waze-térképét a műszerfalra helyezi: kapcsolja be a javítást az autó kezelőfelületén, és a térkép követi a CarPlay-t"
+  },
+  "mindflow-hud": {
+    "title": "HUD-térkép",
+    "description": "Letisztult úttérkép az autó körül a head-up kijelzőn, a műszerfal-megjelenítőn keresztül rajzolva (prototípus)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-térkép",
+    "description": "A HUD-térkép beállításai, valamint az autó helyzete és a kanyarodási utasítások, amelyeket a BMW navigációból olvas (prototípus)"
   }
 }

@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze di panel instrumen",
     "description": "Menampilkan peta Waze CarPlay di panel instrumen: aktifkan patch dari HMI dan peta mengikuti CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Peta HUD",
+    "description": "Peta jalan yang bersih di sekitar mobil pada head-up display, digambar melalui renderer panel instrumen (prototipe)"
+  },
+  "robertn_hud_map": {
+    "title": "Peta HUD",
+    "description": "Pengaturan peta HUD, serta posisi mobil dan petunjuk belokan yang dibaca dari navigasi BMW (prototipe)"
   }
 }

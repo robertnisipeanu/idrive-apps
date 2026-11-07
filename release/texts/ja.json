@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze メーター表示",
     "description": "CarPlayのWazeマップをメーターに表示します。HMIからパッチを有効にすると、地図がCarPlayに連動します"
+  },
+  "mindflow-hud": {
+    "title": "HUDマップ",
+    "description": "ヘッドアップディスプレイに車の周囲のすっきりした道路地図を、メーターのレンダラーで描画します（試作版）"
+  },
+  "robertn_hud_map": {
+    "title": "HUDマップ",
+    "description": "HUDマップの設定と、BMWナビゲーションから読み取る車の位置と曲がる案内（試作版）"
   }
 }

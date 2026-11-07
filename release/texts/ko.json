@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze 계기판 표시",
     "description": "CarPlay의 Waze 지도를 계기판에 표시합니다. HMI에서 패치를 켜면 지도가 CarPlay를 따라갑니다"
+  },
+  "mindflow-hud": {
+    "title": "HUD 지도",
+    "description": "헤드업 디스플레이에 차량 주변의 깔끔한 도로 지도를 계기판 렌더러로 그립니다(프로토타입)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD 지도",
+    "description": "HUD 지도 설정과 BMW 내비게이션에서 읽어오는 차량 위치 및 회전 안내(프로토타입)"
   }
 }

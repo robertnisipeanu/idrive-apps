@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze mittaristossa",
     "description": "Tuo CarPlayn Waze-kartan mittaristoon: ota korjaus käyttöön HMI:stä, ja kartta seuraa CarPlayta"
+  },
+  "mindflow-hud": {
+    "title": "HUD-kartta",
+    "description": "Selkeä tiekartta auton ympäriltä tuulilasinäytössä, piirretty mittariston renderöijän kautta (prototyyppi)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-kartta",
+    "description": "HUD-kartan asetukset sekä auton sijainti ja kääntymisohjeet, jotka se lukee BMW-navigoinnista (prototyyppi)"
   }
 }

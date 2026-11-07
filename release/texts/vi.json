@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze trên bảng đồng hồ",
     "description": "Đưa bản đồ Waze của CarPlay lên bảng đồng hồ: bật bản vá từ HMI và bản đồ sẽ theo CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Bản đồ HUD",
+    "description": "Bản đồ đường gọn gàng quanh xe trên màn hình hiển thị kính lái, được vẽ qua trình kết xuất của cụm đồng hồ (nguyên mẫu)"
+  },
+  "robertn_hud_map": {
+    "title": "Bản đồ HUD",
+    "description": "Cài đặt bản đồ HUD, cùng vị trí xe và chỉ dẫn rẽ mà ứng dụng đọc từ hệ thống dẫn đường BMW (nguyên mẫu)"
   }
 }

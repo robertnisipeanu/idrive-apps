@@ -1,0 +1,20 @@
+[Unit]
+Description=HUD map: road map and turn panel on the head-up display
+After=local-fs.target cluster-render.socket
+RequiresMountsFor=/var/opt
+Requires=cluster-render.socket
+
+[Service]
+Type=simple
+Group=tm_oap_app
+UMask=0007
+WorkingDirectory=/var/opt/mindflow-hud/current
+Environment=HUD_CAMERA_CACHE=/var/opt/mindflow-hud/camera-cache
+ExecStart=/usr/bin/node /var/opt/mindflow-hud/current/store_supervisor.js
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

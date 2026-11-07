@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "robertn_hud_map",
+  "version": "0.6.0",
+  "tree": "robertn_hud_map@0.6.0",
+  "modules": [
+    "src/main.js",
+    "src/app.js",
+    "src/control.js",
+    "src/page.js",
+    "src/settings.js",
+    "src/car_position.js",
+    "src/guidance_feed.js"
+  ],
+  "sdk": [
+    "oap-sdk/src/core/OnlineApp.js",
+    "oap-sdk/src/someip/someipBuilders"
+  ],
+  "mguHmi": [
+    "ID7"
+  ]
+}
