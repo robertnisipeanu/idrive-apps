@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze no quadrante",
     "description": "Coloca o mapa Waze do CarPlay no quadrante de instrumentos: ative a correção no HMI e o mapa acompanha o CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa no HUD",
+    "description": "Um mapa de estradas limpo à volta do carro no head-up display, desenhado pelo renderizador do quadrante (protótipo)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa no HUD",
+    "description": "Definições do mapa no HUD, e a posição do carro e as indicações de mudança de direção que lê da navegação BMW (protótipo)"
   }
 }

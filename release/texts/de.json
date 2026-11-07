@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze im Kombiinstrument",
     "description": "Bringt die CarPlay-Waze-Karte ins Kombiinstrument: Patch im HMI aktivieren, und die Karte folgt CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "HUD-Karte",
+    "description": "Eine aufgeräumte Straßenkarte rund um das Auto im Head-up-Display, gezeichnet über den Kombi-Renderer (Prototyp)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-Karte",
+    "description": "Einstellungen der HUD-Karte sowie Fahrzeugposition und Abbiegehinweise, die sie aus der BMW-Navigation liest (Prototyp)"
   }
 }

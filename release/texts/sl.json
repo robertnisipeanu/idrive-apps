@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze na armaturi",
     "description": "Prikaže zemljevid Waze iz CarPlay na armaturni plošči: vklopite popravek v sistemu vozila in zemljevid sledi CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Zemljevid na HUD",
+    "description": "Pregleden cestni zemljevid okoli avtomobila na projekcijskem zaslonu, izrisan prek upodabljalnika armaturne plošče (prototip)"
+  },
+  "robertn_hud_map": {
+    "title": "Zemljevid na HUD",
+    "description": "Nastavitve zemljevida na HUD ter položaj avtomobila in navodila za zavijanje, ki jih bere iz navigacije BMW (prototip)"
   }
 }

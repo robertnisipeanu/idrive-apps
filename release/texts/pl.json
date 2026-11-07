@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze na zegarach",
     "description": "Przenosi mapę Waze z CarPlay na zestaw wskaźników: włącz poprawkę w HMI, a mapa podąża za CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa na HUD",
+    "description": "Przejrzysta mapa dróg wokół samochodu na wyświetlaczu przeziernym, rysowana przez renderer zestawu wskaźników (prototyp)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa na HUD",
+    "description": "Ustawienia mapy na HUD oraz pozycja samochodu i wskazówki skrętu odczytywane z nawigacji BMW (prototyp)"
   }
 }

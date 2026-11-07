@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze na prístrojovke",
     "description": "Zobrazí mapu Waze z CarPlay na prístrojovej doske: zapnite opravu v systéme vozidla a mapa sleduje CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa na HUD",
+    "description": "Čistá cestná mapa okolia vozidla na head-up displeji, vykreslená cez renderer prístrojového panela (prototyp)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa na HUD",
+    "description": "Nastavenia mapy na HUD a poloha vozidla a pokyny na odbočenie, ktoré číta z navigácie BMW (prototyp)"
   }
 }

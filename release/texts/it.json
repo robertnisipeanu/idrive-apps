@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze sul quadro",
     "description": "Porta la mappa Waze di CarPlay sul quadro strumenti: attiva la patch dal sistema dell'auto e la mappa segue CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mappa sull’HUD",
+    "description": "Una mappa stradale pulita intorno all’auto sull’head-up display, disegnata tramite il renderer del quadro strumenti (prototipo)"
+  },
+  "robertn_hud_map": {
+    "title": "Mappa sull’HUD",
+    "description": "Impostazioni della mappa sull’HUD, e posizione dell’auto e indicazioni di svolta che legge dalla navigazione BMW (prototipo)"
   }
 }

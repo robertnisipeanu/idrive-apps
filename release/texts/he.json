@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze בלוח המחוונים",
     "description": "מציג את מפת Waze של CarPlay בלוח המחוונים: הפעל את התיקון מה-HMI והמפה תעקוב אחר CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "מפה ב-HUD",
+    "description": "מפת דרכים נקייה סביב הרכב בתצוגה העילית, המצוירת דרך מעבד לוח המחוונים (אב טיפוס)"
+  },
+  "robertn_hud_map": {
+    "title": "מפה ב-HUD",
+    "description": "הגדרות מפת ה-HUD, ומיקום הרכב והנחיות הפנייה שהיא קוראת מהניווט של BMW (אב טיפוס)"
   }
 }
