@@ -521,6 +521,18 @@ async function main() {
         JSON.stringify(r.result));
     st = await daemonStatus();
     ok('foreign start: patchd reports the conflict', st.state === 'original' && /60-other\.conf/.test(st.conflict || ''), JSON.stringify(st));
+    /* CarPlay multitouch's drop-in (mgu-store): it starts the binary itself unless that is the factory build, so
+     * the patch is written as on a car without it */
+    fs.unlinkSync(dropin);
+    var mt = path.join(UNITS, 'carplay.service.d', '60-mgu-carplay-multitouch.conf');
+    fs.writeFileSync(mt, '[Service]\nExecStart=\nExecStart=/bin/sh -c \'if [ -r /run/mgu-carplay-multitouch/selected ] && ' +
+        '[ -x /var/opt/mgu-carplay-multitouch/carplay ]; then exec /var/opt/mgu-carplay-multitouch/carplay "$$@"; else exec ' + TGT +
+        ' "$$@"; fi\' -- -c /etc/cinemo/cinemo_options.xml\nKillSignal=SIGKILL\nSuccessExitStatus=SIGKILL\n');
+    r = hook('activate');
+    ok('CarPlay multitouch\'s drop-in: no conflict, the patch is written', r.code === 0 && marker().action === 'apply' && !r.result.conflict,
+        JSON.stringify(r.result));
+    fs.unlinkSync(mt);
+    fresh(SRCBUF);
     fs.writeFileSync(dropin, '[Service]\nEnvironment=LD_PRELOAD=/usr/lib/libschedconfig.so\nExecStart=\nExecStart=' + TGT + ' -c /etc/cinemo/cinemo_options.xml\n');
     r = hook('activate');
     ok('own start: an environment drop-in that still starts carplay is fine', r.code === 0 && marker().action === 'apply' && !r.result.conflict, JSON.stringify(r.result));

@@ -599,7 +599,10 @@ var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: 
 /* Why the patch should not be written without the user asking, or null: a
  * unit that starts another program than its binary (another tool's drop-in,
  * which the patch would switch off or which would bypass it). The stock unit
- * and drop-ins that only set an environment are fine. */
+ * and drop-ins that only set an environment are fine, and so is CarPlay
+ * multitouch's (mgu-store, which the iDrive7 Assistant installs with the Store):
+ * it starts its own copy only while the binary is the factory build it was
+ * made for, else the binary itself, so the patched binary runs as ever. */
 var UNIT_DIRS = (process.env.WOC_UNIT_DIRS || '/etc/systemd/system,/run/systemd/system').split(',');
 function foreignStart(t) {
     var files = [];
@@ -612,7 +615,7 @@ function foreignStart(t) {
     });
     for (var i = 0; i < files.length; i++) {
         var text = readText(files[i]);
-        if (text === null) continue;
+        if (text === null || multitouchStart(files[i], text, t)) continue;
         var lines = text.split('\n');
         for (var j = 0; j < lines.length; j++) {
             var m = /^\s*ExecStart\s*=\s*[-@:+!]*\s*(\S+)/.exec(lines[j]);
@@ -620,6 +623,11 @@ function foreignStart(t) {
         }
     }
     return null;
+}
+
+/* CarPlay multitouch's drop-in: its name, and a start that falls back to t's binary. */
+function multitouchStart(file, text, t) {
+    return path.basename(file) === '60-mgu-carplay-multitouch.conf' && text.indexOf('else exec ' + t.target + ' "$$@"') >= 0;
 }
 
 /* This boot's id, or null where the kernel has none. */
