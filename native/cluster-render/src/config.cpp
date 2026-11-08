@@ -2,6 +2,7 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 #include "config.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -110,6 +111,20 @@ std::string Config::str(const char *key) const
 long Config::num(const char *key) const
 {
     return std::strtol(str(key).c_str(), nullptr, 0);
+}
+
+bool Config::int_value(const char *key, long *out) const
+{
+    const std::string s = str(key);
+    if (s.empty())
+        return false;
+    errno = 0;
+    char *end = nullptr;
+    long v = std::strtol(s.c_str(), &end, 0);
+    if (errno != 0 || end == s.c_str() || *end != '\0')
+        return false;
+    *out = v;
+    return true;
 }
 
 bool Config::has(const char *key) const

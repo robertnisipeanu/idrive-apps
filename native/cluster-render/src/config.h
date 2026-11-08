@@ -25,6 +25,10 @@ public:
 
     std::string str(const char *key) const;
     long num(const char *key) const;
+    /* Strict integer: true only when the whole value parses as a base-0
+     * integer (at least one digit, no trailing junk). Guards against a
+     * typo in a numeric setting silently parsing as 0. */
+    bool int_value(const char *key, long *out) const;
     /* "w x h" or "wxh"; false when unset or malformed. */
     bool size(const char *key, unsigned *w, unsigned *h) const;
     /* An unset value (empty) for slot keys means "not configured". */

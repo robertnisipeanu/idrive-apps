@@ -232,8 +232,13 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     ServiceConfig &sc = *out;
     if (!load_targets(cfg, generation, &sc.targets, err))
         return false;
-    const long max_kb = cfg.num("upload_kb_per_s"), step_kb = cfg.num("upload_step_kb_per_s");
-    long floor_kb = cfg.num("upload_floor_kb_per_s");
+    long max_kb, step_kb, floor_kb;
+    if (!cfg.int_value("upload_kb_per_s", &max_kb) || !cfg.int_value("upload_step_kb_per_s", &step_kb) ||
+        !cfg.int_value("upload_floor_kb_per_s", &floor_kb)) {
+        *err = "upload_kb_per_s, upload_step_kb_per_s and upload_floor_kb_per_s must each be a plain "
+               "integer: a non-numeric value parses as 0 (no limit), which can blank the cluster";
+        return false;
+    }
     if (max_kb < 0 || max_kb > 1048576 || floor_kb < 0 || step_kb < 1 || cfg.num("upload_burst_ms") < 1 ||
         cfg.num("upload_burst_ms") > 1000 || cfg.num("fps") < 1 || cfg.num("fps") > 60 ||
         cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000 || cfg.num("fade_ms") < 0 ||
