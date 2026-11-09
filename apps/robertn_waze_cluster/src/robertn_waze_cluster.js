@@ -11,7 +11,9 @@
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
- * flip it), Logs. HUD: HUD map (the map
+ * flip it), the Keep the model badge checkbox (patchd's setting: the map drawn
+ * below the top of the cluster's map area, which stays the car's own badge's;
+ * a press asks patchd to flip it and restart the render), Logs. HUD: HUD map (the map
  * on the HUD), the Size slider, Position with Move left, Move right, Move
  * up, Move down and Centre; the slider and the position buttons are greyed
  * while the HUD is off or disabled after errors. CarPlay and Android Auto
@@ -82,6 +84,7 @@ const AA_ZOOM_OUT_NAME = 'wocAaZoomOut';
 const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
 const AA_CARD_NAME = 'wocAaCard';
 const GUIDE_NAME = 'wocGuide';
+const BADGE_NAME = 'wocBadge';
 const HEAD_GENERAL_NAME = 'wocHeadGeneral';
 const HEAD_HUD_NAME = 'wocHeadHud';
 const HUD_NAME = 'wocHud';
@@ -203,7 +206,7 @@ class WazeClusterApp extends OnlineApp {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
-            AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
+            AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, BADGE_NAME,
             HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, HUD_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
                 LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL], LOGS_ROW_NAMES);
@@ -229,6 +232,11 @@ class WazeClusterApp extends OnlineApp {
              * decides what it shows */
             delete this._written[`selected:${GUIDE_NAME}`];
             this._control.toggleGuidance();
+        });
+        this._bind(BADGE_NAME, () => {
+            /* as for the turn box: patchd's answer decides the tick */
+            delete this._written[`selected:${BADGE_NAME}`];
+            this._control.toggleBadge();
         });
         this._bind(PROFILE_NAME, () => {
             /* as for the turn box: patchd's answer decides the tick */
@@ -561,6 +569,11 @@ class WazeClusterApp extends OnlineApp {
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable && c.clusterOn() !== false);
         this._write(GUIDE_NAME, t("Hide BMW's turn box"));
         this._setSelected(GUIDE_NAME, !!hide && !unavailable);
+        /* the top of the cluster's map area kept for the car's own model
+         * badge (patchd's badge): greyed while unknown or while it changes */
+        this._write(BADGE_NAME, t('Keep the model badge'));
+        this._setSelected(BADGE_NAME, c.keepBadge() === true);
+        this._setEnabled(BADGE_NAME, c.canToggleBadge());
         this._write(HUD_NAME, c.hudText());
         /* the size slider and the place buttons: greyed while the HUD is off
          * or disabled (the HMI greys no label) */

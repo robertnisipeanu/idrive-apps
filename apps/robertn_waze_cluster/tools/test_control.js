@@ -107,6 +107,36 @@ test('explicit capture and early stop follow capture status without applying a p
     c.close();
 });
 
+test('Keep the model badge: unknown from an older daemon, then flipped through patchd', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch() && c.patchStatus);
+    assert.strictEqual(c.keepBadge(), null, 'a daemon without badge: unknown');
+    assert.strictEqual(c.canToggleBadge(), false, 'unknown: greyed');
+    c.toggleBadge();
+    await sleep(150);
+    assert.strictEqual(patch.count('badge'), 0, 'a greyed checkbox sends nothing');
+
+    patch.badge = 0;
+    patch._broadcast(patch._status());
+    await until('badge off known', () => c.keepBadge() === false && c.canToggleBadge());
+    c.toggleBadge();
+    assert.strictEqual(c.keepBadge(), true, 'the asked value shows at once');
+    assert.strictEqual(c.canToggleBadge(), false, 'greyed while the change runs');
+    await until('on sent and answered', () => patch.count('badge') === 1 && patch.badge === 1 && c.canToggleBadge());
+    assert.strictEqual(c.keepBadge(), true, 'on in effect');
+
+    c.toggleBadge();
+    await until('off sent and answered', () => patch.count('badge') === 2 && patch.badge === 0 && c.canToggleBadge());
+    assert.strictEqual(c.keepBadge(), false, 'off in effect');
+
+    patch.badgeRefuses = true;
+    c.toggleBadge();
+    await until('refused and settled', () => patch.count('badge') === 3 && c.canToggleBadge());
+    assert.strictEqual(c.keepBadge(), false, 'a refusal leaves what is in effect');
+    c.close();
+});
+
 test('connected, original: not patched', async (render, patch) => {
     const c = control();
     c.open();

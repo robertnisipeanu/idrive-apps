@@ -56,6 +56,12 @@
  *                                   hud-reply, hud-size-reply, hud-pos-reply)
  *                                   follows the write and carries ok, the values
  *                                   saved and reason.
+ *                  {"cmd":"badge","on":0|1}
+ *                                   keep the cluster's model badge: BADGE_ENV
+ *                                   written (1) or removed (0), then the render
+ *                                   restarted to read it. The reply (badge-reply)
+ *                                   carries ok, badge and reason; status carries
+ *                                   badge (0|1) from then on.
  *                  {"cmd":"profile","id":"<id>"|null}
  *                  {"cmd":"profile-own","id":"<id>","on":0|1}
  *                                   the driver profile now (the head unit's user
@@ -71,7 +77,7 @@
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
  *   patchd -> app  {"ev":"status","state":...,"panel":...,"mode":...,"res":...,"safe":...,"reason":...,"carplay":...,
- *                   "pending":...,"conflict":...,"removable":...,"busy":...,"restart":...,"aa":...}
+ *                   "pending":...,"conflict":...,"removable":...,"busy":...,"restart":...,"aa":...,"badge":0|1}
  *                    state: original | patched | unknown | busy | error
  *                    removable: Remove patch would change carplay now (a
  *                    patch of ours on disk, waiting for a restart or not);
@@ -174,6 +180,20 @@ var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
  * render (EnvironmentFile): the card's rows grow with the density. The
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
 var AA_CROP_ENV = path.join(STATE_DIR, 'aa-crop.env');
+/* Keep the model badge: with it, the line waze-on-cluster.service passes to
+ * the render (EnvironmentFile, $WOC_BADGE). The map is drawn 1:1 below the
+ * top BADGE_ROWS of the cluster's 1088x480 map area: CarPlay's picture is
+ * already 1088x480 (carplay_patch.js RES_DEFAULT), so src_crop drops its
+ * top rows, tex_size keeps the rest unscaled and map_rect places it, leaving
+ * the strip to the car's own model badge (SAFE_DEFAULT: y from below the
+ * native model badge). Without the file the render draws the whole area. */
+var BADGE_ENV = path.join(STATE_DIR, 'badge.env');
+var BADGE_ROWS = 72;
+var BADGE_TEXT = 'WOC_BADGE=-s tex_size=1088x' + (480 - BADGE_ROWS) +
+    ' -s src_crop=1088x480:0,' + BADGE_ROWS + ',1088,' + (480 - BADGE_ROWS) +
+    ' -s map_rect=0,' + BADGE_ROWS + ',1088,' + (480 - BADGE_ROWS) + '\n';
+var RENDER_UNIT = process.env.WOC_RENDER_UNIT || 'waze-on-cluster.service';
+var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
 var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
 /* The targets the HIGH F reset is done with (highfReset): { carplay, aa },
  * each "applied", "left" or "user". */
@@ -891,6 +911,7 @@ function status(extra, aaExtra) {
             msg.aa = aaMsg(aa);
             if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
             msg.wifi = wifi ? wifi.current() : null;
+            msg.badge = badgeOn() ? 1 : 0;
             send(msg);
         });
     });
@@ -1504,6 +1525,22 @@ function setCrop(text) {
     return true;
 }
 
+/* Keep the model badge: on while BADGE_ENV holds our line. */
+function badgeOn() { return readText(BADGE_ENV) === BADGE_TEXT; }
+
+/* Writes (on) or removes BADGE_ENV; true when it changed. */
+function setBadge(on) {
+    if (badgeOn() === on) return false;
+    if (on) saveFile(BADGE_ENV, BADGE_TEXT); else unlinkQuiet(BADGE_ENV);
+    return true;
+}
+
+/* The render reads BADGE_ENV when it starts: restarted, it draws the map the
+ * new way. The map is back once it has started again, as after a failure. */
+function restartRender(cb) {
+    cp.execFile(SYSTEMCTL, ['restart', RENDER_UNIT], { timeout: 30000 }, function (err) { cb(err); });
+}
+
 /* What aapd runs, from a read that starts once the change's command has
  * arrived and before the change writes anything: a pending marker's run
  * (undefined when the marker has none), else the patch on disk, null
@@ -1729,6 +1766,26 @@ function handle(line, sock) {
     function refuse(why) { reply(sock, { ev: 'refused', cmd: msg.cmd, reason: why }); }
     if (busy || quitting || rebooting) {
         refuse(quitting ? 'patchd is stopping' : rebooting ? 'a restart is in progress' : 'another operation is running');
+        return;
+    }
+
+    /* Keep the model badge: a file and a restart of the render, not an
+     * operation on carplay, but never while one runs. */
+    if (msg.cmd === 'badge') {
+        if (msg.on !== 0 && msg.on !== 1) { refuse('on must be 0 or 1'); return; }
+        var wantBadge = msg.on === 1, badgeChanged;
+        try { badgeChanged = setBadge(wantBadge); } catch (e) {
+            log('badge: writing ' + BADGE_ENV + ' failed: ' + e.message);
+            reply(sock, { ev: 'badge-reply', ok: false, badge: badgeOn() ? 1 : 0, reason: e.message });
+            return;
+        }
+        if (!badgeChanged) { reply(sock, { ev: 'badge-reply', ok: true, badge: wantBadge ? 1 : 0 }); status(); return; }
+        log('badge: ' + (wantBadge ? 'the top strip kept for the model badge' : 'the map over the whole area') + '; restarting the render');
+        restartRender(function (rErr) {
+            if (rErr) log('badge: restarting ' + RENDER_UNIT + ' failed (' + rErr.message + '): it applies at its next start');
+            reply(sock, { ev: 'badge-reply', ok: true, badge: badgeOn() ? 1 : 0 });
+            status();
+        });
         return;
     }
 

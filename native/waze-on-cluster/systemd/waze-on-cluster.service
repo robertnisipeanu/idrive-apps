@@ -42,7 +42,14 @@ ExecStartPre=-+/bin/sh -c 'mkdir -p /var/opt/waze-on-cluster/log /var/opt/waze-o
 # with its geometry here, a line WOC_SRC_CROP=-s src_crop=<crop>, which
 # overrides the conf's. Read at each start.
 EnvironmentFile=-/var/opt/waze-on-cluster/aa-crop.env
-ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf $WOC_SRC_CROP
+# With the app's Keep the model badge ticked, patchd writes here a line
+# WOC_BADGE=-s tex_size=... -s src_crop=... -s map_rect=..., which draws the
+# map 1:1 below the top of the cluster's map area and leaves that strip to
+# the car's own model badge (carplay_patch.js SAFE_DEFAULT: y from below the
+# native model badge). Before $WOC_SRC_CROP, so Android Auto's crop wins
+# where both set one. Read at each start.
+EnvironmentFile=-/var/opt/waze-on-cluster/badge.env
+ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf $WOC_BADGE $WOC_SRC_CROP
 Restart=on-failure
 # At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of
 # systemd's start limit (5 starts in 10 s), which would also stop the socket.

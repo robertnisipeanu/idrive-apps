@@ -684,6 +684,33 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
+    /* ---- the model badge ---- */
+    /* Whether the top of the cluster's map area is kept for the car's own
+     * model badge (patchd's badge): true or false, the asked value while a
+     * change runs, null while unknown (no patchd, or one without it). */
+    keepBadge() {
+        const ps = this.patchStatus;
+        if (!this.connectedPatch() || !ps || (ps.badge !== 0 && ps.badge !== 1)) {
+            return null;
+        }
+        return this._badgeAsked !== null ? this._badgeAsked : ps.badge === 1;
+    }
+
+    canToggleBadge() {
+        return this.keepBadge() !== null && this._badgeAsked === null && !this.busy();
+    }
+
+    /* Flips it: patchd writes it and restarts the render, which then draws
+     * the map the new way; its next status shows the result. */
+    toggleBadge() {
+        if (!this.canToggleBadge()) {
+            return;
+        }
+        this._badgeAsked = !this.keepBadge();
+        this.patch.send({ cmd: 'badge', on: this._badgeAsked ? 1 : 0 });
+        this.emit('change');
+    }
+
     /* ---- Android Auto ---- */
     aa() {
         const ps = this.patchStatus;
@@ -976,6 +1003,7 @@ class WazeClusterControl extends EventEmitter {
         this.patchStatus = null;     /* the patch daemon's last status while connected */
         this._inEffect = { carplay: false, androidAuto: false };
         this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
+        this._badgeAsked = null;     /* Keep the model badge as a badge change asked for, while it runs */
     }
 
     /* From a status outside a change (neither busy nor an error): which
@@ -1033,6 +1061,13 @@ class WazeClusterControl extends EventEmitter {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
             }
+        } else if (msg.ev === 'badge-reply') {
+            /* the change ended: the status that follows holds what is in effect */
+            if (!msg.ok) {
+                this._log.info(`patchd did not change the model badge: ${msg.reason || 'refused'}`);
+            }
+            this._badgeAsked = null;
+            this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
             /* A refused or failed request clears the asked flag; the status
              * that follows says why. A taken one leaves it set until the unit
@@ -1045,6 +1080,10 @@ class WazeClusterControl extends EventEmitter {
             this._log.info(`patchd refused ${msg.cmd}: ${msg.reason}`);
             if (msg.cmd === 'aa-card') {
                 this._cardAsked = null;
+                this.emit('change');
+            }
+            if (msg.cmd === 'badge') {
+                this._badgeAsked = null;
                 this.emit('change');
             }
         }

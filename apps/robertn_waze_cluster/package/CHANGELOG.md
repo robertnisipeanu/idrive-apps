@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Keep the model badge, a checkbox in General after Hide BMW's turn box: the
+map drawn 1:1 below the top 72 rows of the cluster's map area, which stay
+the car's own model badge's (issue #109; carplay_patch.js SAFE_DEFAULT: y
+from below the native model badge). patchd keeps it (badge.env, read by
+waze-on-cluster.service) and restarts the render when it changes; greyed
+while patchd does not report it, or while a change runs.
+
 ## 0.6.4
 
 Map settings per driver profile, after eroobeeroo's #41. Show on, the HUD

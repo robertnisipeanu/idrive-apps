@@ -97,7 +97,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله.",
-   "Own settings for this driver": "إعدادات خاصة لهذا السائق"
+   "Own settings for this driver": "إعدادات خاصة لهذا السائق",
+   "Keep the model badge": "الإبقاء على شعار الطراز"
   }
  },
  {
@@ -196,7 +197,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi.",
-   "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče"
+   "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče",
+   "Keep the model badge": "Zachovat znak modelu"
   }
  },
  {
@@ -295,7 +297,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone.",
-   "Own settings for this driver": "Egne indstillinger for denne fører"
+   "Own settings for this driver": "Egne indstillinger for denne fører",
+   "Keep the model badge": "Behold modelemblemet"
   }
  },
  {
@@ -394,7 +397,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten.",
-   "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer"
+   "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer",
+   "Keep the model badge": "Modellemblem beibehalten"
   }
  },
  {
@@ -493,7 +497,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi.",
-   "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό"
+   "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό",
+   "Keep the model badge": "Διατήρηση εμβλήματος μοντέλου"
   }
  },
  {
@@ -592,7 +597,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi.",
-   "Own settings for this driver": "Configuración propia para este conductor"
+   "Own settings for this driver": "Configuración propia para este conductor",
+   "Keep the model badge": "Conservar el emblema del modelo"
   }
  },
  {
@@ -691,7 +697,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi.",
-   "Own settings for this driver": "Ajustes propios para este conductor"
+   "Own settings for this driver": "Ajustes propios para este conductor",
+   "Keep the model badge": "Conservar el emblema del modelo"
   }
  },
  {
@@ -790,7 +797,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle.",
-   "Own settings for this driver": "Omat asetukset tälle kuljettajalle"
+   "Own settings for this driver": "Omat asetukset tälle kuljettajalle",
+   "Keep the model badge": "Säilytä mallimerkki"
   }
  },
  {
@@ -889,7 +897,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
-   "Own settings for this driver": "Réglages propres à ce conducteur"
+   "Own settings for this driver": "Réglages propres à ce conducteur",
+   "Keep the model badge": "Conserver l’emblème du modèle"
   }
  },
  {
@@ -988,7 +997,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
-   "Own settings for this driver": "Réglages propres à ce conducteur"
+   "Own settings for this driver": "Réglages propres à ce conducteur",
+   "Keep the model badge": "Conserver l’emblème du modèle"
   }
  },
  {
@@ -1087,7 +1097,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש.",
-   "Own settings for this driver": "הגדרות נפרדות לנהג זה"
+   "Own settings for this driver": "הגדרות נפרדות לנהג זה",
+   "Keep the model badge": "שמירת סמל הדגם"
   }
  },
  {
@@ -1186,7 +1197,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t.",
-   "Own settings for this driver": "Saját beállítások ennek a vezetőnek"
+   "Own settings for this driver": "Saját beállítások ennek a vezetőnek",
+   "Keep the model badge": "Típusjelzés megtartása"
   }
  },
  {
@@ -1285,7 +1297,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi.",
-   "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini"
+   "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini",
+   "Keep the model badge": "Pertahankan lencana model"
   }
  },
  {
@@ -1384,7 +1397,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi.",
-   "Own settings for this driver": "Impostazioni proprie per questo conducente"
+   "Own settings for this driver": "Impostazioni proprie per questo conducente",
+   "Keep the model badge": "Mantieni il logo del modello"
   }
  },
  {
@@ -1483,7 +1497,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。",
-   "Own settings for this driver": "このドライバー専用の設定"
+   "Own settings for this driver": "このドライバー専用の設定",
+   "Keep the model badge": "モデルエンブレムを残す"
   }
  },
  {
@@ -1582,7 +1597,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오.",
-   "Own settings for this driver": "이 운전자 전용 설정"
+   "Own settings for this driver": "이 운전자 전용 설정",
+   "Keep the model badge": "모델 엠블럼 유지"
   }
  },
  {
@@ -1681,7 +1697,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone.",
-   "Own settings for this driver": "Egne innstillinger for denne føreren"
+   "Own settings for this driver": "Egne innstillinger for denne føreren",
+   "Keep the model badge": "Behold modellmerket"
   }
  },
  {
@@ -1782,7 +1799,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan.",
-   "Own settings for this driver": "Eigen instellingen voor deze bestuurder"
+   "Own settings for this driver": "Eigen instellingen voor deze bestuurder",
+   "Keep the model badge": "Modelembleem behouden"
   }
  },
  {
@@ -1881,7 +1899,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi.",
-   "Own settings for this driver": "Własne ustawienia dla tego kierowcy"
+   "Own settings for this driver": "Własne ustawienia dla tego kierowcy",
+   "Keep the model badge": "Zachowaj emblemat modelu"
   }
  },
  {
@@ -1980,7 +1999,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi.",
-   "Own settings for this driver": "Configurações próprias para este motorista"
+   "Own settings for this driver": "Configurações próprias para este motorista",
+   "Keep the model badge": "Manter o emblema do modelo"
   }
  },
  {
@@ -2079,7 +2099,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi.",
-   "Own settings for this driver": "Definições próprias para este condutor"
+   "Own settings for this driver": "Definições próprias para este condutor",
+   "Keep the model badge": "Manter o emblema do modelo"
   }
  },
  {
@@ -2178,7 +2199,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi.",
-   "Own settings for this driver": "Setări proprii pentru acest șofer"
+   "Own settings for this driver": "Setări proprii pentru acest șofer",
+   "Keep the model badge": "Păstrează emblema modelului"
   }
  },
  {
@@ -2277,7 +2299,8 @@ module.exports = [
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi.",
-   "Own settings for this driver": "Свои настройки для этого водителя"
+   "Own settings for this driver": "Свои настройки для этого водителя",
+   "Keep the model badge": "Сохранять эмблему модели"
   }
  },
  {
@@ -2376,7 +2399,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi.",
-   "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča"
+   "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča",
+   "Keep the model badge": "Zachovať znak modelu"
   }
  },
  {
@@ -2475,7 +2499,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi.",
-   "Own settings for this driver": "Lastne nastavitve za tega voznika"
+   "Own settings for this driver": "Lastne nastavitve za tega voznika",
+   "Keep the model badge": "Ohrani značko modela"
   }
  },
  {
@@ -2574,7 +2599,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone.",
-   "Own settings for this driver": "Egna inställningar för den här föraren"
+   "Own settings for this driver": "Egna inställningar för den här föraren",
+   "Keep the model badge": "Behåll modellemblemet"
   }
  },
  {
@@ -2673,7 +2699,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone",
-   "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้"
+   "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้",
+   "Keep the model badge": "คงตราสัญลักษณ์รุ่นไว้"
   }
  },
  {
@@ -2772,7 +2799,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın.",
-   "Own settings for this driver": "Bu sürücüye özel ayarlar"
+   "Own settings for this driver": "Bu sürücüye özel ayarlar",
+   "Keep the model badge": "Model amblemini koru"
   }
  },
  {
@@ -2871,7 +2899,8 @@ module.exports = [
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi.",
-   "Own settings for this driver": "Власні налаштування для цього водія"
+   "Own settings for this driver": "Власні налаштування для цього водія",
+   "Keep the model badge": "Зберігати емблему моделі"
   }
  },
  {
@@ -2970,7 +2999,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi.",
-   "Own settings for this driver": "Cài đặt riêng cho người lái này"
+   "Own settings for this driver": "Cài đặt riêng cho người lái này",
+   "Keep the model badge": "Giữ biểu tượng mẫu xe"
   }
  },
  {
@@ -3071,7 +3101,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。",
-   "Own settings for this driver": "此驾驶员的专属设置"
+   "Own settings for this driver": "此驾驶员的专属设置",
+   "Keep the model badge": "保留车型徽标"
   }
  },
  {
@@ -3172,7 +3203,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。",
-   "Own settings for this driver": "此駕駛的專屬設定"
+   "Own settings for this driver": "此駕駛的專屬設定",
+   "Keep the model badge": "保留車型徽標"
   }
  }
 ];

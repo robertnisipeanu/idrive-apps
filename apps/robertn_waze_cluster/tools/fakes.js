@@ -220,6 +220,8 @@ class FakePatch extends LineServer {
         this.reboots = 0;     /* reboot commands honoured */
         this.restart = { state: 'idle' };
         this.wifi = null;          /* CarPlay's Wi-Fi band: { band: '5' | '2.4', iface, freq } or null */
+        this.badge = undefined;    /* Keep the model badge: 0 | 1, undefined: a daemon without it */
+        this.badgeRefuses = false; /* the badge command is refused */
         this.rebootFails = null;   /* 'refused' | 'stayed' | 'error': the restart fails so */
         this.mute = false;         /* commands received and not answered */
         this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
@@ -248,7 +250,7 @@ class FakePatch extends LineServer {
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
             removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
-            restart: this.restart, wifi: this.wifi };
+            restart: this.restart, wifi: this.wifi, ...(this.badge === undefined ? {} : { badge: this.badge }) };
     }
 
     /* patchd's profileCmd: the settings in effect saved into the entry they
@@ -307,6 +309,13 @@ class FakePatch extends LineServer {
             const v = msg.cmd === 'hud-pos' ? [msg.hud_x, msg.hud_y] : [msg.cmd === 'hud-size' ? msg.hud_width_pct : msg.on];
             this.map = Object.assign({}, this.map);
             MAP[msg.cmd].forEach((k, i) => { this.map[k] = v[i]; });
+            return;
+        }
+        if (msg.cmd === 'badge') {
+            if (this.badgeRefuses) { this._send(socket, { ev: 'refused', cmd: 'badge', reason: 'another operation is running' }); return; }
+            this.badge = msg.on;
+            this._send(socket, { ev: 'badge-reply', ok: true, badge: this.badge });
+            this._broadcast(this._status());
             return;
         }
         if (msg.cmd === 'reboot') {
