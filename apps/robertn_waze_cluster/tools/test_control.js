@@ -613,6 +613,45 @@ test('CarPlay\'s Patch button only for original, unknown or outdated; CarPlay\'s
     c.close();
 });
 
+test('HUD arrows (experimental): greyed without the daemon\'s option, off by default; on sends hud-arrows, the patch with its safe area is not outdated; refused on another cluster', async (render, patch) => {
+    const c = control();
+    c.open();
+    patch.res = SIZE;
+    patch.safe = SAFE;
+    patch.announce('patched', 'high', null);
+    await until('patched', () => c.statusText() === 'Status: Patched');
+    assert.deepStrictEqual([c.canToggleHudArrows(), c.hudArrowsOn()], [false, false], 'a daemon without the option: greyed, off');
+    c.toggleHudArrows();
+    patch.hudArrows = { on: false, safe: null, conflict: null };
+    patch.announce('patched', 'high', null);
+    await until('offered', () => c.canToggleHudArrows());
+    assert.strictEqual(patch.count('hud-arrows'), 0, 'nothing sent while greyed');
+    assert.strictEqual(c.hudArrowsOn(), false, 'off by default');
+    c.toggleHudArrows();
+    assert.deepStrictEqual([c.hudArrowsOn(), c.canToggleHudArrows()], [true, false], 'ticked from the press, greyed while it runs');
+    await until('on, the patch written again', () => !c.busy() && patch.hudArrows.on && c.pending() === 'apply' && c.hudArrowsOn());
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'hud-arrows'), [{ cmd: 'hud-arrows', on: 1 }]);
+    assert.strictEqual(c.statusText(), 'Status: Patched after restart');
+    assert.strictEqual(c.canToggleHudArrows(), true, 'a change waiting for the restart does not hold it');
+    patch.pending = null;
+    patch.carplay = null;
+    patch.announce('patched', 'high', null);
+    await until('in effect', () => c.statusText() === 'Status: Patched');
+    assert.strictEqual(patch.safe, '504x228+286+72');
+    assert.strictEqual(c.canEnable(), false, 'the option\'s safe area is the expected one');
+    c.toggleHudArrows();
+    await until('off again', () => !c.busy() && patch.hudArrows.on === false && !c.hudArrowsOn() && patch.safe === SAFE);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'hud-arrows').map((m) => m.on), [1, 0]);
+    patch.hudArrows = { on: false, safe: null, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' };
+    patch.pending = null;
+    patch.announce('patched', 'high', null);
+    await until('greyed on another cluster', () => !c.canToggleHudArrows());
+    c.toggleHudArrows();
+    await sleep(50);
+    assert.strictEqual(patch.count('hud-arrows'), 2, 'nothing sent while refused');
+    c.close();
+});
+
 test('a conflict the install left alone is shown, and CarPlay\'s Patch button stays the user\'s choice', async (render, patch) => {
     const c = control();
     c.open();

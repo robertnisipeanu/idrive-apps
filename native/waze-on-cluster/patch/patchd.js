@@ -70,6 +70,16 @@
  *                  {"cmd":"capture-start"|"capture-stop"|"capture-status"}
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
+ *                  {"cmd":"hud-arrows","on":0|1}
+ *                                   Waze's turn arrows on BMW's HUD (experimental,
+ *                                   off by default): HUD_ARROWS_FILE written or
+ *                                   removed, the hudguide service started or
+ *                                   stopped (only once recmgr loaded its entry;
+ *                                   else from the next head-unit start), and a
+ *                                   patch of ours on disk applied again with the
+ *                                   safe area that goes with the choice, for the
+ *                                   next head-unit start. On is refused on a
+ *                                   cluster not coded KI_KOMBI_VARIANT 7
  *   patchd -> app  {"ev":"status","state":...,"panel":...,"mode":...,"res":...,"safe":...,"reason":...,"carplay":...,
  *                   "pending":...,"conflict":...,"removable":...,"busy":...,"restart":...,"aa":...}
  *                    state: original | patched | unknown | busy | error
@@ -100,6 +110,9 @@
  *                    wifi: {band: "5" | "2.4", iface, freq (MHz)} while
  *                    CarPlay runs over Wi-Fi and its band is known, else
  *                    null (wifi_band.js); a status goes out when it changes
+ *                    hudArrows: {on, safe (the safe area Patch writes while
+ *                    on, else null: the patcher's), conflict (why on is
+ *                    refused, else null)}
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a head unit that refuses our parts: "not
  *                    supported on this car (head unit: ...)"; a binary the
@@ -174,6 +187,19 @@ var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
  * render (EnvironmentFile): the card's rows grow with the density. The
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
 var AA_CROP_ENV = path.join(STATE_DIR, 'aa-crop.env');
+/* Waze's turn arrows on BMW's HUD (README.md "HUD arrows", experimental):
+ * this file while the option is on. The render (its hud_arrows_file) and the
+ * hudguide service's ConditionPathExists read it; without it neither does
+ * anything, and the patch is the one it is without the option. */
+var HUD_ARROWS_FILE = path.join(STATE_DIR, 'hud-arrows');
+var HUDGUIDE = 'waze-on-cluster-hudguide';
+/* The safe area CarPlay's Patch button writes while the option is on, on a
+ * cluster coded KI_KOMBI_VARIANT 7: the arrows make BMW draw its own
+ * guidance box on the cluster (y 285-396 of the 1088x480 frame, the car
+ * 2026-11-04), and Waze puts its car at 78 % of the safe area's height, so
+ * the safe area ends above the box (the patcher's default, 504x368, put the
+ * car under it). */
+var HUD_ARROWS_SAFE = '504x228+286+72';
 var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
 /* The targets the HIGH F reset is done with (highfReset): { carplay, aa },
  * each "applied", "left" or "user". */
@@ -836,6 +862,20 @@ function readAaState(cb, fresh) {
     });
 }
 var AA_CODING = require('./aapd_patch.js').CODING.proven;
+var readCoding = require('./aapd_patch.js').readCoding;
+
+/* The HUD arrows option, and why it cannot be turned on here: the card
+ * rects and the safe area are the KI_KOMBI_VARIANT 7 cluster's (9 and 10
+ * have the stock CarPlay cluster map). */
+function hudArrowsOn() { return fs.existsSync(HUD_ARROWS_FILE); }
+function hudArrowsConflict() {
+    var cd = readCoding(CODING);
+    if (cd.variant === undefined) return notSupported('the cluster coding cannot be read: ' + cd.err);
+    return cd.variant === AA_CODING ? null : notSupported('KI_KOMBI_VARIANT ' + cd.variant);
+}
+/* The safe area apply writes: the option's while it is on, else null (the
+ * patcher's default, as without the option). */
+function hudArrowsSafe() { return hudArrowsOn() && !hudArrowsConflict() ? HUD_ARROWS_SAFE : null; }
 
 /* The conflict of a head unit that refuses our parts, in the words the
  * app shows as not supported. */
@@ -891,6 +931,7 @@ function status(extra, aaExtra) {
             msg.aa = aaMsg(aa);
             if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
             msg.wifi = wifi ? wifi.current() : null;
+            msg.hudArrows = { on: hudArrowsOn(), safe: hudArrowsSafe(), conflict: hudArrowsConflict() };
             send(msg);
         });
     });
@@ -1476,6 +1517,8 @@ function patchWith(t, args, action, blocked, done, run) {
 function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
     var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'].concat(unproven ? ['--unproven'] : []);
+    var safe = panel === 'high' ? hudArrowsSafe() : null;
+    if (safe) { log('HUD arrows on: safe area ' + safe); args.push('--safe', safe); }
     if (mode === 'avb') {
         log('apply IC_' + panel.toUpperCase() + ', stock AVB sink (the render joins the media bus)');
     } else if (mode === 'udp') {
@@ -1773,7 +1816,56 @@ function handle(line, sock) {
             if (aa.binary === 'patched' || (aa.pending === 'apply')) { operate('aa', 'applying', aaEnable); return; }
             idle();
         }, true);
+    } else if (msg.cmd === 'hud-arrows') {
+        if (msg.on !== 0 && msg.on !== 1) { refuse('on must be 0 or 1'); return; }
+        var arrowsWhy = msg.on ? hudArrowsConflict() : null;
+        if (arrowsWhy) { refuse(arrowsWhy); return; }
+        hudArrowsCmd(msg.on === 1);
     }
+}
+
+/* The HUD arrows option on or off: saved, the hudguide service started or
+ * stopped, and a patch of ours on disk (applied, or waiting for the next
+ * head-unit start) applied again with the safe area that goes with it, never
+ * restarting carplay: it takes effect at the next head-unit start. */
+function hudArrowsCmd(on) {
+    busy = 'carplay';
+    readState(function (st) {
+        try {
+            if (on) saveFile(HUD_ARROWS_FILE, 'on\n'); else unlinkQuiet(HUD_ARROWS_FILE);
+        } catch (e) {
+            log('HUD arrows: saving the choice failed: ' + e.message);
+            busy = null;
+            status({ state: 'error', reason: 'saving the HUD arrows choice failed: ' + e.message });
+            quitWhenIdle();
+            return;
+        }
+        log('HUD arrows ' + (on ? 'on' : 'off') + ' (experimental)');
+        hudguide(on);
+        if (st.panel === 'high' && (st.state === 'patched' || st.pending === 'apply')) {
+            /* unproven as CarPlay's Patch: only a patch already written, a build the user patched */
+            operate('carplay', 'applying', function (cb) { apply('high', st.mode || 'avb', true, true, cb); });
+            return;
+        }
+        busy = null;
+        status();
+        quitWhenIdle();
+    });
+}
+
+/* Starts or stops the hudguide service with the option, once recmgr loaded
+ * its entry this boot (recmgr restarts the head unit when a service its list
+ * does not name stops); else its ConditionPathExists decides at the next
+ * head-unit start. */
+function hudguide(on) {
+    var unit = HUDGUIDE + '.service';
+    if (!recmgrLoaded(HUDGUIDE)) {
+        log(unit + ' ' + (on ? 'starts' : 'stops') + ' at the next head-unit start (recmgr has not loaded its entry this boot)');
+        return;
+    }
+    cp.execFile('systemctl', [on ? 'start' : 'stop', unit], { timeout: 15000 }, function (err) {
+        log(unit + (err ? ' ' + (on ? 'start' : 'stop') + ' failed: ' + err.message : on ? ' started' : ' stopped'));
+    });
 }
 
 function accept(sock) {

@@ -41,6 +41,7 @@
 #include "control.h"
 #include "guide_setting.h"
 #include "head_unit.h"
+#include "hud_arrows.h"
 #include "log.h"
 #include "block_pack.h"
 #include "map_feed.h"
@@ -211,7 +212,8 @@ int serve(Config cfg)
         {"hud_scale_down", 0, 1},   {"hud_round_corners", 0, 1},     {"hud_black_background", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
-        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1}};
+        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1},
+        {"hud_arrows_sample_ms", 200, 5000}, {"hud_arrows_stable", 1, 10}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
@@ -259,12 +261,30 @@ int serve(Config cfg)
     int sig_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
     if (sig_fd < 0) { log_error("signalfd: %s", strerror(errno)); return 1; }
 
+    /* Waze's turn arrows on BMW's HUD (README.md "HUD arrows"): on only
+     * while hud_arrows_file exists, which patchd writes when the app turns
+     * the option on; checked once a second. */
+    HudConfig hc;
+    if (!parse_rect(cfg.str("hud_arrows_card_icon_rect"), &hc.card.icon) ||
+        !parse_rect(cfg.str("hud_arrows_card_dist_rect"), &hc.card.dist) ||
+        !parse_rect(cfg.str("hud_arrows_card_plain_rect"), &hc.card.plain)) {
+        log_error("hud_arrows_card_icon_rect, hud_arrows_card_dist_rect and hud_arrows_card_plain_rect must be WxH+X+Y");
+        return 1;
+    }
+    hc.templates_dir = cfg.str("hud_arrows_templates");
+    hc.sample_ms = (unsigned)cfg.num("hud_arrows_sample_ms");
+    hc.stable = (unsigned)cfg.num("hud_arrows_stable");
+    const std::string arrows_file = cfg.str("hud_arrows_file");
+
     GuideSetting guide(cfg.str("hide_bmw_guidance"), cfg.str("state_file"));
     fc.guide_hold = guide.hide();
 
     std::string err;
     VideoProducer producer(vc);
     MapFeeds feed(fc, cfg.num("cluster") == 1, cfg.num("hud") == 1, (unsigned)cfg.num("hud_fps"));
+    HudArrows arrows(hc);
+    bool arrows_on = false;
+    int64_t arrows_read_ms = -1000000;
     Server server(&feed, &guide);
     Control control(&server);
     server.set_control(&control);
@@ -324,6 +344,16 @@ int serve(Config cfg)
         producer.set_pictures(feed.wants_frames());
         feed.set_stream(live, producer.frozen(now), producer.picture(now));
         feed.poll(now);
+        if (now - arrows_read_ms >= 1000) {
+            const bool on = !arrows_file.empty() && access(arrows_file.c_str(), F_OK) == 0;
+            if (on != arrows_on)
+                log_info("hud arrows: the option is %s", on ? "on" : "off");
+            arrows_on = on;
+            arrows_read_ms = now;
+        }
+        /* Only while CarPlay's cluster stream is live and not frozen. */
+        arrows.set_active(arrows_on && live && !producer.frozen(now), now);
+        arrows.poll(now);
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
         const std::string status = status_line(fs);
@@ -366,7 +396,7 @@ int serve(Config cfg)
              * map layer's writes, the upload cap), for the diagnostics. */
             write_sibling_file(cfg.str("fifo_path"), "probe.txt",
                                producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" +
-                                   feed.report());
+                                   (arrows_on ? arrows.report() : std::string()) + feed.report());
             feed.request_report();
             last_status_write = now;
         }
@@ -506,6 +536,13 @@ void define_keys(Config *cfg)
     cfg->define("hud_scale_down", "1");
     cfg->define("hud_round_corners", "1");
     cfg->define("hud_black_background", "1");
+    cfg->define("hud_arrows_file", "/var/opt/waze-on-cluster/hud-arrows");
+    cfg->define("hud_arrows_card_icon_rect", "85x90+150+26");
+    cfg->define("hud_arrows_card_dist_rect", "320x60+236+40");
+    cfg->define("hud_arrows_card_plain_rect", "80x80+580+30");
+    cfg->define("hud_arrows_templates", "/var/opt/waze-on-cluster/hud-templates");
+    cfg->define("hud_arrows_sample_ms", "250");
+    cfg->define("hud_arrows_stable", "2");
     cfg->define("render_socket", "/dev/shm/cluster-render/render.sock");
     cfg->define("log_file", "/var/opt/waze-on-cluster/log/waze-on-cluster.log");
     cfg->define("log_file_kb", "512");

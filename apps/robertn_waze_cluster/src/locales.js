@@ -97,7 +97,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله.",
-   "Own settings for this driver": "إعدادات خاصة لهذا السائق"
+   "Own settings for this driver": "إعدادات خاصة لهذا السائق",
+   "Waze turn arrows on HUD (experimental)": "أسهم انعطاف Waze على HUD (تجريبي)"
   }
  },
  {
@@ -196,7 +197,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi.",
-   "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče"
+   "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče",
+   "Waze turn arrows on HUD (experimental)": "Šipky odbočení Waze na HUD (experimentální)"
   }
  },
  {
@@ -295,7 +297,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone.",
-   "Own settings for this driver": "Egne indstillinger for denne fører"
+   "Own settings for this driver": "Egne indstillinger for denne fører",
+   "Waze turn arrows on HUD (experimental)": "Waze-svingpile på HUD (eksperimentel)"
   }
  },
  {
@@ -394,7 +397,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten.",
-   "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer"
+   "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer",
+   "Waze turn arrows on HUD (experimental)": "Waze-Abbiegepfeile im HUD (experimentell)"
   }
  },
  {
@@ -493,7 +497,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi.",
-   "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό"
+   "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό",
+   "Waze turn arrows on HUD (experimental)": "Βέλη στροφής Waze στο HUD (πειραματικό)"
   }
  },
  {
@@ -592,7 +597,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi.",
-   "Own settings for this driver": "Configuración propia para este conductor"
+   "Own settings for this driver": "Configuración propia para este conductor",
+   "Waze turn arrows on HUD (experimental)": "Flechas de giro de Waze en el HUD (experimental)"
   }
  },
  {
@@ -691,7 +697,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi.",
-   "Own settings for this driver": "Ajustes propios para este conductor"
+   "Own settings for this driver": "Ajustes propios para este conductor",
+   "Waze turn arrows on HUD (experimental)": "Flechas de giro de Waze en el HUD (experimental)"
   }
  },
  {
@@ -790,7 +797,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle.",
-   "Own settings for this driver": "Omat asetukset tälle kuljettajalle"
+   "Own settings for this driver": "Omat asetukset tälle kuljettajalle",
+   "Waze turn arrows on HUD (experimental)": "Wazen kääntymisnuolet HUD:iin (kokeellinen)"
   }
  },
  {
@@ -889,7 +897,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
-   "Own settings for this driver": "Réglages propres à ce conducteur"
+   "Own settings for this driver": "Réglages propres à ce conducteur",
+   "Waze turn arrows on HUD (experimental)": "Flèches de direction Waze sur le HUD (expérimental)"
   }
  },
  {
@@ -988,7 +997,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
-   "Own settings for this driver": "Réglages propres à ce conducteur"
+   "Own settings for this driver": "Réglages propres à ce conducteur",
+   "Waze turn arrows on HUD (experimental)": "Flèches de direction Waze sur le HUD (expérimental)"
   }
  },
  {
@@ -1087,7 +1097,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש.",
-   "Own settings for this driver": "הגדרות נפרדות לנהג זה"
+   "Own settings for this driver": "הגדרות נפרדות לנהג זה",
+   "Waze turn arrows on HUD (experimental)": "חיצי פנייה של Waze ב-HUD (ניסיוני)"
   }
  },
  {
@@ -1186,7 +1197,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t.",
-   "Own settings for this driver": "Saját beállítások ennek a vezetőnek"
+   "Own settings for this driver": "Saját beállítások ennek a vezetőnek",
+   "Waze turn arrows on HUD (experimental)": "Waze kanyarodási nyilak a HUD-on (kísérleti)"
   }
  },
  {
@@ -1285,7 +1297,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi.",
-   "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini"
+   "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini",
+   "Waze turn arrows on HUD (experimental)": "Panah belok Waze di HUD (eksperimental)"
   }
  },
  {
@@ -1384,7 +1397,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi.",
-   "Own settings for this driver": "Impostazioni proprie per questo conducente"
+   "Own settings for this driver": "Impostazioni proprie per questo conducente",
+   "Waze turn arrows on HUD (experimental)": "Frecce di svolta di Waze sull'HUD (sperimentale)"
   }
  },
  {
@@ -1483,7 +1497,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。",
-   "Own settings for this driver": "このドライバー専用の設定"
+   "Own settings for this driver": "このドライバー専用の設定",
+   "Waze turn arrows on HUD (experimental)": "HUDにWazeの曲がる矢印（試験的）"
   }
  },
  {
@@ -1582,7 +1597,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오.",
-   "Own settings for this driver": "이 운전자 전용 설정"
+   "Own settings for this driver": "이 운전자 전용 설정",
+   "Waze turn arrows on HUD (experimental)": "HUD에 Waze 회전 화살표 (실험적)"
   }
  },
  {
@@ -1681,7 +1697,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone.",
-   "Own settings for this driver": "Egne innstillinger for denne føreren"
+   "Own settings for this driver": "Egne innstillinger for denne føreren",
+   "Waze turn arrows on HUD (experimental)": "Waze-svingpiler på HUD (eksperimentell)"
   }
  },
  {
@@ -1782,7 +1799,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan.",
-   "Own settings for this driver": "Eigen instellingen voor deze bestuurder"
+   "Own settings for this driver": "Eigen instellingen voor deze bestuurder",
+   "Waze turn arrows on HUD (experimental)": "Waze-afslagpijlen op de HUD (experimenteel)"
   }
  },
  {
@@ -1881,7 +1899,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi.",
-   "Own settings for this driver": "Własne ustawienia dla tego kierowcy"
+   "Own settings for this driver": "Własne ustawienia dla tego kierowcy",
+   "Waze turn arrows on HUD (experimental)": "Strzałki skrętu Waze na HUD (eksperymentalnie)"
   }
  },
  {
@@ -1980,7 +1999,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi.",
-   "Own settings for this driver": "Configurações próprias para este motorista"
+   "Own settings for this driver": "Configurações próprias para este motorista",
+   "Waze turn arrows on HUD (experimental)": "Setas de conversão do Waze no HUD (experimental)"
   }
  },
  {
@@ -2079,7 +2099,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi.",
-   "Own settings for this driver": "Definições próprias para este condutor"
+   "Own settings for this driver": "Definições próprias para este condutor",
+   "Waze turn arrows on HUD (experimental)": "Setas de viragem do Waze no HUD (experimental)"
   }
  },
  {
@@ -2178,7 +2199,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi.",
-   "Own settings for this driver": "Setări proprii pentru acest șofer"
+   "Own settings for this driver": "Setări proprii pentru acest șofer",
+   "Waze turn arrows on HUD (experimental)": "Săgeți de viraj Waze pe HUD (experimental)"
   }
  },
  {
@@ -2277,7 +2299,8 @@ module.exports = [
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi.",
-   "Own settings for this driver": "Свои настройки для этого водителя"
+   "Own settings for this driver": "Свои настройки для этого водителя",
+   "Waze turn arrows on HUD (experimental)": "Стрелки поворотов Waze на HUD (экспериментально)"
   }
  },
  {
@@ -2376,7 +2399,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi.",
-   "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča"
+   "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča",
+   "Waze turn arrows on HUD (experimental)": "Šípky odbočenia Waze na HUD (experimentálne)"
   }
  },
  {
@@ -2475,7 +2499,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi.",
-   "Own settings for this driver": "Lastne nastavitve za tega voznika"
+   "Own settings for this driver": "Lastne nastavitve za tega voznika",
+   "Waze turn arrows on HUD (experimental)": "Puščice zavijanja Waze na HUD (eksperimentalno)"
   }
  },
  {
@@ -2574,7 +2599,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone.",
-   "Own settings for this driver": "Egna inställningar för den här föraren"
+   "Own settings for this driver": "Egna inställningar för den här föraren",
+   "Waze turn arrows on HUD (experimental)": "Wazes svängpilar på HUD (experimentell)"
   }
  },
  {
@@ -2673,7 +2699,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone",
-   "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้"
+   "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้",
+   "Waze turn arrows on HUD (experimental)": "ลูกศรเลี้ยวของ Waze บน HUD (ทดลอง)"
   }
  },
  {
@@ -2772,7 +2799,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın.",
-   "Own settings for this driver": "Bu sürücüye özel ayarlar"
+   "Own settings for this driver": "Bu sürücüye özel ayarlar",
+   "Waze turn arrows on HUD (experimental)": "HUD'da Waze dönüş okları (deneysel)"
   }
  },
  {
@@ -2871,7 +2899,8 @@ module.exports = [
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi.",
-   "Own settings for this driver": "Власні налаштування для цього водія"
+   "Own settings for this driver": "Власні налаштування для цього водія",
+   "Waze turn arrows on HUD (experimental)": "Стрілки поворотів Waze на HUD (експериментально)"
   }
  },
  {
@@ -2970,7 +2999,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi.",
-   "Own settings for this driver": "Cài đặt riêng cho người lái này"
+   "Own settings for this driver": "Cài đặt riêng cho người lái này",
+   "Waze turn arrows on HUD (experimental)": "Mũi tên rẽ của Waze trên HUD (thử nghiệm)"
   }
  },
  {
@@ -3071,7 +3101,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。",
-   "Own settings for this driver": "此驾驶员的专属设置"
+   "Own settings for this driver": "此驾驶员的专属设置",
+   "Waze turn arrows on HUD (experimental)": "在 HUD 上显示 Waze 转向箭头（实验性）"
   }
  },
  {
@@ -3172,7 +3203,8 @@ module.exports = [
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。",
-   "Own settings for this driver": "此駕駛的專屬設定"
+   "Own settings for this driver": "此駕駛的專屬設定",
+   "Waze turn arrows on HUD (experimental)": "在 HUD 上顯示 Waze 轉向箭頭（實驗性）"
   }
  }
 ];

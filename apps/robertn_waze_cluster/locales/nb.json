@@ -93,6 +93,7 @@
     "5 GHz": "5 GHz",
     "2.4 GHz": "2,4 GHz",
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone.",
-    "Own settings for this driver": "Egne innstillinger for denne føreren"
+    "Own settings for this driver": "Egne innstillinger for denne føreren",
+    "Waze turn arrows on HUD (experimental)": "Waze-svingpiler på HUD (eksperimentell)"
   }
 }

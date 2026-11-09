@@ -74,6 +74,15 @@ With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
 map is disabled; the cluster's map keeps working.
 
+**Waze turn arrows on HUD (experimental)**, in HUD, is off by default.
+Ticked, Waze's turns show as BMW's own HUD arrows, as Apple Maps' and Google
+Maps' do, read from the card iOS draws for Waze's next turn. It also changes
+CarPlay's patch, from the next head-unit start: the safe area Waze draws its
+car in ends higher (504x228 instead of 504x368), above the guidance box BMW
+then draws on the cluster. Only on a KI_KOMBI_VARIANT 7 cluster (the
+waze-on-cluster README, "HUD arrows", from
+[JustAnotherPU](https://github.com/JustAnotherPU)'s waze-hud).
+
 ## Driver profiles
 
 Show on, the HUD map's size and its position are shared by every driver
@@ -130,6 +139,7 @@ supported, HIGH F included.
 | | Position | `Position: Centre`, or how far the HUD map is moved: `Position: 20 px right, 10 px up` |
 | | Move left / Move right / Move up / Move down | 10 px a press, held inside the HUD; kept for the next start; greyed as the Size slider |
 | | Centre | puts it back in the middle; enabled while it is moved |
+| | Waze turn arrows on HUD (experimental) | a checkbox, unticked by default: ticked, Waze's next turn, read from the card iOS draws on the CarPlay screen, shows as BMW's own arrows on the HUD, and CarPlay's patch is written with a shorter safe area so Waze's car stays above the guidance box BMW then draws on the cluster (from the next head-unit start; waze-on-cluster README, "HUD arrows"). Greyed without a `patchd` that has it, while any operation runs, and, for ticking, on a cluster not coded KI_KOMBI_VARIANT 7 |
 | **CarPlay** | Status | `Status: <state>`, in the words above |
 | | Patch | applies the patch; enabled while it is off, unknown or out of date, the head unit is supported and no change is pending |
 | | Remove patch | reverts the patch, which turns the map off; enabled while something of the patch is on disk, also while it waits for a restart (`Patched after restart`), and no change runs; a patch waiting over the original is removed at once (`Not patched`), one waiting over a running patch leaves a removal that waits (`Removed after restart`) |

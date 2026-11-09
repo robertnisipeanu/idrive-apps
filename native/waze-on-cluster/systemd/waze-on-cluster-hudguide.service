@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 JustAnotherPU
+[Unit]
+Description=waze-on-cluster HUD arrows (experimental): Waze's next turn to BMW's own HUD arrows (ProjectedModeGuiding), as carplay sends Apple's and Google's
+RequiresMountsFor=/var/opt
+# Only while the app's "Waze turn arrows on HUD" is ticked: patchd writes
+# this file then, and starts or stops this service as it is ticked or
+# unticked. Without it the service does not run at all.
+ConditionPathExists=/var/opt/waze-on-cluster/hud-arrows
+After=local-fs.target waze-on-cluster.service
+# A start that fails (no navigation, a changed interface file) is retried
+# every 30 s, at most 5 times in 10 min, then left failed.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+# carplay's own user: the navigation's SOME/IP services answer it (VERIFIED
+# on the car as cia_13002; they refuse hmi_5000), so no root. It reads
+# /run/waze-on-cluster/hud.json, which waze-on-cluster writes only while the
+# option is on and CarPlay's cluster stream is live. On stop it clears what
+# it sent (INACTIVE), within 4 s.
+User=cia_13002
+Group=cia_13002
+ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/hudguide.js
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

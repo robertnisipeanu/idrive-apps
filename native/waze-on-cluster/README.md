@@ -393,6 +393,55 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   A missing, corrupt or unreadable `profiles.json` means no profile has its
   own settings (logged).
 
+**HUD arrows (experimental, off by default)** (from
+[JustAnotherPU](https://github.com/JustAnotherPU)'s waze-hud). Waze sends
+CarPlay no route guidance, so BMW's HUD shows no turn arrows for it, while
+it does for Apple Maps and Google Maps. The app's **Waze turn arrows on HUD
+(experimental)** checkbox turns on a reader of the card iOS draws for
+Waze's next turn at the top left of the CarPlay screen, and sends the turn
+to BMW's own HUD arrows the way carplay sends Apple's and Google's.
+
+- **Off changes nothing.** `patchd` keeps the choice as the file
+  `/var/opt/waze-on-cluster/hud-arrows` (`hud_arrows_file`); without it the
+  render starts no grabber and writes nothing, the
+  `waze-on-cluster-hudguide` service does not start
+  (`ConditionPathExists`), and the CarPlay patch is the one it is without
+  the option.
+- **On**, while CarPlay's cluster stream is live, the render reads the
+  centre screen with the unit's `winston-grabber` (1920x720, 4 frames a
+  second, `src/screen_grab.*`), reads the card's arrow and distance
+  (`src/hud_banner.*`, `hud_arrows_card_*_rect`; the distance needs the
+  card's glyph templates in `hud_arrows_templates`, made by
+  `tools/hud_font_templates.py`, else arrows without it), and writes each
+  settled reading to `/run/waze-on-cluster/hud.json` once a second
+  (`src/hud_arrows.*`). `waze-on-cluster-hudguide` (`patch/hudguide.js`,
+  as `cia_13002`, carplay's user) sends it to the navigation's
+  `ProjectedModeGuiding` over SOME/IP (`setGuidanceState` `ACTIVE`
+  `CAR_PLAY`, `updateEventsOnRoute`), clears it when the reading is 3 s
+  stale or the service stops, and gives way to Apple's, Google's and BMW's
+  own guidance.
+- **The CarPlay patch changes with it.** With BMW's arrows, the navigation
+  draws its own guidance box on the cluster (y 285 to 396 of the 1088x480
+  map), and Waze's car, at the patcher's safe area (504x368+286+72), sits
+  under it. While the option is on, CarPlay's Patch writes the safe area
+  504x228+286+72 instead, so Waze keeps its car above the box; turning the
+  option on or off while patched writes the patch again with the other.
+  Like any patch change it takes effect at the next head-unit start;
+  carplay is never restarted for it.
+- **Only on a KI_KOMBI_VARIANT 7 cluster**, the one the card rects and the
+  safe area were measured on: on any other coding, or an unreadable one,
+  `patchd` refuses on (`not supported on this car (...)`) and the app greys
+  the checkbox. Off is always taken.
+- `waze-on-cluster-hudguide` is started and stopped with the checkbox only
+  once recmgr loaded its entry this boot (recmgr restarts the head unit when
+  a service it does not know stops); right after the install that adds it,
+  it starts at the next head-unit start.
+- Control: `{"cmd":"hud-arrows","on":1}` (or `0`); the status carries
+  `hudArrows: {on, safe, conflict}`.
+- Open: the card rects were measured on one car (the iPhone's card at its
+  size there); not yet confirmed on a drive with this build, nor together
+  with **Hide BMW's turn box**.
+
 From a shell, `waze-on-cluster -c <conf> run map|panel` (`sail` is an alias
 of `map`) sets the cluster target until the service restarts and prints the
 status.
@@ -804,7 +853,8 @@ whether it flags those frames `Corrupted` (and propagates the flag to the
 frames that reference them); that the phone's SPS is exactly the advertised 1088x480; how packed
 motion reads during a long fast pan while driving; whether the alternate
 display survives iOS and Waze updates (flag 1006 is server-side). Waze sends
-no guidance metadata, so this shows map pixels, not data-driven directions.
+no guidance metadata, so this shows map pixels, not data-driven directions
+(the experimental HUD arrows read iOS's turn card from the screen).
 
 ## Building and testing
 

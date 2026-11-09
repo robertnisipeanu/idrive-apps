@@ -282,6 +282,7 @@ async function main() {
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
+        'wocHudArrows Waze turn arrows on HUD (experimental)',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
         'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
         'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card",
@@ -301,7 +302,7 @@ async function main() {
         .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
     assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
-    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile'].map((n) => widgets[n]), Array(3).fill('LT_CheckBox_1Row'),
+    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudArrows'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
     assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
         'where the map shows: a drop-down of three; the HUD\'s size: a slider');
@@ -352,7 +353,7 @@ async function main() {
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
         assert.deepStrictEqual(bound, ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
-            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile', 'wocRestart'],
+            'wocGuide', 'wocHudArrows', 'wocHudCentre', 'wocHudDown', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile', 'wocRestart'],
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
@@ -405,6 +406,29 @@ async function main() {
         patch.announce('patched', 'high', null);
         console.log('ok   Android Auto: its own line, Patch, Remove patch, the zoom and the Hide phone\'s turn card checkbox with their values, marked while waiting; ' +
             'not supported on this car: every button greyed');
+
+        /* HUD arrows: greyed and off from a daemon without the option, then
+         * off by default; a press asks patchd, whose answer keeps the tick */
+        const arrows = byName.wocHudArrows;
+        assert.deepStrictEqual([arrows.enabled, arrows.selected, arrows.text], [false, false, 'Waze turn arrows on HUD (experimental)'],
+            'HUD arrows: greyed and off without the daemon\'s option');
+        patch.hudArrows = { on: false, safe: null, conflict: null };
+        patch.announce('patched', 'high', null);
+        await until('HUD arrows offered, off', () => arrows.enabled === true && arrows.selected === false);
+        arrows.ticks.length = 0;
+        arrows.press();
+        await until('HUD arrows on', () => patch.received.some((m) => m.cmd === 'hud-arrows' && m.on === 1) && patch.hudArrows.on === true &&
+            !patch.busy && arrows.selected === true && arrows.enabled === true);
+        await sleep(100);
+        assert(arrows.ticks.every((t) => t === true), `ticked from the press on, never unticked meanwhile: ${JSON.stringify(arrows.ticks)}`);
+        await sleep(400);
+        arrows.press();
+        await until('HUD arrows off', () => patch.received.some((m) => m.cmd === 'hud-arrows' && m.on === 0) && patch.hudArrows.on === false &&
+            !patch.busy && arrows.selected === false);
+        patch.pending = null;
+        patch.carplay = null;
+        patch.announce('patched', 'high', null);
+        console.log('ok   HUD arrows (experimental): greyed without the daemon\'s option, off by default, each press through patchd');
 
         const guide = byName.wocGuide;
         await until('the switch enabled, ticked', () => guide.enabled === true && guide.selected === true);
@@ -612,7 +636,7 @@ async function main() {
         Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
         ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocProfile', 'wocHudSize',
-            'wocHudLeft', 'wocHudCentre']
+            'wocHudLeft', 'wocHudCentre', 'wocHudArrows']
             .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;
         ['wocStatus', 'wocAaStatus', 'wocAaZoom', 'wocMap', 'wocHud', 'wocHudSize', 'wocHudPos', 'wocRestartStatus']

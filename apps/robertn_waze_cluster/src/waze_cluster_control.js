@@ -50,6 +50,10 @@
  *                       restart: {"state":"idle"|"restarting"|"failed","code",
  *                        "possibleAt"} (code refused | stayed | error; possibleAt:
  *                        when the restart limit takes a request again)
+ *                       hudArrows: {"on","safe","conflict"} Waze's turn arrows on
+ *                        BMW's HUD (experimental, off by default; absent from a
+ *                        daemon before it); safe: the safe area Patch writes
+ *                        while on, else null (SAFE); conflict: why on is refused
  *                       wifi: {"band":"5"|"2.4","iface","freq"} while CarPlay runs
  *                        over Wi-Fi and its band is known, else null (absent from
  *                        a daemon before it)
@@ -655,8 +659,36 @@ class WazeClusterControl extends EventEmitter {
     /* A patch other than the one CarPlay's Patch button writes: another capture sink,
      * panel, size or safe area, from an older app. */
     _outdated(ps) {
+        const safe = (ps.hudArrows && ps.hudArrows.safe) || SAFE;
         return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
-            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE));
+            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== safe));
+    }
+
+    /* ---- Waze's turn arrows on BMW's HUD (experimental) ---- */
+    /* patchd's option, or null from a daemon without it. */
+    _hudArrows() {
+        const ps = this.patchStatus;
+        return this.connectedPatch() && ps && ps.hudArrows ? ps.hudArrows : null;
+    }
+
+    /* Offered while patchd is idle; on only where it is not refused (a
+     * change waiting for a head-unit start does not hold it). */
+    canToggleHudArrows() {
+        const ha = this._hudArrows();
+        return !!ha && !this.busy() && !this._arrowsAsked && (ha.on || !ha.conflict);
+    }
+
+    /* The tick: what a change asked for while it runs, else patchd's. */
+    hudArrowsOn() {
+        const ha = this._hudArrows();
+        return this._arrowsAsked ? this._arrowsAsked === 'on' : !!ha && !!ha.on;
+    }
+
+    toggleHudArrows() {
+        if (this.canToggleHudArrows()) {
+            this._arrowsAsked = this._hudArrows().on ? 'off' : 'on';
+            this.patch.send({ cmd: 'hud-arrows', on: this._arrowsAsked === 'on' ? 1 : 0 });
+        }
     }
 
     /* ---- BMW's turn box ---- */
@@ -976,6 +1008,7 @@ class WazeClusterControl extends EventEmitter {
         this.patchStatus = null;     /* the patch daemon's last status while connected */
         this._inEffect = { carplay: false, androidAuto: false };
         this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
+        this._arrowsAsked = null;    /* 'on' | 'off': what a hud-arrows change asked for, while it runs */
     }
 
     /* From a status outside a change (neither busy nor an error): which
@@ -1027,6 +1060,11 @@ class WazeClusterControl extends EventEmitter {
             this.patchStatus = !status.aa && prev && prev.aa ? Object.assign({}, status, { aa: prev.aa }) : status;
             this._noteInEffect();
             this._noteCardAsked(msg);
+            /* the asked tick goes when patchd says so, or its change failed */
+            if (this._arrowsAsked && msg.state !== 'busy' && msg.busy !== 'carplay' &&
+                (msg.state === 'error' || (msg.hudArrows && !!msg.hudArrows.on === (this._arrowsAsked === 'on')))) {
+                this._arrowsAsked = null;
+            }
             this._wake();
             this.emit('change');
         } else if (/^(cluster|hud|hud-size|hud-pos)-reply$/.test(msg.ev)) {
@@ -1045,6 +1083,9 @@ class WazeClusterControl extends EventEmitter {
             this._log.info(`patchd refused ${msg.cmd}: ${msg.reason}`);
             if (msg.cmd === 'aa-card') {
                 this._cardAsked = null;
+                this.emit('change');
+            } else if (msg.cmd === 'hud-arrows') {
+                this._arrowsAsked = null;
                 this.emit('change');
             }
         }

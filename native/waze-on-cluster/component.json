@@ -144,6 +144,16 @@
       "mode": "0644"
     },
     {
+      "path": "hudguide.js",
+      "from": "patch/hudguide.js",
+      "mode": "0644"
+    },
+    {
+      "path": "pmg_schema.js",
+      "from": "patch/pmg_schema.js",
+      "mode": "0644"
+    },
+    {
       "path": "group_dir.js",
       "from": "patch/group_dir.js",
       "mode": "0644"
@@ -187,6 +197,10 @@
     {
       "name": "waze-on-cluster-capture.service",
       "from": "systemd/waze-on-cluster-capture.service"
+    },
+    {
+      "name": "waze-on-cluster-hudguide.service",
+      "from": "systemd/waze-on-cluster-hudguide.service"
     },
     {
       "name": "waze-on-cluster-journal.service",
@@ -239,6 +253,10 @@
       "target": "multi-user.target"
     },
     {
+      "unit": "waze-on-cluster-hudguide.service",
+      "target": "multi-user.target"
+    },
+    {
       "unit": "waze-on-cluster-journal.timer",
       "target": "timers.target"
     },
@@ -268,6 +286,7 @@
     "waze-on-cluster-aa-boot",
     "waze-on-cluster-recovery",
     "waze-on-cluster-capture",
+    "waze-on-cluster-hudguide",
     "waze-on-cluster-journal",
     "waze-on-cluster-logs",
     "waze-on-cluster-logs-fw"

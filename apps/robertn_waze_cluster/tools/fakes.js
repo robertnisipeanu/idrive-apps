@@ -220,6 +220,7 @@ class FakePatch extends LineServer {
         this.reboots = 0;     /* reboot commands honoured */
         this.restart = { state: 'idle' };
         this.wifi = null;          /* CarPlay's Wi-Fi band: { band: '5' | '2.4', iface, freq } or null */
+        this.hudArrows = undefined; /* { on, safe, conflict }: the HUD arrows option; undefined: a daemon without it */
         this.rebootFails = null;   /* 'refused' | 'stayed' | 'error': the restart fails so */
         this.mute = false;         /* commands received and not answered */
         this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
@@ -248,7 +249,7 @@ class FakePatch extends LineServer {
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
             removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
-            restart: this.restart, wifi: this.wifi };
+            restart: this.restart, wifi: this.wifi, hudArrows: this.hudArrows };
     }
 
     /* patchd's profileCmd: the settings in effect saved into the entry they
@@ -348,6 +349,26 @@ class FakePatch extends LineServer {
             };
             if (this.holdAa) this.releaseAa = finish;
             else this._timer = setTimeout(finish, STEP_MS);
+        } else if (msg.cmd === 'hud-arrows') {
+            /* patchd's hudArrowsCmd: saved, and a patch on disk written again
+             * with the option's safe area, for the next head-unit start */
+            if (msg.on && this.hudArrows.conflict) {
+                this._send(socket, { ev: 'refused', cmd: msg.cmd, reason: this.hudArrows.conflict });
+                return;
+            }
+            this.busy = true;
+            this._broadcast(this._status());
+            this._timer = setTimeout(() => {
+                this.busy = false;
+                const safe = msg.on ? '504x228+286+72' : null;
+                this.hudArrows = Object.assign({}, this.hudArrows, { on: !!msg.on, safe });
+                if (this.state === 'patched' && this.panel === 'high') {
+                    this.safe = safe || '504x368+286+72';
+                    this.pending = 'apply';
+                    this.carplay = 'deferred';
+                }
+                this._broadcast(this._status());
+            }, STEP_MS);
         } else if (msg.cmd === 'apply') {
             this.busy = true;
             this.reason = 'applying IC_' + String(msg.panel).toUpperCase();
@@ -360,7 +381,7 @@ class FakePatch extends LineServer {
                 /* The geometry the patcher writes: the high panel's size and
                  * safe area; the mid panel keeps the stock geometry. */
                 this.res = msg.panel === 'high' ? '1088x480' : null;
-                this.safe = msg.panel === 'high' ? '504x368+286+72' : null;
+                this.safe = msg.panel === 'high' ? (this.hudArrows && this.hudArrows.safe) || '504x368+286+72' : null;
                 this.reason = 'restarted';
                 this.log('apply done');
                 this._broadcast(this._status());

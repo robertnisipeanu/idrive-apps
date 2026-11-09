@@ -403,6 +403,32 @@
             }
           ]
         },
+        "64": {
+          "type": "checkBox",
+          "name": "wocHudArrows",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Waze turn arrows on HUD (experimental)",
+                "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": false,
+                "type": "Bool"
+              }
+            }
+          ]
+        },
         "90": {
           "type": "label",
           "name": "wocHeadCarPlay",

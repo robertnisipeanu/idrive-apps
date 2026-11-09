@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Waze turn arrows on HUD (experimental), a checkbox in HUD, off by default:
+ticked, Waze's next turn shows as BMW's own arrows on the HUD, read from the
+card iOS draws on the CarPlay screen, and CarPlay's patch keeps Waze's car
+above the guidance box BMW then draws on the cluster, from the next
+head-unit start. Only on a KI_KOMBI_VARIANT 7 cluster; greyed elsewhere.
+
 ## 0.6.4
 
 Map settings per driver profile, after eroobeeroo's #41. Show on, the HUD

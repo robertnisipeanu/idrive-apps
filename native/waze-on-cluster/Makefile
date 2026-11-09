@@ -5,7 +5,8 @@
 #   make test                 host build + NAL, RTP, the SPS fields and frame timing logged, the decoder
 #                             against a fake MSDK, receive queue and catch-up, backlog, stream health,
 #                             keyframe wait, the turn-box setting, the map's saved settings, the map feed
-#                             against the shared renderer, the kit's tests, patcher,
+#                             against the shared renderer, the HUD arrows option (the CarPlay card's
+#                             reader, its file, the hudguide service), the kit's tests, patcher,
 #                             the aapd locator on every build in AAPD_BIN and
 #                             AAPD_BINS, patchd patch/install activation/DLT/restart/driver profiles, the CarPlay
 #                             Wi-Fi band, capture, boot-recovery, journal keeper, logs
@@ -53,8 +54,10 @@ WOC_SRC = src/main.cpp src/refused.cpp src/video_producer.cpp src/freeze_watch.c
           src/guide_setting.cpp src/map_state.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp src/sps_info.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
-          $(KIT)/block_pack.cpp
+          $(KIT)/block_pack.cpp $(HUD_SRC) src/hud_maparrow.cpp src/screen_grab.cpp src/hud_arrows.cpp
 CR_SRC  = $(CR)/client/client.cpp $(CR)/client/protocol.cpp
+# The HUD arrows' card reader (README.md "HUD arrows").
+HUD_SRC = src/hud_draw.cpp src/hud_banner.cpp
 SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp $(CR)/src/head_unit.cpp
 
 .PHONY: all test test-bin test-cpp test-node test-x86 test-x86-in-docker test-firmware target target-in-docker clean
@@ -65,7 +68,8 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
 		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
-		$(BUILD)/host/frame_timing_test
+		$(BUILD)/host/frame_timing_test $(BUILD)/host/hud_banner_test $(BUILD)/host/hud_maparrow_test \
+		$(BUILD)/host/hud_arrows_test
 # The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
 LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
 CPP_TESTS += $(LINUX_TESTS)
@@ -93,6 +97,7 @@ test-node:
 	umask 077 && $(NODE) patch/test/patchd_patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_activate_test.js
 	umask 077 && $(NODE) patch/test/patchd_hud_test.js
+	umask 077 && $(NODE) patch/test/patchd_hudarrows_test.js
 	umask 077 && $(NODE) patch/test/patchd_profile_test.js
 	umask 077 && $(NODE) patch/test/patchd_dlt_test.js
 	umask 077 && $(NODE) patch/test/patchd_reboot_test.js
@@ -109,6 +114,7 @@ test-node:
 	umask 077 && $(NODE) patch/test/aapd_locate_test.js
 	umask 077 && $(NODE) patch/test/aapd_test.js
 	umask 077 && $(NODE) patch/test/head_unit_test.js
+	umask 077 && $(NODE) patch/test/hudguide_test.js
 
 test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/nal_reader_test
@@ -129,6 +135,9 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/atlas_scale_test
 	$(BUILD)/host/sps_info_test
 	$(BUILD)/host/frame_timing_test
+	$(BUILD)/host/hud_banner_test
+	$(BUILD)/host/hud_maparrow_test
+	$(BUILD)/host/hud_arrows_test
 	$(if $(LINUX_TESTS),$(LINUX_TESTS),@echo 'refused_test: Linux only (make test-x86)')
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
@@ -247,6 +256,19 @@ $(BUILD)/host/guide_setting_test: test/guide_setting_test.cpp src/guide_setting.
 $(BUILD)/host/map_state_test: test/map_state_test.cpp src/map_state.cpp src/map_state.h $(CR)/src/config.cpp $(CR)/src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/map_state_test.cpp src/map_state.cpp $(CR)/src/config.cpp $(CR)/src/log.cpp -lpthread
+
+# The HUD arrows: the card reader's parts, and the option with a fake grabber.
+$(BUILD)/host/hud_banner_test: test/hud_banner_test.cpp $(HUD_SRC) src/hud_draw.h src/hud_banner.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/hud_banner_test.cpp $(HUD_SRC)
+$(BUILD)/host/hud_maparrow_test: test/hud_maparrow_test.cpp src/hud_maparrow.cpp src/hud_maparrow.h $(HUD_SRC) src/hud_draw.h src/hud_banner.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/hud_maparrow_test.cpp src/hud_maparrow.cpp $(HUD_SRC)
+$(BUILD)/host/hud_arrows_test: test/hud_arrows_test.cpp src/hud_arrows.cpp src/hud_arrows.h src/hud_maparrow.cpp src/screen_grab.cpp \
+		src/screen_grab.h $(HUD_SRC) src/hud_draw.h src/hud_banner.h src/hud_maparrow.h $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/hud_arrows_test.cpp src/hud_arrows.cpp src/hud_maparrow.cpp src/screen_grab.cpp \
+		$(HUD_SRC) $(CR)/src/log.cpp -lpthread
 
 # ---- target binary (in Docker) --------------------------------------------
 target:
