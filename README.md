@@ -1,5 +1,7 @@
 # idrive-apps
 
+English | [简体中文](README.zh-CN.md)
+
 Tools and apps for the iDrive 7 head unit (MGU) of a BMW, installed from the
 [mgu Store](https://github.com/robertnisipeanu/mgu-store).
 
