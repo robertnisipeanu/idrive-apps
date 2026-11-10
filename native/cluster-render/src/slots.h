@@ -69,13 +69,18 @@
  *   the publication yet) is asked again after kFreshRetryMs, up to
  *   kFreshRetries times; then the ladder.
  * - A shown scene the display removes (no other content in the slot, the
- *   slot not locked, not our release) is asked for again no sooner than
- *   kRemovalWaitMs after the removal, or the ladder's step if longer. A
- *   fetch that fails within kNotReadyMs of a request made within
- *   kNotReadyWindowMs of the removal is the display not ready yet: asked
- *   again after kNotReadyRetryMs, up to kNotReadyRetries times, which
- *   covers the 7 s the KOMBI once took to accept the scene again; then
- *   the ladder.
+ *   slot not locked, not our release) is asked for again kRemovalWaitMs
+ *   after the removal while the ladder is below kRemovalLadderFrom (the
+ *   first removals since the ladder was reset); from that step, on the
+ *   ladder, no sooner than kRemovalWaitMs. A fetch that fails within
+ *   kNotReadyMs of a request made within kNotReadyWindowMs of the removal
+ *   is the display not ready yet (on the car it refuses every fetch, the
+ *   stock HMI's too, for 1-3 s after it removes a scene, once 7 s): asked
+ *   again after kNotReadyRetryMs, up to kNotReadyRetries times, then the
+ *   ladder. While it probes so, the display fetching anyone else's
+ *   content (Dcsm2 reports every content's fetch status) is the display
+ *   accepting fetches again: the probe goes at once (kFreshRetryMs after
+ *   the last request at the soonest).
  * - Warm scenes: a target's scene is published at its first request and
  *   stays published while the target is released, lost, refused or timed
  *   out; only the display's fetch and map cycle. A released target stages
@@ -302,11 +307,13 @@ public:
     static const int64_t kFreshSceneMs = 2000;
     static const int64_t kFreshRetryMs = 250;
     static const int kFreshRetries = 3;
-    static const int64_t kRemovalWaitMs = 2000;
-    static const int64_t kNotReadyMs = 300;
+    static const int64_t kRemovalWaitMs = 250;
+    static const int kRemovalLadderFrom = 2;
+    /* The fetch's reply alone took 330 ms on the loaded head unit. */
+    static const int64_t kNotReadyMs = 1000;
     static const int64_t kNotReadyWindowMs = 10000;
-    static const int64_t kNotReadyRetryMs = 1500;
-    static const int kNotReadyRetries = 4;
+    static const int64_t kNotReadyRetryMs = 500;
+    static const int kNotReadyRetries = 8;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
@@ -372,6 +379,9 @@ public:
     void on_refused(uint64_t scene_id, Refusal r, const std::string &why, int64_t now_ms);
     void on_lost(uint64_t scene_id, const std::string &why, int64_t now_ms);
     void on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms);
+    /* The display fetched content that is not ours: it accepts fetches
+     * again. A target probing after a removal asks at once. */
+    void on_display_fetched(int64_t now_ms);
 
     void tick(int64_t now_ms);
 
@@ -445,6 +455,7 @@ private:
          * again after kNotReadyRetryMs. */
         int64_t removed_ms = -1;
         int not_ready = 0;
+        bool probing = false;        /* waiting on a not-ready retry: the display fetching pulls it forward */
         /* Waiting on the ladder: the table has since reported the slot
          * disabled or held by other content. */
         bool slot_away = false;

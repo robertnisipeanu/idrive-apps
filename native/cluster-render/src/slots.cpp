@@ -471,7 +471,7 @@ void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason,
     st.reason = reason;
     st.retry_ms = retry_ms;
     if (s != TargetState::Waiting)
-        t_[i].fresh_retry = false;   /* only the fresh-retry wait may request early */
+        t_[i].fresh_retry = t_[i].probing = false;   /* only the fresh-retry wait may request early */
 }
 
 /* Out of the display's slot; the scene stays published. */
@@ -566,6 +566,7 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
     auto a = away_.find(specs_[i].slot);
     t.slot_away = a != away_.end() && a->second;
     t.lock_away = locked(i);
+    t.probing = false;
     set(i, TargetState::Waiting, h, reason, now_ms, retry);
 }
 
@@ -807,6 +808,7 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
                  specs_[i].name.c_str(), (long long)(now_ms - t.last_request_ms), (long long)(now_ms - t.removed_ms),
                  (long long)kNotReadyRetryMs, t.not_ready, kNotReadyRetries);
         take_down(i, now_ms);
+        t.fresh_retry = t.probing = true;
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
         return;
     }
@@ -933,10 +935,25 @@ void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &
         wait(i, h, false, reason, now_ms);
         return;
     }
+    if (by_display && t.ladder < kRemovalLadderFrom) {
+        /* The first removals: asked for again at once, the ladder climbing
+         * so a display that keeps dropping the scene meets it. */
+        wait(i, h, false, reason, now_ms);
+        t.ladder++;
+        t.status.retry_ms = lost_ms + kRemovalWaitMs;
+        return;
+    }
     const int ladder = t.ladder;
     wait(i, h, true, reason, now_ms, lost_ms, by_display ? kRemovalWaitMs : 0);
     if (locked(i))
         t.ladder = ladder;   /* the display's lock, not a contest for the slot */
+}
+
+void SlotManager::on_display_fetched(int64_t now_ms)
+{
+    for (Target &t : t_)
+        if (t.probing && t.status.state == TargetState::Waiting && t.status.retry_ms > now_ms)
+            t.status.retry_ms = now_ms;
 }
 
 void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)

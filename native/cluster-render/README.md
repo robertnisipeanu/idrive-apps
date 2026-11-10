@@ -185,11 +185,13 @@ cluster is offered, and what differs is in "iDrive 8".
 - **Refusals, failed fetches and no answer** (neither shown nor parked
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
-  (not locked, not our release) asks again on the ladder too, and no sooner
-  than 2 s after the removal. A fetch that fails within 300 ms of a request made within 10 s
-  of such a removal is the display not ready yet: asked again after 1.5 s,
-  four times, before the ladder (the KOMBI once took 7 s to accept the
-  scene again). Requests to a slot are
+  (not locked, not our release) asks again 250 ms after the removal; from
+  the third removal within 30 s shown, on the ladder (no sooner than 250
+  ms). A fetch that fails within 1 s of a request made within 10 s of such
+  a removal is the display not ready yet (on the car the KOMBI refuses
+  every fetch, the stock HMI's too, for 1-3 s after it removes a scene;
+  once 7 s): asked again after 500 ms, eight times, and at once when the
+  KOMBI fetches anyone else's content, before the ladder. Requests to a slot are
   at least 1 s apart, with one outstanding. A fetch failed within 2 s of the
   scene's publication (the renderer not having seen it yet) is asked again
   after 250 ms, three times, before the ladder.
@@ -427,8 +429,8 @@ cluster is offered, and what differs is in "iDrive 8".
   ours. The ladder counts from the loss either way.
 - **Recovery.** Dcsm2 going away takes every target down; the scenes stay
   published. When it comes back, the targets still wanted are asked for
-  again after 1 s. A scene the display removes is asked for again on the
-  ladder (2 s after the removal at the earliest), in the same scene, its layers continuing from what they hold. In
+  again after 1 s. A scene the display removes is asked for again 250 ms
+  after the removal (on the ladder from the third removal within 30 s), in the same scene, its layers continuing from what they hold. In
   a new scene each layer starts from what it last showed: the video's
   newest frame, written whole and exact as soon as the budget allows, its
   bytes charged to the budget as debt.
