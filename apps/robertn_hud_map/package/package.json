@@ -1,0 +1,36 @@
+{
+  "name": "robertn_hud_map",
+  "version": "0.6.26",
+  "description": "HUD map settings and feed: the car position and turn guidance for the HUD map (mindflow-hud)",
+  "main": "javascript/runner.js",
+  "mguLocalOnly": true,
+  "mguHmi": [
+    "ID7"
+  ],
+  "oapAppSettings": {
+    "maxDiskUsage": 8388608,
+    "cpuLimit": 20,
+    "memoryThresholdKB": 65536,
+    "priority": "PRIO_MEDIUM",
+    "visibility": "FOREGROUND",
+    "latencyClass": "FOREGROUND",
+    "loggingId": "MHUA",
+    "userLoginRequired": false,
+    "backgroundPriority": 150,
+    "someipManifest": "manifest.json"
+  },
+  "files": [
+    "config",
+    "rhmiData",
+    "package.json",
+    "npm-shrinkwrap.json",
+    "permissions.json",
+    "javascript",
+    "manifest.json",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=8.7.0"
+  },
+  "license": "GPL-3.0-or-later"
+}

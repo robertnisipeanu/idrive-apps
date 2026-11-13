@@ -1,0 +1,953 @@
+{
+  "schemaVersion": "1.3.0",
+  "containers": {
+    "1": {
+      "type": "state",
+      "name": "ST_MindflowHud",
+      "components": {
+        "10": {
+          "type": "title",
+          "name": "hud_title",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "SID_HUD_TITLE",
+                "type": "StringId"
+              }
+            }
+          ]
+        },
+        "20": {
+          "type": "label",
+          "name": "hud_status",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Waiting for HUD service",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "21": {
+          "type": "button",
+          "name": "hud_enabled",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Enable HUD",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "22": {
+          "type": "label",
+          "name": "hud_destination",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Destination unavailable",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "23": {
+          "type": "button",
+          "name": "hud_confirmDestination",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Confirm destination",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "24": {
+          "type": "label",
+          "name": "hud_routing",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Routing configuration",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "25": {
+          "type": "label",
+          "name": "hud_zoom",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Zoom",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "26": {
+          "type": "button",
+          "name": "hud_zoomOut",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Zoom out",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "27": {
+          "type": "button",
+          "name": "hud_zoomIn",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Zoom in",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "77": {
+          "type": "button",
+          "name": "hud_currentStreetVisible",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Current street box",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "70": {
+          "type": "button",
+          "name": "hud_streetVisible",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Street text",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "71": {
+          "type": "label",
+          "name": "hud_streetWidth",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Street box width",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "72": {
+          "type": "button",
+          "name": "hud_streetNarrower",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Decrease street box width",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "73": {
+          "type": "button",
+          "name": "hud_streetWider",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Increase street box width",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "74": {
+          "type": "label",
+          "name": "hud_streetHeight",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Street box height",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "75": {
+          "type": "button",
+          "name": "hud_streetShorter",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Decrease street box height",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "76": {
+          "type": "button",
+          "name": "hud_streetTaller",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Increase street box height",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "28": {
+          "type": "label",
+          "name": "hud_size",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Map size",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "29": {
+          "type": "button",
+          "name": "hud_smaller",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Smaller",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "30": {
+          "type": "button",
+          "name": "hud_larger",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Larger",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "31": {
+          "type": "label",
+          "name": "hud_position",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Position",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "32": {
+          "type": "button",
+          "name": "hud_left",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Move left",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "33": {
+          "type": "button",
+          "name": "hud_right",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Move right",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "34": {
+          "type": "button",
+          "name": "hud_up",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Move up",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "35": {
+          "type": "button",
+          "name": "hud_down",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Move down",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "36": {
+          "type": "button",
+          "name": "hud_centre",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Centre",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "37": {
+          "type": "label",
+          "name": "hud_distance",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Viewing distance",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "38": {
+          "type": "button",
+          "name": "hud_nearer",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Decrease distance",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "39": {
+          "type": "button",
+          "name": "hud_farther",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Increase distance",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "40": {
+          "type": "label",
+          "name": "hud_horizon",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Horizon",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "41": {
+          "type": "button",
+          "name": "hud_horizonUp",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Raise horizon",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "42": {
+          "type": "button",
+          "name": "hud_horizonDown",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Lower horizon",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "43": {
+          "type": "label",
+          "name": "hud_opacity",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Road opacity",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "44": {
+          "type": "button",
+          "name": "hud_fainter",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Fainter roads",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "45": {
+          "type": "button",
+          "name": "hud_brighter",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Brighter roads",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "46": {
+          "type": "button",
+          "name": "hud_cameras",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Camera warnings",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "47": {
+          "type": "button",
+          "name": "hud_reset",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Reset display settings",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "60": {
+          "type": "label",
+          "name": "hud_mapWidth",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Map width: 100%",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "61": {
+          "type": "button",
+          "name": "hud_narrower",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Decrease map width",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "62": {
+          "type": "button",
+          "name": "hud_wider",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Increase map width",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "63": {
+          "type": "label",
+          "name": "hud_mapHeight",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Map height: 100%",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "64": {
+          "type": "button",
+          "name": "hud_shorter",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Decrease map height",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "65": {
+          "type": "button",
+          "name": "hud_taller",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Increase map height",
+                "type": "Text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

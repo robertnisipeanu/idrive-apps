@@ -1,3 +1,6 @@
 # A pull request adds its lines under "## Unreleased"; two of them merge
 # with both sets of lines kept.
 CHANGELOG.md merge=union
+
+# Preserve the bundled upstream runtime byte-for-byte.
+native/mindflow-hud/adapter-runtime/** -text -whitespace

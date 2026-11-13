@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze pe bord",
     "description": "Aduce harta Waze din CarPlay pe bordul digital: activați patch-ul din interfața mașinii, iar harta urmează CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Hartă pe HUD",
+    "description": "O hartă rutieră curată în jurul mașinii pe afișajul head-up, desenată prin rendererul bordului (prototip)"
+  },
+  "robertn_hud_map": {
+    "title": "Hartă pe HUD",
+    "description": "Setările hărții pe HUD, precum și poziția mașinii și indicațiile de viraj pe care le citește din navigația BMW (prototip)"
   }
 }

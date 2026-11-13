@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze in instrumentpaneel",
     "description": "Zet de CarPlay-Waze-kaart op het instrumentpaneel: schakel de patch in via de HMI en de kaart volgt CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "HUD-kaart",
+    "description": "Een overzichtelijke wegenkaart rond de auto op het head-updisplay, getekend via de renderer van het instrumentenpaneel (prototype)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-kaart",
+    "description": "Instellingen van de HUD-kaart, en de positie van de auto en afslagaanwijzingen die zij uit de BMW-navigatie leest (prototype)"
   }
 }

@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze i instrumentpanelet",
     "description": "Viser CarPlay-Waze-kortet på instrumentpanelet: aktivér patchen fra HMI'en, og kortet følger CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "HUD-kort",
+    "description": "Et rent vejkort omkring bilen på head-up-displayet, tegnet via instrumentbrættets renderer (prototype)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-kort",
+    "description": "Indstillinger for HUD-kortet samt bilens position og svingvejledning, som det læser fra BMW-navigationen (prototype)"
   }
 }

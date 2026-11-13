@@ -1,0 +1,30 @@
+'use strict';
+const assert=require('assert'),fs=require('fs'),path=require('path');
+const root=path.resolve(__dirname,'..'),S=require(root+'/settings'),scene=require(root+'/scene'),labels=require(root+'/labels'),kernel=require(root+'/kernel');
+const page=require(path.join(root,'../../apps/robertn_hud_map/src/page'));
+const base=S.validate({size:75,x:20,y:10}),anchor=base.horizon+40770/base.distance;
+assert.equal(base.mapWidth,100);assert.equal(base.mapHeight,100);
+for(const width of [25,50,100,200])for(const height of [25,50,100,200]){
+ const cfg=Object.assign({},base,{mapWidth:width,mapHeight:height});
+ assert.deepStrictEqual(S.mapPoint([400,anchor],cfg),[400,anchor]);
+ const left=S.mapPoint([300,anchor-100],cfg),right=S.mapPoint([500,anchor-100],cfg);
+ assert.equal(400-left[0],right[0]-400);assert.equal(right[0]-400,width);
+ assert(Math.abs(left[1]-(anchor-height))<1e-8);
+ assert.equal(S.mapPoint([400,anchor+20],cfg)[1],anchor+20);
+ const q=scene.project([0,100],[0,0,0],cfg),old=scene.project([0,100],[0,0,0],base);
+ assert.equal(q.x,400);assert(Math.abs(q.y-(anchor+(old.y-anchor)*height/100))<1e-8);
+ const font=JSON.parse(fs.readFileSync(root+'/font.json'));
+ const a=labels.build([], [0,0,0],font,null,null,base,null),b=labels.build([], [0,0,0],font,null,null,cfg,null);
+ assert.deepStrictEqual(b.positions,a.positions,'arrow geometry stays unchanged');
+}
+assert.equal(page.change('wider',S.validate({mapWidth:200})).values.mapWidth,200);
+assert.equal(page.change('shorter',S.validate({mapHeight:25})).values.mapHeight,25);assert.equal(page.change('narrower',S.validate({mapWidth:30})).values.mapWidth,25);assert.throws(()=>S.validate({mapWidth:20}));
+assert.equal(page.change('taller',base,null,'turn').values.mapHeight,105);
+assert.equal(page.change('larger',base,null,'turn').values.turnSize,110);
+assert.equal(page.texts({settings:base},null,null).mapWidth,'Map width: 100%');
+assert(S.worldVS(kernel.vs).includes('gl_Position.x*=u_map.x'));
+assert(S.worldVS(kernel.vs).includes('max(gl_Position.y-anchor,0.)*u_map.y'));
+const ui=JSON.parse(fs.readFileSync(path.join(root,'../../apps/robertn_hud_map/package/rhmiData/uiDescriptions/ID7/uiDescription.json')));
+const names=Object.values(ui.containers['1'].components).map(c=>c.name);page.rows.forEach(r=>assert(names.includes('hud_'+r[0])));
+assert.deepStrictEqual(require(path.join(root,'../../apps/robertn_hud_map/src/settings')).defaults,S.defaults);
+console.log('PASS independent map dimensions, fixed arrow, upward-only height, bounds, migration and UI mapping');

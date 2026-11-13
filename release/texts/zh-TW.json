@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze 儀表板顯示",
     "description": "將 CarPlay 的 Waze 地圖顯示在儀表板上：從 HMI 啟用修補，地圖即會跟隨 CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "HUD 地圖",
+    "description": "在抬頭顯示器上透過儀表渲染器繪製車輛周圍簡潔的道路地圖（原型）"
+  },
+  "robertn_hud_map": {
+    "title": "HUD 地圖",
+    "description": "HUD 地圖的設定，以及它從 BMW 導航讀取的車輛位置與轉向指引（原型）"
   }
 }

@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze i kombiinstrumentet",
     "description": "Visar CarPlay-Waze-kartan i kombiinstrumentet: aktivera patchen från HMI:n så följer kartan CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "HUD-karta",
+    "description": "En ren vägkarta runt bilen på head-up-displayen, ritad via instrumentpanelens renderare (prototyp)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD-karta",
+    "description": "Inställningar för HUD-kartan samt bilens position och svängvägledning som den läser från BMW-navigeringen (prototyp)"
   }
 }

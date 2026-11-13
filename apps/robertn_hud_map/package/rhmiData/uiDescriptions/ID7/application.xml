@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<application><container id="1" type="state" widget="LT_State_Wide"><layoutGroup id="100" name="Titlebar"><component id="10" type="title"><property id="2" value="1"/></component></layoutGroup><layoutGroup id="200" name="List"><property id="3" value="1"/>
+<component id="20" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="21" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="22" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="23" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="24" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="25" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="26" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="27" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="60" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="61" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="62" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="63" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="64" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="65" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="77" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="70" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="71" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="72" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="73" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="74" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="75" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="76" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="28" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="29" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="30" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="31" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="32" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="33" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="34" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="35" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="36" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="37" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="38" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="39" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="40" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="41" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="42" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="43" type="label" widget="LT_Label_1Row"><property id="2" value="1"/><property id="3" value="0"/></component>
+<component id="44" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="45" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="46" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+<component id="47" type="button" widget="LT_Button_1Row"><property id="2" value="1"/><property id="3" value="3"/></component>
+</layoutGroup></container></application>

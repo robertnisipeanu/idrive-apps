@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze en el cuadro",
     "description": "Muestra el mapa de Waze de CarPlay en el cuadro de instrumentos: activa el parche desde el HMI y el mapa sigue a CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa en el HUD",
+    "description": "Un mapa de calles limpio alrededor del coche en el head-up display, dibujado con el renderizador del cuadro de instrumentos (prototipo)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa en el HUD",
+    "description": "Ajustes del mapa en el HUD, y la posición del coche y las indicaciones de giro que lee de la navegación BMW (prototipo)"
   }
 }

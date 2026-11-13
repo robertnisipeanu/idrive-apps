@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze göstergede",
     "description": "CarPlay Waze haritasını gösterge paneline getirir: yamayı aracın ekranından etkinleştirin, harita CarPlay'i izler"
+  },
+  "mindflow-hud": {
+    "title": "HUD haritası",
+    "description": "Head-up ekranda aracın çevresinin sade bir yol haritası, gösterge paneli işleyicisiyle çizilir (prototip)"
+  },
+  "robertn_hud_map": {
+    "title": "HUD haritası",
+    "description": "HUD haritasının ayarları ile BMW navigasyonundan okuduğu araç konumu ve dönüş talimatları (prototip)"
   }
 }

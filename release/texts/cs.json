@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze na přístrojovém štítu",
     "description": "Přenese mapu Waze z CarPlay na přístrojový štít: zapněte opravu v HMI a mapa sleduje CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa na HUD",
+    "description": "Čistá silniční mapa okolí vozu na head-up displeji, vykreslená přes renderer přístrojového štítu (prototyp)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa na HUD",
+    "description": "Nastavení mapy na HUD a poloha vozu a navigační pokyny, které čte z navigace BMW (prototyp)"
   }
 }

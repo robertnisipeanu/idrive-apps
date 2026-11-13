@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "1.3.0",
+  "application": {
+    "uuid": "51371ab1-ef93-50e1-81f0-0ac4e2598567",
+    "type": "OnlineApp",
+    "name": "robertn_hud_map",
+    "vendor": "Mindflow",
+    "version": "0.6.26",
+    "defaultLanguage": "en_GB",
+    "uiDescriptions": [
+      {
+        "applicationFilePath": "./uiDescriptions/ID7/application.xml",
+        "uiDescriptionFilePath": "./uiDescriptions/ID7/uiDescription.json",
+        "hmi": [
+          "ID7"
+        ]
+      }
+    ],
+    "stringBundleUuid": "a2d1e773-0309-5709-a449-63268cdfe5e1",
+    "resourceBundleUuid": "a5af3a3c-6391-585b-ad4f-e79f67f355c1",
+    "variantGroups": [
+      {
+        "stringsPath": "./variantGroups/Common/texts",
+        "resourcesPath": "./variantGroups/Common/images",
+        "hmi": [
+          "ID7"
+        ],
+        "brands": [
+          "BMW"
+        ]
+      }
+    ],
+    "entryPoints": [
+      {
+        "name": "robertn_hud_map",
+        "uuid": "e67f65c4-bb71-504b-813b-e2dbd7c203d3",
+        "textId": "SID_HUD_TITLE",
+        "icon": "hud_icon.png",
+        "insertionStateId": 20974,
+        "insertionFocusId": 2,
+        "insertionMode": "INSERT_BELOW",
+        "insertionOrder": 0,
+        "insertionPriority": 0,
+        "previewType": "NONE",
+        "bookmarkable": true,
+        "private": null,
+        "appearance": "DEFAULT",
+        "isGroupHeader": false,
+        "insertionGroup": 0
+      }
+    ]
+  }
+}

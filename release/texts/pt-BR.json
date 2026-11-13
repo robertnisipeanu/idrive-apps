@@ -10,5 +10,13 @@
   "robertn_waze_cluster": {
     "title": "Waze no painel",
     "description": "Coloca o mapa do Waze do CarPlay no painel de instrumentos: ative o patch pelo HMI e o mapa acompanha o CarPlay"
+  },
+  "mindflow-hud": {
+    "title": "Mapa no HUD",
+    "description": "Um mapa de ruas limpo ao redor do carro no head-up display, desenhado pelo renderizador do painel (protótipo)"
+  },
+  "robertn_hud_map": {
+    "title": "Mapa no HUD",
+    "description": "Configurações do mapa no HUD, e a posição do carro e as indicações de curva que ele lê da navegação BMW (protótipo)"
   }
 }

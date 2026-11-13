@@ -1,0 +1,347 @@
+{
+  "id": "mindflow-hud",
+  "kind": "tool",
+  "version": "0.6.26",
+  "license": "GPL-3.0-or-later",
+  "title": "HUD map",
+  "description": "A clean road map around the car on the head-up display (Mapbox roads, the car position from BMW positioning, speed camera points), drawn through cluster-render; the HUD map app (robertn_hud_map) is its settings page and feeds it the car position and turn guidance. Prototype.",
+  "requires": {
+    "mgu-deploy": "0.7.14",
+    "cluster-render": "0.4.0"
+  },
+  "uninstallable": true,
+  "mguHmi": [
+    "ID7"
+  ],
+  "internet": true,
+  "uids": [
+    5000
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "from": "LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "VELA-LICENSE.txt",
+      "from": "VELA-LICENSE.txt",
+      "mode": "0644"
+    },
+    {
+      "path": "camera_regions.js",
+      "from": "camera_regions.js",
+      "mode": "0644"
+    },
+    {
+      "path": "cameras.js",
+      "from": "cameras.js",
+      "mode": "0644"
+    },
+    {
+      "path": "cluster_render_client.js",
+      "from": "cluster_render_client.js",
+      "mode": "0644"
+    },
+    {
+      "path": "destination_capture.js",
+      "from": "destination_capture.js",
+      "mode": "0644"
+    },
+    {
+      "path": "font.json",
+      "from": "font.json",
+      "mode": "0644"
+    },
+    {
+      "path": "font.r8",
+      "from": "font.r8",
+      "mode": "0644"
+    },
+    {
+      "path": "geocode.js",
+      "from": "geocode.js",
+      "mode": "0644"
+    },
+    {
+      "path": "guidance.js",
+      "from": "guidance.js",
+      "mode": "0644"
+    },
+    {
+      "path": "kernel.js",
+      "from": "kernel.js",
+      "mode": "0644"
+    },
+    {
+      "path": "labels.js",
+      "from": "labels.js",
+      "mode": "0644"
+    },
+    {
+      "path": "map_feed.js",
+      "from": "map_feed.js",
+      "mode": "0644"
+    },
+    {
+      "path": "mapbox.json",
+      "from": "mapbox.json",
+      "mode": "0644"
+    },
+    {
+      "path": "net_broker.js",
+      "from": "net_broker.js",
+      "mode": "0644"
+    },
+    {
+      "path": "net_route.js",
+      "from": "net_route.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/point-geometry/LICENSE",
+      "from": "vendor/@mapbox/point-geometry/LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/point-geometry/index.js",
+      "from": "vendor/@mapbox/point-geometry/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/point-geometry/package.json",
+      "from": "vendor/@mapbox/point-geometry/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/LICENSE.txt",
+      "from": "vendor/@mapbox/vector-tile/LICENSE.txt",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/index.js",
+      "from": "vendor/@mapbox/vector-tile/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/lib/vectortile.js",
+      "from": "vendor/@mapbox/vector-tile/lib/vectortile.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/lib/vectortilefeature.js",
+      "from": "vendor/@mapbox/vector-tile/lib/vectortilefeature.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/lib/vectortilelayer.js",
+      "from": "vendor/@mapbox/vector-tile/lib/vectortilelayer.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/package.json",
+      "from": "vendor/@mapbox/vector-tile/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/@mapbox/vector-tile/proto/vector_tile.proto",
+      "from": "vendor/@mapbox/vector-tile/proto/vector_tile.proto",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/ieee754/LICENSE",
+      "from": "vendor/ieee754/LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/ieee754/index.js",
+      "from": "vendor/ieee754/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/ieee754/package.json",
+      "from": "vendor/ieee754/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/pbf/LICENSE",
+      "from": "vendor/pbf/LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/pbf/compile.js",
+      "from": "vendor/pbf/compile.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/pbf/index.js",
+      "from": "vendor/pbf/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/pbf/package.json",
+      "from": "vendor/pbf/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/LICENSE",
+      "from": "vendor/protocol-buffers-schema/LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/index.js",
+      "from": "vendor/protocol-buffers-schema/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/package.json",
+      "from": "vendor/protocol-buffers-schema/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/parse.js",
+      "from": "vendor/protocol-buffers-schema/parse.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/stringify.js",
+      "from": "vendor/protocol-buffers-schema/stringify.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/protocol-buffers-schema/tokenize.js",
+      "from": "vendor/protocol-buffers-schema/tokenize.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/resolve-protobuf-schema/LICENSE",
+      "from": "vendor/resolve-protobuf-schema/LICENSE",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/resolve-protobuf-schema/index.js",
+      "from": "vendor/resolve-protobuf-schema/index.js",
+      "mode": "0644"
+    },
+    {
+      "path": "node_modules/resolve-protobuf-schema/package.json",
+      "from": "vendor/resolve-protobuf-schema/package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "package.json",
+      "from": "package.json",
+      "mode": "0644"
+    },
+    {
+      "path": "roads.js",
+      "from": "roads.js",
+      "mode": "0644"
+    },
+    {
+      "path": "route_full.js",
+      "from": "route_full.js",
+      "mode": "0644"
+    },
+    {
+      "path": "route_match.js",
+      "from": "route_match.js",
+      "mode": "0644"
+    },
+    {
+      "path": "route_predict.js",
+      "from": "route_predict.js",
+      "mode": "0644"
+    },
+    {
+      "path": "routes.js",
+      "from": "routes.js",
+      "mode": "0644"
+    },
+    {
+      "path": "runtime.js",
+      "from": "runtime.js",
+      "mode": "0644"
+    },
+    {
+      "path": "scene.js",
+      "from": "scene.js",
+      "mode": "0644"
+    },
+    {
+      "path": "service.js",
+      "from": "service.js",
+      "mode": "0644"
+    },
+    {
+      "path": "settings.js",
+      "from": "settings.js",
+      "mode": "0644"
+    },
+    {
+      "path": "store_supervisor.js",
+      "from": "store_supervisor.js",
+      "mode": "0644"
+    },
+    {
+      "path": "vela_routes.js",
+      "from": "vela_routes.js",
+      "mode": "0644"
+    },
+    {
+      "path": "vela_template.json",
+      "from": "vela_template.json",
+      "mode": "0644"
+    },
+    {
+      "path": "route_local.js",
+      "from": "route_local.js",
+      "mode": "0644"
+    },
+    {
+      "path": "destination-reader",
+      "from": "destination-reader",
+      "mode": "0755"
+    },
+    {
+      "path": "destination_reader.c",
+      "from": "destination_reader.c",
+      "mode": "0644"
+    },
+    {
+      "path": "build-destination-reader.sh",
+      "from": "build-destination-reader.sh",
+      "mode": "0755"
+    },
+    {
+      "path": "DESTINATION-READER.md",
+      "from": "DESTINATION-READER.md",
+      "mode": "0644"
+    },
+    {
+      "path": "reader-licenses/OPENSSL-LICENSE.txt",
+      "from": "reader-licenses/OPENSSL-LICENSE.txt",
+      "mode": "0644"
+    },
+    {
+      "path": "reader-licenses/LIBC-LICENSE.txt",
+      "from": "reader-licenses/LIBC-LICENSE.txt",
+      "mode": "0644"
+    }
+  ],
+  "units": [
+    {
+      "name": "mindflow-hud.service",
+      "from": "systemd/mindflow-hud.service"
+    }
+  ],
+  "enable": [
+    {
+      "unit": "mindflow-hud.service",
+      "target": "multi-user.target"
+    }
+  ],
+  "restart": [
+    "mindflow-hud.service"
+  ]
+}
