@@ -610,6 +610,17 @@ Beside the layers:
   its text, and applied whole to the scene loaded again. A file replaced
   goes in place, the slot kept. The files' bytes are charged to the upload
   budget when the scene is published and taken again.
+  - **Layers over it** (`layers` 1, PROTOCOL.md "Layers over a scene
+    file"): the target's layers are drawn in the file's own scene, in
+    passes of the service's after the file's (or from `layers_order`, so
+    passes of the file ordered above them stay on top), and its edits flush
+    with them. RAMSES 19 only (`FileScene::layers`); elsewhere they wait.
+  - **Hosting** (`host`, PROTOCOL.md "Hosting another target"): such a
+    scene may say that another target's content is shown inside it, at a
+    rect and as a part of that target; every client is told, and a
+    producer that follows it draws there, and only there, with only that
+    part. The service moves nothing itself: a producer that does not know
+    the event is unaffected.
 
 Each target's assets and layers are staged, assets first and then layers
 top first, and flushed once a tick, so a tick's changes reach the display
@@ -1175,9 +1186,21 @@ The host tests:
   with every kept edit; dropped, the layers back; a file of another scene
   id in error; edit lines refused or changing nothing reported; another
   file in place, the slot kept; its client gone, shown through the linger
-  and released;
+  and released; a scene with layers: the layers drawn over the file past
+  its passes, its edits flushed with them, also while a video's refused
+  write holds the target; a host of the map told to every client, refused
+  (and ended) outside either target, not sent by the client for the
+  scene's own target or without layers, a producer's video moved into the
+  host's rect over the file with the map's slot released, hidden, back
+  with the scene, its edits and its host after a service restart; a host
+  the service refused, or one a `layers` 0 replacement ended, not sent again
+  after a restart; ended by a file that fails to load (gone from the
+  status), by `layers` 0 and by the scene's drop; a backend drawing nothing
+  over files leaving the layers waiting and refusing hosts, nobody told;
 - `js/test/client_test.js`: the Node client against `host_service`,
-  assets, a mesh layer and a scene file included.
+  assets, a mesh layer and a scene file included, and a scene with layers
+  hosting the map: the part sent as the C++ client sends it, a refused host
+  forgotten, shown, hidden, replaced (its hosts forgotten) and dropped.
 
 ### Verified, and open
 
@@ -1210,8 +1233,10 @@ Verified off the car:
     panel's scene with every edit kind read back from the library, its
     needle turned at 30 edits a second, unpublished for the HUD's shared
     scene id and loaded again with every kept edit, replaced in place by a
-    second file with the slot kept, dropped with the resources its loads
-    made; a file of another scene id refused.
+    second file with the slot kept, layers over it (a video and an effect
+    in passes from render order 2, past the file's two, its edits flushed
+    with them, gone again with the file kept), dropped with the resources
+    its loads made; a file of another scene id refused.
 - **The target binary** links against the unit's libraries within its
   glibc 2.27 and libstdc++ limits.
 

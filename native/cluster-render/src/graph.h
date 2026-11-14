@@ -235,6 +235,17 @@ public:
     /* The data object called name: 1 to 4 values, as its type takes. */
     virtual bool data(const std::string &name, const std::vector<float> &v, std::string *why) = 0;
     virtual bool flush(uint64_t tag) = 0;
+    /* A Graph that draws in this scene, over the file (PROTOCOL.md "Layers
+     * over a scene file"): a camera and passes of its own, which never clear,
+     * at render orders from *order up, one a pass; null order: from one past
+     * the file's highest. Its flush() flushes this scene, edits included. It
+     * borrows the scene: it goes after this FileScene, never before. Null
+     * with *err where the backend draws nothing over a file. */
+    virtual std::unique_ptr<Graph> layers(const int32_t *, std::string *err)
+    {
+        *err = "this display draws no layers over scene files";
+        return nullptr;
+    }
 };
 
 /* The participant: effects (shared by every scene) and the scenes. */

@@ -43,8 +43,9 @@ lacks.
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
 | `stop` | `ref`, `anim` |
-| `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend` ([below](#scene-files)); sent again with its ref, another file in place |
+| `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order` ([below](#scene-files)); sent again with its ref, another file in place |
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
+| `host` | `ref` (a scene with `layers` 1), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown` ([below](#hosting-another-target)) |
 | `drop` | `ref`: a layer, a scene, or an asset no layer samples (else refused: `asset in use`) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
@@ -308,6 +309,8 @@ changed live by edits ([below](#scene-edits)).
 | `res` | its resource files, absolute paths separated by spaces (at most 16; none: empty) |
 | `sha256` | the SHA-256 of `file`, then of each file of `res` in its order: hex, separated by spaces |
 | `contend` | as a layer's |
+| `layers` | 0 (default): the target's layers wait while the file is there; 1: they are drawn over it ([below](#layers-over-a-scene-file)) |
+| `layers_order` | with `layers` 1: the render order the layers' passes start at; left out: one past the file's highest |
 
 The service runs as `hmi_5000` and any client may name a file, and a
 malformed file can take the RAMSES client down with the service, so it takes
@@ -325,7 +328,8 @@ the scene id it was saved with, which must be the target's
 
 A target has at most one scene (another is refused: `the target has a
 scene file already`). While it is there and has not failed to load, the
-target is wanted, as by a layer that wants it, and every layer on it is
+target is wanted, as by a layer that wants it, and, unless the scene has
+`layers` 1, every layer on it is
 `waiting` with `reason` `scene <ref>` (the client's own scene) or
 `scene of <app>`, as below an exclusive layer. The scene's `layer` events:
 `waiting` (the target not shown yet: its state and reason, the `target`
@@ -341,7 +345,7 @@ again with its new scene.
 
 `scene` sent again with the scene's ref (its target unchanged) loads the
 new file in place: the scene is unpublished and published again with the
-same id while the target keeps its slot, and its kept edits go. A `layer`
+same id while the target keeps its slot, and its kept edits (and hosts) go. A `layer`
 event follows even when the state is the same.
 
 ### Scene edits
@@ -376,6 +380,54 @@ why. A line that changes nothing (no object matches, no mesh has the
 uniform, not a regular expression) is reported the same way, once per
 loaded scene.
 
+### Layers over a scene file
+
+A scene with `layers` 1 has the layers on its target, every client's, drawn
+over the file: in the file's own scene, with a camera and render passes of
+the service's that never clear, from render order `layers_order` up, one
+order a pass (the quads between two mesh layers share one; each mesh layer
+takes one), or from one past the file's highest pass without it. A pass of
+the file ordered above all of them is drawn over the layers: the file's
+owner can keep frame lines, an edge that fades into the file's artwork, or
+a shape cut out of it on top of what the layers draw. The layers are
+arranged, faded, written and flushed as on any target, the scene's edits
+in the same flush, within the same budget; the file's resources are charged
+as without layers. The edits never wait for the layers: while a layer holds
+the target's flushes (a buffer left half written, an uncover the budget
+defers), the flush goes for the edits all the same and the layers' writes
+count as not gone (a video writes whole next), so what a layer wrote may
+show half done meanwhile. `scene` sent again with `layers` 0 publishes the
+file again without them, and they wait. A display that draws nothing over
+files (iDrive 8) leaves the layers waiting, the file shown, and logs why.
+
+### Hosting another target
+
+A scene with `layers` 1 may show another target's content: `host` tells
+every client that `target` is hosted in the scene's target, at `x`, `y`,
+`w`, `h` there (inside it), and which part of `target` it shows: `src_x`,
+`src_y`, `src_w`, `src_h` in `target`'s pixels (inside it; all four or none:
+none is all of it), stretched over the rect; `shown` 0 shows it nowhere.
+The service only keeps this and tells the clients (the `host` event); it
+moves nothing. A producer of `target` that follows it puts its layer in the
+scene's target where that part of its own drawing lands in the rect, with
+only that part of its picture, and nothing on `target`, so `target`'s slot
+is let go; with `shown` 0 it has no layer at all. A producer that does not
+know the event keeps drawing on `target` as before. The event says a target
+is hosted only while the scene can draw it: its file published as the
+target's scene with the layers over it; at other times (not published yet,
+published again, a display that draws no layers over files) it says the
+target is not hosted, so a producer stays where it can be seen. `host` sent
+again with the same `target` replaces it. A target is hosted by one scene at
+most (another's is refused: `target T is hosted by another scene`), never
+by a scene on itself. A `host` refused (the `error` event names its
+`target`) ends that scene's host of that target, if it had one. Hosting ends
+when the scene goes (`drop`, its client gone), is sent again (another file,
+or `layers` 0: its hosts go with its edits), fails to load, or the display
+draws no layers over it. The client libraries keep a scene's `host`
+messages and send them again after a reconnect, except one the service
+refused or one whose scene was sent again since, and send none for a scene
+without `layers` or for the scene's own target.
+
 ## Service to client
 
 Every JSON message has `ev`.
@@ -386,12 +438,14 @@ Every JSON message has `ev`.
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
-| `error` | `op`, `ref`, `reason`; `line` for an edit line | a message was refused, or an edit line changed nothing |
+| `error` | `op`, `ref`, `reason`; `line` for an edit line; `target` for a `host` | a message was refused, or an edit line changed nothing |
 | `status` | `text` | after a status request; among its lines, one for each slot the KOMBI's latest reports name: `slot 0x203 status 2: 0x1000400 class 0 map 1, ...` (each row's content, class and map status) |
+| `host` | `target`, `into` (the hosting scene's target; empty: `target` is not hosted any more), `shown`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h` | after the client's hello for each hosted target, and to every client when a host comes, changes or ends ([above](#hosting-another-target)) |
 
 Layer states (a scene's too, [above](#scene-files)): `shown`; `waiting`
 (its target is not shown yet or is taken, an asset it samples is not
-written yet, or a scene file is on its target; `reason` says which);
+written yet, or a scene file without `layers` 1 is on its target; `reason`
+says which);
 `suspended` (below an exclusive layer); `stalled` (no content yet: no frame,
 no part with geometry, an asset it samples without pixels; or a video's
 frames stopped); `hidden`; `error` (the renderer refused it). Target states:
