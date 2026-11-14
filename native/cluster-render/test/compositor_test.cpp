@@ -117,7 +117,6 @@ struct Rig {
         if (own_panel) {
             p.scene_id = 0x010004f8;
             p.fallback_scene_id = 0x01000400;
-            p.strike_limit = 2;
         }
         TargetSpec h;
         h.name = "hud"; h.slot = 0x323; h.scene_id = 0x01000400; h.width = 800; h.height = 480; h.linger_ms = 2000;

@@ -9,8 +9,9 @@
  * taken for any name of lowercase letters and digits and the generation-8
  * per-target fields (category, content, scene_id, size, linger_ms,
  * description, order, preview, background_id, layouts, focus), unset ones
- * empty. Every other unknown key is still refused, so a misspelt field is
- * an error, not a setting nobody reads.
+ * empty. guard_path, which nothing reads, is taken and ignored. Every other
+ * unknown key is still refused, so a misspelt field is an error, not a
+ * setting nobody reads.
  *
  * A drop-in is read only when it is a regular file (no symlink) owned by
  * the owner (root on the unit) and writable by it alone, and it only adds:

@@ -201,8 +201,8 @@ and replaces `hide_bmw_guidance` (1) of the settings. The service makes the
 folder, owned by `hmi_5000`, at each start. A value other than 0 or 1, or a
 state file that does not read, hides the box, with a warning in the log.
 The status event carries the choice as `hide_bmw_guidance`, and
-`guide_disabled` 1 while cluster-render's mapping guard keeps the hold off
-(cluster-render README "Mapping guard"): the box then shows whatever the
+`guide_disabled` 1 while cluster-render reports the hold disabled
+(`guide_disabled` in its `target` event): the box then shows whatever the
 choice. With a
 cluster-render before 0.3.7, which has no `guide_hold`, the switch changes
 nothing.
@@ -381,12 +381,11 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   and comes back 1.5 s after they go, never for route guidance, and never
   takes the HUD from BMW's own content. With `hud_keep_shown` 1 (the app's
   **Keep HUD map over BMW's pop-ups**) it stays shown over them.
-- **Disabled after errors.** cluster-render's mapping guard turns the HUD
-  off after two cluster restarts within 10 s of its mapping; the status
-  says `hud_state` `disabled`, the app shows `HUD map: Disabled after
-  errors`, and its frames are no longer copied or scaled. The cluster's map
-  is not affected. Choosing Cluster and then the HUD again does not undo it; as
-  root, `cluster-render guard-reset` does.
+- **Disabled after errors.** While cluster-render reports the HUD disabled
+  (`disabled` in its `target` event), the status says `hud_state`
+  `disabled`, the app shows `HUD map: Disabled after errors`, and its
+  frames are no longer copied or scaled. The cluster's map is not
+  affected.
 - The settings (`cluster`, `hud`, `hud_width_pct`, `hud_offset_x`,
   `hud_offset_y`, `hud_keep_shown`) are saved by `patchd` in
   `/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this

@@ -249,10 +249,12 @@ void define_keys(cld::Config *cfg)
     cfg->define("id8_popup_background_id", "43400005");
     cfg->define("id8_popup_layouts", "");
     cfg->define("id8_popup_focus", "1");
-    /* Any other iDrive 8 target's keys (settings.h). */
+    /* Any other iDrive 8 target's keys (settings.h), and guard_path, which
+     * nothing reads: a local_conf that still sets it loads (service_config
+     * warns). */
     cfg->extra_keys = [](const std::string &key) {
         std::string name;
-        return id8_target_key(key, &name);
+        return key == "guard_path" || id8_target_key(key, &name);
     };
     cfg->define("drop_ins", "/var/opt/cluster-render/conf.d/*.conf /var/opt/*/current/cluster-render.d/*.conf");
     cfg->define("fade_ms", "250");
@@ -262,7 +264,6 @@ void define_keys(cld::Config *cfg)
     cfg->define("upload_burst_ms", "250");
     cfg->define("slow_flush_ms", "150");
     cfg->define("status_path", "/run/cluster-render/status.txt");
-    cfg->define("guard_path", "/var/opt/cluster-render/state/guard.txt");
     cfg->define("log_file", "/var/opt/cluster-render/log/cluster-render.log");
     cfg->define("log_file_kb", "512");
     /* The shared Config's defaults are cluster-demo's (src/config.cpp). */
