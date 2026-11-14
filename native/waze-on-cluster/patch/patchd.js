@@ -45,19 +45,21 @@
  *                  {"cmd":"hud-size","hud_width_pct":0|20..100}   (over 85 saved as 85)
  *                  {"cmd":"hud-pos","hud_x":-800..800,"hud_y":-800..800}
  *                  {"cmd":"hud-keep-shown","on":0|1}
+ *                  {"cmd":"hud-hide-sport","on":0|1}
  *                                   the map on the cluster on or off, on the HUD on
  *                                   or off, the HUD's size
  *                                   (0: the default box), where it is moved from
- *                                   the centre (HUD pixels) and whether it stays
- *                                   shown over BMW's pop-ups, saved for the render's
+ *                                   the centre (HUD pixels), whether it stays
+ *                                   shown over BMW's pop-ups and whether it is
+ *                                   hidden in a Sport mode, saved for the render's
  *                                   next start as "cluster", "hud", "hud_width_pct",
- *                                   "hud_offset_x", "hud_offset_y" and
- *                                   "hud_keep_shown" in MAP_STATE
+ *                                   "hud_offset_x", "hud_offset_y",
+ *                                   "hud_keep_shown" and "hud_hide_sport" in MAP_STATE
  *                                   (the app changes the running render itself).
  *                                   Changes are written together MAP_SAVE_MS
  *                                   after the last one; the reply (cluster-reply,
  *                                   hud-reply, hud-size-reply, hud-pos-reply,
- *                                   hud-keep-shown-reply)
+ *                                   hud-keep-shown-reply, hud-hide-sport-reply)
  *                                   follows the write and carries ok, the values
  *                                   saved and reason.
  *                  {"cmd":"profile","id":"<id>"|null}
@@ -231,12 +233,15 @@ var REBOOT_CMD_TIMEOUT_MS = 30000;
 var REBOOT_WAIT_MS = parseInt(process.env.WOC_REBOOT_WAIT_MS, 10) || 180000;
 /* The unit's own render settings, which updates keep. */
 var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on-cluster.local.conf';
-/* Where the map shows and the HUD map's size, place and whether it stays
- * shown over BMW's pop-ups, as the app chose them: the render reads this file (its map_state_file) over its
+/* Where the map shows and the HUD map's size, place, whether it stays
+ * shown over BMW's pop-ups and whether it is hidden in a Sport mode, as the
+ * app chose them: the render reads this file (its map_state_file) over its
  * configuration. Not in LOCAL_CONF, which waze-on-cluster 0.8 refuses to
  * start with any of MAP_KEYS in. */
 var MAP_STATE = path.join(STATE_DIR, 'map.state.conf');
-var MAP_KEYS = ['cluster', 'hud', 'hud_width_pct', 'hud_offset_x', 'hud_offset_y', 'hud_keep_shown'];
+var MAP_KEYS = ['cluster', 'hud', 'hud_width_pct', 'hud_offset_x', 'hud_offset_y', 'hud_keep_shown', 'hud_hide_sport'];
+/* Keys added after the first sets were saved: one missing from a saved set is its default. */
+var MAP_KEYS_ADDED = ['hud_keep_shown', 'hud_hide_sport'];
 
 /* A key = value file's settings; none when it cannot be read. */
 function readConf(file) {
@@ -376,7 +381,7 @@ function saveLater(settings, withProfiles) {
 var PROFILES_FILE = path.join(STATE_DIR, 'profiles.json');
 var PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@+={}-]{0,127}$/;
 var MAX_OWN = 16;
-var MAP_DEFAULTS = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0, hud_keep_shown: 0 };
+var MAP_DEFAULTS = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0, hud_keep_shown: 0, hud_hide_sport: 0 };
 var profiles = null;          /* PROFILES_FILE as read at the start, and changed since */
 var currentProfile;           /* the profile the app last told (null: none; undefined: not told since the start) */
 var restored = false;         /* MAP_STATE written from PROFILES_FILE at the start, not yet told to the app */
@@ -391,13 +396,14 @@ function profilesKept(p) { return profilesInUse(p) || !!p.shared; }
 /* The settings in effect as PROFILES_FILE keeps them. */
 function profileEntry(p) { return p.active ? p.own[p.active] : p.shared; }
 /* Settings as PROFILES_FILE holds them, or null when any key is missing or
- * out of range; hud_keep_shown missing (a set saved before it) is its default. */
+ * out of range; hud_keep_shown or hud_hide_sport missing (a set saved before
+ * it) is its default. */
 function profileSettings(o) {
     if (!o || typeof o !== 'object') return null;
     var s = {};
     for (var i = 0; i < MAP_KEYS.length; i++) {
         var k = MAP_KEYS[i];
-        var v = typeof o[k] === 'number' ? String(o[k]) : k === 'hud_keep_shown' && !(k in o) ? String(MAP_DEFAULTS[k]) : null;
+        var v = typeof o[k] === 'number' ? String(o[k]) : MAP_KEYS_ADDED.indexOf(k) >= 0 && !(k in o) ? String(MAP_DEFAULTS[k]) : null;
         if (v === null || !mapValueOk(k, v)) return null;
         s[k] = Number(v);
     }
@@ -1740,6 +1746,11 @@ function handle(line, sock) {
     if (msg.cmd === 'hud-keep-shown') {
         if (msg.on !== 0 && msg.on !== 1) { reply(sock, { ev: 'hud-keep-shown-reply', ok: false, reason: 'on must be 0 or 1' }); return; }
         saveMapSettings(sock, 'hud-keep-shown-reply', { hud_keep_shown: msg.on }, 'the HUD map over pop-ups');
+        return;
+    }
+    if (msg.cmd === 'hud-hide-sport') {
+        if (msg.on !== 0 && msg.on !== 1) { reply(sock, { ev: 'hud-hide-sport-reply', ok: false, reason: 'on must be 0 or 1' }); return; }
+        saveMapSettings(sock, 'hud-hide-sport-reply', { hud_hide_sport: msg.on }, 'the HUD map in a Sport mode');
         return;
     }
     /* The driver profile and its own settings: not operations on carplay either. */

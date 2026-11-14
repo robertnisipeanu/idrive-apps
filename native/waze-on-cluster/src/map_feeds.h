@@ -28,7 +28,12 @@
  *
  * The app's status is the cluster's (state off while it is off), with the
  * HUD's own state beside it (FeedStatus::hud_state): off, disabled as
- * cluster-render reports it, or its feed's state. */
+ * cluster-render reports it, sport, or its feed's state.
+ *
+ * Hide HUD map in Sport mode (set_hud_hide_sport) takes the HUD's map away
+ * as Off does, the setting still on, while the car is in a Sport mode
+ * (set_sport, from the app, which reads the driving mode). The cluster's
+ * map is not touched. */
 #ifndef WOC_MAP_FEEDS_H
 #define WOC_MAP_FEEDS_H
 
@@ -65,6 +70,13 @@ public:
     /* The HUD map kept shown over the stock HMI's pop-ups or not, kept for a
      * HUD feed made later. */
     void set_hud_keep_shown(bool keep);
+    /* The HUD map hidden while the car is in a Sport mode, or not. */
+    void set_hud_hide_sport(bool hide);
+    /* The car's driving mode as the app read it: a Sport mode, or not. A
+     * Sport mode counts for kSportHoldMs; the app says it again while it
+     * lasts, so a mode the app no longer reports never keeps the map away. */
+    void set_sport(bool sport, int64_t now_ms);
+    static constexpr int64_t kSportHoldMs = 90000;
     int hud_offset_x() const { return base_.hud_offset_x; }
     int hud_offset_y() const { return base_.hud_offset_y; }
     /* The cluster map layer's guide_hold. */
@@ -92,12 +104,18 @@ public:
 private:
     /* The HUD's feed made or dropped to match the setting and the target. */
     void follow();
+    /* The HUD's map is wanted: on, and not hidden for a Sport mode. */
+    bool hud_wanted() const { return hud_on_ && !hidden_for_sport(); }
+    bool hidden_for_sport() const { return hud_hide_sport_ && sport_; }
     /* The HUD's copy of the newest picture, when it is due. */
     void feed_hud(int64_t now_ms);
 
     FeedConfig base_;
     unsigned hud_fps_;
     bool cluster_on_, hud_on_;
+    bool hud_hide_sport_ = false;   /* the setting */
+    bool sport_ = false;            /* the car is in a Sport mode, as last told */
+    int64_t sport_at_ms_ = 0;       /* when it was told */
     std::unique_ptr<MapFeed> cluster_, hud_;
     std::vector<uint8_t> copy_;   /* a picture on its way from one feed to the other */
     uint64_t id_ = 0;   /* the newest frame's */
