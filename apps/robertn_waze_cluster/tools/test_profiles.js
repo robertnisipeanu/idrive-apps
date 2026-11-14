@@ -11,7 +11,7 @@
  * open, a display turned on first); Off as a profile's own, the render on
  * neither for it and back on the cluster for another; the HUD map kept shown
  * over BMW's pop-ups as a profile's own, and not told to the render by a
- * patchd before it; unticked, the shared ones back; a
+ * patchd before it, the HUD map hidden in Sport mode likewise; unticked, the shared ones back; a
  * tick patchd refuses (another profile in effect) tells the profile again;
  * a read naming another profile greys the checkbox until that one counts;
  * no profile (no proxy or field): patchd told none, the checkbox greyed;
@@ -306,6 +306,16 @@ async function main() {
         sync2._toRender(settings(1, 0, 0, 0, 0));
         await until('render moved', () => render.received.length === 3);
         assert.deepStrictEqual(render.received[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0' });
+    });
+    await check('the HUD map hidden in Sport mode goes to the render with a profile\'s settings; a patchd before it: the render not told it', async () => {
+        render.received.length = 0;
+        sync2._toRender(Object.assign(settings(1, 1, 0, 0, 0, 0), { hud_hide_sport: 1 }));
+        await until('render moved', () => render.received.length === 3);
+        assert.deepStrictEqual(render.received[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0', hud_keep_shown: '0', hud_hide_sport: '1' });
+        render.received.length = 0;
+        sync2._toRender(settings(1, 1, 0, 0, 0, 0));
+        await until('render moved', () => render.received.length === 3);
+        assert.deepStrictEqual(render.received[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0', hud_keep_shown: '0' });
     });
     sync2.stop();
     c.close();

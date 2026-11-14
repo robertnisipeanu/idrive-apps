@@ -443,6 +443,37 @@ test('the HUD map over BMW\'s pop-ups: gives way by default; a flip goes to the 
     c.close();
 });
 
+test('the HUD map in Sport mode: shown by default; a flip goes to the render and patchd, the render\'s status shows it; ' +
+    'greyed while the HUD is off and for a render without it; a map hidden for Sport says so', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedRender() && c.connectedPatch());
+    render.stream(true);
+    await until('the HUD off', () => c.renderStatus && c.hudOn() === false);
+    assert.deepStrictEqual([c.hudHideSport(), c.canHideHudInSport()], [false, false], 'shown in Sport, greyed while the HUD is off');
+    c.toggleHudHideSport();
+    render.hud = 1;
+    render.announce(render.state, render.reason);
+    await until('on', () => c.canHideHudInSport());
+    assert.strictEqual(render.received.filter((m) => m.hud_hide_sport !== undefined).length, 0, 'nothing sent while greyed');
+    c.toggleHudHideSport();
+    await until('hidden in Sport', () => c.hudHideSport() === true && render.hudHideSport === 1);
+    await until('saved', () => patch.map.hud_hide_sport === 1);
+    await until('not in a Sport mode: the HUD map shows', () => c.hudText() === 'HUD map: Showing');
+    render.sport = 1;
+    render.announce(render.state, render.reason);
+    await until('in a Sport mode: the HUD map row says so', () => c.hudText() === 'HUD map: Hidden in Sport mode');
+    assert.strictEqual(c.canHideHudInSport(), true, 'the checkbox acts while the map is hidden for Sport');
+    c.toggleHudHideSport();
+    await until('shown in Sport again', () => c.hudHideSport() === false && patch.map.hud_hide_sport === 0 && c.hudText() === 'HUD map: Showing');
+    assert.deepStrictEqual(render.received.filter((m) => m.hud_hide_sport !== undefined), [{ cmd: 'hud', hud_hide_sport: '1' }, { cmd: 'hud', hud_hide_sport: '0' }]);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'hud-hide-sport'), [{ cmd: 'hud-hide-sport', on: 1 }, { cmd: 'hud-hide-sport', on: 0 }]);
+    render.hudHideSport = null;
+    render.announce(render.state, render.reason);
+    await until('a render without it', () => c.hudHideSport() === null && !c.canHideHudInSport());
+    c.close();
+});
+
 test('an asked HUD size the render does not show: the render\'s own after a moment, at once on a render reconnect; ' +
     'the same step taken again', async (render, patch) => {
     render.hud = 1;

@@ -94,6 +94,8 @@
     "2.4 GHz": "2,4 GHz",
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi.",
     "Own settings for this driver": "Lastne nastavitve za tega voznika",
-    "Keep HUD map over BMW's pop-ups": "Ohrani zemljevid na HUD nad pojavnimi okni BMW"
+    "Keep HUD map over BMW's pop-ups": "Ohrani zemljevid na HUD nad pojavnimi okni BMW",
+    "Hide HUD map in Sport mode": "Skrij zemljevid na HUD v načinu Sport",
+    "Hidden in Sport mode": "Skrito v načinu Sport"
   }
 }

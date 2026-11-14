@@ -67,6 +67,14 @@
     "de.bmw.infotainment.personalization.SessionManager": {
       "instances": "*",
       "attributes": "*"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "instances": [
+        "1"
+      ],
+      "attributes": {
+        "statusFESVehicleDynamicSwitchHMI": "rs"
+      }
     }
   },
   "services": {

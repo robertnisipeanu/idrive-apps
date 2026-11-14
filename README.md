@@ -61,6 +61,7 @@ make -C native/cluster-render test test-x86 target    # host tests; the unit's t
 make -C native/waze-on-cluster test test-x86 target
 node apps/robertn_waze_cluster/tools/test_control.js
 node apps/robertn_waze_cluster/tools/test_page.js
+node apps/robertn_waze_cluster/tools/test_drive_mode.js
 node apps/robertn_waze_cluster/tools/test_i18n.js
 node release/test/release_test.js
 node release/release.js check                         # reproducible artifacts
