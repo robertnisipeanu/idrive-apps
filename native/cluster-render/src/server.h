@@ -62,6 +62,7 @@ private:
         std::map<uint32_t, std::string> layer_sent;   /* by ref: the state line last sent */
         std::map<std::string, std::string> target_sent;
         std::map<std::string, std::string> host_sent;   /* by hosted target: its host event last sent */
+        uint64_t host_gen = 0;                          /* the Server's hosts_gen_ it was compared with */
         std::map<uint32_t, std::string> frame_error;  /* by ref: the last frame error sent */
         std::string budget_sent;
         bool closing = false;
@@ -103,6 +104,10 @@ private:
     std::string path_;
     std::vector<Client> clients_;
     uint64_t next_client_ = 1;
+    /* The host events as of the compositor's host_serial(); hosts_gen_
+     * counts each time they were made again (report()). */
+    std::map<std::string, std::string> hosts_;
+    uint64_t hosts_serial_ = 0, hosts_gen_ = 0;
 };
 
 }  // namespace crs

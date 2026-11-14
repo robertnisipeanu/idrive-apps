@@ -207,6 +207,9 @@ void Client::read_events()
             auto l = layers_.find(ref);
             if (l != layers_.end())
                 l->second.sent = false;
+            /* a host refused is not sent again after a reconnect */
+            if (l != layers_.end() && j["op"] == "host")
+                l->second.hosts.erase(j["target"]);
             if (on_error)
                 on_error(j["op"], ref, j["reason"]);
         } else if (ev == "budget" && on_budget) {
@@ -532,15 +535,18 @@ void Client::scene(uint32_t ref, const SceneOptions &so)
     it->second.so = so;
     it->second.so.target = target;
     it->second.edits.clear();
+    it->second.hosts.clear();   /* the service ends them with the file it replaces */
     queue(layer_json(ref, it->second));
     send_now();
 }
 
-void Client::host(uint32_t ref, const Host &h)
+bool Client::host(uint32_t ref, const Host &h)
 {
     auto it = layers_.find(ref);
-    if (it == layers_.end() || it->second.kind != "scene" || h.target.empty())
-        return;
+    /* what the service refuses whatever it holds is not sent or kept */
+    if (it == layers_.end() || it->second.kind != "scene" || !it->second.so.layers || h.target.empty() ||
+        h.target == it->second.so.target)
+        return false;
     std::vector<std::pair<std::string, std::string>> kv = {
         {"op", json_quote("host")}, {"ref", num(ref)},     {"target", json_quote(h.target)}, {"x", num(h.x)},
         {"y", num(h.y)},            {"w", num(h.w)},       {"h", num(h.h)},                  {"shown", flag(h.shown)}};
@@ -551,6 +557,7 @@ void Client::host(uint32_t ref, const Host &h)
     it->second.hosts[h.target] = json;
     queue(json);
     send_now();
+    return true;
 }
 
 void Client::edit(uint32_t ref, const std::string &lines)

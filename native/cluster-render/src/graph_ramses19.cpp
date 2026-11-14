@@ -161,6 +161,11 @@ public:
             !ok(cam2d_->setViewport(0, 0, w_, h_)) || !ok(s.pass->setCamera(*cam2d_)) ||
             !ok(s.pass->addRenderGroup(*s.group)) || !ok(s.pass->setClearFlags(ramses::EClearFlags_None)) ||
             !ok(s.pass->setRenderOrder(base_))) {
+            /* nothing of ours left in the file's scene */
+            if (s.pass) scene_->destroy(*s.pass);
+            if (s.group) scene_->destroy(*s.group);
+            if (cam2d_) scene_->destroy(*cam2d_);
+            cam2d_ = nullptr;
             *err = "scene objects failed";
             return false;
         }

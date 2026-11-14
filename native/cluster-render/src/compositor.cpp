@@ -561,6 +561,10 @@ bool Compositor::replace_scene(uint64_t owner, uint32_t id, const SceneSource &s
     s.error.clear();
     s.edits = SceneEdits();
     s.serial++;
+    /* its hosts go with its edits; the display decides on its layers again */
+    s.hosts.clear();
+    s.layers_error.clear();
+    host_serial_++;
     return true;
 }
 
@@ -572,6 +576,7 @@ void Compositor::set_layers(uint32_t id, const SceneLayers &l)
     it->second.layers = l;
     if (!l.on)
         it->second.hosts.clear();
+    host_serial_++;
 }
 
 bool Compositor::host(uint64_t owner, uint32_t id, int hosted, const Host &h, std::string *err)
@@ -583,46 +588,62 @@ bool Compositor::host(uint64_t owner, uint32_t id, int hosted, const Host &h, st
     }
     SceneEntry &s = it->second;
     const std::vector<TargetSpec> &specs = slots_->targets();
-    if (!s.layers.on) {
-        *err = "a scene hosts only with layers 1";
+    /* A refusal ends the scene's host of that target, if it had one: the
+     * clients forget a refused host too (PROTOCOL.md "host"). */
+    auto refuse = [&](const std::string &why) {
+        *err = why;
+        if (s.hosts.erase(hosted))
+            host_serial_++;
         return false;
-    }
-    if (hosted == s.target) {
-        *err = "a scene hosts other targets, not its own";
-        return false;
-    }
+    };
+    if (!s.layers.on)
+        return refuse("a scene hosts only with layers 1");
+    if (!s.layers_error.empty())
+        return refuse("the display draws no layers over this scene: " + s.layers_error);
+    if (!s.error.empty())
+        return refuse("the scene's file did not load: " + s.error);
+    if (hosted == s.target)
+        return refuse("a scene hosts other targets, not its own");
     for (const auto &kv : scenes_)
-        if (kv.first != id && kv.second.hosts.count(hosted)) {
-            *err = "target " + specs[hosted].name + " is hosted by another scene";
-            return false;
-        }
+        if (kv.first != id && kv.second.error.empty() && kv.second.hosts.count(hosted))
+            return refuse("target " + specs[hosted].name + " is hosted by another scene");
     auto inside = [](const Rect &r, const TargetSpec &t) {
         return r.w && r.h && r.x >= 0 && r.y >= 0 && (uint64_t)r.x + r.w <= t.width && (uint64_t)r.y + r.h <= t.height;
     };
-    if (!inside(h.rect, specs[s.target])) {
-        *err = "x, y, w, h must lie inside " + specs[s.target].name;
-        return false;
-    }
-    if (!inside(h.src, specs[hosted])) {
-        *err = "src_x, src_y, src_w, src_h must lie inside " + specs[hosted].name;
-        return false;
-    }
+    if (!inside(h.rect, specs[s.target]))
+        return refuse("x, y, w, h must lie inside " + specs[s.target].name);
+    if (!inside(h.src, specs[hosted]))
+        return refuse("src_x, src_y, src_w, src_h must lie inside " + specs[hosted].name);
     s.hosts[hosted] = h;
+    host_serial_++;
     return true;
+}
+
+void Compositor::unhost(uint64_t owner, uint32_t id, int hosted)
+{
+    auto it = scenes_.find(id);
+    if (it != scenes_.end() && it->second.owner == owner && it->second.hosts.erase(hosted))
+        host_serial_++;
 }
 
 std::vector<Compositor::Hosted> Compositor::hosts() const
 {
     std::vector<Hosted> out;
-    for (const auto &kv : scenes_)
-        if (kv.second.error.empty())
-            for (const auto &h : kv.second.hosts) {
-                Hosted x;
-                x.target = h.first;
-                x.into = kv.second.target;
-                x.host = h.second;
-                out.push_back(x);
-            }
+    for (const auto &kv : scenes_) {
+        const SceneEntry &s = kv.second;
+        const Target &t = targets_[s.target];
+        /* Its layers drawable: its file published with the layers' graph. */
+        if (s.hosts.empty() || !s.error.empty() || !t.file || !t.graph || t.file_of != kv.first ||
+            t.file_serial != s.serial)
+            continue;
+        for (const auto &h : s.hosts) {
+            Hosted x;
+            x.target = h.first;
+            x.into = s.target;
+            x.host = h.second;
+            out.push_back(x);
+        }
+    }
     return out;
 }
 
@@ -721,8 +742,10 @@ void Compositor::remove(uint64_t owner, uint32_t id)
     /* A scene content: its scene is stale now (the slot manager). */
     auto s = scenes_.find(id);
     if (s != scenes_.end()) {
-        if (s->second.owner == owner)
+        if (s->second.owner == owner) {
             scenes_.erase(s);
+            host_serial_++;
+        }
         return;
     }
     auto it = layers_.find(id);
@@ -762,8 +785,14 @@ void Compositor::remove_owner(uint64_t owner)
     std::string err;
     for (uint32_t id : ids)
         remove_asset(owner, id, &err);
-    for (auto it = scenes_.begin(); it != scenes_.end();)
-        it = it->second.owner == owner ? scenes_.erase(it) : std::next(it);
+    for (auto it = scenes_.begin(); it != scenes_.end();) {
+        if (it->second.owner != owner) {
+            ++it;
+            continue;
+        }
+        it = scenes_.erase(it);
+        host_serial_++;
+    }
 }
 
 void Compositor::arrange(int64_t now_ms)
@@ -1084,13 +1113,21 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
     bool ok = false;
     if (failed)
         evidence(spec, Evidence::WriteRefused, now_ms, spec.name);
-    if (!failed && !holds(t) && !(uncover && uncovers(t)))
+    const bool clear = !failed && !holds(t) && !(uncover && uncovers(t));
+    if (clear)
         ok = flush(ti, t, now_ms);
+    /* A scene file's edits never wait for the layers over it: when its
+     * layers hold the flush (a half-written buffer, a write refused now, an
+     * uncover the budget defers), it goes for the edits all the same, and
+     * the layers take their writes as not gone (a video's next write is
+     * whole). What the layers wrote may show half done until then; the
+     * file's owner's content does not freeze behind another client's. */
+    const bool went = clear ? ok : edits && flush(ti, t, now_ms);
     for (Asset *a : staged_assets)
         a->committed(ok);
     for (Layer *l : staged)
         l->committed(ok, now_ms);
-    if (edits && ok)
+    if (edits && went)
         t.file_flush_ms = now_ms;
     /* What the layers undid for a flush that did not go goes with the
      * next one. */
@@ -1769,8 +1806,13 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         SceneEntry &s = scenes_[id];
         t.file = gpu_->load(spec, s.src.file, s.src.res, err);
         if (!t.file) {
-            /* The client's file: it wants nothing more; the layers come back. */
+            /* The client's file: it wants nothing more; the layers come back,
+             * and what it hosted ends. */
             s.error = *err;
+            if (!s.hosts.empty()) {
+                s.hosts.clear();
+                host_serial_++;
+            }
             log_warn("target %s: scene file %s refused: %s", spec.name.c_str(), s.src.file.c_str(), err->c_str());
             return false;
         }
@@ -1787,11 +1829,14 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         if (!s.layers.on)
             return true;
         /* The layers over the file, in its scene; without that graph they
-         * wait, the file shown all the same. */
+         * wait, the file shown all the same, and it hosts nothing. */
+        host_serial_++;
         t.graph = t.file->layers(s.layers.order_set ? &s.layers.order : nullptr, err);
         if (!t.graph) {
             log_warn("target %s: no layers over scene file %s: %s", spec.name.c_str(), s.src.file.c_str(),
                      err->c_str());
+            s.layers_error = *err;
+            s.hosts.clear();
             err->clear();
             return true;
         }
@@ -1866,6 +1911,8 @@ void Compositor::unpublish(const TargetSpec &spec)
             kv.second.asset->detach(false);
     if (t.composite)
         t.composite->detach(false);
+    if (t.file)
+        host_serial_++;   /* what it hosted is not drawable any more */
     t.file.reset();    /* before a graph that borrows its scene */
     t.graph.reset();
     t.file_of = 0;

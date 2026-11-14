@@ -173,11 +173,26 @@ async function main() {
     const over = ovl.scene({ target: 'panel', file: file, sha256: [sha256], layers: true });
     ok('a scene with layers: shown, the layers there drawn over it',
         await until(() => eo.layer[over] === 'shown' && eo.layer[label] === 'shown', 3000));
-    ok('a host needs a scene and a target', !ovl.host(badge, { target: 'map' }) && !ovl.host(over, {}));
+    ok('a host needs a scene with layers and another target', !ovl.host(badge, { target: 'map' }) &&
+        !ovl.host(over, {}) && !ovl.host(over, { target: 'panel', x: 0, y: 0, w: 10, h: 10 }));
+    ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, src_x: 264 });
+    ok('a part goes with src_w and src_h only, all four (as the C++ client): none here, all of the map',
+        !('src_x' in ovl.layers.get(over).hosts.get('map')));
     ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, src_x: 264, src_w: 560, src_h: 400, src_y: 40 });
+    const sent = ovl.layers.get(over).hosts.get('map');
+    ok('with them, all four', sent.src_x === 264 && sent.src_y === 40 && sent.src_w === 560 && sent.src_h === 400);
     ok('it hosts the map: the other client told', await until(() => hosted.indexOf('map:panel:1:560') >= 0, 2000));
+    ovl.host(over, { target: 'map', x: 1800, y: 160, w: 560, h: 400 });
+    ok('a host refused: the client forgets it, the service ends it', await until(() =>
+        !ovl.layers.get(over).hosts.has('map') && hosted[hosted.length - 1] === 'map:-' &&
+        eo.refused.some((r) => r.indexOf('host: x, y, w, h must lie inside panel') === 0), 2000));
     ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, shown: false });
     ok('hidden: told', await until(() => hosted.indexOf('map:panel:0:560') >= 0, 2000));
+    ovl.replace(over, { target: 'panel', file: file, sha256: [sha256], layers: true });
+    ok('the file replaced: its hosts forgotten and ended', ovl.layers.get(over).hosts.size === 0 &&
+        await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
+    ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    ok('hosted again', await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000));
     ovl.drop(over);
     ok('dropped: the map not hosted any more', await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
 

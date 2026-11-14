@@ -345,7 +345,7 @@ again with its new scene.
 
 `scene` sent again with the scene's ref (its target unchanged) loads the
 new file in place: the scene is unpublished and published again with the
-same id while the target keeps its slot, and its kept edits go. A `layer`
+same id while the target keeps its slot, and its kept edits (and hosts) go. A `layer`
 event follows even when the state is the same.
 
 ### Scene edits
@@ -392,27 +392,41 @@ owner can keep frame lines, an edge that fades into the file's artwork, or
 a shape cut out of it on top of what the layers draw. The layers are
 arranged, faded, written and flushed as on any target, the scene's edits
 in the same flush, within the same budget; the file's resources are charged
-as without layers. `scene` sent again with `layers` 0 publishes the file
-again without them, and they wait. A display that draws nothing over files
-(iDrive 8) leaves the layers waiting, the file shown, and logs why.
+as without layers. The edits never wait for the layers: while a layer holds
+the target's flushes (a buffer left half written, an uncover the budget
+defers), the flush goes for the edits all the same and the layers' writes
+count as not gone (a video writes whole next), so what a layer wrote may
+show half done meanwhile. `scene` sent again with `layers` 0 publishes the
+file again without them, and they wait. A display that draws nothing over
+files (iDrive 8) leaves the layers waiting, the file shown, and logs why.
 
 ### Hosting another target
 
 A scene with `layers` 1 may show another target's content: `host` tells
 every client that `target` is hosted in the scene's target, at `x`, `y`,
 `w`, `h` there (inside it), and which part of `target` it shows: `src_x`,
-`src_y`, `src_w`, `src_h` in `target`'s pixels (inside it; left out: all of
-it); `shown` 0 shows it nowhere. The service only keeps this and tells the
-clients (the `host` event); it moves nothing. A producer of `target` that
-follows it puts its layer in the scene's target at that rect, with only that
-part of its picture, and nothing on `target`, so `target`'s slot is let go;
-with `shown` 0 it has no layer at all. A producer that does not know the
-event keeps drawing on `target` as before. `host` sent again with the same
-`target` replaces it. A target is hosted by one scene at most (another's is
-refused: `target T is hosted by another scene`), never by a scene on itself.
-Hosting ends when the scene goes (`drop`, its client gone), fails to load,
-or is sent again with `layers` 0. The client libraries keep a scene's
-`host` messages and send them again after a reconnect.
+`src_y`, `src_w`, `src_h` in `target`'s pixels (inside it; all four or none:
+none is all of it), stretched over the rect; `shown` 0 shows it nowhere.
+The service only keeps this and tells the clients (the `host` event); it
+moves nothing. A producer of `target` that follows it puts its layer in the
+scene's target where that part of its own drawing lands in the rect, with
+only that part of its picture, and nothing on `target`, so `target`'s slot
+is let go; with `shown` 0 it has no layer at all. A producer that does not
+know the event keeps drawing on `target` as before. The event says a target
+is hosted only while the scene can draw it: its file published as the
+target's scene with the layers over it; at other times (not published yet,
+published again, a display that draws no layers over files) it says the
+target is not hosted, so a producer stays where it can be seen. `host` sent
+again with the same `target` replaces it. A target is hosted by one scene at
+most (another's is refused: `target T is hosted by another scene`), never
+by a scene on itself. A `host` refused (the `error` event names its
+`target`) ends that scene's host of that target, if it had one. Hosting ends
+when the scene goes (`drop`, its client gone), is sent again (another file,
+or `layers` 0: its hosts go with its edits), fails to load, or the display
+draws no layers over it. The client libraries keep a scene's `host`
+messages and send them again after a reconnect, except one the service
+refused or one whose scene was sent again since, and send none for a scene
+without `layers` or for the scene's own target.
 
 ## Service to client
 
@@ -424,7 +438,7 @@ Every JSON message has `ev`.
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
-| `error` | `op`, `ref`, `reason`; `line` for an edit line | a message was refused, or an edit line changed nothing |
+| `error` | `op`, `ref`, `reason`; `line` for an edit line; `target` for a `host` | a message was refused, or an edit line changed nothing |
 | `status` | `text` | after a status request; among its lines, one for each slot the KOMBI's latest reports name: `slot 0x203 status 2: 0x1000400 class 0 map 1, ...` (each row's content, class and map status) |
 | `host` | `target`, `into` (the hosting scene's target; empty: `target` is not hosted any more), `shown`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h` | after the client's hello for each hosted target, and to every client when a host comes, changes or ends ([above](#hosting-another-target)) |
 

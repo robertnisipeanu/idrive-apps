@@ -457,6 +457,7 @@ public:
     int scenes = 0;
     bool refuse_textures = false;         /* each new scene's immutable_texture() refused */
     bool refuse_layers = false;           /* no layers over a file scene, as a backend without them */
+    bool fail_loads = false;              /* every scene file fails to load */
     int64_t *clock_us = nullptr;
     int64_t flush_cost_us = 0;
 
@@ -513,7 +514,7 @@ public:
     {
         std::ifstream in(file);
         std::string word, id;
-        if (!(in >> word >> id) || word != "scene") {
+        if (fail_loads || !(in >> word >> id) || word != "scene") {
             *err = "the scene file did not load";
             return nullptr;
         }

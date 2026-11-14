@@ -281,16 +281,24 @@ public:
     /* The scene content's layers over its file, taken when it is next
      * published (add_scene, replace_scene). Off, it hosts nothing. */
     void set_layers(uint32_t id, const SceneLayers &l);
-    /* The scene content, which has layers, hosts target hosted (not its
-     * own, hosted by no other content), rect inside its target and src
-     * inside hosted's; replaces what it hosted there. False with *err. */
+    /* The scene content, which has layers the display has not refused,
+     * hosts target hosted (not its own, hosted by no other content), rect
+     * inside its target and src inside hosted's; replaces what it hosted
+     * there. False with *err. A content's hosts end when its file is
+     * replaced or fails to load, the display refuses its layers, or it goes. */
     bool host(uint64_t owner, uint32_t id, int hosted, const Host &h, std::string *err);
+    /* The content's host of target hosted ends (a host refused before
+     * host(): the same rule). */
+    void unhost(uint64_t owner, uint32_t id, int hosted);
     struct Hosted {
         int target = 0, into = 0;   /* the hosted target, and the content's */
         Host host;
     };
-    /* What the contents that have not failed to load host. */
+    /* What the contents host, only while each is its target's published
+     * scene with its layers graph: a producer moving into it can be drawn. */
     std::vector<Hosted> hosts() const;
+    /* Changes whenever hosts() may have: unchanged, it says the same. */
+    uint64_t host_serial() const { return host_serial_; }
     /* The scene content's edits if it exists and belongs to owner. */
     SceneEdits *edits(uint64_t owner, uint32_t id);
     /* For the status: "on <target>: " its files and edits; empty when id is
@@ -408,6 +416,7 @@ private:
         SceneEdits edits;
         uint32_t serial = 1;   /* its file's: one more each replacement */
         SceneLayers layers;
+        std::string layers_error;    /* the display refused its layers (publish) */
         std::map<int, Host> hosts;   /* by hosted target */
     };
     struct Target {
@@ -654,6 +663,7 @@ private:
     std::vector<Target> targets_;
     uint32_t next_id_ = 1;
     uint64_t seq_ = 0;
+    uint64_t host_serial_ = 0;
     int64_t now_ms_ = 0;
 };
 

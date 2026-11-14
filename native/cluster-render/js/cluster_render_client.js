@@ -239,6 +239,9 @@ class ClusterRender extends EventEmitter {
         } else if (ev.ev === 'budget') {
             this.emit('budget', ev.cap_kb_per_s, ev.max_kb_per_s, ev.reason);
         } else if (ev.ev === 'error') {
+            /* a host refused is not sent again after a reconnect */
+            const l = ev.op === 'host' ? this.layers.get(ev.ref) : null;
+            if (l && l.hosts) l.hosts.delete(ev.target);
             this.emit('refused', ev.op, ev.ref, ev.reason, ev.line);
         } else if (ev.ev === 'status') {
             this.emit('status', ev.text);
@@ -390,14 +393,24 @@ class ClusterRender extends EventEmitter {
 
     /* The scene (made with layers) hosts another target (PROTOCOL.md
      * "host"): opts target, x, y, w, h (in the scene's target), src_x,
-     * src_y, src_w, src_h (in the hosted target's pixels; left out: all of
-     * it), shown. Kept by target and sent again after a reconnect. */
+     * src_y, src_w, src_h (in the hosted target's pixels; sent, all four,
+     * when src_w and src_h are set, else all of it), shown. Kept by target
+     * and sent again after a reconnect, until the service refuses it or the
+     * scene is replaced; false, nothing sent, for a scene without layers or
+     * a host of its own target. */
     host(ref, opts) {
         const l = this.layers.get(ref);
-        if (!l || l.kind !== 'scene' || !opts.target) return false;
+        /* what the service refuses whatever it holds is not sent or kept */
+        if (!l || l.kind !== 'scene' || !l.opts.layers || !opts.target || opts.target === l.opts.target) return false;
         const m = { op: 'host', ref: ref, target: opts.target, x: opts.x, y: opts.y, w: opts.w, h: opts.h,
             shown: flag(opts.shown !== false) };
-        ['src_x', 'src_y', 'src_w', 'src_h'].forEach((k) => { if (opts[k] !== undefined) m[k] = opts[k]; });
+        /* the part: all four with src_w and src_h, else none (all of it), as the C++ client */
+        if (opts.src_w && opts.src_h) {
+            m.src_x = opts.src_x || 0;
+            m.src_y = opts.src_y || 0;
+            m.src_w = opts.src_w;
+            m.src_h = opts.src_h;
+        }
         l.hosts.set(opts.target, m);
         this._send(m);
         return true;
@@ -411,6 +424,7 @@ class ClusterRender extends EventEmitter {
             [].concat(opts.sha256 || []).length !== (opts.res || []).length + 1) return false;
         l.opts = Object.assign({}, opts, { target: l.opts.target });
         l.edits = new Map();
+        l.hosts = new Map();   /* the service ends them with the file it replaces */
         this._send(this._layerMsg(ref, l));
         return true;
     }

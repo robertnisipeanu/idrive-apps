@@ -214,8 +214,11 @@ public:
      * key, and sent again after a reconnect in the order last sent. */
     void edit(uint32_t ref, const std::string &lines);
     /* The scene (made with layers) hosts h.target there (PROTOCOL.md
-     * "host"); kept by target and sent again after a reconnect. */
-    void host(uint32_t ref, const Host &h);
+     * "host"), its src_* part when src_w and src_h are set (all four go),
+     * else all of it. Kept by target and sent again after a reconnect,
+     * until the service refuses it or the scene is replaced; false, nothing
+     * sent, for a scene without layers or a host of its own target. */
+    bool host(uint32_t ref, const Host &h);
     /* Everything of lo but its target. */
     void set(uint32_t ref, const LayerOptions &lo);
     /* A mesh layer's camera and projection (orthographic or not as made). */

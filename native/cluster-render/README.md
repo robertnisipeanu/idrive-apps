@@ -1187,16 +1187,20 @@ The host tests:
   id in error; edit lines refused or changing nothing reported; another
   file in place, the slot kept; its client gone, shown through the linger
   and released; a scene with layers: the layers drawn over the file past
-  its passes, its edits flushed with them, a host of the map told to every
-  client and refused for the scene's own target, outside either target and
-  without layers, a producer's video moved into the host's rect over the
-  file with the map's slot released, hidden, back with the scene, its edits
-  and its host after a service restart, ended by `layers` 0 and by the
-  scene's drop, and a backend drawing nothing over files leaving the layers
-  waiting;
+  its passes, its edits flushed with them, also while a video's refused
+  write holds the target; a host of the map told to every client, refused
+  (and ended) outside either target, not sent by the client for the
+  scene's own target or without layers, a producer's video moved into the
+  host's rect over the file with the map's slot released, hidden, back
+  with the scene, its edits and its host after a service restart; a host
+  the service refused, or one a `layers` 0 replacement ended, not sent again
+  after a restart; ended by a file that fails to load (gone from the
+  status), by `layers` 0 and by the scene's drop; a backend drawing nothing
+  over files leaving the layers waiting and refusing hosts, nobody told;
 - `js/test/client_test.js`: the Node client against `host_service`,
   assets, a mesh layer and a scene file included, and a scene with layers
-  hosting the map, shown, hidden and dropped.
+  hosting the map: the part sent as the C++ client sends it, a refused host
+  forgotten, shown, hidden, replaced (its hosts forgotten) and dropped.
 
 ### Verified, and open
 

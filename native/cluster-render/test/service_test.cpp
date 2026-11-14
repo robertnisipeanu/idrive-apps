@@ -1282,19 +1282,21 @@ static void layers_and_hosting()
     }
     cr::Host own = h;
     own.target = "panel";
-    a.host(sc, own);
+    ok("its own target: refused by the client, nothing sent", !a.host(sc, own));
     cr::Host outside = h;
     outside.x = 1800;
     a.host(sc, outside);
+    r.pump(50);
+    ok("a rect outside the panel refused, and the scene's host of the map ended with it",
+       has(ea.errors, "host: x, y, w, h must lie inside panel") && !b.hosts.count("map") && told.back().into.empty());
     cr::Host past = h;
     past.src_x = 800;
     a.host(sc, past);
     r.pump(50);
-    ok("refused: its own target, a rect outside it, a part outside the map; the host kept",
-       has(ea.errors, "host: a scene hosts other targets, not its own") &&
-           has(ea.errors, "host: x, y, w, h must lie inside panel") &&
-           has(ea.errors, "host: src_x, src_y, src_w, src_h must lie inside map") && b.hosts["map"].x == 700);
-    a.host(sc, h);   /* kept by target in the client: the good one last */
+    ok("a part outside the map refused", has(ea.errors, "host: src_x, src_y, src_w, src_h must lie inside map"));
+    a.host(sc, h);
+    r.pump(50);
+    ok("hosted again", b.hosts.count("map") && b.hosts["map"].x == 700);
 
     /* The producer moves its video to the host's rect: one layer, cropped. */
     b.drop(video);
@@ -1316,6 +1318,24 @@ static void layers_and_hosting()
     a.edit(sc, "--rotate ^needle_pivot$=0,0,45");
     r.pump(100);
     ok("edits flush with the layers", gauge_edited_turn(r.gpu.file("panel"), 45));
+
+    /* The video's write refused: it holds the target (a half-written
+     * buffer); the file's edits flush all the same. */
+    g->write_budget = 0;
+    std::vector<uint8_t> f3(560 * 600, 160);
+    b.frame(video, f3.data(), f3.size(), 3);
+    r.pump(100);
+    const uint64_t held_flushes = g->flushes;
+    a.edit(sc, "--rotate ^needle_pivot$=0,0,50");
+    r.pump(100);
+    ok("a video holding the target over the file: the file's edits flush all the same",
+       gauge_edited_turn(r.gpu.file("panel"), 50) && g->flushes > held_flushes);
+    g->write_budget = -1;
+    b.frame(video, f2.data(), f2.size(), 4);
+    r.pump(300);
+    ok("its writes allowed again: the video whole again", eb.layer[video] == "shown");
+    a.edit(sc, "--rotate ^needle_pivot$=0,0,45");
+    r.pump(100);
 
     h.shown = false;
     a.host(sc, h);
@@ -1340,16 +1360,54 @@ static void layers_and_hosting()
     so.layers = false;
     a.scene(sc, so);
     r.pump(1500);
-    a.host(sc, h);
-    r.pump(50);
-    ok("layers 0: the host ended, the layers waiting, a host refused",
-       !b.hosts.count("map") && told.back().into.empty() && eb.layer[video] == "waiting" &&
-           has(ea.errors, "host: a scene hosts only with layers 1"));
+    ok("layers 0: the host ended, the layers waiting, a host refused by the client",
+       !b.hosts.count("map") && told.back().into.empty() && eb.layer[video] == "waiting" && !a.host(sc, h));
+    /* What the client keeps: not the ended host (replaced, layers 0). */
+    r.svc.reset();
+    r.pump(100);
+    r.start();
+    r.pump(1500);
+    ok("after a restart the client sends no host the scene's replacement ended",
+       !has(ea.errors, "host: a scene hosts only with layers 1") && !b.hosts.count("map"));
     so.layers = true;
     a.scene(sc, so);
     a.host(sc, h);
     r.pump(1500);
+    b.frame(video, f2.data(), f2.size(), 5);
+    r.pump(300);
     ok("layers 1 again: hosted, the video shown", b.hosts.count("map") && eb.layer[video] == "shown");
+
+    /* A host refused is not kept by the client either: not sent again. */
+    a.host(sc, outside);
+    r.pump(50);
+    const auto refusals = [&ea]() {
+        return std::count(ea.errors.begin(), ea.errors.end(), std::string("host: x, y, w, h must lie inside panel"));
+    };
+    const long before_restart = refusals();
+    r.svc.reset();
+    r.pump(100);
+    r.start();
+    r.pump(1500);
+    ok("a refused host: the host ended, and not sent again after a restart",
+       before_restart == 2 && refusals() == 2 && !b.hosts.count("map"));
+    b.frame(video, f2.data(), f2.size(), 6);   /* the producer's next frame after the restart */
+    r.pump(100);
+
+    /* A file that fails to load ends what the scene hosted. */
+    a.host(sc, h);
+    r.pump(1500);
+    const bool hosted_before = b.hosts.count("map") != 0;
+    r.gpu.fail_loads = true;
+    a.scene(sc, so);
+    a.host(sc, h);
+    r.pump(1500);
+    ok("a file that fails to load: its host ended, told, and gone from the status",
+       hosted_before && ea.layer[sc] == "error" && !b.hosts.count("map") &&
+           !has(r.svc->server().status_text(r.now), "hosts map"));
+    r.gpu.fail_loads = false;
+    a.scene(sc, so);
+    r.pump(1500);
+    ok("the file replaced: shown, nothing hosted until it says so", ea.layer[sc] == "shown" && !b.hosts.count("map"));
 
     a.drop(sc);
     r.pump(1500);
@@ -1363,6 +1421,18 @@ static void layers_and_hosting()
     r.pump(1500);
     ok("a backend drawing nothing over files: the file shown, the layers waiting for it",
        ea.layer[sc2] == "shown" && eb.layer[video] == "waiting" && r.gpu.file("panel") && !r.gpu.graph("panel"));
+    a.host(sc2, h);
+    r.pump(100);
+    ok("and a host there refused, nobody told: the producer stays where it is drawn",
+       has(ea.errors, "host: the display draws no layers over this scene") && !b.hosts.count("map"));
+    {
+        Raw raw(r.path);
+        raw.send("{\"op\":\"hello\",\"app\":\"raw3\",\"proto\":1}");
+        raw.send("{\"op\":\"host\",\"ref\":7,\"target\":\"map\",\"x\":0,\"y\":0,\"w\":10,\"h\":10,\"src_x\":0}");
+        r.pump(50);
+        ok("a host's error names its target", raw.events().find("\"op\":\"host\",\"ref\":7,\"target\":\"map\"") !=
+                                                  std::string::npos);
+    }
     const int removed = std::system(("rm -rf " + root).c_str());
     (void)removed;
 }
