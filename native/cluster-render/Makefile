@@ -60,9 +60,9 @@ CORE_SRC = src/slots.cpp src/guard.cpp src/governor.cpp src/stack.cpp src/recv_b
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
-UNIT_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
-UNIT8_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
-LAUNCH_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
+UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
+UNIT8_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
+LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \

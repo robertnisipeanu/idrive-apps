@@ -1,0 +1,202 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026 Robert Nisipeanu */
+#include "settings.h"
+
+#include <cstdlib>
+
+#include <algorithm>
+#include <sstream>
+
+#include "holds.h"
+#include "log.h"
+
+namespace crs {
+
+void define_keys(cld::Config *cfg)
+{
+    cfg->define("generation", "auto");
+    cfg->define("vsomeip_app", "cluster-demo");
+    cfg->define("targets", "map,panel,hud");
+    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1,0x010004f8");
+    cfg->define("map_slot", "0x100");
+    cfg->define("map_content_class", "0");
+    cfg->define("map_scene_id", "0x010004f0");
+    cfg->define("map_size", "1088x480");
+    cfg->define("map_linger_ms", "0");
+    cfg->define("map_take_over_stock", "1");
+    cfg->define("panel_slot", "0x203");
+    cfg->define("panel_content_class", "0");
+    cfg->define("panel_scene_id", "0x010004f8");
+    cfg->define("panel_fallback_scene_id", "0x01000400");
+    cfg->define("panel_size", "1920x720");
+    cfg->define("panel_linger_ms", "3000");
+    cfg->define("panel_take_over_stock", "0");
+    cfg->define("hud_linger_ms", "3000");
+    cfg->define("hud_take_over_stock", "0");
+    /* the stock pop-up slots each target gives way to, and how long after */
+    cfg->define("map_yield_slots", "");
+    cfg->define("panel_yield_slots", "");
+    cfg->define("hud_yield_slots", "0x322");
+    cfg->define("map_yield_ms", "1500");
+    cfg->define("panel_yield_ms", "1500");
+    cfg->define("hud_yield_ms", "1500");
+    /* whether clients may have a target's scene loaded from a scene file */
+    cfg->define("map_scene_files", "0");
+    cfg->define("panel_scene_files", "0");
+    cfg->define("hud_scene_files", "0");
+    cfg->define("dcsm_hmi_client_handle", "1");
+    cfg->define("guide_hold", "1");
+    cfg->define("guide_slots", "auto");
+    cfg->define("guide_scene_id", "0x010004f1");
+    cfg->define("guide_content_class", "0");
+    cfg->define("guide_take_over", "0x01000310");
+    /* iDrive 8: a target's slot is a DCSM category, its content the content
+     * offered there (README.md "iDrive 8"). */
+    cfg->define("id8_targets", "map,hud,guide,widget,popup");
+    cfg->define("id8_scene_ids_allowed",
+                "0x4d4755000108,0x4d4755000110,0x4d4755000118,0x4d4755000001,0x4d4755000002");
+    cfg->define("id8_map_category", "43100201");
+    cfg->define("id8_map_content", "43204041");
+    cfg->define("id8_map_scene_id", "0x4d4755000108");
+    cfg->define("id8_map_size", "874x749");
+    cfg->define("id8_map_linger_ms", "0");
+    cfg->define("id8_hud_category", "43100202");
+    cfg->define("id8_hud_content", "43204012");
+    cfg->define("id8_hud_scene_id", "0x4d4755000110");
+    cfg->define("id8_hud_size", "353x203");
+    cfg->define("id8_hud_linger_ms", "3000");
+    cfg->define("id8_guide_category", "43100401");
+    cfg->define("id8_guide_content", "43204051");
+    cfg->define("id8_guide_scene_id", "0x4d4755000118");
+    cfg->define("id8_guide_size", "702x213");
+    cfg->define("id8_guide_linger_ms", "3000");
+    cfg->define("id8_widget_category", "43100301");
+    cfg->define("id8_widget_content", "43204001");
+    cfg->define("id8_widget_scene_id", "0x4d4755000001");
+    cfg->define("id8_widget_size", "2240x896");
+    cfg->define("id8_widget_linger_ms", "3000");
+    cfg->define("id8_widget_description", "Cluster renderer");
+    cfg->define("id8_widget_order", "50");
+    cfg->define("id8_widget_preview", "");
+    cfg->define("id8_widget_background_id", "");
+    cfg->define("id8_widget_layouts", "");
+    cfg->define("id8_widget_focus", "0");
+    cfg->define("id8_popup_category", "43100301");
+    cfg->define("id8_popup_content", "43204003");
+    cfg->define("id8_popup_scene_id", "0x4d4755000002");
+    cfg->define("id8_popup_size", "2240x896");
+    cfg->define("id8_popup_linger_ms", "3000");
+    cfg->define("id8_popup_description", "Pop-up");
+    cfg->define("id8_popup_order", "51");
+    cfg->define("id8_popup_preview", "");
+    cfg->define("id8_popup_background_id", "43400005");
+    cfg->define("id8_popup_layouts", "");
+    cfg->define("id8_popup_focus", "1");
+    cfg->define("fade_ms", "250");
+    cfg->define("upload_kb_per_s", "5500");
+    cfg->define("upload_floor_kb_per_s", "2000");
+    cfg->define("upload_step_kb_per_s", "500");
+    cfg->define("upload_burst_ms", "250");
+    cfg->define("slow_flush_ms", "150");
+    cfg->define("status_path", "/run/cluster-render/status.txt");
+    cfg->define("guard_path", "/var/opt/cluster-render/state/guard.txt");
+    cfg->define("log_file", "/var/opt/cluster-render/log/cluster-render.log");
+    cfg->define("log_file_kb", "512");
+    /* The shared Config's defaults are cluster-demo's (src/config.cpp). */
+    std::string err;
+    cfg->set_pair("socket_path=/dev/shm/cluster-render/render.sock", &err);
+    cfg->set_pair("local_conf=/var/opt/cluster-render/cluster-render.local.conf", &err);
+}
+
+bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec> *out, std::string *err)
+{
+    const std::string g = generation == 8 ? "id8_" : "";
+    const std::string slot = generation == 8 ? "category" : "slot";
+    std::vector<uint64_t> allowed;
+    {
+        std::stringstream ss(cfg.str((g + "scene_ids_allowed").c_str()));
+        std::string id;
+        while (std::getline(ss, id, ','))
+            allowed.push_back(std::strtoull(id.c_str(), nullptr, 0));
+    }
+    std::stringstream ss(cfg.str((g + "targets").c_str()));
+    std::string name;
+    while (std::getline(ss, name, ',')) {
+        if (name.empty())
+            continue;
+        const std::string p = g + name + "_";
+        TargetSpec t;
+        t.name = name;
+        if (!cfg.has((p + slot).c_str()) || !cfg.has((p + "scene_id").c_str()) ||
+            (generation == 8 && !cfg.has((p + "content").c_str()))) {
+            *err = "target " + name + ": " + p + slot + (generation == 8 ? ", " + p + "content" : std::string()) +
+                   " and " + p + "scene_id must be set";
+            return false;
+        }
+        t.slot = std::strtoull(cfg.str((p + slot).c_str()).c_str(), nullptr, 0);
+        t.scene_id = std::strtoull(cfg.str((p + "scene_id").c_str()).c_str(), nullptr, 0);
+        t.linger_ms = (int)cfg.num((p + "linger_ms").c_str());
+        if (generation == 8) {
+            t.content = std::strtoull(cfg.str((p + "content").c_str()).c_str(), nullptr, 0);
+        } else {
+            t.content_class = (uint32_t)cfg.num((p + "content_class").c_str());
+            t.take_over_stock = cfg.num((p + "take_over_stock").c_str()) != 0;
+            t.scene_files = cfg.num((p + "scene_files").c_str()) == 1;
+            if (cfg.has((p + "yield_slots").c_str())) {
+                std::stringstream ys(cfg.str((p + "yield_slots").c_str()));
+                std::string ysl;
+                while (std::getline(ys, ysl, ','))
+                    if (!ysl.empty())
+                        t.yield_slots.push_back(std::strtoull(ysl.c_str(), nullptr, 0));
+            }
+            if (cfg.has((p + "yield_ms").c_str()))
+                t.yield_ms = (int)cfg.num((p + "yield_ms").c_str());
+            if (t.yield_ms < 0 || t.yield_ms > 60000) {
+                *err = "target " + name + ": " + p + "yield_ms must be from 0 to 60000";
+                return false;
+            }
+        }
+        if (!cfg.size((p + "size").c_str(), &t.width, &t.height) || t.width < 16 || t.height < 16 ||
+            t.width > 4096 || t.height > 4096) {
+            *err = "target " + name + ": " + p + "size must be WxH";
+            return false;
+        }
+        if (t.linger_ms < 0 || t.linger_ms > 600000) {
+            *err = "target " + name + ": " + p + "linger_ms must be from 0 to 600000";
+            return false;
+        }
+        std::string why;
+        if (generation == 7 && name == "hud" && !hud_rules(&t, &why)) {
+            log_warn("target hud left out: %s", why.c_str());
+            continue;
+        }
+        /* Only scene ids the KOMBI is known to take: others (7702, 7703)
+         * made it restart the cluster and the HUD. On iDrive 8, the ones
+         * the cluster took. */
+        if (std::find(allowed.begin(), allowed.end(), t.scene_id) == allowed.end()) {
+            *err = "target " + name + ": scene id " + cfg.str((p + "scene_id").c_str()) + " is not in " + g +
+                   "scene_ids_allowed";
+            return false;
+        }
+        if (generation == 7 && name == "panel" && !fallback_rules(&t, cfg.str("panel_fallback_scene_id"), allowed, &why)) {
+            *err = "target panel: " + why;
+            return false;
+        }
+        out->push_back(t);
+    }
+    if (out->empty()) {
+        *err = "no targets";
+        return false;
+    }
+    if (generation == 8)
+        return true;
+    std::string warn;
+    const bool held = load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"), cfg.str("guide_scene_id"),
+                                              cfg.str("guide_content_class"), cfg.str("guide_take_over")},
+                                 allowed, out, &warn);
+    if (!warn.empty())
+        log_warn("guide hold%s: %s", held ? "" : " off", warn.c_str());
+    return true;
+}
+
+}  // namespace crs
