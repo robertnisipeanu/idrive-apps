@@ -28,7 +28,12 @@
  *                    file); fifo = file:// FIFO sink
  *                  {"cmd":"revert"}
  *                  {"cmd":"aa-apply"} | {"cmd":"aa-revert"}   the Android Auto patch
- *                  {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
+ *                  {"cmd":"aa-restart"}   take the Android Auto change that waits for a head-unit start now,
+ *                                   without that restart: restart the render (it reads its crop when it starts),
+ *                                   then aapd (it reads aapd.conf when it starts). Only while one waits and where
+ *                                   aapd's own restart is allowed (recmgr loaded its entry this boot)
+ *                  {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"|"hud"}
+ *                                   ("hud": the HUD-shaped 800x480 picture)
  *                                   save the choice and, with the patch on disk,
  *                                   apply it (one change per DENSITY_SPACING_MS)
  *                  {"cmd":"reboot"} activate a deferred patch with a normal
@@ -177,6 +182,8 @@ var aapdConf = require('./aapd_conf.js');
 var STATE_DIR = process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster';
 var AA_DPI_FILE = path.join(STATE_DIR, 'aa-density');
 var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
+/* The render's unit: restarted with aapd to take a change of its crop (read when it starts) without a head-unit restart. */
+var WOC_UNIT = process.env.WOC_UNIT || 'waze-on-cluster.service';
 /* With the turn card hidden, the crop waze-on-cluster.service passes to the
  * render (EnvironmentFile): the card's rows grow with the density. The
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
@@ -868,7 +875,11 @@ function aaCard() {
 }
 
 /* The crop override for card and dpi, null for the shipped one. */
-function cropEnv(card, dpi) { return card === 'hidden' ? 'WOC_SRC_CROP=-s src_crop=' + aapdConf.srcCrop(card, dpi) + '\n' : null; }
+function cropEnv(card, dpi) {
+    /* The HUD picture is decoded at its UI size (tex_size 640x480), not at the map slot's. */
+    if (card === 'hud') return 'WOC_SRC_CROP=-s src_crop=' + aapdConf.srcCrop(card, dpi) + ' -s tex_size=' + aapdConf.texSize(card) + '\n';
+    return card === 'hidden' ? 'WOC_SRC_CROP=-s src_crop=' + aapdConf.srcCrop(card, dpi) + '\n' : null;
+}
 
 function aaMsg(st) {
     var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP],
@@ -1573,6 +1584,33 @@ function aaRevert(noRestart, dropBackup, done) {
     });
 }
 
+/* Applies a waiting Android Auto change (the cluster or HUD picture, the dpi) now, without a head-unit restart.
+ * Such a change is saved first and used from the next head-unit start, because two programs read their settings only
+ * when they start: aapd reads aapd.conf, and the render reads its crop (aa-crop.env, as WOC_SRC_CROP). This restarts
+ * both. The render goes first (systemctl restart, as an install does), so it is ready when the phone reconnects. Then
+ * aapd is restarted (the same SIGKILL and start as any restart of it) and the waiting marker is cleared.
+ * It refuses, and the change keeps waiting for the next head-unit start, when no change waits or when restartBlocked
+ * does not allow aapd's restart (recmgr has not loaded its entry this boot).
+ * done(err, roErr, activation): activation is 'restarted' when both were restarted. */
+function aaRestartNow(done) {
+    if (!readPending(AA)) { done(new Error('no Android Auto change waits for a restart')); return; }
+    restartBlocked(AA, function (blocked) {
+        if (blocked) { done(new Error('aapd is not restarted now (' + blocked + '); the change waits for the next head-unit start')); return; }
+        cp.execFile('systemctl', ['restart', WOC_UNIT], { timeout: tmo(30000) }, function (sErr) {
+            if (sErr) { done(new Error('restarting ' + WOC_UNIT + ' failed: ' + sErr.message)); return; }
+            log('Android Auto: ' + WOC_UNIT + ' restarted to read the crop; restarting aapd');
+            remount(true, function (mErr) {
+                if (mErr) { finalizeRo(AA, new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }); return; }
+                restartUnit(AA, function (rErr) {
+                    if (!rErr && !needed(AA)) unlinkQuiet(AA.running);
+                    settleHeld(AA);
+                    finalizeRo(AA, rErr || null, function (e, r) { done(e, r, e ? null : 'restarted'); });
+                });
+            });
+        });
+    });
+}
+
 /* A file in STATE_DIR, written whole by rename. */
 function saveFile(f, text) {
     try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
@@ -1766,6 +1804,10 @@ function handle(line, sock) {
         operate('aa', 'applying', aaEnable);
     } else if (msg.cmd === 'aa-revert') {
         operate('aa', 'reverting', function (cb) { aaRevert(false, false, cb); });
+    } else if (msg.cmd === 'aa-restart') {
+        /* with nothing waiting the answer is a plain refusal, not an Android Auto error: a client may ask after every change */
+        if (!readPending(AA)) { refuse('no Android Auto change waits for a restart'); return; }
+        operate('aa', 'restarting', aaRestartNow);
     } else if (msg.cmd === 'aa-density' || msg.cmd === 'aa-card') {
         var density = msg.cmd === 'aa-density', v = density ? Number(msg.value) : String(msg.value), now = Date.now();
         if ((density ? aapdConf.DENSITIES : aapdConf.CARDS).indexOf(v) < 0) {

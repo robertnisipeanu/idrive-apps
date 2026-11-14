@@ -212,6 +212,20 @@ function onlyEdits(a, b) {
     ok('status: patched, every edit, 180 dpi, card shown, restorable', /restorable:\s+yes/.test(s) && (s.match(/PATCHED/g) || []).length === 5 &&
         /PATCHED \(180 dpi, card shown, crop 1280x720:0,0,1280,564\)/.test(s), s);
     ok('apply again: nothing to do', /nothing to do/.test(patcher(t, ['apply', '--yes']).out));
+    /* Re-apply over an earlier edit. A unit patched by an earlier release holds our edit with another safe area, which
+     * this release's geometry cannot rebuild, so apply used to refuse it as "modified by something else". The fixture
+     * is the patched aapd.conf with its last SA_OFFSET_TOPPIXELS (in the KOMBI_DISPLAY block) set to 7. The first check
+     * proves the fixture is such a file: it differs from the original in KOMBI_DISPLAY numbers only (otherFile), and
+     * the old test (edited) does not recognise it. The second runs apply and expects it to succeed and to leave the
+     * file as a fresh apply writes it. */
+    var nowConf = fs.readFileSync(t.conf, 'utf8');
+    var tops = []; nowConf.replace(/("SA_OFFSET_TOPPIXELS":\s*)(\d+)/g, function (m, pre, num, at) { tops.push([at + pre.length, num.length]); return m; });
+    var last = tops[tops.length - 1];
+    var earlier = nowConf.slice(0, last[0]) + '7' + nowConf.slice(last[0] + last[1]);
+    ok('earlier geometry: the fixture differs from the original aapd.conf in KOMBI_DISPLAY numbers only', earlier !== nowConf && conf.otherFile(earlier, SRCCONF.toString('utf8')) === null && conf.edited(SRCCONF.toString('utf8'), earlier) === null);
+    fs.writeFileSync(t.conf, earlier);
+    r = patcher(t, ['apply', '--yes']);
+    ok('earlier geometry: an aapd.conf written with another safe area is brought up to date, no refusal', r.code === 0 && fs.readFileSync(t.conf, 'utf8') === nowConf, r.out);
     var binAt = sha(t.bin);
     conf.DENSITIES.forEach(function (d) {
         var x = patcher(t, ['apply', '--dpi', String(d), '--yes']);
@@ -243,6 +257,29 @@ function onlyEdits(a, b) {
         });
     });
     ok('every density and card is recognised and is the original\'s file', every);
+
+    /* The HUD picture, the card setting's third value ('hud'). It is an 800x480 stream with the UI in its left 640x480
+     * (the margins are what is left of the stream: 160 wide, 0 high). The cluster's safe area size, 592x432, sits in
+     * the UI at 24,24, and the picture is decoded at the UI's size, 640x480 (tex_size), so that it is not stretched
+     * to the cluster map's 1088x480. The checks below: apply writes these numbers and the dpi into aapd.conf; the
+     * status names the crop; only 'hud' has a decode size; the edit is recognised at every dpi, so revert and a
+     * later apply treat it as ours; and aapd itself is not changed. The last apply puts a cluster card back, the
+     * state the tests below start from. */
+    r = patcher(t, ['apply', '--dpi', '230', '--card', 'hud', '--yes']);
+    k = JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY; c = k.CODEC_DEFINITION.HIGH_1080P; sa = k.DIMENSIONS['12.3'];
+    ok('card hud: 800x480, margins 160 x 0, UI 640x480, safe area 592x432 at 24,24, 230 dpi', r.code === 0 && c.CODEC_WIDTH === 800 && c.CODEC_HEIGHT === 480 &&
+        c.HORIZONTAL_MARGIN_SIZE === 160 && c.VERTICAL_MARGIN_SIZE === 0 && c.WIDTH_TARGET_VIEWPORT === 640 && c.HEIGHT_TARGET_VIEWPORT === 480 &&
+        [sa.SA_OFFSET_LEFTPIXELS, sa.SA_OFFSET_TOPPIXELS, sa.SA_WIDTHPIXELS, sa.SA_HEIGHTPIXELS].join() === '24,24,592,432' && c.REPORTED_SCREEN_DENSITY === 230, r.out);
+    ok('card hud: status names the crop', /PATCHED \(230 dpi, card hud, crop 800x480:0,0,640,480\)/.test(status(t)));
+    ok('card hud: the decode size is its UI, the others keep the shipped one',
+        conf.texSize('hud') === '640x480' && conf.texSize('shown') === null && conf.texSize('hidden') === null);
+    conf.DENSITIES.forEach(function (d) {
+        var e = conf.edited(origText, conf.transform(origText, d, 'hud'));
+        if (!e || e.dpi !== d || e.card !== 'hud') ok('card hud at ' + d + ' dpi is recognised', false);
+    });
+    ok('card hud: only aapd.conf changes, aapd stays as it was', sha(t.bin) === binAt);
+    r = patcher(t, ['apply', '--dpi', '240', '--card', 'hidden', '--yes']);      // the state the tests below start from
+    ok('card hud: back to another card setting', r.code === 0 && /PATCHED \(240 dpi, card hidden/.test(status(t)), r.out);
 
     /* Undo needs no anchors: the patched aapd with an anchor changed (an
      * older release's edit there), and aapd.conf with KOMBI_DISPLAY numbers
@@ -894,6 +931,13 @@ async function socketTests() {
     ok('aa-density: pending, the disk at 240 dpi, aapd still running the original', spaced.aa.pending === 'apply' && spaced.aa.dpi === 240 &&
         spaced.aa.runDpi === null && marker(t, 'aa-pending').run === null, JSON.stringify(spaced.aa));
 
+    /* aa-restart takes a waiting change now only where aapd's own restart is allowed */
+    var markT = calls(t).length;
+    p.send({ cmd: 'aa-restart' });
+    st = await p.next(function (m) { return m.ev === 'status' && m.aa && m.aa.error; });
+    ok('aa-restart without recmgr\'s aapd entry: refused with the reason, the change still waits, neither the render nor aapd restarted', /recmgr did not load an? aapd restart entry/.test(st.aa.error) &&
+        marker(t, 'aa-pending').action === 'apply' && !calls(t).slice(markT).some(function (l) { return /^systemctl (restart|start|stop)/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).slice(markT).join(';'));
+
     /* Restart head unit: once, then refused, and refused again by a new patchd within 10 min. */
     fs.writeFileSync(t.env.WOC_BOOT_ID, 'boot-R\n');
     p.send({ cmd: 'reboot' });
@@ -954,6 +998,24 @@ async function socketTests() {
     ok('aa-card hidden: the crop override written, deferred, aapd not restarted', st.aa.aapd === 'deferred' && st.aa.card === 'hidden' &&
         cropEnv(r) === 'WOC_SRC_CROP=-s src_crop=1280x720:0,156,1280,564\n' && marker(r, 'aa-pending').action === 'apply' &&
         !calls(r).slice(before).some(function (l) { return /aapd/.test(l); }), JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
+    /* aa-restart takes it now: the render restarted first (it reads the crop when it starts), then aapd killed and
+     * started; the marker is gone, nothing pending, / read-only, never a head-unit restart */
+    var victim2 = cp.spawn('sleep', ['300']);
+    children.push(victim2);
+    fs.writeFileSync(r.unitState, JSON.stringify({ pid: victim2.pid }));
+    var died2 = new Promise(function (res) { victim2.on('exit', function (code, sig) { res(sig); }); });
+    var markR = calls(r).length;
+    pr.send({ cmd: 'aa-restart' });
+    st = await pr.next(function (m) { return m.ev === 'status' && m.aa && m.aa.aapd === 'restarted' && m.busy !== 'aa'; });
+    var sig2 = await Promise.race([died2, sleep(3000)]), after = calls(r).slice(markR);
+    var iRender = after.indexOf('systemctl restart waze-on-cluster.service'), iStart = after.indexOf('systemctl start aapd.service');
+    ok('aa-restart: the render restarted, then aapd SIGKILLed and started, nothing pending, / read-only', iRender >= 0 && iStart > iRender && sig2 === 'SIGKILL' &&
+        !st.aa.pending && !marker(r, 'aa-pending') && cropEnv(r) !== null && ro(r), JSON.stringify(st.aa) + after.join(';'));
+    ok('aa-restart: no stop of aapd or carplay, no head-unit restart', !after.some(function (l) { return /systemctl (stop|restart) (aapd|carplay)|reboot/.test(l); }), after.join(';'));
+    markR = calls(r).length;
+    pr.send({ cmd: 'aa-restart' });
+    st = await pr.next(function (m) { return m.ev === 'refused' && m.cmd === 'aa-restart'; });
+    ok('aa-restart: with nothing waiting it is refused (not an error of Android Auto\'s) and nothing is restarted', /no Android Auto change waits/.test(st.reason) && !calls(r).slice(markR).some(function (l) { return /^systemctl (restart|start|stop)/.test(l); }), JSON.stringify(st));
     pr.send({ cmd: 'aa-revert' });
     await pr.next(function (m) { return aaDone(m) && m.aa.state === 'original' || m.aa && m.aa.pending === 'revert'; });
     ok('aa-revert: originals back byte-exact, the crop override gone', sha(r.bin) === sha(SRC) && sha(r.conf) === sha(SRCCONF) && cropEnv(r) === null);
@@ -1086,6 +1148,15 @@ async function socketTests() {
     run = marker(n, 'aa-pending').run;
     ok('a second deferred change keeps the first run', !!run && run.dpi === 180 && run.card === 'shown' &&
         st.aa.runDpi === 180 && st.aa.runCard === 'shown', JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    /* the HUD picture also sets the decode size; a deferred change like the others */
+    pn.send({ cmd: 'aa-card', value: 'hud' });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.diskCard === 'hud'; });
+    run = marker(n, 'aa-pending').run;
+    ok('aa-card hud: crop and decode size written, deferred, the first run kept', cropEnv(n) === 'WOC_SRC_CROP=-s src_crop=800x480:0,0,640,480 -s tex_size=640x480\n' &&
+        !!run && run.dpi === 180 && run.card === 'shown' && st.aa.card === 'hud', JSON.stringify([cropEnv(n), marker(n, 'aa-pending'), st.aa]));
+    pn.send({ cmd: 'aa-card', value: 'windscreen' });
+    st = await pn.next(function (m) { return m.ev === 'refused' && m.cmd === 'aa-card'; });
+    ok('aa-card: a value outside shown, hidden and hud is refused', /card must be/.test(st.reason), JSON.stringify(st));
     fs.writeFileSync(path.join(n.shm, 'aa-pending'), JSON.stringify({ action: 'apply' }) + '\n');
     pn.send({ cmd: 'aa-density', value: 190 });
     st = await pn.next(function (m) { return aaDone(m) && m.aa.dpi === 190; });

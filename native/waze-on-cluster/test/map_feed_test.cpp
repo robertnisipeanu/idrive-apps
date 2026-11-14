@@ -920,14 +920,20 @@ int main()
     feeds.set_hud_offset(800, 800);
     bpump(300, &f2);
     hl = layer_on(2);
-    ok("moved too far: held inside the HUD (its bottom right corner)",
-       hl && hl->params.rect.x + hl->params.rect.w == 800 && hl->params.rect.y + hl->params.rect.h >= 479 && hl->params.rect.y + hl->params.rect.h <= 480);
-    ok("moved too far: the offset reported as far as it goes (240,170 for 320x140)",
-       feeds.status("decode").hud_offset_x == 240 && feeds.status("decode").hud_offset_y == 170);
+    /* the map may hang past the HUD's edge by half its size (kHudOverhangPct) */
+    ok("moved too far: held at half its size past the HUD's bottom right corner (320x140: x 640, y 409)",
+       hl && hl->params.rect.x == 640 && hl->params.rect.y == 409 && hl->params.rect.w == 320 && hl->params.rect.h == 140);
+    ok("moved too far: the offset reported as far as it goes (400,240 for 320x140)",
+       feeds.status("decode").hud_offset_x == 400 && feeds.status("decode").hud_offset_y == 240);
     feeds.set_hud_offset(-800, -800);
     bpump(300, &f2);
     hl = layer_on(2);
-    ok("moved too far the other way: the top left corner", hl && hl->params.rect.x == 0 && hl->params.rect.y == 0);
+    ok("moved too far the other way: half its size past the top left corner (x -160, y -70)",
+       hl && hl->params.rect.x == -160 && hl->params.rect.y == -70);
+    feeds.set_hud_offset(150, -50);
+    bpump(300, &f2);
+    hl = layer_on(2);
+    ok("inside the overhang it goes where asked (240+150, 169-50)", hl && hl->params.rect.x == 390 && hl->params.rect.y == 119);
     feeds.set_hud_offset(-30, 20);
     feeds.set_hud_width(60);
     bpump(300, &f2);

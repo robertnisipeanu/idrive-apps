@@ -124,8 +124,10 @@ void MapFeed::make_layer()
     lo_.contend = true;   /* the map takes the slot back from the stock map */
     lo_.guide_hold = cfg_.guide_hold;
     lo_.yield = cfg_.target != "hud" || !cfg_.hud_keep_shown;
-    lo_.x = (int)q.x;
-    lo_.y = (int)q.y;
+    /* The layer's position is the quad's plus the overhang quad() worked out (over_x_/over_y_: how far the HUD map goes
+     * past the scene's edge, so that it can be moved to the right half). The same two lines are in set_hud_offset(). */
+    lo_.x = (int)q.x + over_x_;
+    lo_.y = (int)q.y + over_y_;
     lo_.w = q.w;
     lo_.h = q.h;
     lo_.visible = live_ && !frozen_ && picture_ == Picture::Shown;
@@ -166,8 +168,15 @@ crk::QuadRect MapFeed::quad(uint32_t tw, uint32_t th) const
     const uint32_t cx = q.x, cy = q.y;
     q.x = (uint32_t)(x < 0 ? 0 : x > xmax ? xmax : x);
     q.y = (uint32_t)(y < 0 ? 0 : y > ymax ? ymax : y);
-    placed_x_ = (int)q.x - (int)cx;
-    placed_y_ = (int)q.y - (int)cy;
+    /* the map may hang past the scene's edge by kHudOverhangPct of its size: q stays the position held inside the
+     * scene, over_x_/over_y_ is how far past it the map goes */
+    const long ox = (long)q.w * kHudOverhangPct / 100, oy = (long)q.h * kHudOverhangPct / 100;
+    const long px = x < -ox ? -ox : x > xmax + ox ? xmax + ox : x;
+    const long py = y < -oy ? -oy : y > ymax + oy ? ymax + oy : y;
+    over_x_ = (int)(px - (long)q.x);
+    over_y_ = (int)(py - (long)q.y);
+    placed_x_ = (int)px - (int)cx;
+    placed_y_ = (int)py - (int)cy;
     return q;
 }
 
@@ -181,10 +190,12 @@ void MapFeed::set_hud_offset(int dx, int dy)
     if (cfg_.target != "hud" || !layer_ || !target_size(client_.targets, "hud", &tw, &th))
         return;
     const crk::QuadRect q = quad(tw, th);
-    lo_.x = (int)q.x;
-    lo_.y = (int)q.y;
+    /* The same position as when the layer is made (quad's plus the overhang); quad() has just set over_x_/over_y_
+     * for the new offset. */
+    lo_.x = (int)q.x + over_x_;
+    lo_.y = (int)q.y + over_y_;
     client_.set(layer_, lo_);
-    log_info("render: HUD map moved to %u,%u (offset %+d,%+d)", q.x, q.y, placed_x_, placed_y_);
+    log_info("render: HUD map moved to %d,%d (offset %+d,%+d)", lo_.x, lo_.y, placed_x_, placed_y_);
 }
 
 void MapFeed::set_hud_keep_shown(bool keep)

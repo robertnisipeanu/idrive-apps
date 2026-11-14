@@ -362,7 +362,14 @@ function cmdApply(t, dpi, card, yes, unproven) {
     if (cb && cb.err) die('refusing: ' + cb.err);
     var confWhy = cb ? conf.check(origText.toString('utf8')) : confNotOriginal(origText.toString('utf8'));
     if (confWhy) die('refusing: ' + (cb ? 'backup ' + backupPath(t.conf) : t.conf) + ': ' + confWhy);
-    if (cb && !text.equals(cb.buf) && !conf.edited(cb.buf.toString('utf8'), text.toString('utf8'))) die('refusing: ' + t.conf + ' was modified by something else');
+    /* apply accepts an aapd.conf that holds this patcher's edit at other values (another dpi, card or safe area). It
+     * differs from the backup in numbers of the KOMBI_DISPLAY block only (otherFile, as revert reads it), and the edit
+     * is made again from the backup with the current values. Any other difference means something else changed the
+     * file, and apply refuses it. */
+    if (cb && !text.equals(cb.buf)) {
+        var otherConf = conf.otherFile(text.toString('utf8'), cb.buf.toString('utf8'));
+        if (otherConf) die('refusing: ' + t.conf + ' was modified by something else (' + otherConf + ')');
+    }
 
     var outBin = Buffer.from(buf);
     EDITS.forEach(function (e) { Buffer.from(c.loc[e[0]].patched, 'hex').copy(outBin, c.loc[e[0]].offset); });
