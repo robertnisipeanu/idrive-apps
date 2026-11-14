@@ -746,8 +746,11 @@ none as shipped), the guide hold, the upload budget and the tick. A unit's own s
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
 line overrides both. `key += a,b` adds each entry a list does not have
-yet (`id8_targets += mine`). On iDrive 8 a tool adds a widget of its own
-with a drop-in, read after all of these ("iDrive 8" below), and an error in
+yet (`id8_targets += mine`); cluster-render before 0.5.10 refuses `+=`
+and `id8_<name>_` keys it does not know (exit 2), so a unit that may go
+back to one keeps its own widgets in a drop-in, not in local_conf. On
+iDrive 8 a tool adds a widget of its own with a drop-in, read after all of
+these ("iDrive 8" below), and an error in
 a drop-in only skips that file; one in the shipped file, local_conf or the
 command line stops the service (exit 2). `cluster-render status` prints the targets, Dcsm2's
 availability, the subscription's answer per event and the count of what
@@ -916,7 +919,13 @@ another content, its own content and scene id CAR-ONLY (below):
   `/var/opt/cluster-render/conf.d/` (`drop_ins`; cluster-render.conf has an
   example). A drop-in adds its targets and their scene ids with `+=`
   (`id8_targets += mywidget`, `id8_scene_ids_allowed += 0x4d4755000020`)
-  and sets only those targets' keys. It is read at the service's start,
+  and sets only those targets' keys. A target it adds is a widget with a
+  name no target has yet: the widget category `Ca_Widget_IC` 43100301, a
+  dynamic widget content (43202001-43205000, never the head unit's own
+  43202020-43202120), a scene id `0x4d4755……`, as is every scene id it
+  allows; the drop-ins together add at most 8 targets. A widget's picture
+  (`_preview`) is a regular file of at most 1 MB; any other is left out,
+  with an error in the log. It is read at the service's start,
   after local_conf and the command line, in the order of the paths, and
   only as a regular file owned by root and writable by no one else; each
   goes onto a copy of the settings, kept only when the targets still load
@@ -1182,8 +1191,12 @@ The host tests:
   and every bad one skipped whole with the settings as before it: an
   unknown key or line, a missing scene id, a content or scene id another
   target's, a scene id not allowed, a list set rather than added to,
-  another key or another target's key set, a symlink, writable by the
-  group or others, another owner;
+  another key or another target's key set, a target already listed, a
+  category other than the widget one, a content outside the dynamic
+  widgets or the head unit's own, a scene id not ours, more than 8 targets
+  from drop-ins, a symlink, writable by the group or others, another
+  owner; a widget's picture read, a device, a pipe, a missing, empty or
+  too large file refused, a symlink to one followed;
 - `guard_test`: the mapping guard's file: a strike read back, a hold's
   mapping disabled at its limit and after a reboot, the default limit never
   disabling, the map's mapping never disabled whatever its limit or the
