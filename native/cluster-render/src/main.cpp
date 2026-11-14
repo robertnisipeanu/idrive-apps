@@ -38,11 +38,22 @@ using namespace crs;
 #define CR_VERSION ""
 #endif
 
+namespace {
+
+/* The drop-ins read with the settings (main()), for the log and the
+ * status once the service starts (service_config). */
+std::vector<std::string> drop_in_report;
+
+}  // namespace
+
 bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *out, std::string *err)
 {
     if (cfg.has("log_file"))
         cld::log_to_file(cfg.str("log_file"), cld::log_file_cap(cfg.num("log_file_kb")), "cluster-render", CR_VERSION);
     ServiceConfig &sc = *out;
+    for (const std::string &line : drop_in_report)
+        cld::log(line.compare(0, 8, "skipped ") ? 'I' : 'W', "drop-in %s", line.c_str());
+    sc.drop_ins = drop_in_report;
     if (!load_targets(cfg, generation, &sc.targets, err))
         return false;
     const long max_kb = cfg.num("upload_kb_per_s"), step_kb = cfg.num("upload_step_kb_per_s");
@@ -150,6 +161,7 @@ int main(int argc, char **argv)
     cld::Config cfg;
     define_keys(&cfg);
     std::string err;
+    bool conf = false;
     int i = 1;
     for (; i < argc && argv[i][0] == '-'; i++) {
         const bool has_arg = i + 1 < argc;
@@ -158,6 +170,7 @@ int main(int argc, char **argv)
                 std::fprintf(stderr, "cluster-render: %s\n", err.c_str());
                 return 2;
             }
+            conf = true;
         } else if (!std::strcmp(argv[i], "-s") && has_arg) {
             if (!cfg.set_pair(argv[++i], &err)) {
                 std::fprintf(stderr, "cluster-render: %s\n", err.c_str());
@@ -170,6 +183,10 @@ int main(int argc, char **argv)
     cld::log_verbose = (int)cfg.num("verbose");
     signal(SIGPIPE, SIG_IGN);
     if (i == argc) {
+        /* The drop-ins with a settings file, as local_conf, but after the
+         * whole command line: -s drop_ins= reads none (settings.h). */
+        if (conf)
+            load_drop_ins(&cfg, 0, &drop_in_report);
         /* Before anything that reaches the cluster: the generation's
          * service, Dcsm2, vsomeip, RAMSES. */
         const std::string why = cld::head_unit_refused();

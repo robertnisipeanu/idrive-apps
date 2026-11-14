@@ -47,6 +47,8 @@ public:
     std::string status_text(int64_t now_ms) const;
     /* Where the scene files clients name may come from (scene_file.h). */
     void set_scene_files(const SceneFiles &where) { scene_files_ = where; }
+    /* The drop-ins' lines for the status (ServiceConfig::drop_ins). */
+    void set_drop_ins(const std::vector<std::string> &lines) { drop_ins_ = lines; }
 
 private:
     struct Client {
@@ -92,6 +94,7 @@ private:
     SlotManager *slots_;
     std::string backend_;
     SceneFiles scene_files_;
+    std::vector<std::string> drop_ins_;
     int listen_fd_ = -1;
     bool own_path_ = false;
     std::string path_;

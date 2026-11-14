@@ -47,6 +47,9 @@ struct ServiceConfig {
      * /var/opt/, root's (scene_file.h). */
     SceneFiles scene_files;
     std::string version, boot_id;
+    /* The drop-ins read with the settings, one line each for the status:
+     * "loaded PATH" or "skipped PATH: why" (settings.h). */
+    std::vector<std::string> drop_ins;
 };
 
 class Service {

@@ -1133,6 +1133,8 @@ std::string Server::status_text(int64_t now_ms) const
             s += line + cv->stats() + "\n";
         }
     }
+    for (const std::string &d : drop_ins_)
+        s += "drop-in " + d + "\n";
     s += slots_->guard_text();
     s += slots_->renderer_text(now_ms);
     s += slots_->port().status_text(now_ms);

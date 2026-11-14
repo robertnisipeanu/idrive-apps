@@ -2,7 +2,13 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 #include "settings.h"
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <glob.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <sstream>
@@ -11,6 +17,115 @@
 #include "log.h"
 
 namespace crs {
+
+namespace {
+
+/* Generation 8's per-target fields (load_targets and unit_idrive8.cpp's
+ * offer read them). */
+const char *const kId8Fields[] = {"category", "content", "scene_id", "size",   "linger_ms",
+                                  "description", "order", "preview", "background_id", "layouts", "focus"};
+
+/* key is id8_<name>_<field> with a name of lowercase letters and digits:
+ * its name. A name has no '_', so the field is the key's end. */
+bool id8_target_key(const std::string &key, std::string *name)
+{
+    if (key.compare(0, 4, "id8_") != 0)
+        return false;
+    for (const char *f : kId8Fields) {
+        const std::string tail = std::string("_") + f;
+        if (key.size() <= 4 + tail.size() || key.compare(key.size() - tail.size(), tail.size(), tail) != 0)
+            continue;
+        *name = key.substr(4, key.size() - 4 - tail.size());
+        return std::all_of(name->begin(), name->end(),
+                           [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); });
+    }
+    return false;
+}
+
+/* A drop-in is a few lines. */
+const off_t kMaxDropIn = 64 * 1024;
+
+/* A comma-separated list's entries, trimmed, empty ones left out. */
+std::vector<std::string> entries(const std::string &list)
+{
+    std::vector<std::string> out;
+    std::stringstream ss(list);
+    for (std::string e; std::getline(ss, e, ',');) {
+        const size_t a = e.find_first_not_of(" \t"), b = e.find_last_not_of(" \t");
+        if (a != std::string::npos)
+            out.push_back(e.substr(a, b - a + 1));
+    }
+    return out;
+}
+
+/* The drop-in at path, read onto *cfg (a copy) as settings.h says; false
+ * with why. */
+bool drop_in(const std::string &path, uid_t owner, cld::Config *cfg, std::string *why)
+{
+    /* What is checked is what is read: the open file, no symlink. */
+    const int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) {
+        *why = errno == ELOOP ? "a symlink" : strerror(errno);
+        return false;
+    }
+    struct stat st;
+    std::string text;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        *why = "not a regular file";
+    } else if (st.st_uid != owner || (st.st_mode & (S_IWGRP | S_IWOTH))) {
+        *why = "not owned by uid " + std::to_string((unsigned long)owner) + " or writable by its group or others";
+    } else if (st.st_size > kMaxDropIn) {
+        *why = "larger than " + std::to_string(kMaxDropIn / 1024) + " KB";
+    } else {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(fd, buf, sizeof buf)) > 0)
+            text.append(buf, (size_t)n);
+        if (n < 0)
+            *why = strerror(errno);
+    }
+    close(fd);
+    if (!why->empty())
+        return false;
+    const cld::Config before = *cfg;
+    std::istringstream in(text);
+    if (!cfg->load(in, path, why))
+        return false;
+    for (const char *list : {"id8_targets", "id8_scene_ids_allowed"}) {
+        const std::vector<std::string> was = entries(before.str(list)), now = entries(cfg->str(list));
+        if (now.size() < was.size() || !std::equal(was.begin(), was.end(), now.begin())) {
+            *why = std::string(list) + " set: a drop-in only adds to it (+=)";
+            return false;
+        }
+    }
+    const std::vector<std::string> was = entries(before.str("id8_targets")), now = entries(cfg->str("id8_targets"));
+    const std::vector<std::string> added(now.begin() + was.size(), now.end());
+    for (const auto &kv : cfg->values()) {
+        std::string name;
+        if (kv.first == "id8_targets" || kv.first == "id8_scene_ids_allowed" || before.str(kv.first.c_str()) == kv.second)
+            continue;
+        if (!id8_target_key(kv.first, &name) || std::find(added.begin(), added.end(), name) == added.end()) {
+            *why = kv.first + " set: a drop-in sets only the id8_ keys of the targets it adds";
+            return false;
+        }
+    }
+    std::vector<TargetSpec> targets;
+    if (!load_targets(*cfg, 8, &targets, why))
+        return false;
+    for (const TargetSpec &t : targets) {
+        if (std::find(added.begin(), added.end(), t.name) == added.end())
+            continue;
+        for (const TargetSpec &o : targets)
+            if (o.name != t.name && (o.content == t.content || o.scene_id == t.scene_id)) {
+                *why = "target " + t.name + ": its " + (o.content == t.content ? "content" : "scene id") +
+                       " is target " + o.name + "'s";
+                return false;
+            }
+    }
+    return true;
+}
+
+}  // namespace
 
 void define_keys(cld::Config *cfg)
 {
@@ -92,6 +207,12 @@ void define_keys(cld::Config *cfg)
     cfg->define("id8_popup_background_id", "43400005");
     cfg->define("id8_popup_layouts", "");
     cfg->define("id8_popup_focus", "1");
+    /* Any other iDrive 8 target's keys (settings.h). */
+    cfg->extra_keys = [](const std::string &key) {
+        std::string name;
+        return id8_target_key(key, &name);
+    };
+    cfg->define("drop_ins", "/var/opt/cluster-render/conf.d/*.conf /var/opt/*/current/cluster-render.d/*.conf");
     cfg->define("fade_ms", "250");
     cfg->define("upload_kb_per_s", "5500");
     cfg->define("upload_floor_kb_per_s", "2000");
@@ -197,6 +318,30 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
     if (!warn.empty())
         log_warn("guide hold%s: %s", held ? "" : " off", warn.c_str());
     return true;
+}
+
+void load_drop_ins(cld::Config *cfg, uid_t owner, std::vector<std::string> *report)
+{
+    std::vector<std::string> paths;
+    std::stringstream ss(cfg->str("drop_ins"));
+    for (std::string pattern; ss >> pattern;) {
+        glob_t g;
+        if (glob(pattern.c_str(), 0, nullptr, &g) == 0)
+            paths.insert(paths.end(), g.gl_pathv, g.gl_pathv + g.gl_pathc);
+        globfree(&g);
+    }
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    for (const std::string &path : paths) {
+        cld::Config copy = *cfg;
+        std::string why;
+        if (drop_in(path, owner, &copy, &why)) {
+            *cfg = copy;
+            report->push_back("loaded " + path);
+        } else {
+            report->push_back("skipped " + path + ": " + why);
+        }
+    }
 }
 
 }  // namespace crs

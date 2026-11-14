@@ -745,7 +745,11 @@ menu entry), the targets that take scene files (`<target>_scene_files`,
 none as shipped), the guide hold, the upload budget and the tick. A unit's own settings go in
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
-line overrides both. `cluster-render status` prints the targets, Dcsm2's
+line overrides both. `key += a,b` adds each entry a list does not have
+yet (`id8_targets += mine`). On iDrive 8 a tool adds a widget of its own
+with a drop-in, read after all of these ("iDrive 8" below), and an error in
+a drop-in only skips that file; one in the shipped file, local_conf or the
+command line stops the service (exit 2). `cluster-render status` prints the targets, Dcsm2's
 availability, the subscription's answer per event and the count of what
 Dcsm2 sent (fetch, map and slot events, notifications that did not decode,
 replies), every client's layers and the upload cap.
@@ -901,6 +905,29 @@ another content, its own content and scene id CAR-ONLY (below):
   `C_GuidingPanels_IC` 43201101, `C_Media_IC` 43202120, ...) are never
   offered: two providers of one content fight. Scene ids are `0x4d4755……`
   ("MGU"), allowed by `id8_scene_ids_allowed`.
+- Any number of targets: a target is its keys. `id8_<name>_<field>` is
+  taken for any name of lowercase letters and digits and the fields above
+  (`category`, `content`, `scene_id`, `size`, `linger_ms`, `description`,
+  `order`, `preview`, `background_id`, `layouts`, `focus`; one left out is
+  empty, 0), so a target needs no code; any other unknown key is still an
+  error. A tool installed under `/var/opt/<id>/current` adds a widget of
+  its own with a drop-in there, `cluster-render.d/<name>.conf`, which goes
+  with the tool on uninstall; the unit's own drop-ins go in
+  `/var/opt/cluster-render/conf.d/` (`drop_ins`; cluster-render.conf has an
+  example). A drop-in adds its targets and their scene ids with `+=`
+  (`id8_targets += mywidget`, `id8_scene_ids_allowed += 0x4d4755000020`)
+  and sets only those targets' keys. It is read at the service's start,
+  after local_conf and the command line, in the order of the paths, and
+  only as a regular file owned by root and writable by no one else; each
+  goes onto a copy of the settings, kept only when the targets still load
+  and each target it adds has a content and a scene id no other target
+  has. Anything else skips the file whole, with a warning in the log, and
+  the service runs without it: a third party's broken file never stops the
+  service. The status lists each drop-in, `loaded` or `skipped` and why.
+  The cluster lists every offered `Ca_Widget_IC` dynamic widget in its
+  widget menu with its description (two of ours at once, `widget` and
+  `popup`, VERIFIED on the car). A second instance run by hand beside the
+  installed service takes `-s drop_ins=`: their contents would be the same.
 
 VERIFIED on the car with the service itself (before 0.2.2 was merged),
 run by hand as `hmi_5000` with `showcase.js all` on `map` and on `widget`:
@@ -933,6 +960,8 @@ CAR-ONLY on iDrive 8:
   over a long run;
 - how a focus request, the backgrounds and the views mask behave on other
   iDrive 8 cars than an M4;
+- more than two of our widgets offered at once (drop-ins, host-tested
+  only);
 - the `guide` target: its dynamic content shown in `Ca_GuidingPanel_IC`,
   and which content the cluster shows there during route guidance, when
   the head unit offers its own guiding panel in the same category;
@@ -1143,6 +1172,18 @@ The host tests:
   gauge, each pattern resolved once over 30 updates, a line changing
   nothing reported once, and a new scene given every kept line ending as
   the first;
+- `settings_test`: the shipped cluster-render.conf loading with every key
+  known; `id8_<name>_<field>` taken for any target name and each field,
+  every other unknown key refused; `+=` adding each entry once; a target
+  declared by its keys alone loaded on iDrive 8; drop-ins, on files it
+  writes: a widget target added, read in the order of their paths across
+  patterns, a file matched twice once, a skipped one not stopping the next,
+  the earlier of two with one content kept, `drop_ins` empty reading none;
+  and every bad one skipped whole with the settings as before it: an
+  unknown key or line, a missing scene id, a content or scene id another
+  target's, a scene id not allowed, a list set rather than added to,
+  another key or another target's key set, a symlink, writable by the
+  group or others, another owner;
 - `guard_test`: the mapping guard's file: a strike read back, a hold's
   mapping disabled at its limit and after a reboot, the default limit never
   disabling, the map's mapping never disabled whatever its limit or the
