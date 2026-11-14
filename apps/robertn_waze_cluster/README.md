@@ -69,6 +69,11 @@ The app is in the head unit's display language.
 - **Keep HUD map over BMW's pop-ups:** unticked (the default), the map steps
   aside while BMW's media and list pop-ups show on the HUD. Ticked, it
   stays.
+- **Hide HUD map in Sport mode:** ticked, the HUD map is hidden while the
+  car is in a Sport driving mode (Sport, Sport+, Sport Individual or
+  XtraBoost) and comes back in any other mode. The cluster's map stays.
+  Unticked (the default), the driving mode changes nothing. You can change
+  it only while **Show on** has the HUD.
 - **Size:** how wide the map is on the HUD.
 - **Move left / Move right / Move up / Move down** and **Centre:** where the
   map sits on the HUD.
@@ -105,6 +110,7 @@ apply the change.
 | `Cluster map: Frozen` or `Stream lost` | Reconnect your phone: unplug it, or turn its Wi-Fi off and on. This can happen after you change the cluster's Central display area. |
 | The map never shows on the cluster | Set **Instrument cluster > Central display area** to **Map view**. |
 | `Cluster map: Error` or `Unavailable` | [Report it](#logs-and-reporting-a-problem). |
+| `HUD map: Hidden in Sport mode` | **Hide HUD map in Sport mode** is ticked and the car is in a Sport driving mode. Leave the Sport mode, or untick it. |
 | `HUD map: Disabled after errors` | The HUD map was turned off because the instrument cluster restarted right after it showed. It stays off until the next update of Cluster renderer. The cluster map keeps working. |
 | CarPlay audio cuts out and `CarPlay Wi-Fi: 2.4 GHz` | On your iPhone, turn Wi-Fi off and on. |
 
@@ -197,9 +203,32 @@ size shown, the corners are rounded and a night map's background is made
 black, which the HUD shows as nothing, so the roads, route and labels float
 in view. The map steps aside while the HUD's media and list pop-ups show, never
 for route guidance; **Keep HUD map over BMW's pop-ups** keeps it shown.
+With **Hide HUD map in Sport mode** ticked the HUD map goes while the car
+is in a Sport driving mode, as with Off for the HUD alone, and comes back
+with the next frame once the mode is another ("The driving mode" below).
 With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
 map is disabled; the cluster's map keeps working.
+
+### The driving mode
+
+For **Hide HUD map in Sport mode** the app reads the car's driving mode
+from the head unit (`de.bmw.infotainment.drivingexcitement.FES`, field
+`statusFESVehicleDynamicSwitchHMI`, its
+`actualValueModeDrivingExperience`), read-only, from its start, page shown
+or not (`src/drive_mode.js`): at each change the head unit notifies, and
+every 10 s. Sport, Sport+, Sport Individual, a plug-in hybrid's Sport and
+XtraBoost are Sport modes; Comfort, Eco Pro, Adaptive and a plug-in
+hybrid's Hybrid and Electric are not; a value that is not a mode (the
+switch initialising, the car switching off) keeps the last one. The modes'
+numbers and names are those idrive7-apps' Redline reads on cars.
+
+While the setting is in use (ticked, and the map on the HUD) the app tells
+the map service a Sport mode when it starts and every 30 s while it lasts,
+and its end once. The map service counts a Sport mode for 90 s only, so
+the HUD map comes back by itself if the app stops reporting. Not in use,
+nothing is told. On a head unit where the app finds no driving mode to
+read, the checkbox is greyed and the HUD map stays shown in every mode.
 
 ### Driver profiles
 
@@ -250,8 +279,9 @@ supported, HIGH F included.
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
-| **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
+| **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Hidden in Sport mode` (Hide HUD map in Sport mode is ticked and the car is in a Sport driving mode), `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
 | | Keep HUD map over BMW's pop-ups | a checkbox: unticked (the default), the HUD map steps aside while BMW's HUD media and list pop-ups show (the media source list) and comes back after they go; ticked, it stays shown over them. Never steps aside for route guidance. Kept for the next start; greyed as the Size slider |
+| | Hide HUD map in Sport mode | a checkbox: ticked, the HUD map is hidden while the car is in a Sport driving mode (Sport, Sport+, Sport Individual, XtraBoost) and shown again in any other; the cluster's map stays. Unticked (the default), the mode changes nothing. Kept for the next start; greyed as the Size slider, so whenever Show on has no HUD, and on a head unit with no driving mode to read |
 | | Size | a slider, `Size: Standard` (the fitted box, about 57 % of the HUD's width, at the 55 % step) or `Size: 70 %`: 5 % a step, from 30 % to 85 % of the HUD's width, the picture's shape kept; kept for the next start; greyed while the HUD is off or disabled |
 | | Position | `Position: Centre`, or how far the HUD map is moved: `Position: 20 px right, 10 px up` |
 | | Move left / Move right / Move up / Move down | 10 px a press, held inside the HUD; kept for the next start; greyed as the Size slider |
@@ -322,7 +352,10 @@ the Logs page is, and retries each once a second; the tools keep running
 when it closes them.
 
 - **Render** `/dev/shm/waze-on-cluster/ctl.sock`. The app sends
-  `{"cmd":"guide","hide":0|1}` (Hide BMW's turn box). The tool sends
+  `{"cmd":"guide","hide":0|1}` (Hide BMW's turn box) and, while Hide HUD
+  map in Sport mode is in use, `{"cmd":"drive","sport":"0"|"1"}` (the
+  car in a Sport mode or not; also over a short connection of its own while
+  the page is closed). The tool sends
   `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason","hide_bmw_guidance","guide_disabled"}`
   (`state` idle, starting, showing, frozen or error; `hide_bmw_guidance` 0
   or 1; `guide_disabled` 1 while the cluster renderer keeps the box shown),
@@ -356,6 +389,7 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
 node tools/test_profiles.js          # the driver profiles against fake sockets and SessionManager
+node tools/test_drive_mode.js        # the driving mode against a fake FES and the fake render
 node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
 node tools/build.js                  # robertn_waze_cluster@<version>.src.tgz
 node tools/build.js --sdk <donor>    # also robertn_waze_cluster@<version>.tgz
@@ -380,6 +414,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/waze_cluster_control.js` | the render and patch socket clients and the status logic |
 | `src/logs_control.js` | the logs socket client |
 | `src/profile_sync.js` | the driver profile in use and its own map settings |
+| `src/drive_mode.js` | the car's driving mode, for Hide HUD map in Sport mode |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
 | `package/` | the package tree (manifest, RHMI UI, config, CHANGELOG) |

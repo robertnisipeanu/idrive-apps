@@ -34,7 +34,10 @@
  * greyed; Keep HUD map over BMW's pop-ups, a checkbox under HUD map,
  * unticked by default, each press one command to the render and one save,
  * ticked as the render reports, greyed with the size slider and for a render
- * without the setting; Own settings for this driver, a checkbox under Show on, greyed
+ * without the setting; Hide HUD map in Sport mode, a checkbox under it,
+ * unticked by default, greyed likewise: ticked, the HUD map goes while the
+ * car is in a Sport mode (the head unit's FES, read from the app's start)
+ * and HUD map says Hidden in Sport mode; Own settings for this driver, a checkbox under Show on, greyed
  * while no driver profile is detected, ticked for a profile with its own
  * map settings, a switch of profile moving the render to that profile's
  * (or the shared) settings, unticked the shared ones back; no label greyed (the HMI's labels have no setEnabled, its
@@ -240,11 +243,26 @@ class OnlineApp extends EventEmitter {
 const hmiContexts = [];
 let displayLanguage = null;
 let sessionUser = '';
+/* the car's driving mode, as the head unit's FES gives and notifies it */
+let driveModeNow = 'COMFORT';
+let driveModeChanged = null;
+const driveModeField = () => ({ actualValueModeDrivingExperience: driveModeNow });
+function driveMode(mode) {
+    driveModeNow = mode;
+    if (driveModeChanged) driveModeChanged(driveModeField());
+}
 const someipBuilders = {
     buildTypedProxy: (iface, instance) => Promise.resolve(iface === 'de.bmw.infotainment.personalization.SessionManager' ? {
         init: () => Promise.resolve(),
         waitUntilAvailable: () => Promise.resolve(),
         currentUserAccountReference: { getValue: () => Promise.resolve(sessionUser) }
+    } : iface === 'de.bmw.infotainment.drivingexcitement.FES' ? {
+        init: () => Promise.resolve(),
+        waitUntilAvailable: () => Promise.resolve(),
+        statusFESVehicleDynamicSwitchHMI: {
+            subscribe: (cb) => { driveModeChanged = cb; return Promise.resolve(); },
+            getValue: () => Promise.resolve(driveModeField())
+        }
     } : {
         init: () => Promise.resolve(),
         waitUntilAvailable: () => Promise.resolve(),
@@ -285,7 +303,7 @@ async function main() {
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
-        'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
+        'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSport Hide HUD map in Sport mode', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
         'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
@@ -306,7 +324,7 @@ async function main() {
         .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
     assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
-    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_1Row'),
+    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep', 'wocHudSport'].map((n) => widgets[n]), Array(5).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
     assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
         'where the map shows: a drop-down of four; the HUD\'s size: a slider');
@@ -357,7 +375,7 @@ async function main() {
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
         assert.deepStrictEqual(bound, ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
-            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudKeep', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile',
+            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudKeep', 'wocHudLeft', 'wocHudRight', 'wocHudSport', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile',
             'wocRestart'],
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
@@ -441,7 +459,7 @@ async function main() {
         /* ---- where the map shows, and the HUD ---- */
         const showOn = byName.wocShowOn;
         const size = byName.wocHudSize;
-        const hudRows = () => ['wocHudKeep', 'wocHudSize', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocHudDown'].map((n) => byName[n].enabled);
+        const hudRows = () => ['wocHudKeep', 'wocHudSport', 'wocHudSize', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocHudDown'].map((n) => byName[n].enabled);
         await until('the cluster, the HUD off', () => showOn.shown() === 'Show on: Cluster' && showOn.enabled === true &&
             byName.wocHud.text === 'HUD map: Off' && size.text === 'Size: Standard' && size.cells['0:Value'] === 5 &&
             byName.wocHudPos.text === 'Position: Centre');
@@ -488,6 +506,42 @@ async function main() {
         render.hudKeep = 0;
         render.announce(render.state, render.reason);
         await until('enabled again', () => keep.enabled === true);
+        /* Hide HUD map in Sport mode: unticked by default; a press ticks it at the render, patchd saves it; in a Sport mode the
+         * HUD map goes and its row says so, back with the mode gone; greyed for a render without the setting */
+        const sport = byName.wocHudSport;
+        assert(sport.enabled === true && sport.selected === false && sport.text === 'Hide HUD map in Sport mode', 'shown in Sport by default');
+        driveMode('SPORT');
+        await sleep(100);
+        assert.strictEqual(byName.wocHud.text, 'HUD map: Showing', 'unticked: a Sport mode changes nothing');
+        render.received.length = 0;
+        await sleep(450);
+        sport.press();
+        await until('ticked in a Sport mode: the HUD map hidden, its row says so', () => render.hudHideSport === 1 && sport.selected === true &&
+            render.sport === 1 && byName.wocHud.text === 'HUD map: Hidden in Sport mode');
+        assert.deepStrictEqual(render.received, [{ cmd: 'hud', hud_hide_sport: '1' }, { cmd: 'drive', sport: '1' }], 'the setting, then the mode, to the render');
+        await until('saved', () => patch.received.some((m) => m.cmd === 'hud-hide-sport' && m.on === 1) && patch.map.hud_hide_sport === 1);
+        assert(sport.enabled === true && hudRows().every((e) => e === true), 'the HUD\'s rows act while the map is hidden for Sport');
+        driveMode('COMFORT');
+        await until('Comfort: the HUD map back', () => render.sport === 0 && byName.wocHud.text === 'HUD map: Showing');
+        driveMode('SPORT_PLUS');
+        await until('Sport+: hidden again', () => byName.wocHud.text === 'HUD map: Hidden in Sport mode');
+        await sleep(450);
+        sport.press();
+        await until('unticked in a Sport mode: the HUD map back', () => render.hudHideSport === 0 && sport.selected === false &&
+            patch.map.hud_hide_sport === 0 && byName.wocHud.text === 'HUD map: Showing');
+        driveMode('COMFORT');
+        render.hudHideSport = null;   /* a render without the setting */
+        render.announce(render.state, render.reason);
+        await until('a render without it: greyed, unticked', () => sport.enabled === false && sport.selected === false);
+        render.received.length = 0;
+        await sleep(450);
+        sport.press();
+        await until('a greyed checkbox pressed: unticked again', () => sport.selected === false);
+        await sleep(100);
+        assert.deepStrictEqual(render.received, [], 'nothing sent');
+        render.hudHideSport = 0;
+        render.announce(render.state, render.reason);
+        await until('enabled again', () => sport.enabled === true);
         await sleep(450);
         showOn.pick(2);
         await until('both', () => render.cluster === 1 && showOn.shown() === 'Show on: Cluster and HUD (experimental)' &&
@@ -552,6 +606,7 @@ async function main() {
         console.log('ok   where the map shows: a drop-down, Cluster by default, each choice through the render and patchd, the HUD on first, ' +
             'Off for neither, the HUD\'s rows and the turn box greyed then; the HUD: off by default with its size and position greyed; ' +
             'the size slider, Position and Keep HUD map over BMW\'s pop-ups change it, the checkbox greyed for a render without it; ' +
+            'Hide HUD map in Sport mode hides it in a Sport mode and says so, greyed with the HUD off and for a render without it; ' +
             'Disabled after errors greys them');
 
         /* ---- own settings per driver profile ---- */
@@ -677,7 +732,7 @@ async function main() {
         Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
         ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocProfile', 'wocHudSize',
-            'wocHudLeft', 'wocHudCentre', 'wocHudKeep']
+            'wocHudLeft', 'wocHudCentre', 'wocHudKeep', 'wocHudSport']
             .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;
         ['wocStatus', 'wocAaStatus', 'wocAaZoom', 'wocMap', 'wocHud', 'wocHudSize', 'wocHudPos', 'wocRestartStatus']

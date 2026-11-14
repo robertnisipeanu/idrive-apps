@@ -13,6 +13,9 @@
  * then showing the "Waze map" page at 30 updates/s; stream(false) -> idle. The map
  * stays when the connection closes. guide -> the status with the new
  * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
+ * drive -> `sport`, the car in a Sport mode or not: while `hudHideSport` is
+ * 1 the HUD's state is then "sport" (none with `hudHideSport` null, as a
+ * tool before the setting).
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
  * the current state; apply -> busy, then patched with the asked panel;
@@ -47,6 +50,7 @@ class LineServer extends EventEmitter {
         this.path = path;
         this.received = [];
         this.backlog = [];
+        this.connections = 0;   /* every connection made so far */
         this._clients = new Set();
         this._server = net.createServer((socket) => this._onClient(socket));
     }
@@ -91,6 +95,7 @@ class LineServer extends EventEmitter {
     }
 
     _onClient(socket) {
+        this.connections++;
         this._clients.add(socket);
         let buf = '';
         socket.setEncoding('utf8');
@@ -131,6 +136,9 @@ class FakeRender extends LineServer {
         this.hudState = null;
         /* the HUD map kept shown over BMW's pop-ups (null: a tool without the field) */
         this.hudKeep = 0;
+        /* the HUD map hidden in a Sport mode (null: a tool without the field), and the mode as told */
+        this.hudHideSport = 0;
+        this.sport = 0;
         this._showTimer = null;
     }
 
@@ -153,9 +161,11 @@ class FakeRender extends LineServer {
         const s = { ev: 'status', state: this.state, target: this.target, page: this.page, reason: this.reason };
         /* hud null: a tool without the HUD's fields (one refused by its head unit) */
         if (this.hud !== null) {
-            Object.assign(s, { cluster: this.cluster, hud: this.hud, hud_state: this.hud ? this.hudState || this.state : 'off',
+            const hidden = this.hudHideSport === 1 && this.sport === 1;
+            Object.assign(s, { cluster: this.cluster, hud: this.hud, hud_state: !this.hud ? 'off' : hidden ? 'sport' : this.hudState || this.state,
                 hud_width_pct: this.hudWidth || 0, hud_x: this.hudX || 0, hud_y: this.hudY || 0 });
             if (this.hudKeep !== null) s.hud_keep_shown = this.hudKeep;
+            if (this.hudHideSport !== null) s.hud_hide_sport = this.hudHideSport;
         }
         if (this.hide !== null) {
             s.hide_bmw_guidance = this.hide;
@@ -201,6 +211,11 @@ class FakeRender extends LineServer {
             if (msg.hud_x !== undefined) this.hudX = lim(Number(msg.hud_x));
             if (msg.hud_y !== undefined) this.hudY = Number(msg.hud_y);
             if (msg.hud_keep_shown !== undefined && this.hudKeep !== null) this.hudKeep = Number(msg.hud_keep_shown);
+            if (msg.hud_hide_sport !== undefined && this.hudHideSport !== null) this.hudHideSport = Number(msg.hud_hide_sport);
+            this._broadcast(this._status());
+        }
+        if (msg.cmd === 'drive' && (msg.sport === '0' || msg.sport === '1')) {
+            this.sport = Number(msg.sport);
             this._broadcast(this._status());
         }
     }
@@ -228,7 +243,7 @@ class FakePatch extends LineServer {
         this.mute = false;         /* commands received and not answered */
         this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
         this.releaseAa = null;
-        this.map = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0, hud_keep_shown: 0 };
+        this.map = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0, hud_keep_shown: 0, hud_hide_sport: 0 };
         this.shared = null;
         this.own = {};
         this.active = null;
@@ -307,7 +322,7 @@ class FakePatch extends LineServer {
             return;
         }
         const MAP = { cluster: ['cluster'], hud: ['hud'], 'hud-size': ['hud_width_pct'], 'hud-pos': ['hud_offset_x', 'hud_offset_y'],
-            'hud-keep-shown': ['hud_keep_shown'] };
+            'hud-keep-shown': ['hud_keep_shown'], 'hud-hide-sport': ['hud_hide_sport'] };
         if (MAP[msg.cmd]) {
             const v = msg.cmd === 'hud-pos' ? [msg.hud_x, msg.hud_y] : [msg.cmd === 'hud-size' ? msg.hud_width_pct : msg.on];
             this.map = Object.assign({}, this.map);

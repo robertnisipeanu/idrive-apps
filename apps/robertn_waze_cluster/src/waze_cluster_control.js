@@ -12,12 +12,14 @@
  *
  *   Render control socket (RENDER_PATH)
  *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
- *                   {"cmd":"cluster"|"hud","on":"0"|"1"}, {"cmd":"hud","hud_width_pct"|"hud_x","hud_y"|"hud_keep_shown"}
+ *                   {"cmd":"cluster"|"hud","on":"0"|"1"}, {"cmd":"hud","hud_width_pct"|"hud_x","hud_y"|"hud_keep_shown"|"hud_hide_sport"}
  *                    the map's settings (patchd saves them)
+ *                   {"cmd":"drive","sport":"0"|"1"}  the car in a Sport mode or not (drive_mode.js)
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error"|"unsupported",
  *                    "target","page","reason","hide_bmw_guidance","guide_disabled","cluster","hud",
- *                    "hud_state","hud_width_pct","hud_x","hud_y","hud_keep_shown"}
- *                   (hud_keep_shown 0|1, absent from a tool before it)
+ *                    "hud_state","hud_width_pct","hud_x","hud_y","hud_keep_shown","hud_hide_sport"}
+ *                   (hud_keep_shown and hud_hide_sport 0|1, each absent from a tool before it;
+ *                    hud_state "sport": the HUD map hidden while the car is in a Sport mode)
  *                   (unsupported: the head unit refuses the tool, which stays idle)
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
  *                    absent from a tool before the switch; guide_disabled 1: the cluster
@@ -445,6 +447,8 @@ class WazeClusterControl extends EventEmitter {
             return t('Frozen');
         case 'off':
             return t('Off');
+        case 'sport':
+            return t('Hidden in Sport mode');
         default:
             return t('Waiting for the phone');
         }
@@ -558,6 +562,25 @@ class WazeClusterControl extends EventEmitter {
             const keep = !this.hudKeepShown();
             this.render.send({ cmd: 'hud', hud_keep_shown: keep ? '1' : '0' });
             this.patch.send({ cmd: 'hud-keep-shown', on: keep ? 1 : 0 });
+        }
+    }
+    /* ---- the HUD map in a Sport mode ---- */
+    /* True while the HUD map is hidden in a Sport mode, false while the
+     * mode changes nothing; null while the render has not said. */
+    hudHideSport() {
+        const v = this.renderStatus && this.renderStatus.hud_hide_sport;
+        return v === 0 || v === 1 ? v === 1 : null;
+    }
+    /* Changes as the size and place do: only with the map on the HUD. */
+    canHideHudInSport() {
+        return this.canChangeHudSize() && this.hudHideSport() !== null;
+    }
+    /* Flips it: the render at once, patchd saves it; the render's next status shows it. */
+    toggleHudHideSport() {
+        if (this.canHideHudInSport()) {
+            const hide = !this.hudHideSport();
+            this.render.send({ cmd: 'hud', hud_hide_sport: hide ? '1' : '0' });
+            this.patch.send({ cmd: 'hud-hide-sport', on: hide ? 1 : 0 });
         }
     }
 
@@ -1058,7 +1081,7 @@ class WazeClusterControl extends EventEmitter {
             this._noteCardAsked(msg);
             this._wake();
             this.emit('change');
-        } else if (/^(cluster|hud|hud-size|hud-pos|hud-keep-shown)-reply$/.test(msg.ev)) {
+        } else if (/^(cluster|hud|hud-size|hud-pos|hud-keep-shown|hud-hide-sport)-reply$/.test(msg.ev)) {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
             }
