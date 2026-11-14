@@ -30,6 +30,7 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     };
     server_.reset(new Server(comp_.get(), &slots_, cfg_.backend));
     server_->set_scene_files(cfg_.scene_files);
+    server_->set_drop_ins(cfg_.drop_ins);
 }
 
 bool Service::start(std::string *err)

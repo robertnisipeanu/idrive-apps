@@ -11,7 +11,8 @@
 #                             RAMSES console reader, the upload governor, the
 #                             stack, layers, compositor, video composites and
 #                             hidden tiles on a fake renderer, the receive buffer,
-#                             scene files and their edits, the service over its socket
+#                             scene files and their edits, the settings and their
+#                             drop-ins, the service over its socket
 #                             with the C++ client, and the Node client
 #   make test-kit             the kit's tests alone (for producers that link it)
 #   make test-x86             the C++ tests built and run with the unit's
@@ -60,9 +61,9 @@ CORE_SRC = src/slots.cpp src/guard.cpp src/governor.cpp src/stack.cpp src/recv_b
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
-UNIT_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
-UNIT8_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
-LAUNCH_SRC = src/main.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
+UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
+UNIT8_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
+LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
@@ -73,7 +74,7 @@ CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_tes
 	$(H)/occlusion_test \
 	$(H)/service_test \
 	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
-	$(H)/guard_test $(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test
+	$(H)/guard_test $(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test $(H)/settings_test
 
 all: test
 
@@ -99,6 +100,7 @@ test-cpp: $(CPP_TESTS)
 	$(H)/refused_test $(H)/cluster-render
 	$(H)/recv_buffer_test
 	$(H)/scene_test
+	$(H)/settings_test
 	$(H)/service_test
 
 test-js: $(H)/host_service
@@ -196,6 +198,9 @@ $(H)/recv_buffer_test: $(O)/test/recv_buffer_test.o $(O)/src/recv_buffer.o $(O)/
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 $(H)/scene_test: $(O)/test/scene_test.o $(CORE_OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(H)/settings_test: $(O)/test/settings_test.o $(O)/src/settings.o $(O)/src/config.o $(O)/src/holds.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o
