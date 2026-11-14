@@ -9,10 +9,13 @@
  *                  {"cmd":"hud","hud_width_pct":"0"|"20".."100"}  the HUD map's size
  *                  {"cmd":"hud","hud_x":"-800".."800","hud_y":...}  where it is, from the centre
  *                  {"cmd":"hud","hud_keep_shown":"0"|"1"}  kept shown over BMW's pop-ups, or not
+ *                  {"cmd":"hud","hud_hide_sport":"0"|"1"}  hidden while the car is in a Sport mode, or not
+ *                  {"cmd":"drive","sport":"0"|"1"}  the car is in a Sport mode, or not; a Sport mode
+ *                                   counts for 90 s (MapFeeds::kSportHoldMs) unless said again
  *                  {"cmd":"guide","hide":0|1}  BMW's turn box hidden or not (guide_setting.h)
  *   tool -> owner  {"ev":"status",...,"hide_bmw_guidance":0|1,"guide_disabled":0|1,
- *                   "cluster":0|1,"hud":0|1,"hud_state":"off"|"disabled"|"idle"|"starting"|"showing"|...,
- *                   "hud_width_pct":...,"hud_x":...,"hud_y":...,"hud_keep_shown":0|1}
+ *                   "cluster":0|1,"hud":0|1,"hud_state":"off"|"disabled"|"sport"|"idle"|"starting"|"showing"|...,
+ *                   "hud_width_pct":...,"hud_x":...,"hud_y":...,"hud_keep_shown":0|1,"hud_hide_sport":0|1}
  *                  {"ev":"log","line":...}
  *
  * One connection is the owner; a second one is told "busy" and closed. */

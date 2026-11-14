@@ -6,6 +6,8 @@
 
 namespace woc {
 
+constexpr int64_t MapFeeds::kSportHoldMs;
+
 namespace {
 
 /* The renderer target a cluster target names: "map" ("sail" too) or
@@ -34,7 +36,7 @@ void MapFeeds::follow()
 {
     /* A feed made while the other is there starts from its newest picture:
      * the HUD's is made first, so it can still take the cluster's. */
-    if (hud_on_ && !hud_) {
+    if (hud_wanted() && !hud_) {
         FeedConfig fc = base_;
         fc.target = "hud";
         fc.rect = MapRect();   /* map_rect is the cluster's */
@@ -62,12 +64,12 @@ void MapFeeds::follow()
         }
         log_info("cluster: %s", cluster_on_ ? "on" : "off");
     }
-    if (!hud_on_ && hud_) {
+    if (!hud_wanted() && hud_) {
         /* its connection closes: the renderer drops its layer and lets the
          * HUD's slot go */
         hud_.reset();
         copy_ = std::vector<uint8_t>();
-        log_info("hud: off");
+        log_info(hud_on_ ? "hud: hidden, the car is in a Sport mode" : "hud: off");
     }
 }
 
@@ -123,6 +125,19 @@ void MapFeeds::set_hud_keep_shown(bool keep)
         hud_->set_hud_keep_shown(keep);
 }
 
+void MapFeeds::set_hud_hide_sport(bool hide)
+{
+    hud_hide_sport_ = hide;
+    follow();
+}
+
+void MapFeeds::set_sport(bool sport, int64_t now_ms)
+{
+    sport_ = sport;
+    sport_at_ms_ = now_ms;
+    follow();
+}
+
 void MapFeeds::set_guide_hold(bool hold)
 {
     base_.guide_hold = hold;
@@ -141,6 +156,11 @@ size_t MapFeeds::poll_fds(std::vector<pollfd> *fds) const
 
 void MapFeeds::poll(int64_t now_ms)
 {
+    if (sport_ && now_ms - sport_at_ms_ >= kSportHoldMs) {
+        log_info("hud: the Sport mode was not reported again for %lld s; it counts no longer", (long long)(kSportHoldMs / 1000));
+        sport_ = false;
+        follow();
+    }
     if (cluster_)
         cluster_->poll(now_ms);
     if (hud_)
@@ -212,7 +232,7 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
     s.cluster = cluster_on_;
     s.hud = hud_on_;
     if (!hud_) {
-        s.hud_state = "off";
+        s.hud_state = hud_on_ && hidden_for_sport() ? "sport" : "off";
     } else {
         const FeedStatus h = hud_->status(decode, stream);
         s.hud_state = h.disabled ? "disabled" : h.state;
@@ -223,6 +243,7 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
     }
     s.hud_width_pct = base_.hud_width_pct;
     s.hud_keep_shown = base_.hud_keep_shown;
+    s.hud_hide_sport = hud_hide_sport_;
     s.hud_offset_x = hud_ ? hud_->hud_offset_x() : base_.hud_offset_x;
     s.hud_offset_y = hud_ ? hud_->hud_offset_y() : base_.hud_offset_y;
     return s;

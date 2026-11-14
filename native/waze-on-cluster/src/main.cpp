@@ -88,7 +88,8 @@ std::string status_line(const FeedStatus &s)
            ",\"hud\":" + (s.hud ? "1" : "0") + ",\"hud_state\":" + json_escape(s.hud_state) +
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
-           ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") + "}";
+           ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
+           ",\"hud_hide_sport\":" + (s.hud_hide_sport ? "1" : "0") + "}";
 }
 
 class Server : public Control::Handler {
@@ -100,7 +101,9 @@ public:
      * hud turn the map on each off or on ("on"), hud also sizes and places
      * the HUD's; the map itself
      * comes and goes with the stream. guide is the app's switch for BMW's
-     * turn box (guide_setting.h). */
+     * turn box (guide_setting.h). drive is the car's driving mode as the
+     * app reads it: the HUD's map is hidden in a Sport mode while
+     * hud_hide_sport is on (map_feeds.h). */
     void on_command(const std::map<std::string, std::string> &msg) override
     {
         const std::string &cmd = msg.at("cmd");
@@ -109,6 +112,7 @@ public:
         auto pct = msg.find("hud_width_pct");
         auto hx = msg.find("hud_x"), hy = msg.find("hud_y"), on = msg.find("on");
         auto keep = msg.find("hud_keep_shown");
+        auto hide_sport = msg.find("hud_hide_sport"), sport = msg.find("sport");
         if (cmd == "start" && it != msg.end()) {
             log_info("start %s", it->second.c_str());
             if (!feeds_->set_target(it->second))
@@ -118,8 +122,14 @@ public:
             feeds_->set_guide_hold(guide_->hide());
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
             feeds_->set_cluster(on->second == "1");
+        } else if (cmd == "drive" && sport != msg.end() && (sport->second == "0" || sport->second == "1")) {
+            const bool is_sport = sport->second == "1";
+            if (is_sport != sport_)
+                log_info("drive: the car is %s a Sport mode", is_sport ? "in" : "not in");
+            sport_ = is_sport;
+            feeds_->set_sport(is_sport, now_ms());
         } else if (cmd == "hud" && (on != msg.end() || pct != msg.end() || hx != msg.end() || hy != msg.end() ||
-                                    keep != msg.end())) {
+                                    keep != msg.end() || hide_sport != msg.end())) {
             if (on != msg.end()) {
                 if (on->second == "0" || on->second == "1")
                     feeds_->set_hud(on->second == "1");
@@ -153,6 +163,15 @@ public:
                 else
                     log_warn("hud: hud_keep_shown must be 0 or 1, not %s", keep->second.c_str());
             }
+            /* and whether it is hidden while the car is in a Sport mode */
+            if (hide_sport != msg.end()) {
+                if (hide_sport->second == "0" || hide_sport->second == "1") {
+                    log_info("hud: map %s in a Sport mode", hide_sport->second == "1" ? "hidden" : "shown");
+                    feeds_->set_hud_hide_sport(hide_sport->second == "1");
+                } else {
+                    log_warn("hud: hud_hide_sport must be 0 or 1, not %s", hide_sport->second.c_str());
+                }
+            }
         } else {
             log_warn("control: unknown or malformed command %s", cmd.c_str());
         }
@@ -182,6 +201,7 @@ public:
 
 private:
     MapFeeds *feeds_;
+    bool sport_ = false;   /* the driving mode as last told, for the log */
     GuideSetting *guide_;
     Control *control_ = nullptr;
     uint64_t log_seq_ = 0;
@@ -220,7 +240,7 @@ int serve(Config cfg)
         {"cluster", 0, 1},          {"hud", 0, 1},                   {"hud_fps", 1, 30},
         {"hud_width_pct", 0, 100},  {"hud_offset_x", -800, 800},     {"hud_offset_y", -800, 800},
         {"hud_scale_down", 0, 1},   {"hud_round_corners", 0, 1},     {"hud_black_background", 0, 1},
-        {"hud_keep_shown", 0, 1},
+        {"hud_keep_shown", 0, 1},   {"hud_hide_sport", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
         {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1}};
@@ -293,6 +313,7 @@ int serve(Config cfg)
     std::string err;
     VideoProducer producer(vc);
     MapFeeds feed(fc, cfg.num("cluster") == 1, cfg.num("hud") == 1, (unsigned)cfg.num("hud_fps"));
+    feed.set_hud_hide_sport(cfg.num("hud_hide_sport") == 1);
     Server server(&feed, &guide);
     Control control(&server);
     server.set_control(&control);
@@ -538,6 +559,7 @@ void define_keys(Config *cfg)
     cfg->define("hud_offset_x", "0");
     cfg->define("hud_offset_y", "0");
     cfg->define("hud_keep_shown", "0");
+    cfg->define("hud_hide_sport", "0");
     cfg->define("hud_scale_down", "1");
     cfg->define("hud_round_corners", "1");
     cfg->define("hud_black_background", "1");

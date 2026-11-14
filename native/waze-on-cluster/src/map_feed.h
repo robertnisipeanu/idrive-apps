@@ -99,10 +99,11 @@ struct FeedStatus {
     bool disabled = false;         /* cluster-render reports the target disabled */
     bool cluster = true;           /* the cluster setting (MapFeeds) */
     bool hud = false;              /* the HUD setting (MapFeeds) */
-    std::string hud_state = "off";   /* off, disabled, or the HUD feed's state */
+    std::string hud_state = "off";   /* off, disabled, sport (hidden in a Sport mode), or the HUD feed's state */
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
     int hud_offset_x = 0, hud_offset_y = 0;   /* and where it is moved to from the centre */
     bool hud_keep_shown = false;   /* the HUD map kept shown over the stock HMI's pop-ups */
+    bool hud_hide_sport = false;   /* the HUD map hidden while the car is in a Sport mode (MapFeeds) */
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs

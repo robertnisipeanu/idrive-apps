@@ -381,13 +381,22 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   and comes back 1.5 s after they go, never for route guidance, and never
   takes the HUD from BMW's own content. With `hud_keep_shown` 1 (the app's
   **Keep HUD map over BMW's pop-ups**) it stays shown over them.
+- **Hidden in a Sport mode.** With `hud_hide_sport` 1 (the app's **Hide HUD
+  map in Sport mode**) the HUD's feed is dropped, as with the HUD off,
+  while the car is in a Sport driving mode, and made again when it is not;
+  the status says `hud_state` `sport` and the app `HUD map: Hidden in Sport
+  mode`. The cluster's map is not affected. The render does not read the
+  driving mode: the app does, and tells it with a control
+  `{"cmd":"drive","sport":"1"}`, again every 30 s while the mode lasts. A
+  Sport mode not told again for 90 s counts no longer, so the map never
+  stays away for lack of the app.
 - **Disabled after errors.** While cluster-render reports the HUD disabled
   (`disabled` in its `target` event), the status says `hud_state`
   `disabled`, the app shows `HUD map: Disabled after errors`, and its
   frames are no longer copied or scaled. The cluster's map is not
   affected.
 - The settings (`cluster`, `hud`, `hud_width_pct`, `hud_offset_x`,
-  `hud_offset_y`, `hud_keep_shown`) are saved by `patchd` in
+  `hud_offset_y`, `hud_keep_shown`, `hud_hide_sport`) are saved by `patchd` in
   `/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this
   tool reads over its configuration at each start, and the app changes the
   running render at once. They stay out of `waze-on-cluster.local.conf`,
@@ -395,7 +404,8 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   finds there into the state file at its start and at an install. Control:
   `{"cmd":"hud","on":"1"}`, `{"cmd":"hud","hud_width_pct":"70"}`,
   `{"cmd":"hud","hud_x":"40","hud_y":"-20"}` (strings; an axis left out
-  stays), `{"cmd":"hud","hud_keep_shown":"1"}`.
+  stays), `{"cmd":"hud","hud_keep_shown":"1"}`,
+  `{"cmd":"hud","hud_hide_sport":"1"}`.
 - Per driver profile: the settings are shared by every driver profile until
   the app's **Own settings for this driver** gives one its own copy. The app
   tells `patchd` the profile in use (`{"cmd":"profile","id"}`) and the

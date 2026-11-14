@@ -54,6 +54,9 @@
  *   and none scaled, and moving again the HUD scales at most hud_fps while
  *   the cluster keeps its rate; a feed made beside the other starts from its
  *   picture;
+ * - Hide HUD map in Sport mode: the HUD's map gone while the car is in a
+ *   Sport mode and the setting is on, back with the mode gone or not said
+ *   again for the hold, the cluster's map kept throughout;
  * - Off (neither), from the cluster alone and from both: the map's and the
  *   HUD's slots and the turn box's hold released, the stock map and box
  *   shown again, nothing asked of the renderer while off; the cluster, or
@@ -395,6 +398,89 @@ static void show_off()
                                                          feeds.status("decode").hud_state == "showing");
 }
 
+/* The app's Hide HUD map in Sport mode (MapFeeds::set_hud_hide_sport) with
+ * the driving mode as the app reads it (set_sport): ticked, the HUD's map
+ * goes while the car is in a Sport mode, its slot released, and comes back
+ * with the mode gone; the cluster's map stays throughout. Unticked, the
+ * mode changes nothing. */
+static void hud_hidden_in_sport()
+{
+    const std::vector<uint8_t> f1 = atlas(21), f2 = atlas(22);
+    const uint64_t kHud = 0x01000400;
+    Rig b(false, 6000, true, true, true);
+    b.feed.reset();
+    b.start();
+    FeedConfig fc;
+    fc.socket = b.path;
+    fc.video.level_bits = 0;
+    MapFeeds feeds(fc, true, true, 10);
+    feeds.set_stream(true, false, Picture::Shown);
+    std::vector<uint8_t> spare;
+    const auto pump = [&](int64_t ms, const std::vector<uint8_t> *frame) {
+        for (int64_t t = 0; t < ms; t += 5) {
+            b.now += 5;
+            if (frame && t % 65 == 0 && feeds.wants_frames()) {
+                spare.assign(frame->begin(), frame->end());
+                spare[(size_t)(t / 65) % 1088] ^= 0x80;
+                feeds.offer(&spare, (uint64_t)b.now, b.now);
+            }
+            for (int round = 0; round < 400; round++) {
+                std::vector<pollfd> fds;
+                const size_t first = b.svc->poll_fds(&fds);
+                const int n = ::poll(fds.data(), fds.size(), 0);
+                b.port.tick(b.now);
+                b.svc->after_poll(fds, first, b.now);
+                const bool pending = (feeds.cluster() && feeds.cluster()->wants_write()) || (feeds.hud_feed() && feeds.hud_feed()->wants_write());
+                const bool scaling = hud_scaling(feeds, b.now);
+                if (scaling)
+                    usleep(1000);
+                feeds.poll(b.now);
+                if (round > 0 && n <= 0 && !pending && !scaling)
+                    break;
+            }
+        }
+    };
+    const auto hud_slot = [&]() {
+        const crs::SlotInfo *r = b.port.row(0x323, kHud);
+        return r ? (int)r->map_status : -1;
+    };
+    const auto both_up = [&]() {
+        const FeedStatus s = feeds.status("decode");
+        return s.state == "showing" && s.hud_state == "showing" && hud_slot() == 1;
+    };
+
+    pump(2000, &f1);
+    ok("Sport: the cluster's and the HUD's map up first", both_up());
+
+    feeds.set_sport(true, b.now);
+    pump(2000, &f2);
+    ok("Sport with the setting unticked: the HUD's map stays", both_up() && !feeds.status("decode").hud_hide_sport);
+
+    feeds.set_hud_hide_sport(true);
+    pump(5000, &f1);
+    FeedStatus st = feeds.status("decode");
+    ok("Sport with the setting ticked: no HUD feed, its slot released, reported as hidden for Sport with the HUD setting still on",
+       !feeds.hud_feed() && hud_slot() == -1 && st.hud_state == "sport" && st.hud && st.hud_hide_sport);
+    ok("Sport with the setting ticked: the cluster's map still showing", st.state == "showing" && feeds.cluster());
+
+    feeds.set_sport(false, b.now);
+    pump(2000, &f2);
+    ok("Sport gone: the HUD's map back with the next frame", both_up());
+
+    /* The app says a Sport mode again while it lasts. One not said again
+     * (the app gone, or its reading) counts no longer: the map comes back. */
+    feeds.set_sport(true, b.now);
+    pump(MapFeeds::kSportHoldMs - 1000, nullptr);
+    ok("Sport said once: the HUD's map hidden until just before the hold ends", !feeds.hud_feed() && feeds.status("decode").hud_state == "sport");
+    feeds.set_sport(true, b.now);
+    pump(MapFeeds::kSportHoldMs - 1000, nullptr);
+    ok("Sport said again within the hold: still hidden", !feeds.hud_feed() && feeds.status("decode").hud_state == "sport");
+    pump(2000, nullptr);
+    ok("Sport not said again for the hold: the HUD's feed back", feeds.hud_feed() && feeds.status("decode").hud_state != "sport");
+    pump(2000, &f1);
+    ok("Sport not said again for the hold: the HUD's map showing again", both_up());
+}
+
 /* Only what the renderer needs goes over its socket. */
 static void only_what_is_needed()
 {
@@ -728,6 +814,7 @@ int main()
 
     guide_hold();
     show_off();
+    hud_hidden_in_sport();
     only_what_is_needed();
     {   /* (its own scope: the names of the rest of main) */
     /* ---- MapFeeds: the cluster, and the HUD's copy when it is on ---- */
