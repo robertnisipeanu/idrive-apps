@@ -160,6 +160,8 @@ int main()
         ok("upper case name refused", refused(&c, "id8_Mine_size = 64x64"));
         ok("name with _ refused", refused(&c, "id8_my_widget_size = 64x64"));
         ok("empty name refused", refused(&c, "id8__size = 64x64") && refused(&c, "id8_size = 64x64"));
+        ok("guard_path, which nothing reads, accepted", !refused(&c, "guard_path = /tmp/g.txt") &&
+                                                           !refused(&c, "guard_path ="));
         ok("other prefixes refused", refused(&c, "id7_mine_size = 64x64") && refused(&c, "mine_size = 64x64") &&
                                          refused(&c, "foo = 1") && refused(&c, "foo += 1"));
         cld::Config plain;

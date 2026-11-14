@@ -12,8 +12,7 @@
  * target added: a slot that is not whole hex from 0x1 to 0xfff, a slot
  * listed twice or another target's, a scene id not allowed or another
  * target's, a take-over content that is not whole hex, none, no map, no
- * slot. The panel: on an id other than the HUD's struck out at 2; its
- * fallback scene id another allowed id, none when empty or its own id,
+ * slot. The panel: its fallback scene id another allowed id, none when empty or its own id,
  * anything else refused. */
 #include <algorithm>
 #include <cstdlib>
@@ -106,16 +105,16 @@ int main()
             return p;
         };
         TargetSpec p = panel(0x010004f8);
-        ok("panel: a fallback of another allowed id, its own id struck out at 2",
+        ok("panel: a fallback of another allowed id",
            fallback_rules(&p, "0x01000400", allowed, &err) && p.fallback_scene_id == 0x01000400);
         p = panel(0x010004f8);
-        ok("panel: empty, no fallback, its own id still struck out at 2",
+        ok("panel: empty, no fallback",
            fallback_rules(&p, "", allowed, &err) && p.fallback_scene_id == 0);
         p = panel(0x01000400);
         ok("panel: on the HUD's id with it as fallback: no fallback",
            fallback_rules(&p, "0x01000400", allowed, &err) && p.fallback_scene_id == 0);
         p = panel(0x010004f8);
-        ok("panel: its own id as fallback: none, struck out at 2",
+        ok("panel: its own id as fallback: none",
            fallback_rules(&p, "0x010004f8", allowed, &err) && p.fallback_scene_id == 0);
         p = panel(0x010004f8);
         ok("panel: a decimal id taken", fallback_rules(&p, "16778240", allowed, &err) && p.fallback_scene_id == 0x01000400);

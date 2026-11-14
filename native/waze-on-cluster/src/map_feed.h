@@ -95,8 +95,8 @@ struct FeedStatus {
     unsigned upload_cap_kb = 0;   /* 0 until the renderer reports it */
     std::string upload_reason;
     bool guide_hold = true;
-    bool guide_disabled = false;   /* cluster-render's guard keeps the turn box's hold off */
-    bool disabled = false;         /* cluster-render's guard keeps the target's mapping off */
+    bool guide_disabled = false;   /* cluster-render reports the turn box's hold disabled */
+    bool disabled = false;         /* cluster-render reports the target disabled */
     bool cluster = true;           /* the cluster setting (MapFeeds) */
     bool hud = false;              /* the HUD setting (MapFeeds) */
     std::string hud_state = "off";   /* off, disabled, or the HUD feed's state */
@@ -183,7 +183,7 @@ public:
     /* A copy of the newest picture into *out; false when this feed has none
      * at hand. */
     bool latest(std::vector<uint8_t> *out) const;
-    /* cluster-render's mapping guard keeps the target's mapping off. */
+    /* cluster-render reports the target disabled. */
     bool disabled() const;
     /* Frames scaled for this feed. */
     uint64_t scaled_frames() const { return worker_.frames(); }

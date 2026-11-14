@@ -404,7 +404,8 @@ cluster is offered, and what differs is in "iDrive 8".
   slot table. At start the service removes
   `/var/opt/cluster-render/state/guard.txt`, the mapping guard's strikes
   of cluster-render 0.5.10 and older, logged (`… removed: its strikes are
-  not used`).
+  not used`). A `guard_path` line in `cluster-render.local.conf` is
+  ignored, with a warning.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. `map` has 0x010004f0, the guide
   hold 0x010004f1, `hud` 0x01000400 and `panel` 0x010004f8, so all three
