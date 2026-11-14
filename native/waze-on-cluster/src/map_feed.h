@@ -152,8 +152,8 @@ public:
     /* The HUD map kept shown over the stock HMI's pop-ups or not
      * (FeedConfig::hud_keep_shown), at once. */
     void set_hud_keep_shown(bool keep);
-    /* A layer to take frames: made, and not disabled by cluster-render's
-     * guard. */
+    /* A layer to take frames: made, and not reported disabled by
+     * cluster-render. */
     bool takes_frames() const { return layer_ && !disabled(); }
     int fd() const { return client_.fd(); }
     bool wants_write() const { return client_.wants_write(); }
