@@ -1,7 +1,7 @@
 {
   "id": "waze-on-cluster",
   "kind": "tool",
-  "version": "0.9.14",
+  "version": "0.10.0",
   "license": "GPL-3.0-or-later",
   "title": "Waze on cluster",
   "description": "Runs the Waze on cluster map in the background. It is installed with the Waze on cluster app, which you use to control it.",
