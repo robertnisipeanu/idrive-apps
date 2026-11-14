@@ -39,7 +39,7 @@ namespace {
  * status once the service starts (service_config). */
 std::vector<std::string> drop_in_report;
 
-/* The mapping guard's strikes, as cluster-render 0.5.10 and older keep
+/* The mapping guard's strikes, as cluster-render 0.5.11 and older keep
  * them: nothing reads them, and the service removes the file at start. */
 const char kOldStateFile[] = "/var/opt/cluster-render/state/guard.txt";
 
