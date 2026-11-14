@@ -58,9 +58,18 @@ std::vector<std::string> entries(const std::string &list)
     return out;
 }
 
-/* The drop-in at path, read onto *cfg (a copy) as settings.h says; false
- * with why. */
-bool drop_in(const std::string &path, uid_t owner, cld::Config *cfg, std::string *why)
+/* id is one of ours: 0x4d4755xxxxxx, written whole. */
+bool our_scene(const std::string &id)
+{
+    char *end = nullptr;
+    errno = 0;
+    const unsigned long long v = std::strtoull(id.c_str(), &end, 0);
+    return errno == 0 && end != id.c_str() && *end == '\0' && (v >> 24) == (kOurScenes >> 24);
+}
+
+/* The drop-in at path, read onto *cfg (a copy) as settings.h says, with
+ * id8_targets at most max_targets long; false with why. */
+bool drop_in(const std::string &path, uid_t owner, size_t max_targets, cld::Config *cfg, std::string *why)
 {
     /* What is checked is what is read: the open file, no symlink. */
     const int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
@@ -100,6 +109,24 @@ bool drop_in(const std::string &path, uid_t owner, cld::Config *cfg, std::string
     }
     const std::vector<std::string> was = entries(before.str("id8_targets")), now = entries(cfg->str("id8_targets"));
     const std::vector<std::string> added(now.begin() + was.size(), now.end());
+    for (auto it = added.begin(); it != added.end(); ++it)
+        if (std::find(was.begin(), was.end(), *it) != was.end() || std::find(added.begin(), it, *it) != it) {
+            *why = "target " + *it + ": a target already";
+            return false;
+        }
+    if (now.size() > max_targets) {
+        *why = "more than " + std::to_string(kMaxDropInTargets) + " targets from drop-ins";
+        return false;
+    }
+    {
+        const std::vector<std::string> allowed_was = entries(before.str("id8_scene_ids_allowed")),
+                                       allowed_now = entries(cfg->str("id8_scene_ids_allowed"));
+        for (size_t i = allowed_was.size(); i < allowed_now.size(); i++)
+            if (!our_scene(allowed_now[i])) {
+                *why = "id8_scene_ids_allowed: " + allowed_now[i] + " is not a scene id of ours (0x4d4755......)";
+                return false;
+            }
+    }
     for (const auto &kv : cfg->values()) {
         std::string name;
         if (kv.first == "id8_targets" || kv.first == "id8_scene_ids_allowed" || before.str(kv.first.c_str()) == kv.second)
@@ -115,6 +142,21 @@ bool drop_in(const std::string &path, uid_t owner, cld::Config *cfg, std::string
     for (const TargetSpec &t : targets) {
         if (std::find(added.begin(), added.end(), t.name) == added.end())
             continue;
+        if (t.slot != kWidgetCategory) {
+            *why = "target " + t.name + ": its category is not the widget category " + std::to_string(kWidgetCategory);
+            return false;
+        }
+        if (t.content < kWidgetContentFirst || t.content > kWidgetContentLast ||
+            (t.content >= kHeadUnitContentFirst && t.content <= kHeadUnitContentLast)) {
+            *why = "target " + t.name + ": its content is not a dynamic widget's (" + std::to_string(kWidgetContentFirst) +
+                   "-" + std::to_string(kWidgetContentLast) + ", not " + std::to_string(kHeadUnitContentFirst) + "-" +
+                   std::to_string(kHeadUnitContentLast) + ")";
+            return false;
+        }
+        if ((t.scene_id >> 24) != (kOurScenes >> 24)) {
+            *why = "target " + t.name + ": its scene id is not one of ours (0x4d4755......)";
+            return false;
+        }
         for (const TargetSpec &o : targets)
             if (o.name != t.name && (o.content == t.content || o.scene_id == t.scene_id)) {
                 *why = "target " + t.name + ": its " + (o.content == t.content ? "content" : "scene id") +
@@ -332,16 +374,59 @@ void load_drop_ins(cld::Config *cfg, uid_t owner, std::vector<std::string> *repo
     }
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    const size_t max_targets = entries(cfg->str("id8_targets")).size() + kMaxDropInTargets;
     for (const std::string &path : paths) {
         cld::Config copy = *cfg;
         std::string why;
-        if (drop_in(path, owner, &copy, &why)) {
+        if (drop_in(path, owner, max_targets, &copy, &why)) {
             *cfg = copy;
             report->push_back("loaded " + path);
         } else {
             report->push_back("skipped " + path + ": " + why);
         }
     }
+}
+
+bool read_preview(const std::string &path, std::vector<char> *png, std::string *why)
+{
+    /* Checked before the open, so a path that is a device or a pipe is not
+     * opened, and again on the open file, a pipe opened without blocking. */
+    why->clear();
+    png->clear();
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        *why = strerror(errno);
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        *why = "not a regular file";
+        return false;
+    }
+    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) {
+        *why = strerror(errno);
+        return false;
+    }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        *why = "not a regular file";
+    } else if ((size_t)st.st_size > kMaxPreview) {
+        *why = "larger than " + std::to_string(kMaxPreview / 1024) + " KB";
+    } else {
+        char buf[4096];
+        ssize_t n = 0;
+        while (png->size() <= kMaxPreview && (n = read(fd, buf, sizeof buf)) > 0)
+            png->insert(png->end(), buf, buf + n);
+        if (n < 0)
+            *why = strerror(errno);
+        else if (png->size() > kMaxPreview)
+            *why = "larger than " + std::to_string(kMaxPreview / 1024) + " KB";
+        else if (png->empty())
+            *why = "empty";
+    }
+    close(fd);
+    if (!why->empty())
+        png->clear();
+    return why->empty();
 }
 
 }  // namespace crs

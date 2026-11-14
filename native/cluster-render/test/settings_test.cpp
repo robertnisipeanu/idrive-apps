@@ -12,8 +12,12 @@
  * whole with why, the settings as before it: an unknown key or line, a
  * missing scene id, a content or scene id another target's, a scene id not
  * allowed, a list set rather than added to, another key or another
- * target's key set, a symlink, writable by the group or others, another
- * owner.
+ * target's key set, a target already listed, a category other than the
+ * widget one, a content outside the dynamic widgets or the head unit's
+ * own, a scene id not ours, more than kMaxDropInTargets targets from
+ * drop-ins, a symlink, writable by the group or others, another owner. A
+ * widget's picture: read; a device, a pipe, a missing, empty or too large
+ * file refused; a symlink to one followed.
  *
  *   settings_test   (from cluster-render's folder) */
 #include <sys/stat.h>
@@ -22,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -106,6 +111,15 @@ static bool skipped(const std::string &text, const std::string &want, mode_t mod
     for (size_t i = 0; !r && i < report.size(); i++)
         std::printf("     %s\n", report[i].c_str());
     return r;
+}
+
+static size_t entries_count(const std::string &list)
+{
+    size_t n = 0;
+    std::stringstream ss(list);
+    for (std::string e; std::getline(ss, e, ',');)
+        n += !e.empty();
+    return n;
 }
 
 static bool refused(cld::Config *c, const std::string &pair)
@@ -254,6 +268,61 @@ int main()
     ok("writable by others: skipped", skipped(w, "writable by its group or others", 0646));
     ok("another owner: skipped", skipped(w, "not owned by uid " + std::to_string((unsigned long)getuid() + 1), 0644,
                                          getuid() + 1));
+    ok("a shipped target listed again with =, its keys set: skipped",
+       skipped("id8_targets = map,hud,guide,widget,popup,map\nid8_map_content = 43204020\n", "target map: a target already"));
+    ok("a new target listed twice with =: skipped",
+       skipped(w + "id8_targets = map,hud,guide,widget,popup,mywidget,mywidget\n", "target mywidget: a target already"));
+    ok("a category other than the widget one: skipped",
+       skipped(w + "id8_mywidget_category = 43100201\n", "target mywidget: its category is not the widget category"));
+    ok("a content below the dynamic widgets: skipped",
+       skipped(widget("mywidget", "43200501"), "target mywidget: its content is not a dynamic widget's"));
+    ok("a content above the dynamic widgets: skipped",
+       skipped(widget("mywidget", "43205001"), "target mywidget: its content is not a dynamic widget's"));
+    ok("the head unit's own content: skipped",
+       skipped(widget("mywidget", "43202120"), "target mywidget: its content is not a dynamic widget's") &&
+           skipped(widget("mywidget", "43202020"), "its content is not a dynamic widget's"));
+    ok("a scene id not ours: skipped",
+       skipped(widget("mywidget", "43204020", "0x010004f0"), "id8_scene_ids_allowed: 0x010004f0 is not a scene id of ours"));
+    ok("an allowed scene id not ours, with no target: skipped",
+       skipped("id8_scene_ids_allowed += 0x4d4755000030, 0x01000400\n", "0x01000400 is not a scene id of ours"));
+    {
+        clear();
+        for (int i = 0; i <= (int)kMaxDropInTargets; i++)
+            put("a/" + std::to_string(10 + i) + "-w.conf",
+                widget("w" + std::to_string(i), std::to_string(43204100 + i), "0x4d47550002" + std::to_string(10 + i)));
+        cld::Config c = base();
+        const std::vector<std::string> report = read_drop_ins(&c);
+        size_t loaded = 0;
+        for (const std::string &r : report)
+            loaded += starts(r, "loaded ");
+        ok("at most kMaxDropInTargets targets from drop-ins, the next skipped",
+           report.size() == kMaxDropInTargets + 1 && loaded == kMaxDropInTargets &&
+               report.back().find("more than " + std::to_string(kMaxDropInTargets) + " targets from drop-ins") !=
+                   std::string::npos &&
+               entries_count(c.str("id8_targets")) == 5 + kMaxDropInTargets);
+    }
+    {
+        std::vector<char> png;
+        std::string why;
+        put("p.png", "\x89PNG");
+        ok("a picture read", read_preview(dir + "/p.png", &png, &why) && png.size() == 4);
+        put("big.png", std::string(kMaxPreview + 1, 'x'));
+        why.clear();
+        ok("a picture too large refused", !read_preview(dir + "/big.png", &png, &why) && why.find("larger than") == 0 && png.empty());
+        why.clear();
+        ok("a device refused", !read_preview("/dev/zero", &png, &why) && why == "not a regular file");
+        why.clear();
+        const bool fifo = mkfifo((dir + "/fifo").c_str(), 0600) == 0;
+        ok("a pipe refused without blocking", fifo && !read_preview(dir + "/fifo", &png, &why) && why == "not a regular file");
+        why.clear();
+        ok("a missing picture refused", !read_preview(dir + "/none.png", &png, &why) && !why.empty());
+        why.clear();
+        put("empty.png", "");
+        ok("an empty picture refused", !read_preview(dir + "/empty.png", &png, &why) && why == "empty");
+        why.clear();
+        const int r = symlink((dir + "/p.png").c_str(), (dir + "/link.png").c_str());
+        ok("a symlink to a picture read", r == 0 && read_preview(dir + "/link.png", &png, &why) && png.size() == 4);
+    }
     {
         clear();
         put("real.conf", w);
