@@ -57,9 +57,14 @@
  * - Off (neither), from the cluster alone and from both: the map's and the
  *   HUD's slots and the turn box's hold released, the stock map and box
  *   shown again, nothing asked of the renderer while off; the cluster, or
- *   both, again: the next frame shown, the hold back. */
+ *   both, again: the next frame shown, the hold back;
+ * - hosted by another app's scene (hosting): the map in its scene at the
+ *   host's rect with the host's part of the picture, its own slot released;
+ *   hidden by the host, no layer and nothing sent; shown again; the host
+ *   gone, back on its own target. */
 #include <poll.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -115,6 +120,7 @@ struct Rig {
     int64_t last_frame_ms = -1;
     FreezeWatch watch{FreezeConfig()};
     ChangeSampler sampler{1088, 480};
+    cr::Client *other = nullptr;   /* another app of the renderer, polled with the feed */
 
     /* w: watched (above); hold: with the guide hold of the turn box's slot
      * following the map, as cluster-render.conf ships it; guide_hold: the
@@ -191,8 +197,10 @@ struct Rig {
                     port.tick(now);
                     svc->after_poll(fds, first, now);
                 }
-                const bool pending = feed->wants_write();
+                const bool pending = feed->wants_write() || (other && other->wants_write());
                 feed->poll(now);
+                if (other)
+                    other->poll(now);
                 if (round > 0 && n <= 0 && !pending)
                     break;
             }
@@ -445,10 +453,88 @@ static void only_what_is_needed()
     ok("another target: repeats alone bring the picture", r.st().state == "showing" && r.st().target == "panel" && drawn);
 }
 
+/* The w x h part at x, y of a 1088x480 atlas, as an atlas of its own. */
+static std::vector<uint8_t> crop_of(const std::vector<uint8_t> &f, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    std::vector<uint8_t> c((size_t)w * (h + h / 2));
+    for (uint32_t r = 0; r < h; r++)
+        std::copy_n(&f[(size_t)(y + r) * 1088 + x], w, &c[(size_t)r * w]);
+    for (uint32_t r = 0; r < h / 2; r++)
+        for (uint32_t p = 0; p < 2; p++)
+            std::copy_n(&f[(size_t)(480 + y / 2 + r) * 1088 + p * 544 + x / 2], w / 2, &c[(size_t)(h + r) * w + p * w / 2]);
+    return c;
+}
+
+/* A scene with layers on the panel hosting the map (cluster-render
+ * PROTOCOL.md "host"): the map's layer moves into it, at the host's rect,
+ * its frames the host's part of the picture, the map's own slot released;
+ * hidden by the host, no layer at all and nothing sent, idle with the
+ * reason; shown again, the newest picture's part; the host gone, the map on
+ * its own target again. */
+static void hosting()
+{
+    char tmpl[] = "/tmp/woc-hosting-XXXXXX";
+    const std::string root = mkdtemp(tmpl) ? tmpl : "/nonexistent";
+    const std::string file = root + "/design.scene";
+    std::ofstream(file) << "scene 0x010004f8\nnode plate -\npass main\n";
+    chmod(file.c_str(), 0644);
+    const std::vector<uint8_t> f = atlas(3), f2 = atlas(4);
+    Rig r;
+    r.sc.targets[1].scene_files = true;
+    r.sc.scene_files.root = root;
+    r.sc.scene_files.owner = getuid();
+    r.start();
+    r.pump(2000, &f);
+    ok("hosting: the map shown on its own target", r.st().state == "showing" && r.st().target == "map" && !r.st().hosted);
+
+    cr::Client design("design", r.path);
+    r.other = &design;
+    cr::SceneOptions so;
+    so.target = "panel";
+    so.file = file;
+    so.sha256 = {crs::sha256_file(file)};
+    so.layers = true;
+    const uint32_t sc = design.scene(so);
+    r.pump(500, &f);
+    cr::Host h;
+    h.target = "map";
+    h.x = 700; h.y = 160; h.w = 560; h.h = 400;
+    h.src_x = 264; h.src_y = 40; h.src_w = 560; h.src_h = 400;
+    design.host(sc, h);
+    r.pump(2500, &f);
+    bool with = false;
+    const int map_i = r.svc->slots().index("map");
+    ok("hosted: the map in the panel's scene over the file, its frames the host's 560x400 part, the map's slot released",
+       r.st().state == "showing" && r.st().target == "panel" && r.st().hosted && r.drawing("panel", crop_of(f, 264, 40, 560, 400), &with) &&
+           with && r.gpu.graph("panel")->over_file && r.svc->compositor().layers().size() == 1 &&
+           r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+
+    h.shown = false;
+    design.host(sc, h);
+    r.pump(1000, &f2);
+    ok("hidden by the host: no layer, nothing sent, idle with the reason",
+       r.svc->compositor().layers().empty() && r.st().state == "idle" && r.st().reason == MapFeed::kHostHidden &&
+           r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+    h.shown = true;
+    design.host(sc, h);
+    r.pump(1500);
+    ok("shown again: the newest picture's part first", r.st().state == "showing" &&
+                                                         r.drawing("panel", crop_of(f2, 264, 40, 560, 400), &with) && with);
+
+    design.drop(sc);
+    r.pump(2000, &f2);
+    ok("the host gone: the map on its own target again",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f2, &with) && with);
+    r.other = nullptr;
+    const int removed = std::system(("rm -rf " + root).c_str());
+    (void)removed;
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
     setvbuf(stdout, nullptr, _IONBF, 0);
+    hosting();
     Rig r;
     r.pump(100);
     const crs::Layer *l = r.map_layer();

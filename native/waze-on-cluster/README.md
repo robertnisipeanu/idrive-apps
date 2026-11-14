@@ -416,6 +416,24 @@ From a shell, `waze-on-cluster -c <conf> run map|panel` (`sail` is an alias
 of `map`) sets the cluster target until the service restarts and prints the
 status.
 
+**Inside another app's scene.** Another app that shows a scene file on a
+target (with `layers` 1) can host the map there (cluster-render
+PROTOCOL.md "Hosting another target"): it names the map's target, a rect in
+its own target and the part of the map's target it wants. While that holds,
+the cluster's map is drawn there and only there: one video layer at that
+rect, its frames that part of the picture, scaled on the head unit to at
+most the rect's size (`src/atlas_scale.*`, the HUD's worker), and no layer
+on its own target, so the KOMBI shows its own content there and nothing of
+the map goes to it twice. The decoder is the same: one decode, one upload,
+of that part only (a 560x400 part: 336,000 B a frame instead of 783,360).
+While the app hides it, there is no layer at all and nothing is sent; the
+newest picture is held and drawn first when it shows again. When the app's
+scene goes, or cluster-render restarts, the map is back on its own target
+(and in the scene again once it says so). The status says `hosted` 1 and
+the scene's target as `target`; hidden, `state` idle with the reason
+`hidden by the app it is shown in`. The HUD and the app's settings are
+unaffected. Nothing changes without such an app.
+
 ### Status and diagnostics
 
 Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):

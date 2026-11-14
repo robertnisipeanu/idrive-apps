@@ -79,6 +79,7 @@ void on_signal(int) { g_stop = 1; }
 std::string status_line(const FeedStatus &s)
 {
     return "{\"ev\":\"status\",\"state\":" + json_escape(s.state) + ",\"target\":" + json_escape(s.target) +
+           ",\"hosted\":" + (s.hosted ? "1" : "0") +
            ",\"page\":" + json_escape(s.page) + ",\"reason\":" + json_escape(s.reason) +
            ",\"upload_cap_kb_per_s\":" + std::to_string(s.upload_cap_kb) +
            ",\"upload_reason\":" + json_escape(s.upload_reason) +
