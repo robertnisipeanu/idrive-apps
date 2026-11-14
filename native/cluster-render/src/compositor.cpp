@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 
@@ -104,8 +105,8 @@ Compositor::~Compositor()
     for (Target &t : targets_) {
         if (t.composite)
             t.composite->detach(false);
+        t.file.reset();    /* before a graph that borrows its scene */
         t.graph.reset();
-        t.file.reset();
     }
     if (atlas_view_fx_) gpu_->drop_effect(atlas_view_fx_);
     if (block_view_fx_) gpu_->drop_effect(block_view_fx_);
@@ -563,6 +564,68 @@ bool Compositor::replace_scene(uint64_t owner, uint32_t id, const SceneSource &s
     return true;
 }
 
+void Compositor::set_layers(uint32_t id, const SceneLayers &l)
+{
+    auto it = scenes_.find(id);
+    if (it == scenes_.end())
+        return;
+    it->second.layers = l;
+    if (!l.on)
+        it->second.hosts.clear();
+}
+
+bool Compositor::host(uint64_t owner, uint32_t id, int hosted, const Host &h, std::string *err)
+{
+    auto it = scenes_.find(id);
+    if (it == scenes_.end() || it->second.owner != owner) {
+        *err = "no such scene";
+        return false;
+    }
+    SceneEntry &s = it->second;
+    const std::vector<TargetSpec> &specs = slots_->targets();
+    if (!s.layers.on) {
+        *err = "a scene hosts only with layers 1";
+        return false;
+    }
+    if (hosted == s.target) {
+        *err = "a scene hosts other targets, not its own";
+        return false;
+    }
+    for (const auto &kv : scenes_)
+        if (kv.first != id && kv.second.hosts.count(hosted)) {
+            *err = "target " + specs[hosted].name + " is hosted by another scene";
+            return false;
+        }
+    auto inside = [](const Rect &r, const TargetSpec &t) {
+        return r.w && r.h && r.x >= 0 && r.y >= 0 && (uint64_t)r.x + r.w <= t.width && (uint64_t)r.y + r.h <= t.height;
+    };
+    if (!inside(h.rect, specs[s.target])) {
+        *err = "x, y, w, h must lie inside " + specs[s.target].name;
+        return false;
+    }
+    if (!inside(h.src, specs[hosted])) {
+        *err = "src_x, src_y, src_w, src_h must lie inside " + specs[hosted].name;
+        return false;
+    }
+    s.hosts[hosted] = h;
+    return true;
+}
+
+std::vector<Compositor::Hosted> Compositor::hosts() const
+{
+    std::vector<Hosted> out;
+    for (const auto &kv : scenes_)
+        if (kv.second.error.empty())
+            for (const auto &h : kv.second.hosts) {
+                Hosted x;
+                x.target = h.first;
+                x.into = kv.second.target;
+                x.host = h.second;
+                out.push_back(x);
+            }
+    return out;
+}
+
 SceneEdits *Compositor::edits(uint64_t owner, uint32_t id)
 {
     auto it = scenes_.find(id);
@@ -575,9 +638,20 @@ std::string Compositor::scene_text(uint32_t id) const
     if (it == scenes_.end())
         return std::string();
     const SceneEntry &s = it->second;
-    return "on " + slots_->targets()[s.target].name + ": " + s.src.file + " and " +
-           std::to_string(s.src.res.size()) + " resource files, " + std::to_string(s.src.bytes / 1024) + " KB; " +
-           std::to_string(s.edits.kept()) + " edit lines kept";
+    std::string text = "on " + slots_->targets()[s.target].name + ": " + s.src.file + " and " +
+                       std::to_string(s.src.res.size()) + " resource files, " + std::to_string(s.src.bytes / 1024) +
+                       " KB; " + std::to_string(s.edits.kept()) + " edit lines kept";
+    if (s.layers.on)
+        text += "; layers over it" + (s.layers.order_set ? " from render order " + std::to_string(s.layers.order) : "");
+    for (const auto &kv : s.hosts) {
+        const Host &h = kv.second;
+        char b[160];
+        std::snprintf(b, sizeof b, "; hosts %s at %ux%u+%d+%d from %ux%u+%d+%d%s",
+                      slots_->targets()[kv.first].name.c_str(), h.rect.w, h.rect.h, h.rect.x, h.rect.y, h.src.w,
+                      h.src.h, h.src.x, h.src.y, h.shown ? "" : ", not shown");
+        text += b;
+    }
+    return text;
 }
 
 uint32_t Compositor::content(int target) const
@@ -586,6 +660,15 @@ uint32_t Compositor::content(int target) const
         if (kv.second.target == target && kv.second.error.empty())
             return kv.first;
     return 0;
+}
+
+bool Compositor::layers_wait(int target) const
+{
+    const uint32_t sc = content(target);
+    if (!sc)
+        return false;
+    const Target &t = targets_[target];
+    return !scenes_.at(sc).layers.on || (t.file && !t.graph);
 }
 
 bool Compositor::stale(const TargetSpec &spec) const
@@ -717,8 +800,10 @@ void Compositor::arrange(int64_t now_ms)
         t.arr = crs::arrange(items);
         if (const uint32_t sc = content((int)ti)) {
             /* The target's scene is the content's file: it wants the
-             * target, and every layer waits (state()). */
-            t.arr.drawn.clear();
+             * target, and every layer waits (state()) unless they are
+             * drawn over the file. */
+            if (layers_wait((int)ti))
+                t.arr.drawn.clear();
             t.arr.wanted = true;
             t.arr.contend = t.arr.contend || scenes_[sc].contend;
         }
@@ -864,8 +949,8 @@ void Compositor::render(int64_t now_ms)
             slots_->status((int)ti).state == TargetState::Parked)
             continue;
         t.uncover = false;
-        if (t.file) {
-            /* A scene file: no layers, nothing to uncover. */
+        if (t.file && !t.graph) {
+            /* A scene file without layers over it: nothing to uncover. */
             t.uncover_since = t.alert_since = -1;
             render_later_.push_back((int)ti);
             continue;
@@ -901,7 +986,7 @@ void Compositor::render(int64_t now_ms)
                      [&since](int a, int b) { return since(a) < since(b); });
     render_order_.insert(render_order_.end(), render_later_.begin(), render_later_.end());
     for (int ti : render_order_) {
-        if (targets_[ti].file)
+        if (targets_[ti].file && !targets_[ti].graph)
             render_file(ti, targets_[ti], now_ms);
         else
             render_target(ti, targets_[ti], now_ms);
@@ -982,7 +1067,9 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         wrote = wrote || s == Stage::Wrote;
         failed = failed || s == Stage::Failed;
     }
-    if (!wrote && !failed && !t.dirty) {
+    /* Layers over a scene file: its due edits go in the same flush. */
+    const bool edits = t.file && stage_edits(t, now_ms);
+    if (!wrote && !failed && !t.dirty && !edits) {
         settle(ti, t, false);
         return;
     }
@@ -1003,6 +1090,8 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         a->committed(ok);
     for (Layer *l : staged)
         l->committed(ok, now_ms);
+    if (edits && ok)
+        t.file_flush_ms = now_ms;
     /* What the layers undid for a flush that did not go goes with the
      * next one. */
     t.dirty = !ok;
@@ -1017,7 +1106,8 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 {
     const TargetSpec &spec = slots_->targets()[ti];
     const int64_t t0 = clock_us_();
-    const bool ok = t.file ? t.file->flush(++t.tag) : t.graph->flush(++t.tag);
+    /* A graph over a file flushes the file's scene, edits and all. */
+    const bool ok = t.graph ? t.graph->flush(++t.tag) : t.file->flush(++t.tag);
     const int64_t took = clock_us_() - t0;
     if (!ok)
         evidence(spec, Evidence::FlushFailure, now_ms, spec.name);
@@ -1035,17 +1125,22 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 
 void Compositor::render_file(int ti, Target &t, int64_t now_ms)
 {
-    /* The content gone, its scene stays as last flushed until released. */
-    auto s = scenes_.find(t.file_of);
-    const bool mine = s != scenes_.end() && s->second.serial == t.file_serial;
-    /* Once a tick: lines coming faster stay due (wake_in_ms). */
-    if (mine && !t.dirty && file_tick_ms_ > 0 && t.file_flush_ms >= 0 && now_ms - t.file_flush_ms < file_tick_ms_)
-        return;
-    const bool staged = mine && s->second.edits.stage(t.file.get());
-    if (staged || t.dirty) {
+    if (stage_edits(t, now_ms) || t.dirty) {
         t.dirty = !flush(ti, t, now_ms);
         t.file_flush_ms = now_ms;
     }
+}
+
+bool Compositor::stage_edits(Target &t, int64_t now_ms)
+{
+    /* The content gone, its scene stays as last flushed until released. */
+    auto s = scenes_.find(t.file_of);
+    if (s == scenes_.end() || s->second.serial != t.file_serial)
+        return false;
+    /* Once a tick: lines coming faster stay due (wake_in_ms). */
+    if (!t.dirty && file_tick_ms_ > 0 && t.file_flush_ms >= 0 && now_ms - t.file_flush_ms < file_tick_ms_)
+        return false;
+    return s->second.edits.stage(t.file.get());
 }
 
 void Compositor::charge(int ti, uint64_t bytes, int64_t now_ms)
@@ -1603,7 +1698,7 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
         return LayerState::Hidden;
     if (!l.ready(now_ms_) || !assets_have(e))
         return LayerState::Stalled;
-    if (content(l.target())) {
+    if (layers_wait(l.target())) {
         *reason = "scene";
         return LayerState::Waiting;
     }
@@ -1689,11 +1784,22 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         charge(ti, t.file_bytes, now_ms_);
         log_info("target %s: scene file %s published, %llu KB with its resource files, %zu edit lines kept",
                  spec.name.c_str(), s.src.file.c_str(), (unsigned long long)(t.file_bytes / 1024), s.edits.kept());
-        return true;
+        if (!s.layers.on)
+            return true;
+        /* The layers over the file, in its scene; without that graph they
+         * wait, the file shown all the same. */
+        t.graph = t.file->layers(s.layers.order_set ? &s.layers.order : nullptr, err);
+        if (!t.graph) {
+            log_warn("target %s: no layers over scene file %s: %s", spec.name.c_str(), s.src.file.c_str(),
+                     err->c_str());
+            err->clear();
+            return true;
+        }
+    } else {
+        t.graph = gpu_->scene(spec, err);
+        if (!t.graph)
+            return false;
     }
-    t.graph = gpu_->scene(spec, err);
-    if (!t.graph)
-        return false;
     t.tag = 0;
     t.flush_failing = false;
     /* A new scene shows nothing until its first flush. */
@@ -1760,8 +1866,8 @@ void Compositor::unpublish(const TargetSpec &spec)
             kv.second.asset->detach(false);
     if (t.composite)
         t.composite->detach(false);
+    t.file.reset();    /* before a graph that borrows its scene */
     t.graph.reset();
-    t.file.reset();
     t.file_of = 0;
     t.dirty = false;
     t.flushed_videos = 0;

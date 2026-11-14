@@ -61,6 +61,7 @@ private:
         std::map<uint32_t, uint32_t> assets;          /* the client's ref -> asset id */
         std::map<uint32_t, std::string> layer_sent;   /* by ref: the state line last sent */
         std::map<std::string, std::string> target_sent;
+        std::map<std::string, std::string> host_sent;   /* by hosted target: its host event last sent */
         std::map<uint32_t, std::string> frame_error;  /* by ref: the last frame error sent */
         std::string budget_sent;
         bool closing = false;
@@ -85,6 +86,8 @@ private:
     /* A scene file on a target (PROTOCOL.md "Scene files"), and its edits. */
     void op_scene(Client &c, const cr::Json &j);
     void op_edit(Client &c, uint32_t ref, const cr::Json &j);
+    /* The scene ref hosts a target (PROTOCOL.md "host"). */
+    void op_host(Client &c, uint32_t ref, const cr::Json &j);
     /* set, uniform, bind, part, transform, animate and stop. */
     void op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *l, const cr::Json &j);
     void op_uniform(Client &c, uint32_t ref, Layer *l, const cr::Json &j);

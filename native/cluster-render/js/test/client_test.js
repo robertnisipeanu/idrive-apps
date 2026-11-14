@@ -10,8 +10,10 @@
  * restarting under the client, whose layers, assets, parts and binds come
  * back by themselves; a synthetic scene file on the panel, shown with the
  * layers there waiting, its edit lines kept by key, a malformed one and one
- * changing nothing reported, and dropped; close() and connect() in one tick
- * making one connection. */
+ * changing nothing reported, and dropped; one with layers, the layers drawn
+ * over it, hosting the map, shown and hidden, the other client told, and the
+ * host ended when it is dropped; close() and connect() in one tick making one
+ * connection. */
 'use strict';
 
 const assert = require('assert');
@@ -166,6 +168,18 @@ async function main() {
             eo.refused.some((r) => r.indexOf('edit: \'--show ^nothing$\' changed nothing') === 0), 1000));
     ovl.drop(gauge);
     ok('dropped: the layers there shown again', await until(() => eo.layer[label] === 'shown', 3000));
+    const hosted = [];
+    waze.on('host', (t, ev) => hosted.push(t + ':' + (ev.into || '-') + (ev.into ? ':' + ev.shown + ':' + ev.w : '')));
+    const over = ovl.scene({ target: 'panel', file: file, sha256: [sha256], layers: true });
+    ok('a scene with layers: shown, the layers there drawn over it',
+        await until(() => eo.layer[over] === 'shown' && eo.layer[label] === 'shown', 3000));
+    ok('a host needs a scene and a target', !ovl.host(badge, { target: 'map' }) && !ovl.host(over, {}));
+    ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, src_x: 264, src_w: 560, src_h: 400, src_y: 40 });
+    ok('it hosts the map: the other client told', await until(() => hosted.indexOf('map:panel:1:560') >= 0, 2000));
+    ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, shown: false });
+    ok('hidden: told', await until(() => hosted.indexOf('map:panel:0:560') >= 0, 2000));
+    ovl.drop(over);
+    ok('dropped: the map not hosted any more', await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',

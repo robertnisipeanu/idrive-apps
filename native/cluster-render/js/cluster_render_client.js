@@ -174,6 +174,7 @@ class ClusterRender extends EventEmitter {
                 if ((l.kind === 'asset') !== assets) return;
                 this._send(this._layerMsg(ref, l));
                 if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
+                l.hosts.forEach((m) => this._send(m));
                 l.parts.forEach((p) => {
                     this._send(p.msg);
                     if (p.geometry) this._write(p.geometry);
@@ -241,6 +242,8 @@ class ClusterRender extends EventEmitter {
             this.emit('refused', ev.op, ev.ref, ev.reason, ev.line);
         } else if (ev.ev === 'status') {
             this.emit('status', ev.text);
+        } else if (ev.ev === 'host') {
+            this.emit('host', ev.target, ev);   /* ev.into empty: not hosted any more */
         }
     }
 
@@ -287,8 +290,11 @@ class ClusterRender extends EventEmitter {
     _layerMsg(ref, l) {
         const o = l.opts;
         if (l.kind === 'scene') {
-            return { op: 'scene', ref: ref, target: o.target, file: o.file, res: (o.res || []).join(' '),
+            const m = { op: 'scene', ref: ref, target: o.target, file: o.file, res: (o.res || []).join(' '),
                 sha256: [].concat(o.sha256).join(' '), contend: flag(o.contend) };
+            if (o.layers) m.layers = 1;
+            if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
+            return m;
         }
         if (l.kind === 'asset') {
             return { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
@@ -332,7 +338,7 @@ class ClusterRender extends EventEmitter {
     _add(kind, opts) {
         const o = Object.assign({}, opts);
         const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, anims: new Map(), nextAnim: 1,
-            dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map() };
+            dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map(), hosts: new Map() };
         if (kind === 'scene' && !(o.file && [].concat(o.sha256 || []).length === (o.res || []).length + 1)) return 0;
         if (kind === 'image') {
             o.iw = o.iw || o.w;
@@ -378,8 +384,24 @@ class ClusterRender extends EventEmitter {
     /* A scene file as the target's scene (PROTOCOL.md "Scene files"): opts
      * target, file (an absolute path), res (its resource files' paths),
      * sha256 (an array of hex SHA-256s: the file's, then each resource
-     * file's), contend. */
+     * file's), contend; layers: true draws the target's layers over the
+     * file, layers_order the render order their passes start at. */
     scene(opts) { return this._add('scene', opts); }
+
+    /* The scene (made with layers) hosts another target (PROTOCOL.md
+     * "host"): opts target, x, y, w, h (in the scene's target), src_x,
+     * src_y, src_w, src_h (in the hosted target's pixels; left out: all of
+     * it), shown. Kept by target and sent again after a reconnect. */
+    host(ref, opts) {
+        const l = this.layers.get(ref);
+        if (!l || l.kind !== 'scene' || !opts.target) return false;
+        const m = { op: 'host', ref: ref, target: opts.target, x: opts.x, y: opts.y, w: opts.w, h: opts.h,
+            shown: flag(opts.shown !== false) };
+        ['src_x', 'src_y', 'src_w', 'src_h'].forEach((k) => { if (opts[k] !== undefined) m[k] = opts[k]; });
+        l.hosts.set(opts.target, m);
+        this._send(m);
+        return true;
+    }
 
     /* Another file for a scene, in place (opts as scene()'s, the target
      * kept): its kept edits go. */

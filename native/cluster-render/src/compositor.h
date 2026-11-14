@@ -151,7 +151,15 @@
  * outdated (Scenes::outdated) and published again in place, the target
  * kept in its slot. The files' sizes are charged to the
  * budget when the scene is published and when the display takes it again:
- * the renderer fetches its resources then. */
+ * the renderer fetches its resources then.
+ *
+ * A content with layers (SceneLayers) has the target's layers drawn over its
+ * file: the target's graph is FileScene::layers(), in the file's own scene,
+ * and the layers are arranged, staged and flushed as on any target, the
+ * content's due edits in the same flush. Without that graph (the backend
+ * draws none) they wait as without layers. A content may host other targets
+ * (Host): the service only keeps that and tells every client (server.h);
+ * the hosted target's producers act on it. */
 #ifndef CRS_COMPOSITOR_H
 #define CRS_COMPOSITOR_H
 
@@ -195,6 +203,23 @@ struct CompositorLimits {
     uint64_t pixel_bytes = 16u << 20;   /* CPU copies of all images, videos, assets and meshes */
     uint32_t assets = 32;               /* across all clients */
     uint32_t assets_per_client = 16;
+};
+
+/* A scene content's layers drawn over its file (PROTOCOL.md "Layers over a
+ * scene file"): their passes from render order `order` up, or past the
+ * file's own without it. */
+struct SceneLayers {
+    bool on = false;
+    bool order_set = false;
+    int32_t order = 0;
+};
+
+/* A scene content showing another target's content (PROTOCOL.md "host"): at
+ * rect in its own target, the part src of the hosted target; shown 0:
+ * nowhere. */
+struct Host {
+    Rect rect, src;
+    bool shown = true;
 };
 
 class Compositor : public Scenes {
@@ -253,6 +278,19 @@ public:
         auto it = scenes_.find(id);
         return it == scenes_.end() ? -1 : it->second.target;
     }
+    /* The scene content's layers over its file, taken when it is next
+     * published (add_scene, replace_scene). Off, it hosts nothing. */
+    void set_layers(uint32_t id, const SceneLayers &l);
+    /* The scene content, which has layers, hosts target hosted (not its
+     * own, hosted by no other content), rect inside its target and src
+     * inside hosted's; replaces what it hosted there. False with *err. */
+    bool host(uint64_t owner, uint32_t id, int hosted, const Host &h, std::string *err);
+    struct Hosted {
+        int target = 0, into = 0;   /* the hosted target, and the content's */
+        Host host;
+    };
+    /* What the contents that have not failed to load host. */
+    std::vector<Hosted> hosts() const;
     /* The scene content's edits if it exists and belongs to owner. */
     SceneEdits *edits(uint64_t owner, uint32_t id);
     /* For the status: "on <target>: " its files and edits; empty when id is
@@ -369,6 +407,8 @@ private:
         std::string error;   /* the file did not load: the content wants nothing */
         SceneEdits edits;
         uint32_t serial = 1;   /* its file's: one more each replacement */
+        SceneLayers layers;
+        std::map<int, Host> hosts;   /* by hosted target */
     };
     struct Target {
         std::unique_ptr<Graph> graph;
@@ -521,6 +561,12 @@ private:
     /* Stages the scene content's due edits into the target's file scene and
      * flushes it. */
     void render_file(int ti, Target &t, int64_t now_ms);
+    /* The content's due edits staged into the target's file scene, at most
+     * once a tick unless the target is dirty; whether any were. */
+    bool stage_edits(Target &t, int64_t now_ms);
+    /* The target's layers wait for its scene content: it has one, and its
+     * layers are not drawn over the file. */
+    bool layers_wait(int target) const;
     /* bytes the renderer fetches now, charged to the target's budget. */
     void charge(int ti, uint64_t bytes, int64_t now_ms);
     /* The budget the target's writes spend: the HUD's share for a share

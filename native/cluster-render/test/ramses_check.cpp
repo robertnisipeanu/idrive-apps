@@ -739,6 +739,43 @@ int main()
     ok("another file in place: loaded and edited, the slot not asked for again, no resource more",
        comp.state(sc, &reason) == LayerState::Shown && gauge_edited(client, 60) && port.requests == requests &&
            resource_count(client, gpu.types().resource) == resources);
+
+    /* Layers over the file: a video and an effect drawn in its scene, in
+     * passes after its own (main_pass 0, glow_pass 1), its edits with them. */
+    SceneLayers over;
+    over.on = true;
+    comp.set_layers(sc, over);
+    comp.replace_scene(6, sc, second, false);
+    LayerParams hv;
+    hv.rect.x = 700; hv.rect.y = 160; hv.rect.w = 560; hv.rect.h = 400;
+    VideoParams hvp;
+    hvp.w = 560;
+    hvp.h = 400;
+    const uint32_t hosted = comp.add_video(8, 1, hv, hvp, now, &err);
+    LayerParams fp;
+    fp.klass = Klass::Overlay;
+    fp.rect = hv.rect;
+    const uint32_t edge = comp.add_effect(8, 1, fp, "", kBars, 0, now, &err);
+    VideoLayer *hvideo = static_cast<VideoLayer *>(comp.layer(8, hosted));
+    std::vector<uint8_t> hatlas(hvideo->frame_bytes());
+    for (int i = 0; i < 30; i++) {
+        for (size_t k = 0; k < hatlas.size(); k++)
+            hatlas[k] = (uint8_t)(k / 7 + i * 5);
+        hvideo->offer(hatlas.data(), now);
+        if (i == 10)
+            ed->add("--rotate ^needle_pivot$=0,0,30\n--uniform ^needle$:u_color=1,0,0,1\n--set level=0.75\n"
+                    "--hide ^quad$\n--viewport ^main_cam$=0,0,960,360\n--pass-off ^glow_pass$");
+        run(33);
+    }
+    run(500);
+    const ramses::RenderPass *lp0 = gauge_object<ramses::RenderPass>(client, "cluster-render layers");
+    ok("layers over the file: a video and an effect drawn in its scene from render order 2, its edits flushed with them",
+       comp.state(sc, &reason) == LayerState::Shown && comp.state(hosted, &reason) == LayerState::Shown &&
+           comp.state(edge, &reason) == LayerState::Shown && lp0 && lp0->getRenderOrder() == 2 &&
+           gauge_edited(client, 30));
+    comp.remove_owner(8);
+    run(500);
+    ok("the layers gone, the file stays", comp.state(sc, &reason) == LayerState::Shown && client.findObjectByName("gauge"));
     comp.remove_owner(6);
     run(1500);
     ok("dropped: the panel released, the scene and the resources its load made gone",
