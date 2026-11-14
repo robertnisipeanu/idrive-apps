@@ -8,10 +8,7 @@
  * generation, which takes the same arguments.
  *
  *   cluster-render [-c FILE] [-s key=value]...          serve
- *   cluster-render [-c FILE] [-s key=value]... status   print the service's status
- *   cluster-render [-c FILE] [-s key=value]... guard-reset
- *                     as root: remove the mapping guard's file (guard.h) and
- *                     restart the service if it runs */
+ *   cluster-render [-c FILE] [-s key=value]... status   print the service's status */
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -20,8 +17,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-
-#include <fstream>
 
 #include "cluster_render/protocol.h"
 #include "config.h"
@@ -44,6 +39,10 @@ namespace {
  * status once the service starts (service_config). */
 std::vector<std::string> drop_in_report;
 
+/* The mapping guard's strikes, as cluster-render 0.5.10 and older keep
+ * them: nothing reads them, and the service removes the file at start. */
+const char kOldStateFile[] = "/var/opt/cluster-render/state/guard.txt";
+
 }  // namespace
 
 bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *out, std::string *err)
@@ -54,6 +53,10 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     for (const std::string &line : drop_in_report)
         cld::log(line.compare(0, 8, "skipped ") ? 'I' : 'W', "drop-in %s", line.c_str());
     sc.drop_ins = drop_in_report;
+    if (unlink(kOldStateFile) == 0)
+        cld::log('I', "%s removed: its strikes are not used", kOldStateFile);
+    else if (errno != ENOENT)
+        cld::log('W', "%s: not removed: %s", kOldStateFile, strerror(errno));
     if (!load_targets(cfg, generation, &sc.targets, err))
         return false;
     const long max_kb = cfg.num("upload_kb_per_s"), step_kb = cfg.num("upload_step_kb_per_s");
@@ -82,10 +85,6 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     sc.socket_group = cfg.str("socket_group");
     sc.status_path = cfg.str("status_path");
     sc.backend = generation == 8 ? "id8" : "id7";
-    sc.guard_path = cfg.str("guard_path");
-    sc.version = CR_VERSION;
-    std::ifstream boot("/proc/sys/kernel/random/boot_id");
-    std::getline(boot, sc.boot_id);
     return true;
 }
 
@@ -128,23 +127,6 @@ int status(const cld::Config &cfg)
         if (bad)
             return 1;
     }
-}
-
-/* Root only: removes the mapping guard's file, then restarts the service
- * if it runs, so it starts with no strike. */
-int guard_reset(const cld::Config &cfg)
-{
-    if (geteuid() != 0) {
-        std::fprintf(stderr, "cluster-render: guard-reset runs as root\n");
-        return 1;
-    }
-    const std::string path = cfg.str("guard_path");
-    if (unlink(path.c_str()) != 0 && errno != ENOENT) {
-        std::fprintf(stderr, "cluster-render: %s: %s\n", path.c_str(), strerror(errno));
-        return 1;
-    }
-    std::printf("cluster-render: %s removed\n", path.c_str());
-    return std::system("systemctl try-restart cluster-render.service") == 0 ? 0 : 1;
 }
 
 bool load_local(cld::Config *cfg, std::string *err)
@@ -194,8 +176,6 @@ int main(int argc, char **argv)
     }
     if (i + 1 == argc && !std::strcmp(argv[i], "status"))
         return status(cfg);
-    if (i + 1 == argc && !std::strcmp(argv[i], "guard-reset"))
-        return guard_reset(cfg);
-    std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status | guard-reset]\n");
+    std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status]\n");
     return 2;
 }

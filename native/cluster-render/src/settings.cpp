@@ -262,7 +262,6 @@ void define_keys(cld::Config *cfg)
     cfg->define("upload_burst_ms", "250");
     cfg->define("slow_flush_ms", "150");
     cfg->define("status_path", "/run/cluster-render/status.txt");
-    cfg->define("guard_path", "/var/opt/cluster-render/state/guard.txt");
     cfg->define("log_file", "/var/opt/cluster-render/log/cluster-render.log");
     cfg->define("log_file_kb", "512");
     /* The shared Config's defaults are cluster-demo's (src/config.cpp). */

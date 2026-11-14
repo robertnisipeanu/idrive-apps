@@ -62,7 +62,7 @@ Results:
    session follow the log:
 
    ```sh
-   tail -f /var/opt/cluster-render/log/cluster-render.log | grep -E 'etc2|asset|hud|guard|ramses'
+   tail -f /var/opt/cluster-render/log/cluster-render.log | grep -E 'etc2|asset|hud|went away|ramses'
    ```
 
    In another, run one test at a time, leave it up while you look, Ctrl+C
@@ -93,13 +93,12 @@ layer `shown`.
 | Blank, the layer `shown`, no restart | The cluster took the scene and did not draw the texture: too big, or the format unsupported |
 | The left half right, the right half or the far edges garbage or missing | The cluster draws only part of a 2048 px texture: keep atlases at 1024 |
 | `REFUSED asset ...: format must be ...` | A build without `etc2rgba` is running: redo step 1 |
-| HUD (and cluster) blank, KOMBI restarts | The cluster choked on it. The guard records a strike (`guard: hud 0x323 0x1000400 0: strike`); two disable the HUD. Stop the client, then as root `cluster-render guard-reset` |
+| HUD (and cluster) blank, KOMBI restarts | The cluster choked on it. The log has `target hud: the display service went away … after its mapping`. Stop the client |
 
 Write down what the HUD showed, the client's output and the log lines.
 
 ## Afterwards
 
-`rm -rf /tmp/etc2` on the unit, turn the HUD apps back on, and
-`cluster-render guard-reset` if the guard tripped. To leave a development
+`rm -rf /tmp/etc2` on the unit and turn the HUD apps back on. To leave a development
 build, install a release from the Store (`deploy/hu rollback cluster-render
 --yes` works only while the deploy tool keeps another version).

@@ -23,8 +23,8 @@
  * the box taken over and parked behind it, while the map is shown, and with
  * the seat-belt panel parked there; released with the map and at stop; the
  * map's layer choosing it with guide_hold, and a client without the field
- * getting it. The mapping guard (guard.h) striking and disabling the hold
- * on cluster restarts, never the map. A video frame repeated: a few bytes
+ * getting it. Cluster restarts right after the hold's mapping, again and
+ * again: the map and the hold shown again after each. A video frame repeated: a few bytes
  * that keep the layer from stalling, to a service that takes repeats; the
  * last frame whole again to one that does not, to one that restarted and
  * after the service refuses the layer; a refused layer's still map answered
@@ -64,6 +64,7 @@
 #include <vector>
 
 #include "../kit/yuv_atlas.h"
+#include "../src/log.h"
 #include "../src/service.h"
 #include "cluster_render/client.h"
 #include "fake_graph.h"
@@ -358,7 +359,6 @@ static void hold_rig(Rig &r)
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
     g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
-    g.strike_limit = 2;   /* as load_holds makes it */
     r.sc.targets.push_back(g);
     r.start();
     r.port.stock_map(0x100, kHmiMap);
@@ -509,21 +509,13 @@ static void kombi_restart(Rig &r)
     r.port.set_up(true);
 }
 
-/* The mapping guard (guard.h) in the service: a cluster restart right after
- * the hold's mapping strikes the hold, also while it is asked for in the
- * tick its map is shown; two disable it, which is then never asked for,
- * also after a service restart, and the map's client is told; a restart
- * long after any mapping is no strike; the map (its strike limit the
- * default, as main.cpp leaves it) only has its strikes logged; a client's
- * guard_reset is an unknown op. */
-static void mapping_guard()
+/* Cluster restarts right after the hold's mapping, again and again: each
+ * logged naming the target mapped last, and the map and the hold shown
+ * again after each; the map's client never told either is disabled, the
+ * status has no line about it; after a service restart the same. */
+static void display_drops()
 {
-    const std::string path = "/tmp/crs-guard-" + std::to_string(getpid()) + ".txt";
-    unlink(path.c_str());
     Rig r;
-    r.sc.guard_path = path;
-    r.sc.version = "0.3.7";
-    r.sc.boot_id = "boot-1";
     hold_rig(r);
     cr::Client a("waze", r.path);
     Events ea;
@@ -535,36 +527,27 @@ static void mapping_guard()
     lo.contend = true;
     const uint32_t map = show_map(r, a, lo);
     const SlotInfo *ours = r.port.row(0x105, kGuide);
-    ok("guard: the map and the hold shown", ea.target["map"] == "shown" && ours && ours->map_status == 1);
+    ok("drops: the map and the hold shown", ea.target["map"] == "shown" && ours && ours->map_status == 1);
 
-    kombi_restart(r);
-    std::string text = r.svc->guard().status_text();
-    ok("a cluster restart 0.3 s after the hold's mapping: a strike against the hold, none against the map",
-       text == "guard: guide_0x105 0x105 0x10004f1 0: 1 strike\n");
-    for (int k = 0; k < 1000 && !r.port.pending.count(kGuide); k++)
-        r.pump(5);
-    ok("both asked for again: the map shown, the hold asked for in the same tick",
-       r.port.pending.count(kGuide) && ea.target["map"] == "shown");
-    kombi_restart(r);
-    r.pump(5000);
-    text = r.svc->server().status_text(r.now);
-    ok("a second, before the hold is shown: the hold disabled, in the status; the map shown again without it, "
-       "the box shown",
-       has(text, "guard: guide_0x105 0x105 0x10004f1 0: disabled, 2 strikes\n") && ea.target["map"] == "shown" &&
-           !r.port.row(0x105, kGuide) && box_status(r) == 1);
-
-    r.pump(15000);
-    kombi_restart(r);
-    ok("a restart 15 s after the last mapping: no strike",
-       r.svc->guard().status_text() == "guard: guide_0x105 0x105 0x10004f1 0: disabled, 2 strikes\n");
-    for (int k = 0; k < 3; k++) {
-        r.pump(3000);
+    uint64_t log_seq = 0;
+    std::vector<std::string> lines;
+    cld::log_lines_since(&log_seq, &lines);
+    for (int k = 0; k < 4; k++) {
+        lines.clear();
         kombi_restart(r);
+        cld::log_lines_since(&log_seq, &lines);
+        bool logged = false;
+        for (const std::string &l : lines)
+            logged = logged || l.find("the display service went away") != std::string::npos;
+        r.pump(5000);
+        ours = r.port.row(0x105, kGuide);
+        ok(("drop " + std::to_string(k + 1) + " right after a mapping: logged; the map and the hold shown again")
+               .c_str(),
+           logged && ea.target["map"] == "shown" && ours && ours->map_status == 1);
     }
-    r.pump(3000);
-    text = r.svc->guard().status_text();
-    ok("restarts right after the map's mapping: its strikes logged, the map never disabled",
-       has(text, "guard: map 0x100 0x10004f0 0: 3 strikes\n") && ea.target["map"] == "shown");
+    ok("the map's client never told the hold or the map is disabled; no such status line",
+       !a.guide_disabled["map"] && !a.disabled["map"] &&
+           !has(r.svc->server().status_text(r.now), "guard") && !has(r.svc->server().status_text(r.now), "strike"));
 
     r.svc.reset();
     r.start();
@@ -573,19 +556,8 @@ static void mapping_guard()
         a.frame(map, f.data(), f.size(), 2 + k);
         r.pump(50);
     }
-    ok("a service restart: the hold still disabled, the map shown without it",
-       has(r.svc->server().status_text(r.now), "guard: guide_0x105 0x105 0x10004f1 0: disabled, 2 strikes") &&
-           ea.target["map"] == "shown" && !r.port.row(0x105, kGuide));
-
-    ok("the map's client told the hold is disabled", a.guide_disabled["map"]);
-    Raw reset(r.path);
-    reset.send("{\"op\":\"hello\",\"app\":\"reset\"}");
-    reset.send("{\"op\":\"guard_reset\"}");
-    r.pump(2000);
-    ok("guard_reset from a client: an unknown op, the hold still disabled",
-       has(reset.events(), "unknown op") && has(r.svc->guard().status_text(), "disabled, 2 strikes") &&
-           !r.port.row(0x105, kGuide));
-    unlink(path.c_str());
+    ours = r.port.row(0x105, kGuide);
+    ok("a service restart: the map and the hold shown", ea.target["map"] == "shown" && ours && ours->map_status == 1);
 }
 
 /* A service that answers the hello as told and keeps what the client
@@ -1684,7 +1656,7 @@ int main()
     guide_hold();
     guide_hold_choice();
     hud_yield_choice();
-    mapping_guard();
+    display_drops();
     repeats();
     framing();
     scene_files();

@@ -41,8 +41,7 @@
  * - BMW's turn box (the layer's guide_hold): hidden by default, the hold of
  *   its slot following the map; the switch off releases it and the box
  *   shows, the map still showing; on again, held; off from the start,
- *   never held; the hold disabled by cluster-render's guard: never held,
- *   and the status says so;
+ *   never held; the status never says the hold is disabled;
  * - only what the renderer needs goes: a picture repeated (as the producer
  *   hands over a picture the same as the last) keeps a static map showing
  *   past stall_ms; nothing reaches the renderer while the layer is hidden,
@@ -54,7 +53,7 @@
  *   both layers, or the HUD alone, shown past stall_ms with no frame whole
  *   and none scaled, and moving again the HUD scales at most hud_fps while
  *   the cluster keeps its rate; a feed made beside the other starts from its
- *   picture; the HUD disabled by the guard;
+ *   picture;
  * - Off (neither), from the cluster alone and from both: the map's and the
  *   HUD's slots and the turn box's hold released, the stock map and box
  *   shown again, nothing asked of the renderer while off; the cluster, or
@@ -129,7 +128,6 @@ struct Rig {
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x010004f8; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
         g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
-        g.strike_limit = 2;
         u.name = "hud"; u.slot = 0x323; u.scene_id = 0x01000400; u.width = 800; u.height = 480; u.linger_ms = 3000;
         u.yield_slots = {0x322};   /* as cluster-render.conf ships it */
         u.yield_ms = 1500;
@@ -274,18 +272,6 @@ static void guide_hold()
        off.st().state == "showing" && off.in_box_slot(kGuide) == -1 && off.in_box_slot(kBox) == 1);
     ok("turn box: the hold not disabled, the status says so", !h.st().guide_disabled);
 
-    const std::string path = "/tmp/woc-feed-guard-" + std::to_string(getpid()) + ".txt";
-    std::ofstream(path) << "version t\nboot b\nguide_0x105 0x105 0x10004f1 0 1 0 2\n";
-    Rig d(false, 6000, true);
-    d.sc.guard_path = path;
-    d.sc.version = "t";
-    d.sc.boot_id = "b";
-    d.start();
-    d.port.stock_map(0x105, kBox);
-    d.pump(3000, &f);
-    ok("turn box: the hold disabled by cluster-render's guard: never held, the status says so",
-       d.st().state == "showing" && d.st().guide_disabled && d.in_box_slot(kGuide) == -1 && d.in_box_slot(kBox) == 1);
-    unlink(path.c_str());
 }
 
 /* The HUD's worker is still scaling a frame: the feed then asks to be woken
@@ -748,7 +734,6 @@ int main()
     Rig b(false, 6000, false, true, true);
     b.feed.reset();   /* the rig's single feed is not used here */
     b.sc.targets[2].share = true;
-    b.sc.targets[2].strike_limit = 2;   /* as cluster-render's main sets the iDrive 7 HUD */
     b.start();
     FeedConfig bfc;
     bfc.socket = b.path;
@@ -1130,62 +1115,6 @@ int main()
        none.status("decode").hud_offset_x == 30 && none.status("decode").hud_offset_y == -20);
     none.set_hud_offset(40, -20);
     ok("and a move then is taken as asked", none.status("decode").hud_offset_x == 40);
-    }
-
-    {   /* ---- the HUD disabled by cluster-render's mapping guard ---- */
-    const std::string path = "/tmp/woc-feed-hud-guard-" + std::to_string(getpid()) + ".txt";
-    std::ofstream(path) << "version t\nboot b\nhud 0x323 0x1000400 0 1 0 2\n";
-    Rig d(false, 6000, false, true, true);
-    d.feed.reset();
-    d.sc.targets[2].share = true;
-    d.sc.targets[2].strike_limit = 2;
-    d.sc.guard_path = path;
-    d.sc.version = "t";
-    d.sc.boot_id = "b";
-    d.start();
-    FeedConfig dfc;
-    dfc.socket = d.path;
-    dfc.video.level_bits = 0;
-    MapFeeds feeds(dfc, true, true, 10);
-    feeds.set_stream(true, false, Picture::Shown);
-    std::vector<uint8_t> dspare;
-    bool hud_asked = false;
-    for (int64_t t = 0; t < 3000; t += 5) {
-        d.now += 5;
-        if (t % 65 == 0) {
-            dspare.assign(f1.begin(), f1.end());
-            feeds.offer(&dspare, (uint64_t)d.now, d.now);
-        }
-        for (int round = 0; round < 50; round++) {
-            std::vector<pollfd> fds;
-            const size_t first = d.svc->poll_fds(&fds);
-            const int n = ::poll(fds.data(), fds.size(), 0);
-            d.port.tick(d.now);
-            d.svc->after_poll(fds, first, d.now);
-            feeds.poll(d.now);
-            hud_asked = hud_asked || d.svc->slots().requested(2);
-            if (round > 0 && n <= 0)
-                break;
-        }
-    }
-    const FeedStatus ds = feeds.status("decode");
-    ok("HUD disabled by the guard: never asked for, reported disabled, its frames not scaled; the cluster's map showing",
-       !hud_asked && ds.hud_state == "disabled" && ds.state == "showing" && feeds.hud_feed() &&
-           feeds.hud_feed()->scaled_frames() == 0);
-    feeds.set_hud(false);
-    feeds.set_hud(true);
-    for (int64_t t = 0; t < 1000; t += 5) {
-        d.now += 5;
-        std::vector<pollfd> fds;
-        const size_t first = d.svc->poll_fds(&fds);
-        ::poll(fds.data(), fds.size(), 0);
-        d.port.tick(d.now);
-        d.svc->after_poll(fds, first, d.now);
-        feeds.poll(d.now);
-        hud_asked = hud_asked || d.svc->slots().requested(2);
-    }
-    ok("HUD disabled: off and on again from the app, still disabled", !hud_asked && feeds.status("decode").hud_state == "disabled");
-    unlink(path.c_str());
     }
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);

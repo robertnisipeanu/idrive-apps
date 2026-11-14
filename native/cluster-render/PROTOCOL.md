@@ -405,12 +405,8 @@ someone else holds the slot, and `retry_in_ms` when on a timer),
 (the display's renderer is subscribed to its scene), `checking` (not
 subscribed yet; after 1.5 s shown the service asks for the slot again),
 `unobservable` (the service cannot see subscriptions); `none` otherwise.
-`guide_disabled`: 1 while a guide hold following the target (`map`) is
-disabled by the mapping guard or by the display refusing its slot, so the
-stock HMI's guidance box shows whatever the layers' `guide_hold`; else 0.
-`disabled`: 1 while the target's own mapping is disabled by the mapping
-guard (the HUD's, README.md "Mapping guard"): it is never asked for, its
-layers stay waiting; else 0.
+`guide_disabled` and `disabled` are always 0; no target or guide hold is
+ever turned off for good.
 
 On a head unit that refuses the service (README.md "Supported head
 units") no `hello` comes: a `status` request gets `text` `not supported on
