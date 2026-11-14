@@ -116,22 +116,23 @@ void MapFeed::make_layer()
     const uint32_t sw = q.w & ~3u, sh = q.h & ~3u;
     if (hosted()) {
         /* Hosted: the part of the picture the host's src covers where the
-         * map would be (q), at the host's rect, scaled on the head unit to
-         * at most the rect's size. */
-        MapRect crop;
+         * map would be (q), where that part lands in the host's rect,
+         * scaled on the head unit to at most that size. */
+        MapRect crop, place;
         if (!host_crop(MapRect{q.x, q.y, q.w, q.h}, cfg_.video.w, cfg_.video.h,
-                       MapRect{(uint32_t)host_.src_x, (uint32_t)host_.src_y, host_.src_w, host_.src_h}, &crop)) {
+                       MapRect{(uint32_t)host_.src_x, (uint32_t)host_.src_y, host_.src_w, host_.src_h},
+                       MapRect{(uint32_t)host_.x, (uint32_t)host_.y, host_.w, host_.h}, &crop, &place)) {
             refused_ = "the host's part of " + cfg_.target + " misses the map";
             log_error("render: %s", refused_.c_str());
             return;
         }
-        const uint32_t dw = (crop.w < host_.w ? crop.w : host_.w) & ~3u, dh = (crop.h < host_.h ? crop.h : host_.h) & ~1u;
+        const uint32_t dw = (crop.w < place.w ? crop.w : place.w) & ~3u, dh = (crop.h < place.h ? crop.h : place.h) & ~1u;
         if (dw < 64 || dh < 32) {
-            refused_ = "the host's rect is smaller than 64x32";
+            refused_ = "the map's part in the host's rect is smaller than 64x32";
             log_error("render: %s", refused_.c_str());
             return;
         }
-        q = crk::QuadRect{(uint32_t)host_.x, (uint32_t)host_.y, host_.w, host_.h};
+        q = crk::QuadRect{place.x, place.y, place.w, place.h};
         vo.w = dw;
         vo.h = dh;
         scaling_ = true;
@@ -242,7 +243,8 @@ void MapFeed::set_hud_offset(int dx, int dy)
     cfg_.hud_offset_x = placed_x_ = dx;
     cfg_.hud_offset_y = placed_y_ = dy;
     uint32_t tw, th;
-    if (cfg_.target != "hud" || !layer_ || !target_size(client_.targets, "hud", &tw, &th))
+    /* hosted, the host places it: the offset waits for the HUD's own */
+    if (cfg_.target != "hud" || !layer_ || hosted() || !target_size(client_.targets, "hud", &tw, &th))
         return;
     const crk::QuadRect q = quad(tw, th);
     lo_.x = (int)q.x;
@@ -254,7 +256,7 @@ void MapFeed::set_hud_offset(int dx, int dy)
 void MapFeed::set_hud_keep_shown(bool keep)
 {
     cfg_.hud_keep_shown = keep;
-    const bool yield = cfg_.target != "hud" || !keep;
+    const bool yield = hosted() || cfg_.target != "hud" || !keep;
     if (layer_ && lo_.yield != yield) {
         lo_.yield = yield;
         client_.set(layer_, lo_);
@@ -268,7 +270,8 @@ void MapFeed::set_hud_width(unsigned pct)
         return;
     cfg_.hud_width_pct = pct;
     uint32_t tw, th;
-    if (cfg_.target != "hud" || !layer_ || !target_size(client_.targets, "hud", &tw, &th))
+    /* hosted, the host sizes it: the width waits for the HUD's own */
+    if (cfg_.target != "hud" || !layer_ || hosted() || !target_size(client_.targets, "hud", &tw, &th))
         return;
     /* the texture's size changes with it: a new layer at the new size */
     log_info("render: HUD map %u%% wide", pct);

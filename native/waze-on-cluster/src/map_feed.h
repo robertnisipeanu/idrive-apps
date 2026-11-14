@@ -39,8 +39,9 @@
  * the stream lost) when it has one, in place of kWaiting.
  *
  * Hosted: while a scene on another target hosts the feed's target
- * (cluster-render PROTOCOL.md "host"), the layer is there instead, at the
- * host's rect, and nothing is on the feed's own target, so the renderer lets
+ * (cluster-render PROTOCOL.md "host"), the layer is there instead, where its
+ * part lands in the host's rect (host_crop), and nothing is on the feed's
+ * own target, so the renderer lets
  * that slot go. Its frames are the part of the picture the host's src
  * covers (host_crop), scaled on the head unit to at most the rect's size by
  * the scaling worker, as the HUD's are: one decode, one upload, of that part

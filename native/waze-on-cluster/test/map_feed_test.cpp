@@ -525,6 +525,31 @@ static void hosting()
     r.pump(2000, &f2);
     ok("the host gone: the map on its own target again",
        r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f2, &with) && with);
+
+    /* A map smaller than the host's src (map_rect: half size, centred):
+     * the host stretches src over its rect, so the map lands as that much
+     * of the rect, at its place in src, not over the whole rect. */
+    FeedConfig fc;
+    fc.socket = r.path;
+    fc.video.level_bits = 0;
+    fc.rect = MapRect{272, 120, 544, 240};
+    r.feed.reset(new MapFeed(fc));
+    r.feed->set_stream(true, false, Picture::Shown);
+    const uint32_t sc2 = design.scene(so);
+    r.pump(500, &f);
+    cr::Host whole;
+    whole.target = "map";
+    whole.x = 700; whole.y = 160; whole.w = 544; whole.h = 240;   /* the map target, half size, no src: all of it */
+    design.host(sc2, whole);
+    r.pump(2500, &f);
+    const crs::Layer *placed = r.map_layer();
+    ok("a map smaller than the host's src: the half-size map at its place in the rect (836,220 272x120), "
+       "its frame scaled to that",
+       r.st().hosted && placed && placed->params.rect.x == 836 && placed->params.rect.y == 220 &&
+           placed->params.rect.w == 272 && placed->params.rect.h == 120 &&
+           r.drawing("panel", f, &with));
+    design.drop(sc2);
+    r.pump(500, &f);
     r.other = nullptr;
     const int removed = std::system(("rm -rf " + root).c_str());
     (void)removed;

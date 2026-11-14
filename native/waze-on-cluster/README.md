@@ -420,9 +420,11 @@ status.
 target (with `layers` 1) can host the map there (cluster-render
 PROTOCOL.md "Hosting another target"): it names the map's target, a rect in
 its own target and the part of the map's target it wants. While that holds,
-the cluster's map is drawn there and only there: one video layer at that
-rect, its frames that part of the picture, scaled on the head unit to at
-most the rect's size (`src/atlas_scale.*`, the HUD's worker), and no layer
+the cluster's map is drawn there and only there: one video layer where its
+part lands in that rect (the app's part is stretched over the rect, so a
+map smaller than that part keeps its place in it), its frames that part of
+the picture, scaled on the head unit to at most that size
+(`src/atlas_scale.*`, the HUD's worker), and no layer
 on its own target, so the KOMBI shows its own content there and nothing of
 the map goes to it twice. The decoder is the same: one decode, one upload,
 of that part only (a 560x400 part: 336,000 B a frame instead of 783,360).
@@ -431,8 +433,9 @@ newest picture is held and drawn first when it shows again. When the app's
 scene goes, or cluster-render restarts, the map is back on its own target
 (and in the scene again once it says so). The status says `hosted` 1 and
 the scene's target as `target`; hidden, `state` idle with the reason
-`hidden by the app it is shown in`. The HUD and the app's settings are
-unaffected. Nothing changes without such an app.
+`hidden by the app it is shown in`; not hosted, the status line is as it
+always was (no `hosted` field). While a HUD map is hosted, a new HUD size
+or offset waits for its own place. Nothing changes without such an app.
 
 ### Status and diagnostics
 
