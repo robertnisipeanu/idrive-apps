@@ -15,10 +15,6 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
 {
     for (const TargetSpec &t : cfg_.targets)
         slots_.add(t);
-    if (!cfg_.guard_path.empty()) {
-        guard_.load(cfg_.guard_path, cfg_.version, cfg_.boot_id);
-        slots_.set_guard(&guard_);
-    }
     comp_.reset(new Compositor(gpu, &slots_, cfg_.budget, cfg_.upload_burst_ms));
     comp_->set_slow_flush_ms(cfg_.slow_flush_ms);
     comp_->set_file_tick_ms(1000 / std::max(1, cfg_.fps));
@@ -30,6 +26,7 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     };
     server_.reset(new Server(comp_.get(), &slots_, cfg_.backend));
     server_->set_scene_files(cfg_.scene_files);
+    server_->set_drop_ins(cfg_.drop_ins);
 }
 
 bool Service::start(std::string *err)

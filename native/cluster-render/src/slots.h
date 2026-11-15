@@ -36,6 +36,16 @@
  *   when the HMI's map is not mapped again first, a race lost about 30% of
  *   the time (VERIFIED on the car); the HMI maps its content again, parked
  *   behind ours, so it comes back when ours goes.
+ * - Accepted, not mapped: a target whose map the display accepted
+ *   (Port::accepted_ms) and that has no map status kNotMappedMs after that,
+ *   or a parked, shown or lingering target whose own row the slot table
+ *   reports unmapped (and none of its rows mapped) for kNotMappedMs, is
+ *   released and asked for again, as a loss: on the ladder, at once when
+ *   its slot comes back after a lock, never while the slot is locked. The
+ *   display unmaps a parked scene with no map status when it locks the
+ *   slot (seen on the car), and accepts a map and shows nothing while it
+ *   starts. Any target, any slot; the take-overs' count starts over as at
+ *   any release (a hold's does not), their 1.5 s spacing kept.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
  *   it comes from the display's slot table, one row per mapping: the row
@@ -91,15 +101,18 @@
  *   subscription is awaited as after a showing (rendering, below).
  * - Fallback: a target with TargetSpec::fallback_scene_id (the panel) goes
  *   over to the fallback id, logged, until the service restarts, when the
- *   display refuses its scene id as unknown (Refusal::UnknownContent) or
- *   the guard disables its own mapping. Its scene is taken down and
- *   unpublished, and the target is asked for again on the ladder with a
- *   scene of the fallback id, sharing it as any two targets with one id. A
- *   target the guard has disabled on its own id starts on the fallback.
+ *   display refuses its scene id as unknown (Refusal::UnknownContent). Its
+ *   scene is taken down and unpublished, and the target is asked for again
+ *   on the ladder with a scene of the fallback id, sharing it as any two
+ *   targets with one id.
  * - The display service going away takes every target down; when it comes
  *   back, the targets still wanted are requested again after kSettleMs. The
  *   scenes stay published: RAMSES publication does not go through Dcsm2,
  *   and a renderer that subscribes gets the scene as it was last flushed.
+ *   Going away within kMappingLogMs of a mapping event (our request of a
+ *   target, or the display's first showing of it after that request) is
+ *   logged with the target of the latest such event; nothing else follows
+ *   from it.
  * - Rendering: the display's renderer subscribes to a scene it is to draw,
  *   which the RAMSES client logs (ramses_console.h). A target the display
  *   shows counts as rendered once its renderer is subscribed to its scene.
@@ -119,7 +132,9 @@
  *   enabled, and moves to the one the latest report has one of its
  *   take_over_contents mapped in (shown or parked), not reported disabled
  *   (move_hold): released there first if requested, so it never holds two
- *   slots; a wait on the ladder carries over.
+ *   slots; a wait on the ladder carries over. A hold the display refuses
+ *   for its slot (Refusal::NoSlot) is not asked for again until the service
+ *   restarts.
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -162,15 +177,11 @@ struct TargetSpec {
     std::vector<uint64_t> take_over_contents;
     /* A hold whose slot is whichever of these the slot table reports one of
      * take_over_contents mapped in (SlotManager::on_slots); before any has,
-     * the first of them the table reports enabled; slot 0 until one is. The
-     * guard counts it as one mapping in any of them. */
+     * the first of them the table reports enabled; slot 0 until one is. */
     std::vector<uint64_t> table_slots;
-    /* The mapping guard's strikes that disable this mapping; 0: never
-     * disabled, the strikes only logged (guard.h). Holds: 2. */
-    int strike_limit = 0;
     /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
      * falls back to when the display refuses its own, scene_id
-     * (SlotManager::fall_back). The fallback's mapping has strike_limit 0. */
+     * (SlotManager::fall_back). */
     uint64_t fallback_scene_id = 0;
     /* The stock HMI's slots the target gives way to (the HUD's: its lists,
      * 0x322): while one of them shows content other than
@@ -184,8 +195,6 @@ struct TargetSpec {
      * evidence never moves the upload cap (compositor.h). The HUD's. */
     bool share = false;
 };
-
-class Guard;
 
 /* Who the display reports in a slot. */
 enum class Holder { None, Us, Stock, Foreign };
@@ -231,8 +240,17 @@ public:
     virtual void take_over(const TargetSpec &t, uint64_t content) = 0;
     /* Ask for the slot table (SlotManager::on_slots). */
     virtual void refresh_slots() = 0;
+    /* Called on every tick while request(t) is unanswered and not given up. True: the
+     * display accepted the request and only its showing is outstanding (a
+     * display that is still starting accepts a map and shows nothing); the
+     * port may ask again, and the slot manager waits kNotMappedMs from
+     * then instead of kStartTimeoutMs before it gives the request up. */
+    virtual bool remind(const TargetSpec &, int64_t) { return false; }
+    /* When the display accepted request(t), as remind(t) would tell
+     * (asking for nothing); -1: not accepted, or answered since. */
+    virtual int64_t accepted_ms(const TargetSpec &) const { return -1; }
     /* For the log only: the slot manager stopped waiting for an answer to
-     * request(t) (kStartTimeoutMs) and releases it. */
+     * request(t) (kStartTimeoutMs, or kNotMappedMs once accepted) and releases it. */
     virtual void no_answer(const TargetSpec &, int64_t) {}
     /* Lines for the service's status text; empty: none. */
     virtual std::string status_text(int64_t) const { return std::string(); }
@@ -280,6 +298,13 @@ struct TargetStatus {
 class SlotManager {
 public:
     static const int64_t kStartTimeoutMs = 5000;
+    /* Accepted, not mapped (above): how long a map the display accepted
+     * waits for its map status, the port asking again meanwhile, and a
+     * target the slot table reports unmapped waits to be mapped again. */
+    static const int64_t kNotMappedMs = 3000;
+    /* How often the slot manager wakes for a request the display accepted
+     * (Port::remind). */
+    static const int64_t kRemindMs = 250;
     static const int64_t kMinRequestGapMs = 1000;
     static const int64_t kSettleMs = 1000;
     static const int64_t kSlotPollMs = 5000;
@@ -345,30 +370,14 @@ public:
     static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
-    /* The mapping guard (guard.h). A mapping event is our request of a
-     * target and the display's first showing of it after that request; a
-     * re-park or re-show the display makes on its own is none. The display
-     * service gone within Guard::kWindowMs of a hold's mapping event, held
-     * still or released since, is a strike against the hold with the latest
-     * one (a target with a strike_limit counts as a hold here: the HUD, the
-     * panel's own id); with none, against the target with the latest event
-     * (log only). A hold that gives up (kHoldLosses) on faults alone, no
-     * yield to BMW's own content or move with the box among the losses, is
-     * a strike against it too, and a hold the display refuses for its slot
-     * (Refusal::NoSlot) is a strike and is not asked for again while the
-     * service runs. A target whose mapping is disabled is never wanted,
-     * unless it has a fallback scene id (Fallback). */
+    /* The display service gone within this long of a mapping event is
+     * logged, naming the target (above). A re-park or re-show the display
+     * makes on its own is no mapping event. */
+    static const int64_t kMappingLogMs = 10000;
     void on_availability(bool up, int64_t now_ms);
-    void set_guard(Guard *g);
-    std::string guard_text() const;
     /* Every slot the latest reports name, one line each ("slot 0x203 status 2: 0x1000400 class 0 map 1, ..."),
      * for the status: what else the KOMBI shows while ours is up. */
     std::string table_text() const;
-    /* A hold following the target is disabled by the guard, or by its
-     * slot's refusal. */
-    bool hold_disabled(int target) const;
-    /* The target's own mapping is disabled (the HUD's, by the guard). */
-    bool disabled(int target) const { return t_[target].disabled; }
     void on_shown(uint64_t scene_id, int64_t now_ms);
     /* Mapped, but parked invisible behind the content the slot shows. */
     void on_parked(uint64_t scene_id, int64_t now_ms);
@@ -414,6 +423,11 @@ public:
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
     /* The RAMSES console's line counts (RamsesConsole::counts_text). */
     std::function<std::string(int64_t now_ms)> console_text;
+    /* The display maps a target's scene and its renderer never subscribes, recovery after recovery: every
+     * kReconnectAfter-th such recovery in a row the unit reconnects its RAMSES framework (a participant session the
+     * renderer side no longer serves, e.g. one it kept over a restart of this side). Unset: the ladder only. */
+    std::function<void(int64_t now_ms)> on_renderer_stuck;
+    static constexpr int kReconnectAfter = 3;
 
 private:
     struct Target {
@@ -421,10 +435,10 @@ private:
         bool wanted = false, contend = false, guide_hold = true;
         bool yield = true;   /* no wanting layer has yield false (popup_blocks) */
         bool requested = false;
-        bool disabled = false;       /* by the guard */
+        bool refused = false;        /* a hold whose slot the display refused: not asked for again */
         bool declined = false;       /* a hold: the target it follows does not let it hold */
         /* The last mapping event (on_availability); kNoMapping: none since
-         * the last request, or struck already. */
+         * the last request, or logged already. */
         int64_t mapped_ms = kNoMapping;
         uint64_t mapped_seq = 0;     /* its order among all targets' mapping events */
         bool first_show = false;     /* requested and not shown since: its showing is a mapping event */
@@ -469,14 +483,15 @@ private:
         std::set<uint64_t> ahead;
         uint64_t takeovers_total = 0;   /* since start */
         uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
-        /* A hold's losses within kHoldLossMs: when, and whether a fault
-         * (unmapped or removed with nothing off take_over_contents shown
-         * in its slot) rather than a yield to BMW's own content. */
-        std::vector<std::pair<int64_t, bool>> losses;
+        /* A hold's losses within kHoldLossMs: when. */
+        std::vector<int64_t> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
         /* A pop-up in one of its yield slots was last seen shown then. */
         int64_t popup_ms = -1;
+        /* Accepted and not mapped since then (Accepted, not mapped); -1:
+         * mapped, or not accepted yet. */
+        int64_t unmapped_ms = -1;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -536,6 +551,8 @@ private:
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);
+    /* Accepted, not mapped for kNotMappedMs: released and asked for again. */
+    void not_mapped(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
     int by_scene(uint64_t scene_id) const;
@@ -551,29 +568,25 @@ private:
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
     /* A hold's scene lost while its slot is not locked, or (move) its move
-     * to another slot, locked or not; fault: see Target::losses. A give-up
-     * is a guard strike only when every loss in it is a fault. */
-    void note_loss(int i, const char *how, bool fault, int64_t now_ms, bool move = false);
+     * to another slot, locked or not. */
+    void note_loss(int i, const char *how, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
      * disabled (shown first, then its own slot, then 0x105); with none
      * and no slot yet, the first of them the report has enabled (status 1
      * or 2), as the stock HMI chooses; *why says which; 0: none. */
     uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, std::string *why) const;
-    /* The hold to slot: a loss, never a fault, when it had one, released
+    /* The hold to slot: a loss when it had one, released
      * there first if requested; still waiting on the ladder until the same
      * time if it was, else idle. */
     void move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms);
     /* A target with a fallback scene id over to it (Fallback, above): out
-     * of its slot, its scene unpublished, the id and its strike limit the
-     * fallback's. False, nothing done, for a target without one. The
-     * caller sets its state. */
+     * of its slot, its scene unpublished, the id the fallback's. False,
+     * nothing done, for a target without one. The caller sets its state. */
     bool fall_back(int i, const std::string &why, int64_t now_ms);
-    void use_fallback(int i);
 
     Port *port_;
     Scenes *scenes_;
-    Guard *guard_ = nullptr;
     uint64_t mapped_seq_ = 0;
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;

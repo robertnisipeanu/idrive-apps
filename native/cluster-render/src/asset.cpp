@@ -11,7 +11,7 @@
 namespace crs {
 
 Asset::Asset(uint32_t id, int target, crk::UploadPacer &pacer, const AssetParams &p)
-    : id_(id), target_(target), pacer_(pacer), p_(p), px_((size_t)p.w * p.h * bpp(), 0)
+    : id_(id), target_(target), pacer_(pacer), p_(p), px_(tex_bytes(p.format, p.w, p.h), 0)
 {
 }
 
@@ -21,7 +21,10 @@ const char *Asset::size_error(TexFormat f, uint32_t w, uint32_t h)
         return "an asset is at least 1x1";
     if (w > 2048 || h > 2048)
         return "an asset is at most 2048x2048";
-    if ((size_t)w * h * (f == TexFormat::R8 ? 1 : 4) + 64 > cr::kMaxMessage)
+    if (tex_compressed(f) && (w % 4 || h % 4))
+        return f == TexFormat::ETC2RGB ? "an etc2rgb asset's w and h are multiples of 4"
+                                       : "an etc2rgba asset's w and h are multiples of 4";
+    if (tex_bytes(f, w, h) + 64 > cr::kMaxMessage)
         return "an asset's pixels must fit one frame message (5,529,600 bytes)";
     return nullptr;
 }
@@ -29,6 +32,14 @@ const char *Asset::size_error(TexFormat f, uint32_t w, uint32_t h)
 bool Asset::update(const std::vector<crk::PixelRect> &rects, const uint8_t *data, size_t n, std::string *err)
 {
     const uint32_t b = bpp();
+    if (compressed() && !rects.empty()) {
+        *err = std::string("an ") + tex_format_name(p_.format) + " asset is sent whole, with no rects";
+        return false;
+    }
+    if (compressed() && have_) {
+        *err = std::string("an ") + tex_format_name(p_.format) + " asset is sent once";
+        return false;
+    }
     if (rects.empty()) {
         if (n != px_.size()) {
             *err = "a whole asset is " + std::to_string(px_.size()) + " bytes";
@@ -71,6 +82,12 @@ bool Asset::update(const std::vector<crk::PixelRect> &rects, const uint8_t *data
 
 bool Asset::attach(Graph *g)
 {
+    if (compressed()) {   /* its texture is made at its first stage, from its pixels */
+        g_ = g;
+        buf_ = 0;
+        clean_ = false;
+        return true;
+    }
     g_ = g;
     buf_ = g->buffer(p_.format, p_.w, p_.h, p_.sampling, p_.wrap);
     if (!buf_) {
@@ -99,6 +116,26 @@ void Asset::detach(bool drop)
 Stage Asset::stage(int64_t now_ms)
 {
     staged_ = 0;
+    if (compressed()) {
+        /* Made once a scene; flushed again until a flush carries it. */
+        if (!g_ || !have_ || clean_ || !refused_.empty() || !pacer_.ready(now_ms))
+            return Stage::Idle;
+        if (!buf_) {
+            buf_ = g_->immutable_texture(p_.format, p_.w, p_.h, p_.sampling, p_.wrap, px_.data(), px_.size());
+            if (!buf_) {
+                refused_ = "the renderer refused its " + std::to_string(p_.w) + "x" + std::to_string(p_.h) + " " +
+                           tex_format_name(p_.format) + " texture";
+                log_error("asset %u: %s", id_, refused_.c_str());
+                return Stage::Idle;
+            }
+            log_info("asset %u: %ux%u %s texture made, %zu bytes", id_, p_.w, p_.h, tex_format_name(p_.format),
+                     px_.size());
+            staged_ = px_.size();
+            pacer_.spend(staged_);
+        }
+        staged_whole_ = true;
+        return Stage::Wrote;
+    }
     if (!g_ || !have_ || (!whole_ && dirty_.empty()) || !pacer_.ready(now_ms))
         return Stage::Idle;
     const std::vector<crk::PixelRect> all{crk::PixelRect{0, 0, p_.w, p_.h}};
@@ -117,6 +154,17 @@ Stage Asset::stage(int64_t now_ms)
 
 void Asset::committed(bool ok)
 {
+    if (compressed()) {
+        if (ok) {
+            writes_++;
+            bytes_ += staged_;
+            clean_ = true;
+        } else {
+            failed_++;
+        }
+        staged_ = 0;
+        return;
+    }
     if (ok) {
         writes_++;
         bytes_ += staged_;
