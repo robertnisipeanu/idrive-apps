@@ -106,9 +106,11 @@ Standard, about 57 %), moved by **Position**, the corners rounded and a
 night map's background made black, which the HUD shows as nothing. With
 both, the HUD gets up to half the upload budget, only what it uses. The
 HUD map steps aside while BMW's HUD lists show (never for route guidance),
-unless **Keep HUD map over BMW's pop-ups** is ticked. **Own settings for
-this driver** gives the driver profile in use its own copy of these
-settings.
+unless **Keep HUD map over BMW's pop-ups** is ticked. **Hide HUD map in
+Sport mode** takes it off the HUD, as with the HUD off, while the car is in
+a Sport driving mode; the app tells the render the mode, and one not told
+again for 90 s counts no longer. **Own settings for this driver** gives the
+driver profile in use its own copy of these settings.
 
 From a shell, `waze-on-cluster -c <conf> run map|panel` sets the cluster
 target until the service restarts and prints the status.
