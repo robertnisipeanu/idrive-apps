@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Hide HUD map in Sport mode, a checkbox in HUD. Ticked, the HUD map is
+hidden while the car is in a Sport driving mode (Sport, Sport+, Sport
+Individual or XtraBoost) and comes back in any other mode; the cluster's
+map stays. Unticked, the default, the driving mode changes nothing. It can
+be changed only while the map shows on the HUD. Kept for the next start,
+and per driver profile with Own settings for this driver.
+
 ## 0.6.12
 
 The cluster's safe area is back to 504x368 at (286, 72); a smaller area made

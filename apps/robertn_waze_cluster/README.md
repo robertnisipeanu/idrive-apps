@@ -70,6 +70,12 @@ The app is in the head unit's display language.
 - **Keep HUD map over BMW's pop-ups:** unticked (the default), the map steps
   aside while BMW's media and list pop-ups show on the HUD. Ticked, it
   stays.
+- **Hide HUD map in Sport mode:** ticked, the HUD map is hidden while the
+  car is in a Sport driving mode (Sport, Sport+, Sport Individual or
+  XtraBoost) and comes back in any other mode. The cluster's map stays.
+  Unticked (the default), the driving mode changes nothing. You can change
+  it only while **Show on** has the HUD, and not on a head unit where the
+  app finds no driving mode to read.
 - **Size:** how wide the map is on the HUD.
 - **Move left / Move right / Move up / Move down** and **Centre:** where the
   map sits on the HUD.
@@ -106,6 +112,7 @@ apply the change.
 | `Cluster map: Frozen` or `Stream lost` | Reconnect your phone: unplug it, or turn its Wi-Fi off and on. This can happen after you change the cluster's Central display area. |
 | The map never shows on the cluster | Set **Instrument cluster > Central display area** to **Map view**. With Route preview or Assisted Driving View the cluster's own content takes the centre. |
 | `Cluster map: Error` or `Unavailable` | [Report it](#logs-and-reporting-a-problem). |
+| `HUD map: Hidden in Sport mode` | **Hide HUD map in Sport mode** is ticked and the car is in a Sport driving mode. Leave the Sport mode, or untick it. |
 | `HUD map: Disabled after errors` | Update **Cluster renderer** in the Store. The cluster map keeps working. |
 | CarPlay audio cuts out and `CarPlay Wi-Fi: 2.4 GHz` | On your iPhone, turn Wi-Fi off and on. |
 
@@ -192,6 +199,7 @@ the same `{n}`, and every HMI language its text file.
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
 node tools/test_profiles.js          # the driver profiles against fake sockets and SessionManager
+node tools/test_drive_mode.js        # the driving mode against a fake FES and the fake render
 node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
 node tools/build.js                  # robertn_waze_cluster@<version>.src.tgz
 node tools/build.js --sdk <donor>    # also robertn_waze_cluster@<version>.tgz
@@ -215,6 +223,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/waze_cluster_control.js` | the render and patch socket clients and the status logic |
 | `src/logs_control.js` | the logs socket client |
 | `src/profile_sync.js` | the driver profile in use and its own map settings |
+| `src/drive_mode.js` | the car's driving mode, for Hide HUD map in Sport mode |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
 | `package/` | the package tree (manifest, RHMI UI, config, CHANGELOG) |
