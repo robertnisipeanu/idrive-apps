@@ -480,7 +480,9 @@ other content). `rendering`, for a shown or lingering target: `verified`
 subscribed yet; after 1.5 s shown the service asks for the slot again),
 `unobservable` (the service cannot see subscriptions); `none` otherwise.
 `guide_disabled` and `disabled` are always 0; no target or guide hold is
-ever turned off for good.
+ever turned off for good. A client treats a target or layer state it does not
+know as not shown: states are added as the service learns new ones, and
+`loading` and `loaded` occur only on a target some client preloads.
 
 On a head unit that refuses the service (README.md "Supported head
 units") no `hello` comes: a `status` request gets `text` `not supported on
