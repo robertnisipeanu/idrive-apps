@@ -78,6 +78,7 @@ std::string status_line(const FeedStatus &s)
            ",\"cluster\":" + (s.cluster ? "1" : "0") +
            ",\"hud\":" + (s.hud ? "1" : "0") + ",\"hud_state\":" + json_escape(s.hud_state) +
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
+           ",\"hud_brightness_pct\":" + std::to_string(s.hud_brightness_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
            ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
            /* only while hosted: otherwise the line is as it always was */
@@ -98,6 +99,7 @@ public:
         auto hide = msg.find("hide");
         auto pct = msg.find("hud_width_pct");
         auto hx = msg.find("hud_x"), hy = msg.find("hud_y"), on = msg.find("on");
+        auto bright = msg.find("hud_brightness_pct");
         auto keep = msg.find("hud_keep_shown");
         if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
@@ -105,7 +107,7 @@ public:
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
             feeds_->set_cluster(on->second == "1");
         } else if (cmd == "hud" && (on != msg.end() || pct != msg.end() || hx != msg.end() || hy != msg.end() ||
-                                    keep != msg.end())) {
+                                    bright != msg.end() || keep != msg.end())) {
             if (on != msg.end()) {
                 if (on->second == "0" || on->second == "1")
                     feeds_->set_hud(on->second == "1");
@@ -130,6 +132,16 @@ public:
                     feeds_->set_hud_offset((int)x, (int)y);
                 } else {
                     log_warn("hud: offset %ld,%ld out of range (-800..800)", x, y);
+                }
+            }
+            /* how bright the map is (its layer's opacity; BMW's HUD content keeps its own brightness) */
+            if (bright != msg.end()) {
+                const long v = std::strtol(bright->second.c_str(), nullptr, 10);
+                if (v >= 10 && v <= 100) {
+                    log_info("hud: map at %ld%% brightness", v);
+                    feeds_->set_hud_brightness((unsigned)v);
+                } else {
+                    log_warn("hud: brightness %s out of range (10-100)", bright->second.c_str());
                 }
             }
             /* and whether it stays shown over BMW's pop-ups */
@@ -205,6 +217,7 @@ int serve(Config cfg)
         {"cluster", 0, 1},          {"hud", 0, 1},                   {"hud_fps", 1, 30},
         {"hud_width_pct", 0, 100},  {"hud_offset_x", -800, 800},     {"hud_offset_y", -800, 800},
         {"hud_scale_down", 0, 1},   {"hud_round_corners", 0, 1},     {"hud_black_background", 0, 1},
+        {"hud_brightness_pct", 10, 100},
         {"hud_keep_shown", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
@@ -248,6 +261,7 @@ int serve(Config cfg)
     }
     fc.hud_offset_x = (int)cfg.num("hud_offset_x");
     fc.hud_offset_y = (int)cfg.num("hud_offset_y");
+    fc.hud_brightness_pct = (unsigned)cfg.num("hud_brightness_pct");
     fc.hud_keep_shown = cfg.num("hud_keep_shown") != 0;
     fc.scale_down = cfg.num("hud_scale_down") != 0;
     fc.hud_round_corners = cfg.num("hud_round_corners") != 0;
@@ -497,6 +511,7 @@ void define_keys(Config *cfg)
     cfg->define("hud_width_pct", "0");
     cfg->define("hud_offset_x", "0");
     cfg->define("hud_offset_y", "0");
+    cfg->define("hud_brightness_pct", "50");
     cfg->define("hud_keep_shown", "0");
     cfg->define("hud_scale_down", "1");
     cfg->define("hud_round_corners", "1");
