@@ -26,7 +26,7 @@ var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-hud-'));
 var SOCK = path.join(dir, 'sock', 'patch.sock');
 var CONF = path.join(dir, 'waze-on-cluster.local.conf');
 var STATE = path.join(dir, 'map.state.conf');
-fs.writeFileSync(CONF, 'upload_kb_per_s = 3000\nhud = 1\n# the HUD\nhud_width_pct = 70\ntarget_fps = 15\ncluster = 2\n');
+fs.writeFileSync(CONF, 'upload_kb_per_s = 3000\nhud = 1\n# the HUD\nhud_width_pct = 70\ndirty_threshold = 4\ncluster = 2\n');
 fs.writeFileSync(STATE, 'hud_width_pct = 50\n');
 
 /* The keys waze-on-cluster 0.8.7 starts with in its local conf (any other is
@@ -107,7 +107,7 @@ function ok(name, cond) {
     for (var t = 0; t < 5000 && !fs.existsSync(SOCK); t += 50) await sleep(50);
     ok('at the start: the local conf\'s map settings moved, one already saved kept, one out of range dropped',
        fs.readFileSync(STATE, 'utf8') === 'hud_width_pct = 50\nhud = 1\n');
-    ok('the local conf\'s other lines kept', fs.readFileSync(CONF, 'utf8') === 'upload_kb_per_s = 3000\n# the HUD\ntarget_fps = 15\n');
+    ok('the local conf\'s other lines kept', fs.readFileSync(CONF, 'utf8') === 'upload_kb_per_s = 3000\n# the HUD\ndirty_threshold = 4\n');
     ok('the local conf: only keys waze-on-cluster 0.8.7 starts with', keys(CONF).every(function (k) { return KEYS_087.indexOf(k) >= 0; }));
     ok('both files readable by the capture (0644), whatever the umask', [CONF, STATE].every(function (f) { return (fs.statSync(f).mode & 0o777) === 0o644; }),
         [CONF, STATE].map(function (f) { return (fs.statSync(f).mode & 0o777).toString(8); }).join(' '));
