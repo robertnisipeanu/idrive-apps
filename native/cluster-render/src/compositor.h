@@ -329,6 +329,14 @@ public:
     /* The target's layers whose change waits to uncover a video's tiles
      * (defer_uncover). */
     uint32_t held_layers(int target) const { return targets_[target].held_n; }
+    /* The target's last render left a change to flush: a layer's write
+     * held by the budget, a change waiting to uncover, or a flush not
+     * gone. */
+    bool pending(int target) const
+    {
+        const Target &t = targets_[target];
+        return t.held_back || t.held_n || t.dirty;
+    }
     /* Since when the target's uncover has waited; -1: none waits. */
     int64_t uncover_waiting_since(int target) const { return targets_[target].uncover_since; }
     /* The byte budget the targets without the HUD's share write from. */
@@ -431,6 +439,7 @@ private:
         int64_t file_flush_ms = -1;   /* its edits' last flush */
         Arrangement arr;
         bool dirty = false;    /* changed outside a layer's stage(): flush */
+        bool held_back = false;   /* the last render held a layer's write for the budget */
         uint64_t tag = 0;
         bool flush_failing = false;
         /* The fade (above): where it is, what the layers were last

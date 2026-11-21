@@ -114,8 +114,14 @@
  * time; a target wanting its scene id has it released first, and no load
  * goes while that target is wanted or holds the id; a lock leaves it
  * loaded, and wanted then it waits until the slot is back; a kept target
- * nothing wants is loaded. A target with no preload layer, or a port that
- * cannot keep a fetch, is as without preload. */
+ * nothing wants is loaded; a pop-up while loading releases the load,
+ * never loaded without a fetch; after an unmap a report of its own row
+ * still mapped counts as ours, and one that stays so 3 s releases it and
+ * loads it again on the ladder; stalled loads nothing wants never
+ * reconnect the framework, a wanted target's third stall in a row does. A
+ * target with no preload layer, or a port that cannot keep a fetch, is as
+ * without preload, also waiting on the ladder while another target with
+ * its scene id is wanted. */
 #include <cstdio>
 #include <map>
 #include <sstream>
@@ -4315,6 +4321,150 @@ static void preload_lock()
     ok("preload: wanted: mapped with no fetch", calls_are("remap panel"));
 }
 
+/* A target with no preload layer, nothing wanting it, waiting on the ladder
+ * while another target with its scene id is wanted and not requested: at
+ * its retry it goes idle, its incident closed. */
+static void shared_id_ladder_no_preload()
+{
+    Rig r;
+    r.rows(kHudSlot, 2, {{0x02000001, 1}});   /* the HUD's slot held by another app: the HUD waits */
+    r.m.want(1, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kPanelScene, r.now);
+    r.run(1000);
+    r.m.want(2, true, false);
+    r.run(100);
+    joined();
+    incidents();
+    r.m.on_lost(kPanelScene, "fetch removed", r.now);
+    r.m.want(1, false, false);
+    r.run(100);
+    ok("shared id, no preload: the panel waits on the ladder, the HUD wanted and not requested",
+       r.state(1) == TargetState::Waiting && r.m.status(1).retry_ms > r.now && !r.m.requested(2) &&
+           r.state(2) == TargetState::Waiting);
+    r.run(2000);
+    ok("shared id, no preload: at its retry the panel goes idle, not back",
+       r.state(1) == TargetState::Idle && has(incidents(), "INCIDENT target panel not back: released after"));
+}
+
+/* A stock pop-up the target gives way to while its load is out. */
+static void preload_popup()
+{
+    FakePort port;
+    port.preloads_ok = true;
+    FakeScenes scenes;
+    SlotManager m{&port, &scenes};
+    TargetSpec hud;
+    hud.name = "hud"; hud.slot = kHudSlot; hud.scene_id = kPanelScene; hud.width = 800; hud.height = 480;
+    hud.linger_ms = 3000;
+    hud.yield_slots = {0x322};
+    m.add(hud);
+    int64_t now = 100000;
+    const auto run = [&](int64_t ms) { for (int64_t x = 0; x < ms; x += 10) { now += 10; m.tick(now); } };
+    const auto row = [&](uint64_t slot, uint32_t status, uint64_t content, uint32_t map) {
+        SlotInfo si; si.slot = slot; si.status = status; si.content = content; si.map_status = map;
+        m.on_slots({si}, now);
+    };
+    calls.clear();
+    m.want(0, false, false, true, true, true);
+    m.tick(now);
+    ok("preload pop-up: loading", calls_are("publish hud; load hud") && m.status(0).state == TargetState::Loading);
+    m.want(0, true, false, true, true, true);
+    row(0x322, 2, 0x01000501, 1);
+    m.tick(now);
+    ok("preload pop-up: a pop-up while loading: the load released, the target giving way",
+       calls_are("release hud") && m.status(0).state == TargetState::Waiting && !m.loaded(0));
+    m.on_refused(kPanelScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", now);
+    m.want(0, false, false, true, true, true);
+    run(500);
+    ok("preload pop-up: nothing wanting it: not loaded without a fetch", m.status(0).state != TargetState::Loaded &&
+                                                                        !m.loaded(0) && calls_are(""));
+    run(1000);
+    ok("preload pop-up: loaded again", calls_are("load hud") && m.status(0).state == TargetState::Loading);
+    m.on_fetched(kPanelScene, now);
+    ok("preload pop-up: loaded once fetched", m.status(0).state == TargetState::Loaded);
+}
+
+/* The table's view of a target unmapped to Loaded. */
+static void preload_unmap_table()
+{
+    PreloadRig r;
+    r.panel(true, true);
+    r.m.tick(r.now);
+    r.rows(kPanelSlot, 2, {{kPanelScene, 1}});
+    r.m.on_shown(kPanelScene, r.now);
+    r.panel(false, true);
+    r.run(3010);
+    ok("unmap table: unmapped, loaded", calls_are("publish panel; request panel; unmap panel") &&
+                                        r.state(1) == TargetState::Loaded);
+    r.rows(kPanelSlot, 2, {{kPanelScene, 1}});   /* a report from before the unmap */
+    r.panel(true, true);
+    r.m.tick(r.now);
+    ok("unmap table: our own row still mapped is ours, not the stock HMI's: mapped again at once",
+       calls_are("remap panel") && r.state(1) == TargetState::Acquiring);
+
+    PreloadRig s;   /* the unmap not done */
+    s.panel(true, true);
+    s.m.tick(s.now);
+    s.rows(kPanelSlot, 2, {{kPanelScene, 1}});
+    s.m.on_shown(kPanelScene, s.now);
+    s.panel(false, true);
+    s.run(3010);
+    joined();
+    s.rows(kPanelSlot, 2, {{kPanelScene, 1}});
+    s.run(2990);
+    ok("unmap table: reported mapped after the unmap: loaded until 3 s", calls_are("") &&
+                                                                          s.state(1) == TargetState::Loaded);
+    s.run(20);
+    ok("unmap table: 3 s mapped: released, loaded again on the ladder",
+       calls_are("release panel") && s.state(1) == TargetState::Waiting && !s.m.loaded(1));
+    s.run(2000);
+    ok("unmap table: loaded at the ladder's step", calls_are("load panel"));
+
+    PreloadRig u;   /* the unmap reported, then the id mapped again by other content */
+    u.panel(true, true);
+    u.m.tick(u.now);
+    u.rows(kPanelSlot, 2, {{kPanelScene, 1}});
+    u.m.on_shown(kPanelScene, u.now);
+    u.panel(false, true);
+    u.run(3010);
+    joined();
+    u.rows(kPanelSlot, 1, {{kPanelScene, 0}});
+    u.rows(kPanelSlot, 2, {{kPanelScene, 1}});
+    u.run(10000);
+    ok("unmap table: once reported unmapped, the row is not watched", calls_are("") &&
+                                                                       u.state(1) == TargetState::Loaded);
+}
+
+/* Stalled loads nothing wants never reconnect the framework; a wanted
+ * target's stalls count from its own. */
+static void preload_stalls_no_reconnect()
+{
+    PreloadRig r;
+    int reconnects = 0;
+    r.m.on_renderer_stuck = [&reconnects](int64_t) { reconnects++; };
+    r.port.fetching["panel"] = true;
+    r.panel(false, true);
+    incidents();
+    r.run(120000);
+    const std::string inc = incidents();
+    size_t stalls = 0;
+    for (size_t at = inc.find("stalled"); at != std::string::npos; at = inc.find("stalled", at + 1))
+        stalls++;
+    ok("preload stalls: six loads stalled, the scene republished, no reconnect",
+       stalls >= 6 && reconnects == 0 && !has(inc, "reconnecting") && has(joined(), "unpublish panel"));
+    r.panel(true, true);
+    int wanted_stalls = 0;
+    for (int k = 0; k < 3; k++) {
+        for (int n = 0; n < 12000 && !has(incidents(), "stalled"); n++)
+            r.run(10);
+        wanted_stalls++;
+        if (k < 2)
+            ok("preload stalls: wanted, its first stalls reconnect nothing", reconnects == 0);
+    }
+    ok("preload stalls: the third wanted stall in a row reconnects", wanted_stalls == 3 && reconnects == 1);
+}
+
 int main()
 {
     incident_lines();
@@ -4388,6 +4538,10 @@ int main()
     preload_dropped();
     preload_shared_scene();
     preload_lock();
+    shared_id_ladder_no_preload();
+    preload_popup();
+    preload_unmap_table();
+    preload_stalls_no_reconnect();
     {
         /* The HUD's media pop-up (0x322): the HUD map gives way while it shows */
         TargetSpec hud2;

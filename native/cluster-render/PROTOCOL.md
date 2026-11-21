@@ -92,7 +92,7 @@ Layer fields (all optional):
 | `class` | `content` | `ambient`, `content`, `overlay` or `alert`: the stack's order, bottom to top |
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
-| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
+| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger (with a `preload` layer: taken off screen and kept loaded) |
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `preload` | 0 | 1, visible or not: while any layer on the target has it, the display keeps the target's scene loaded without showing it (`loading`, then `loaded`), so a layer that wants the target later is shown with no load (README.md "Arbitration"). No effect where the display cannot keep a scene loaded unshown (iDrive 8): there the target never reports `loading` or `loaded` |

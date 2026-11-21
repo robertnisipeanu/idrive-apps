@@ -94,7 +94,7 @@ int SlotManager::by_scene(uint64_t scene_id) const
 int SlotManager::by_held(uint64_t scene_id) const
 {
     for (size_t i = 0; i < specs_.size(); i++)
-        if (specs_[i].scene_id == scene_id && (t_[i].requested || t_[i].kept))
+        if (specs_[i].scene_id == scene_id && (t_[i].requested || t_[i].kept || (t_[i].loaded && t_[i].unmapping)))
             return (int)i;
     return -1;
 }
@@ -582,7 +582,8 @@ void SlotManager::take_down(int i, int64_t now_ms)
     }
     t.requested = false;
     t.kept = t.remap = t.lock_takeover = t.lock_hold = false;
-    t.loaded = t.from_load = false;
+    t.loaded = t.from_load = t.load_done = t.unmapping = false;
+    t.still_mapped_ms = -1;
     t.unmapped_ms = -1;
     t.status.rendering = Rendering::None;
 }
@@ -748,6 +749,8 @@ void SlotManager::load(int i, int64_t now_ms)
     log_info("target %s: a layer has preload 1: fetching scene 0x%llx, not mapping it", spec.name.c_str(),
              (unsigned long long)spec.scene_id);
     t.loaded = true;
+    t.load_done = t.unmapping = false;
+    t.still_mapped_ms = -1;
     t.last_request_ms = now_ms;
     t.unmapped_ms = -1;
     port_->load(spec);
@@ -763,7 +766,8 @@ bool SlotManager::unmap(int i, int64_t now_ms)
     log_info("target %s: not wanted: scene 0x%llx unmapped, kept fetched while a layer has preload 1",
              spec.name.c_str(), (unsigned long long)spec.scene_id);
     t.requested = false;
-    t.loaded = true;
+    t.loaded = t.load_done = t.unmapping = true;
+    t.still_mapped_ms = -1;
     t.remap = t.from_load = t.lock_takeover = false;
     t.unmapped_ms = -1;
     t.status.rendering = Rendering::None;
@@ -786,6 +790,24 @@ void SlotManager::tick_loaded(int i, int64_t now_ms, bool *poll_slots)
                  target_state_name(s), (unsigned long long)spec.scene_id);
         take_down(i, now_ms);
         set(i, TargetState::Idle, Holder::None, "", now_ms);
+        return;
+    }
+    if (s != TargetState::Loading && !t.load_done) {
+        /* Taken out of Loading before its fetch completed: loaded again. */
+        log_info("target %s: its load of scene 0x%llx was left before the fetch completed (target %s): released, "
+                 "loaded again",
+                 spec.name.c_str(), (unsigned long long)spec.scene_id, target_state_name(s));
+        take_down(i, now_ms);
+        set(i, TargetState::Idle, Holder::None, "", now_ms);
+        return;
+    }
+    if (t.still_mapped_ms >= 0 && now_ms - t.still_mapped_ms >= kNotMappedMs) {
+        log_warn("target %s: unmapped, and the slot table reports scene 0x%llx mapped for %lld ms since; releasing "
+                 "it and loading it again; slot 0x%llx %s",
+                 spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - t.still_mapped_ms),
+                 (unsigned long long)spec.slot, rows_text(spec.slot).c_str());
+        take_down(i, now_ms);
+        wait(i, Holder::None, true, "unmapped, still mapped", now_ms);
         return;
     }
     if (s == TargetState::Loading) {
@@ -870,7 +892,8 @@ void SlotManager::remap(int i, int64_t now_ms)
         log_info("target %s: slot 0x%llx back after %lld ms locked: mapping its kept scene 0x%llx again, no fetch",
                  spec.name.c_str(), (unsigned long long)spec.slot, (long long)(now_ms - t.kept_ms),
                  (unsigned long long)spec.scene_id);
-    t.kept = t.loaded = false;
+    t.kept = t.loaded = t.load_done = t.unmapping = false;
+    t.still_mapped_ms = -1;
     t.from_load = loaded;
     t.requested = true;
     t.remap = t.remapped = t.incident_asked = true;
@@ -957,7 +980,9 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
         t_[i].requested = false;
         t_[i].no_fetch = 0;
         t_[i].kept = t_[i].remap = t_[i].lock_takeover = t_[i].lock_hold = false;
-        t_[i].loaded = t_[i].from_load = false;
+        t_[i].loaded = t_[i].from_load = t_[i].load_done = t_[i].unmapping = false;
+        t_[i].still_mapped_ms = -1;
+        t_[i].stuck = 0;
         t_[i].status.rendering = Rendering::None;
         set((int)i, t_[i].wanted ? TargetState::Unavailable : TargetState::Idle, Holder::None,
             t_[i].wanted ? "display service not available" : "", now_ms);
@@ -988,7 +1013,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
         t.mapped_seq = ++mapped_seq_;
     }
     t.removed_ms = -1;
-    t.no_fetch = 0;
+    t.no_fetch = t.stuck = 0;
     verify(i, now_ms);
 }
 
@@ -998,9 +1023,10 @@ void SlotManager::on_fetched(uint64_t scene_id, int64_t now_ms)
     if (i < 0)
         return;
     Target &t = t_[i];
-    t.no_fetch = 0;
+    t.no_fetch = t.stuck = 0;
     if (!t.loaded || t.status.state != TargetState::Loading)
         return;
+    t.load_done = true;
     log_info("target %s: loaded: scene 0x%llx fetched %lld ms after the fetch, not mapped", specs_[i].name.c_str(),
              (unsigned long long)scene_id, (long long)(now_ms - t.last_request_ms));
     charge_resend(i, now_ms);
@@ -1438,6 +1464,26 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
                      (long long)kNotMappedMs, (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
         }
     }
+    /* Loaded by an unmap: its own row mapped (shown) since then is an unmap
+     * the display has not done; one unmapped, or gone, ends the watch. */
+    for (size_t i = 0; i < t_.size(); i++) {
+        Target &t = t_[i];
+        if (!t.loaded || !t.unmapping || !rows.count(specs_[i].slot))
+            continue;
+        bool mapped = false;
+        for (const SlotInfo &r : slots_[specs_[i].slot])
+            mapped = mapped || (r.content == specs_[i].scene_id && (r.map_status == 1 || r.map_status == 2));
+        if (!mapped) {
+            t.unmapping = false;
+            t.still_mapped_ms = -1;
+        } else if (t.still_mapped_ms < 0) {
+            t.still_mapped_ms = now_ms;
+            log_info("target %s: unmapped, and the slot table reports scene 0x%llx mapped; released if it stays so "
+                     "%lld ms; slot 0x%llx %s",
+                     specs_[i].name.c_str(), (unsigned long long)specs_[i].scene_id, (long long)kNotMappedMs,
+                     (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+        }
+    }
     /* A kept target's slot reported not locked: its scene mapped again at
      * once, ahead of the stock HMI's. */
     for (size_t i = 0; i < t_.size(); i++) {
@@ -1503,7 +1549,7 @@ void SlotManager::tick(int64_t now_ms)
         Target &t = t_[i];
         const TargetSpec &spec = specs_[i];
         if (!t.wanted && !loads(i))
-            t.no_fetch = 0;
+            t.no_fetch = t.stuck = 0;
         if (holding && (t.wanted || loads(i)))
             poll_slots = true;
 
@@ -1553,7 +1599,7 @@ void SlotManager::tick(int64_t now_ms)
         if (!spec.yield_slots.empty()) {
             if (t.wanted && popup_blocks(i, now_ms)) {
                 if (s == TargetState::Acquiring || s == TargetState::Parked || s == TargetState::Shown ||
-                    s == TargetState::Lingering || t.kept) {
+                    s == TargetState::Lingering || t.kept || (t.loaded && !t.load_done)) {
                     loss_hint_ = "yielded to a pop-up";
                     release(i, now_ms);
                     loss_hint_.clear();
@@ -1582,7 +1628,7 @@ void SlotManager::tick(int64_t now_ms)
                 log_info("target %s: not wanted: its kept scene 0x%llx stays fetched while a layer has preload 1",
                          spec.name.c_str(), (unsigned long long)spec.scene_id);
                 t.kept = false;
-                t.loaded = true;
+                t.loaded = t.load_done = true;
                 set(i, TargetState::Loaded, Holder::None, "", now_ms);
             } else if (!t.wanted) {
                 take_down(i, now_ms);
@@ -1708,7 +1754,7 @@ void SlotManager::tick(int64_t now_ms)
             if (st.retry_ms >= 0) {
                 if (t.wanted && now_ms >= st.retry_ms)
                     give_way(i, now_ms);
-                ready = now_ms >= st.retry_ms && !scene_busy(i) && (t.wanted || !scene_wanted(i));
+                ready = now_ms >= st.retry_ms && !scene_busy(i) && (t.wanted || !loads(i) || !scene_wanted(i));
             } else if (st.holder == Holder::Stock && t.contend) {
                 /* A contending layer arrived while yielding: retry on the ladder. */
                 wait(i, Holder::Stock, true, st.reason, now_ms);
@@ -1786,6 +1832,8 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
         case TargetState::Loaded:
             if (t.wanted)
                 at(t.last_request_ms + kMinRequestGapMs);
+            if (t.still_mapped_ms >= 0)
+                at(t.still_mapped_ms + kNotMappedMs);
             break;
         case TargetState::Waiting:
             if (t.status.retry_ms >= 0)
@@ -1869,6 +1917,10 @@ void SlotManager::stalled_fetch(int i, bool accepted, int64_t now_ms)
     Target &t = t_[i];
     const TargetSpec &spec = specs_[i];
     t.no_fetch++;
+    /* A load nothing wants never reconnects: the framework serves the
+     * shown targets too. */
+    if (t.wanted)
+        t.stuck++;
     const bool fresh = t.no_fetch >= 2 && t.scene;
     log_warn("INCIDENT target %s stalled: %s in %lld ms, %d in a row; %s; asking again on the ladder",
              spec.name.c_str(),
@@ -1877,8 +1929,8 @@ void SlotManager::stalled_fetch(int i, bool accepted, int64_t now_ms)
              fresh ? "republishing its scene: unpublished, published fresh at the next request" : "its scene kept");
     if (fresh)
         drop_scene(i);
-    if (t.no_fetch % kReconnectAfter == 0)
-        reconnect(i, std::to_string(t.no_fetch) + " stalled fetches in a row", now_ms);
+    if (t.wanted && t.stuck % kReconnectAfter == 0)
+        reconnect(i, std::to_string(t.stuck) + " stalled fetches in a row", now_ms);
 }
 
 void SlotManager::reconnect(int i, const std::string &why, int64_t now_ms)

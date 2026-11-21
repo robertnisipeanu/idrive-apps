@@ -1102,6 +1102,7 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
      * target: only its whole rewrite stages, and nothing flushes until
      * that goes, so the cluster keeps showing the last frame. */
     const bool hold = holds(t);
+    t.held_back = false;
     std::vector<Layer *> staged;
     std::vector<Asset *> staged_assets;
     bool wrote = false, failed = false;
@@ -1145,7 +1146,9 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         }
         if (hold && !l->holds_flush() && !l->uncovering())
             continue;
+        const uint64_t holds = l->write_stats().holds;
         const Stage s = l->stage(now_ms);
+        t.held_back = t.held_back || l->write_stats().holds != holds;
         if (l == t.composite.get() && t.composite->placed_now())
             t.dirty = true;   /* quads moved over a canvas the display holds */
         if (s == Stage::Idle)

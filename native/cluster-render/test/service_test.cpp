@@ -1476,7 +1476,9 @@ static void layers_and_hosting()
  * the status too); shown, the target is mapped with no second fetch;
  * hidden again, unmapped after the linger and loaded, not released; the
  * service restarting under the client, the field is sent again and the
- * target loaded again; preload 0 releases it. */
+ * target loaded again; preload 0 releases it. A loaded target with nothing
+ * to flush leaves the loop at four ticks a second; wanted and waiting for
+ * its slot, a write the budget holds ticks it at the frame rate. */
 static void preload()
 {
     Rig r;
@@ -1515,6 +1517,8 @@ static void preload()
     r.pump(4000);
     ok("preload: hidden again: unmapped after the linger, loaded, not released",
        e.target["panel"] == "loaded" && r.port.releases == 0 && !r.port.row(0x203, 0x01000400));
+    ok("preload: loaded with nothing to flush: the loop ticks four times a second",
+       r.svc->timeout_ms(r.now) == 250 && !r.svc->compositor().pending(1));
     r.svc.reset();
     r.start();
     e.target.clear();
@@ -1525,6 +1529,38 @@ static void preload()
     c.set(img, lo);
     r.pump(100);
     ok("preload: preload 0: released", e.target["panel"] == "idle" && r.port.releases == 1);
+
+    /* Wanted while loaded, its slot held by another app's content: its
+     * writes the budget holds tick the loop at the frame rate until they
+     * go. */
+    Rig b(64 * 1024);
+    cr::Client d("preload", b.path);
+    Events f;
+    f.wire(d);
+    b.clients = {&d};
+    b.pump(50);
+    cr::LayerOptions big = lo;
+    big.preload = true;
+    big.visible = false;
+    big.w = big.h = 256;
+    io.w = io.h = 256;
+    const uint32_t pic = d.image(big, io);
+    std::vector<uint8_t> whole(256 * 256 * 4, 90);
+    d.pixels(pic, {}, whole.data(), whole.size());
+    b.pump(300);
+    b.port.stock_map(0x203, 0x02000001);
+    big.visible = true;
+    d.set(pic, big);
+    b.pump(1500);
+    const bool waits = f.target["panel"] == "waiting" && b.svc->slots().loaded(1);
+    whole.assign(whole.size(), 91);
+    d.pixels(pic, {}, whole.data(), whole.size());
+    b.pump(10);
+    const bool held = b.svc->compositor().pending(1), fast = b.svc->timeout_ms(b.now) < 250;
+    ok("preload: wanted while loaded, the slot another app's: a write held by the budget ticks the loop fast",
+       waits && held && fast);
+    b.pump(5000);
+    ok("preload: once it has gone, idle again", !b.svc->compositor().pending(1) && b.svc->timeout_ms(b.now) == 250);
 }
 
 int main()

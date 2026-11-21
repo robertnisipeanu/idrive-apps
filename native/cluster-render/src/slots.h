@@ -158,12 +158,13 @@
  *   asked for again on the ladder as any no answer, and counted, as is any
  *   no answer that follows it. From the second in a row its scene is
  *   unpublished, so the next request publishes it fresh; every
- *   kReconnectAfter-th in a row the unit reconnects its RAMSES framework
+ *   kReconnectAfter-th in a row of a wanted target (a load nothing wants
+ *   never counts) the unit reconnects its RAMSES framework
  *   (on_renderer_stuck): a display in that state ignored
  *   every later fetch of the participant session until a new one. The
  *   count starts over when a fetch of the target completes (on_fetched),
- *   when it is shown, while nothing wants it and when the display service
- *   goes away. A reconnect, for this or for a target not rendered (below),
+ *   when it is shown, while nothing wants it and no preload layer loads
+ *   it, and when the display service goes away. A reconnect, for this or for a target not rendered (below),
  *   goes at most once per kReconnectGapMs.
  * - Rendering: the display's renderer subscribes to a scene it is to draw,
  *   which the RAMSES client logs (ramses_console.h). A target the display
@@ -213,7 +214,13 @@
  *   flushes go on while that map is outstanding. Not wanted for linger_ms,
  *   or parked when nothing wants it, it is unmapped with its fetch kept
  *   (Port::unmap) and Loaded again, the take-overs' count starting over as
- *   at a release; one whose fetch the port has lost is released. A
+ *   at a release; one whose fetch the port has lost is released. Until a
+ *   table report has its own row unmapped, a row of its scene id in its
+ *   slot counts as ours (holder_of); one reported shown for kNotMappedMs
+ *   (the unmap not done) is released and loaded again on the ladder. A
+ *   target that leaves Loading before its fetch completes (a pop-up it
+ *   gives way to) is released and loaded again: Loaded always follows a
+ *   completed fetch. A
  *   kept target (Kept through a lock) nothing wants is Loaded, its fetch
  *   kept. A lock leaves a Loaded target as it is: it is not mapped. With no
  *   preload layer left, a Loading or Loaded target nothing wants is
@@ -626,6 +633,7 @@ private:
         int64_t check_ms = 0;        /* Checking since */
         int recoveries = 0;          /* releases for not rendering since it was last rendered */
         int no_fetch = 0;            /* stalled fetches in a row (above) */
+        int stuck = 0;               /* of them, those while wanted: the reconnects count these */
         int64_t since_ms = 0;        /* entered the current state */
         int64_t last_request_ms = -1000000;
         int ladder = 0;
@@ -696,6 +704,13 @@ private:
         bool loaded = false;
         /* The outstanding re-map is of a loaded scene: flushes go on. */
         bool from_load = false;
+        /* Loaded: the fetch completed (or was kept from a mapping). */
+        bool load_done = false;
+        /* Loaded by an unmap, and no table report has had its row unmapped
+         * since: a row of its scene id in its slot is its own; mapped since
+         * mapped_ms (-1: not reported mapped). */
+        bool unmapping = false;
+        int64_t still_mapped_ms = -1;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -793,7 +808,8 @@ private:
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
     int by_scene(uint64_t scene_id) const;
-    /* The target requested or kept with that scene id; -1: none. */
+    /* The target requested or kept with that scene id, or loaded by an
+     * unmap the table has not shown yet (unmapping); -1: none. */
     int by_held(uint64_t scene_id) const;
     bool scene_busy(int i) const;
     /* The slot's status from its latest rows; -1: not reported. */
