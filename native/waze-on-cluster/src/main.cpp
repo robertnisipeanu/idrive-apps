@@ -80,6 +80,7 @@ std::string status_line(const FeedStatus &s)
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
            ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
+           ",\"hud_black_background\":" + (s.hud_black_background ? "1" : "0") +
            /* only while hosted: otherwise the line is as it always was */
            (s.hosted ? ",\"hosted\":1" : "") + "}";
 }
@@ -98,14 +99,14 @@ public:
         auto hide = msg.find("hide");
         auto pct = msg.find("hud_width_pct");
         auto hx = msg.find("hud_x"), hy = msg.find("hud_y"), on = msg.find("on");
-        auto keep = msg.find("hud_keep_shown");
+        auto keep = msg.find("hud_keep_shown"), black = msg.find("hud_black_background");
         if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
             feeds_->set_guide_hold(guide_->hide());
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
             feeds_->set_cluster(on->second == "1");
         } else if (cmd == "hud" && (on != msg.end() || pct != msg.end() || hx != msg.end() || hy != msg.end() ||
-                                    keep != msg.end())) {
+                                    keep != msg.end() || black != msg.end())) {
             if (on != msg.end()) {
                 if (on->second == "0" || on->second == "1")
                     feeds_->set_hud(on->second == "1");
@@ -138,6 +139,13 @@ public:
                     feeds_->set_hud_keep_shown(keep->second == "1");
                 else
                     log_warn("hud: hud_keep_shown must be 0 or 1, not %s", keep->second.c_str());
+            }
+            /* and whether a night map's background is made black */
+            if (black != msg.end()) {
+                if (black->second == "0" || black->second == "1")
+                    feeds_->set_hud_black_background(black->second == "1");
+                else
+                    log_warn("hud: hud_black_background must be 0 or 1, not %s", black->second.c_str());
             }
         } else {
             log_warn("control: unknown or malformed command %s", cmd.c_str());

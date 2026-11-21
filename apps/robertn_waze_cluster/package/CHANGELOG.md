@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Hide the night map's background on the HUD, a checkbox under Keep HUD map
+over BMW's pop-ups, ticked by default. Unticked, the HUD shows the map as
+the phone sends it, its dark background included, for a map whose roads and
+labels break up once its background is made black. Each driver profile
+with its own settings keeps its own choice.
+
 ## 0.6.12
 
 The cluster's safe area is back to 504x368 at (286, 72); a smaller area made

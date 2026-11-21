@@ -112,7 +112,9 @@ the cluster is hidden (cluster-render README, "Guide hold"). The app's
 both or neither (**Off**), at once. On the HUD the frames are scaled on the
 head unit to the size shown (**Size**, 30 % to 85 % of the HUD's width, or
 Standard, about 57 %), moved by **Position**, the corners rounded and a
-night map's background made black, which the HUD shows as nothing. With
+night map's background made black, which the HUD shows as nothing (unless
+**Hide the night map's background on the HUD** is unticked: the map as the
+phone sends it). With
 both, the HUD gets up to half the upload budget, only what it uses. The
 HUD map steps aside while BMW's HUD lists show (never for route guidance),
 unless **Keep HUD map over BMW's pop-ups** is ticked. **Own settings for

@@ -46,9 +46,9 @@ function until(what, check, ms) {
         poll();
     });
 }
-/* keep left out: a patchd before hud_keep_shown */
-const settings = (cluster, hud, pct, x, y, keep) => Object.assign({ cluster, hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y },
-    keep === undefined ? {} : { hud_keep_shown: keep });
+/* keep left out: a patchd before hud_keep_shown; black left out: one before hud_black_background */
+const settings = (cluster, hud, pct, x, y, keep, black) => Object.assign({ cluster, hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y },
+    keep === undefined ? {} : { hud_keep_shown: keep }, black === undefined ? {} : { hud_black_background: black });
 
 let passed = 0;
 async function check(name, fn) {
@@ -90,7 +90,7 @@ async function main() {
     await render.listen();
     const patch = new FakePatch(PSOCK);
     await patch.listen();
-    patch.map = settings(1, 0, 0, 0, 0, 0);
+    patch.map = settings(1, 0, 0, 0, 0, 0, 1);
 
     /* ---- the reader ---- */
     await check('the reader: the field\'s id, read-only through the typed SessionManager proxy', async () => {
@@ -190,14 +190,15 @@ async function main() {
         await sync.setOwn(true);
         assert.strictEqual(patch.count('profile-own'), 1, 'ticked again: nothing asked');
     });
-    /* driver A picks the HUD alone at 60 %, moved left, kept shown over BMW's pop-ups (the page's commands, which patchd saves) */
-    patch.map = settings(0, 1, 60, -40, 0, 1);
+    /* driver A picks the HUD alone at 60 %, moved left, kept shown over BMW's pop-ups, the map as the phone sends it (the page's
+     * commands, which patchd saves) */
+    patch.map = settings(0, 1, 60, -40, 0, 1, 0);
     id = 'driverB';
     await check('another profile, without its own: the shared settings on the render over a short connection, a display on first', async () => {
         await until('B in effect', () => sync.profile === 'driverB' && sync.own === false);
         await until('render moved', () => render.received.length === 3);
         assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '1' }, { cmd: 'hud', on: '0' },
-            { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0', hud_keep_shown: '0' }]);
+            { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0', hud_keep_shown: '0', hud_black_background: '1' }]);
         await until('short connection closed', () => render._clients.size === 0);
     });
     render.received.length = 0;
@@ -205,17 +206,18 @@ async function main() {
     await check('back to A: its own settings on the render, the HUD turned on before the cluster off', async () => {
         await until('A in effect', () => sync.profile === 'driverA' && sync.own === true);
         await until('render moved', () => render.hud === 1 && render.cluster === 0 && render.hudWidth === 60 && render.hudX === -40 &&
-            render.hudKeep === 1);
+            render.hudKeep === 1 && render.hudBlack === 0);
         assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['hud1', 'cluster0', 'hud']);
     });
     /* driver A picks Off (the page turns the render to neither, patchd saves it as A's own) */
-    patch.map = settings(0, 0, 60, -40, 0, 1);
+    patch.map = settings(0, 0, 60, -40, 0, 1, 0);
     render.hud = 0;
     render.received.length = 0;
     id = 'driverB';
     await check('Off as A\'s own: another profile without its own gets the shared settings, the map back on the cluster', async () => {
         await until('B in effect', () => sync.profile === 'driverB' && sync.own === false);
-        await until('render moved', () => render.cluster === 1 && render.hud === 0 && render.hudWidth === 0 && render.hudKeep === 0);
+        await until('render moved', () => render.cluster === 1 && render.hud === 0 && render.hudWidth === 0 && render.hudKeep === 0 &&
+            render.hudBlack === 1);
         assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['cluster1', 'hud0', 'hud']);
     });
     render.received.length = 0;
@@ -301,7 +303,7 @@ async function main() {
         flip.stop();
         assert.strictEqual(patch.count('profile'), told);
     });
-    await check('a patchd before hud_keep_shown: the render not told it', async () => {
+    await check('a patchd before hud_keep_shown and hud_black_background: the render not told them', async () => {
         render.received.length = 0;
         sync2._toRender(settings(1, 0, 0, 0, 0));
         await until('render moved', () => render.received.length === 3);

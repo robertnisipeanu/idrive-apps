@@ -133,6 +133,7 @@ struct FeedStatus {
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
     int hud_offset_x = 0, hud_offset_y = 0;   /* and where it is moved to from the centre */
     bool hud_keep_shown = false;   /* the HUD map kept shown over the stock HMI's pop-ups */
+    bool hud_black_background = true;   /* a night map's background made black on the HUD */
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs
@@ -180,6 +181,10 @@ public:
     /* The HUD map kept shown over the stock HMI's pop-ups or not
      * (FeedConfig::hud_keep_shown), at once. */
     void set_hud_keep_shown(bool keep);
+    /* A night map's background made black on the HUD or the map as sent
+     * (FeedConfig::hud_black_background): the newest picture scaled again
+     * at once. */
+    void set_hud_black_background(bool on);
     /* A layer to take frames: made, and not reported disabled by
      * cluster-render. */
     bool takes_frames() const { return layer_ && !disabled(); }

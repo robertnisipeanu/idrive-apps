@@ -289,6 +289,19 @@ void MapFeed::set_hud_offset(int dx, int dy)
     log_info("render: HUD map moved to %u,%u (offset %+d,%+d)", q.x, q.y, placed_x_, placed_y_);
 }
 
+void MapFeed::set_hud_black_background(bool on)
+{
+    if (cfg_.hud_black_background == on)
+        return;
+    cfg_.hud_black_background = on;
+    if (cfg_.target != "hud" || !scaling_ || hosted())
+        return;
+    shape_.black = on;
+    if (!held_.empty() || in_worker_ || elsewhere_)
+        held_new_ = true;
+    log_info("render: HUD map %s", on ? "with a night map's background made black" : "as the phone sends it");
+}
+
 void MapFeed::set_hud_keep_shown(bool keep)
 {
     cfg_.hud_keep_shown = keep;
@@ -566,6 +579,7 @@ FeedStatus MapFeed::status(const std::string &decode, const std::string &stream)
     s.hud_width_pct = cfg_.hud_width_pct;
     s.hud_offset_x = placed_x_;
     s.hud_keep_shown = cfg_.hud_keep_shown;
+    s.hud_black_background = cfg_.hud_black_background;
     s.hud_offset_y = placed_y_;
     s.upload_cap_kb = cap_kb_;
     s.upload_reason = budget_reason_;

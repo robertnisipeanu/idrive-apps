@@ -1454,6 +1454,44 @@ int main()
     bpump(2500, &f2);
     ok("the list gone: the HUD map shown again", b.svc->slots().status(2).state == crs::TargetState::Shown);
 
+    /* ---- a night map's background on the HUD ---- */
+    {
+        /* a night map: a dark grey field (Y 40), roads a little lighter (Y 60), U and V neutral */
+        std::vector<uint8_t> night(1088 * 720, 128);
+        std::fill(night.begin(), night.begin() + 1088 * 480, 40);
+        for (uint32_t y = 100; y < 380; y += 40)
+            std::fill(night.begin() + y * 1088, night.begin() + y * 1088 + 1088, 60);
+        const auto hud_ref = [&](bool black) {
+            AtlasScaler r;
+            std::vector<uint8_t> out;
+            r.configure(1088, 480, 452, 200, 2);
+            r.set_corner_radius(200 / 12);
+            r.set_black_background(black);
+            r.scale(night.data(), &out);
+            return out;
+        };
+        const std::vector<uint8_t> keyed = hud_ref(true), as_sent = hud_ref(false);
+        ok("night map: made black and as sent differ", keyed != as_sent);
+        ok("by default a night map's background is made black", feeds.status("decode").hud_black_background);
+        bpump(500, &night);
+        const uint32_t ref = layer_on(2) ? layer_on(2)->id() : 0;
+        feeds.set_hud_black_background(false);
+        bpump(300, nullptr);
+        ok("as sent: the still map scaled again at once, its background kept, the same layer, the status says so",
+           shown_r8("hud", as_sent) && layer_on(2) && layer_on(2)->id() == ref &&
+               !feeds.status("decode").hud_black_background);
+        ok("as sent: the cluster's map untouched", shown_r8("map", night));
+        feeds.set_hud(false);
+        bpump(2500, &night);
+        feeds.set_hud(true);
+        bpump(2500, &night);
+        ok("a HUD feed made later sends it as sent", shown_r8("hud", as_sent) && !feeds.status("decode").hud_black_background);
+        feeds.set_hud_black_background(true);
+        bpump(300, nullptr);
+        ok("made black again: the still map scaled again at once", shown_r8("hud", keyed) &&
+                                                                   feeds.status("decode").hud_black_background);
+    }
+
     /* ---- where the map shows: the cluster, the HUD, both, neither ---- */
     {
         const std::vector<uint8_t> f4 = atlas(4), f5 = atlas(5);

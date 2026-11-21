@@ -318,14 +318,18 @@ class ProfileSync extends EventEmitter {
 
     /* The render to the settings in effect: a display turned on first, so a
      * switch from one display to the other never passes through neither,
-     * then the HUD's size, place and whether it stays shown over BMW's
-     * pop-ups (from a patchd that has it). */
+     * then the HUD's size, place, whether it stays shown over BMW's
+     * pop-ups and whether a night map's background is made black on it (each
+     * from a patchd that has it). */
     _toRender(s) {
         const on = (v) => (v ? '1' : '0');
         const shows = ['cluster', 'hud'].sort((a, b) => s[b] - s[a]);
         const hud = { cmd: 'hud', hud_width_pct: String(s.hud_width_pct), hud_x: String(s.hud_offset_x), hud_y: String(s.hud_offset_y) };
         if (s.hud_keep_shown === 0 || s.hud_keep_shown === 1) {
             hud.hud_keep_shown = on(s.hud_keep_shown);
+        }
+        if (s.hud_black_background === 0 || s.hud_black_background === 1) {
+            hud.hud_black_background = on(s.hud_black_background);
         }
         const cmds = shows.map((d) => ({ cmd: d, on: on(s[d]) })).concat([hud]);
         const c = this._control;

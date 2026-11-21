@@ -34,7 +34,7 @@
  * cluster renderer holds the box shown. Where the map shows (the cluster,
  * the HUD, both or Off, from the cluster and from both, the HUD's size and
  * place refused while Off) and the HUD's size slider, place, Keep HUD map
- * over BMW's pop-ups and guard; an asked HUD size the render does not show goes after a moment,
+ * over BMW's pop-ups, Hide the night map's background on the HUD and guard; an asked HUD size the render does not show goes after a moment,
  * on a failed save and on a render reconnect. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
  * line under it on 2.4 GHz only, nothing while the band is unknown, from a
  * patchd before it, or with patchd gone.
@@ -440,6 +440,34 @@ test('the HUD map over BMW\'s pop-ups: gives way by default; a flip goes to the 
     render.hudKeep = null;
     render.announce(render.state, render.reason);
     await until('a render without it', () => c.hudKeepShown() === null && !c.canKeepHud());
+    c.close();
+});
+
+test('a night map\'s background on the HUD: made black by default; a flip goes to the render and patchd, the render\'s status ' +
+    'shows it; greyed while the HUD is off and for a render without it', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedRender() && c.connectedPatch());
+    render.stream(true);
+    await until('the HUD off', () => c.renderStatus && c.hudOn() === false);
+    assert.deepStrictEqual([c.hudBlackBackground(), c.canBlackenHud()], [true, false], 'made black, greyed while the HUD is off');
+    c.toggleHudBlack();
+    render.hud = 1;
+    render.announce(render.state, render.reason);
+    await until('on', () => c.canBlackenHud());
+    assert.strictEqual(render.received.filter((m) => m.hud_black_background !== undefined).length, 0, 'nothing sent while greyed');
+    c.toggleHudBlack();
+    await until('as sent', () => c.hudBlackBackground() === false && render.hudBlack === 0);
+    await until('saved', () => patch.map.hud_black_background === 0);
+    c.toggleHudBlack();
+    await until('made black again', () => c.hudBlackBackground() === true && patch.map.hud_black_background === 1);
+    assert.deepStrictEqual(render.received.filter((m) => m.hud_black_background !== undefined),
+        [{ cmd: 'hud', hud_black_background: '0' }, { cmd: 'hud', hud_black_background: '1' }]);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'hud-black-background'),
+        [{ cmd: 'hud-black-background', on: 0 }, { cmd: 'hud-black-background', on: 1 }]);
+    render.hudBlack = null;
+    render.announce(render.state, render.reason);
+    await until('a render without it', () => c.hudBlackBackground() === null && !c.canBlackenHud());
     c.close();
 });
 
