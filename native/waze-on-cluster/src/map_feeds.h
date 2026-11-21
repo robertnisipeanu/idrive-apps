@@ -70,7 +70,9 @@ public:
     /* For poll(): one entry per feed, appended. */
     size_t poll_fds(std::vector<pollfd> *fds) const;
     void poll(int64_t now_ms);
-    /* Until poll() has HUD work to do (-1: none). */
+    /* Until poll() has work for a feed that scales (the HUD's, or the
+     * cluster's while hosted): a scaled frame to take, or the next one due
+     * (-1: none). */
     int64_t wake_in_ms(int64_t now_ms) const;
 
     void offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms);

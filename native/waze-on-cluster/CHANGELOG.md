@@ -4,6 +4,9 @@
 
 The rollback tests treat 0.11.0 and later as releases that patch CarPlay in
 memory.
+A map shown inside another app's scene on the cluster appears as soon as
+its picture is ready, including when that app shows it again while the map
+is still.
 
 ## 0.12.0
 

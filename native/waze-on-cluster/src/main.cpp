@@ -315,11 +315,12 @@ int serve(Config cfg)
                                  {producer.ready_fd(), POLLIN, 0}};
         feed.poll_fds(&p);   /* one per target's renderer connection */
         /* A decoded frame wakes it (the producer's ready fd), and so does the
-         * renderer's socket, and the HUD's next frame when one is due; four
-         * times a second otherwise, so the client retries its connection, a
-         * source that is down is retried and the status files stay current. */
-        const int64_t hud_wake = feed.wake_in_ms(now_ms());
-        int n = poll(p.data(), p.size(), hud_wake >= 0 && hud_wake < 250 ? (int)hud_wake : 250);
+         * renderer's socket, and a scaled frame to take or the next one due
+         * (the HUD's, or a hosted map's); four times a second otherwise, so
+         * the client retries its connection, a source that is down is
+         * retried and the status files stay current. */
+        const int64_t wake = feed.wake_in_ms(now_ms());
+        int n = poll(p.data(), p.size(), wake >= 0 && wake < 250 ? (int)wake : 250);
         if (n < 0 && errno != EINTR)
             break;
         if (p[0].revents & POLLIN)
