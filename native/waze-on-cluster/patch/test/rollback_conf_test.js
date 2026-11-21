@@ -4,7 +4,8 @@
 /* Every released waze-on-cluster against the settings files this version
  * leaves. This version does not read waze-on-cluster.local.conf; earlier
  * ones do, so it stays on the unit, one each release starts with: with the
- * opt-in keys (hosted_vpp_scale, always_packed) turned on, and on a car whose
+ * opt-in keys (hosted_vpp_scale, always_packed, target_fps, picture_fps)
+ * set, and on a car whose
  * local conf has the owner's settings, the app's map settings and the opt-in
  * keys, through an install or update (patchd activate), a head-unit start
  * (patchd's daemon), a downgrade (Undo update), Remove and uninstall (patchd
@@ -93,7 +94,7 @@ function refusing(text) {
     return out;
 }
 
-var OPT_IN = ['hosted_vpp_scale', 'always_packed'];
+var OPT_IN = ['hosted_vpp_scale', 'always_packed', 'target_fps', 'picture_fps'];
 /* A release that reads features.conf takes the keys from it: it must know
  * them, so none that refuses them (every one up to 0.10.7, below) reads it. */
 var unknowing = RELEASES.filter(function (v) {
@@ -102,15 +103,16 @@ var unknowing = RELEASES.filter(function (v) {
 ok('every release that reads features.conf knows the opt-in keys', unknowing.length === 0,
     unknowing.map(function (v) { return v + ': ' + READS_FEATURES[v]; }).join('; '));
 /* The local conf the owner keeps: keys every release knows. */
-var USER = '# mine\ntarget_fps = 20\npan_blocks = 1\n';
+var USER = '# mine\ndirty_threshold = 4\npan_blocks = 1\n';
 ok('every release starts with the owner\'s own local conf', refusing(USER).length === 0, refusing(USER).join(' '));
-/* What this test guards against: every release up to 0.10.7 refuses an
- * opt-in key in the local conf. */
-var UP_TO_0107 = RELEASES.filter(function (v) { return cmp(v, '0.10.7') <= 0; });
-OPT_IN.forEach(function (k) {
-    var refused = refusing(USER + k + ' = 1\n').map(function (r) { return r.split(' ')[0]; });
-    var accepted = UP_TO_0107.filter(function (v) { return refused.indexOf(v) < 0; });
-    ok('every release up to 0.10.7 refuses ' + k + ' in the local conf', accepted.length === 0, accepted.join(' '));
+/* What this test guards against: every release up to 0.10.7 refuses
+ * hosted_vpp_scale and always_packed in the local conf, up to 0.9.12
+ * picture_fps. */
+[['hosted_vpp_scale', '0.10.7'], ['always_packed', '0.10.7'], ['picture_fps', '0.9.12']].forEach(function (kv) {
+    var upTo = RELEASES.filter(function (v) { return cmp(v, kv[1]) <= 0; });
+    var refused = refusing(USER + kv[0] + ' = 1\n').map(function (r) { return r.split(' ')[0]; });
+    var accepted = upTo.filter(function (v) { return refused.indexOf(v) < 0; });
+    ok('every release up to ' + kv[1] + ' refuses ' + kv[0] + ' in the local conf', accepted.length === 0, accepted.join(' '));
 });
 
 /* ---- this version's patchd on a temporary /var/opt/waze-on-cluster ------- */
@@ -187,28 +189,29 @@ function check(name, wantLocal, wantFeatures, out) {
 }
 
 var ON = 'hosted_vpp_scale = 1\nalways_packed = 1\n';
+var FPS = 'target_fps = 20\npicture_fps = 20\n';
 
 (async function () {
-    /* 1. Turned on in features.conf: every step, in the order an owner meets
+    /* 1. Set in features.conf: every step, in the order an owner meets
      * them, leaves both files as they are. */
-    set(USER, ON);
+    set(USER, ON + FPS);
     var seq = [['an update to this version', 'activate'], ['a head-unit start', 'boot'], ['Undo update', 'deactivate'],
         ['an update to this version again', 'activate'], ['a head-unit start', 'boot'], ['Remove', 'deactivate'],
         ['a reinstall', 'activate'], ['removal', 'deactivate']];
     for (var i = 0; i < seq.length; i++) {
         var out = seq[i][1] === 'boot' ? await boot() : hook(seq[i][1]);
-        check('features.conf, ' + seq[i][0], USER, ON, out);
+        check('features.conf, ' + seq[i][0], USER, ON + FPS, out);
     }
 
     /* 2. Written in the local conf: each step moves them to features.conf,
      * the local conf's other lines kept. */
     var steps = Object.keys(STEPS);
     for (i = 0; i < steps.length; i++) {
-        set(USER + 'hosted_vpp_scale = 1\n# packed\nalways_packed = 1\n', null);
+        set(USER + 'hosted_vpp_scale = 1\n# packed\nalways_packed = 1\n' + FPS, null);
         out = await STEPS[steps[i]]();
-        check('in the local conf, ' + steps[i], USER + '# packed\n', ON, out);
+        check('in the local conf, ' + steps[i], USER + '# packed\n', ON + FPS, out);
         out = await STEPS[steps[i]]();
-        check('in the local conf, ' + steps[i] + ' again', USER + '# packed\n', ON, out);
+        check('in the local conf, ' + steps[i] + ' again', USER + '# packed\n', ON + FPS, out);
     }
 
     /* 3. One in both files: features.conf's kept. One that is not 0 or 1:
@@ -219,6 +222,13 @@ var ON = 'hosted_vpp_scale = 1\nalways_packed = 1\n';
     set(USER + 'always_packed += 1\nhosted_vpp_scale = 1 # on\n', null);
     out = hook('activate');
     check('a += line, a comment after the value', USER, ON, out);
+    /* A frame rate: 0-60, written as the render takes it (no leading 0). */
+    set(USER + 'target_fps = 15 # CPU\npicture_fps = 61\n', null);
+    out = hook('activate');
+    check('a frame rate, and one out of range', USER, 'target_fps = 15\n', out);
+    set(USER + 'target_fps = 020\npicture_fps = 15\n', 'picture_fps = 20\n');
+    out = hook('activate');
+    check('a frame rate in both files, and one with a leading 0', USER, 'picture_fps = 20\n', out);
 
     /* 4. An update cut short. After this version's files, before its hook:
      * the next head-unit start moves them. Its activate ran, then the update
@@ -256,12 +266,13 @@ var ON = 'hosted_vpp_scale = 1\nalways_packed = 1\n';
 
     /* 5. A car with a local conf: the owner's settings (a target, a frame
      * rate), the app's map settings and an opt-in key, which releases up to
-     * 0.8.8 and 0.10.7 refuse. The first install moves those two into their
-     * files; the owner's lines stay in the local conf, which every release
-     * starts with, through every step after. */
-    var OWN = '# mine\ntarget = panel\ntarget_fps = 20\n';
-    var CAR_LOCAL = OWN + 'cluster = 0\nhud_width_pct = 50\nhosted_vpp_scale = 1\n';
-    var CAR_MAP = 'cluster = 0\nhud_width_pct = 50\n', CAR_FEAT = 'hosted_vpp_scale = 1\n';
+     * 0.8.8 and 0.10.7 refuse. The first install moves the map settings, and
+     * the opt-in key and the frame rate (an opt-in key too), into their
+     * files; the owner's other lines stay in the local conf, which every
+     * release starts with, through every step after. */
+    var OWN = '# mine\ntarget = panel\n';
+    var CAR_LOCAL = OWN + 'target_fps = 20\ncluster = 0\nhud_width_pct = 50\nhosted_vpp_scale = 1\n';
+    var CAR_MAP = 'cluster = 0\nhud_width_pct = 50\n', CAR_FEAT = 'hosted_vpp_scale = 1\ntarget_fps = 20\n';
     ok('every release starts with the owner\'s settings', refusing(OWN).length === 0, refusing(OWN).join(' '));
     ok('releases refuse the car\'s local conf as it was', refusing(CAR_LOCAL).length > 0);
     var life = [['an update to this version', 'activate'], ['a head-unit start', 'boot'], ['a downgrade', 'deactivate'],

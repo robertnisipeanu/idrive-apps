@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+A head unit that is short of CPU can run the map at a lower frame rate:
+`target_fps` and `picture_fps` can be set in
+`/var/opt/waze-on-cluster/features.conf` (README, "A lower frame rate").
+Without them nothing changes.
+
 ## 0.11.0
 
 CarPlay's cluster map patch is applied in CarPlay's memory each time it

@@ -247,12 +247,16 @@ var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on
  * start with any of MAP_KEYS in. */
 var MAP_STATE = path.join(STATE_DIR, 'map.state.conf');
 var MAP_KEYS = ['cluster', 'hud', 'hud_width_pct', 'hud_offset_x', 'hud_offset_y', 'hud_keep_shown'];
-/* The opt-in settings: the render reads this file (its features_file) over
- * its configuration. Not in LOCAL_CONF, which every release up to 0.10.7
- * refuses to start with any of FEATURE_KEYS in; no release before 0.10.9
- * reads FEATURES. */
+/* The opt-in settings, each a whole number from 0 to its highest
+ * (FEATURE_HI, the render's kFeatureKeys): the render reads this file (its
+ * features_file) over its configuration. Not in LOCAL_CONF, which every
+ * release up to 0.10.7 refuses to start with hosted_vpp_scale or
+ * always_packed in, and up to 0.9.12 with picture_fps; no release before
+ * 0.10.9 reads FEATURES, and only this version on takes target_fps and
+ * picture_fps from it. */
 var FEATURES = path.join(STATE_DIR, 'features.conf');
-var FEATURE_KEYS = ['hosted_vpp_scale', 'always_packed'];
+var FEATURE_HI = { hosted_vpp_scale: 1, always_packed: 1, target_fps: 60, picture_fps: 60 };
+var FEATURE_KEYS = Object.keys(FEATURE_HI);
 
 /* A key = value file's settings (a key += value line's value as the key's);
  * none when it cannot be read. */
@@ -308,18 +312,20 @@ function moveMapSettings() {
 }
 
 /* Moves any of FEATURE_KEYS found in LOCAL_CONF into FEATURES, a valid
- * value already there kept and one other than 0 or 1 dropped. LOCAL_CONF is
- * rewritten first, its other lines kept: cut short between the two writes,
- * the setting is lost but LOCAL_CONF is one every release starts with.
- * True when LOCAL_CONF holds none of FEATURE_KEYS. */
+ * value already there kept and one out of the key's range dropped.
+ * LOCAL_CONF is rewritten first, its other lines kept: cut short between the
+ * two writes, the setting is lost but LOCAL_CONF is one every release starts
+ * with. True when LOCAL_CONF holds none of FEATURE_KEYS. */
 function moveFeatures() {
     var local = readConf(LOCAL_CONF), feat = readConf(FEATURES), move = {};
     var found = FEATURE_KEYS.filter(function (k) { return k in local; });
     if (!found.length) return true;
     function value(v) { return v.replace(/\s*#.*$/, ''); }
+    /* as the render takes it: no sign, no leading 0 */
+    function valid(k, v) { return /^(0|[1-9]\d*)$/.test(v) && Number(v) <= FEATURE_HI[k]; }
     found.forEach(function (k) {
         var v = value(local[k]);
-        if (!(k in feat && /^[01]$/.test(value(feat[k]))) && /^[01]$/.test(v)) move[k] = v;
+        if (!(k in feat && valid(k, value(feat[k]))) && valid(k, v)) move[k] = v;
     });
     try {
         rewriteConf(LOCAL_CONF, {}, FEATURE_KEYS);
@@ -2423,9 +2429,9 @@ function oneShot(which) {
             process.exit(code);
         });
     }
-    /* A version this one gives way to refuses to start with an opt-in key in
-     * LOCAL_CONF: while one stays there the removal or the change is
-     * refused, nothing else done. */
+    /* A version this one gives way to may refuse to start with an opt-in key
+     * in LOCAL_CONF (FEATURES): while one stays there the removal or the
+     * change is refused, nothing else done. */
     if (!moveFeatures() && which === 'deactivate') {
         result.status = 'the opt-in settings could not be moved out of ' + LOCAL_CONF + '; nothing changed';
         log(which + ': ' + result.status);
