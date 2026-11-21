@@ -237,7 +237,7 @@ public:
     void request_report();
     const std::string &report() const { return report_; }
     /* Another app's layer on the cluster asks for the other videos' upload
-     * bandwidth (cluster-render PROTOCOL.md "others_fps"): the renderer
+     * bandwidth (cluster-render PROTOCOL.md "Bandwidth for a layer"): the renderer
      * writes this feed's layer at most this many times a second, and a
      * layer that scales scales no more often; 0: not held, and while the
      * renderer is not reachable. */

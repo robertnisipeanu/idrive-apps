@@ -326,17 +326,18 @@ public:
 
     LayerState state(uint32_t id, std::string *reason) const;
 
-    /* Bandwidth for a client's layer (PROTOCOL.md "others_fps"): while a
-     * layer with others_fps is shown, every video layer of the other
-     * clients updates at most that many times a second (its own fps when
-     * lower), and a target's composite at the highest rate its sources'
-     * clients are held to (its own when one of them is not held). Below
+    /* Bandwidth for a client's layer (PROTOCOL.md "Bandwidth for a
+     * layer"): while a layer with others_fps is shown, every video layer
+     * of the other clients updates at most that many times a second (its
+     * own fps when lower), a composite's sources included, and a target's
+     * composite at the highest rate its sources' clients are held to (its
+     * own when one of them is not held). Below
      * kOthersFpsFloor counts as it; of several such layers the lowest
      * holds. Its own client's videos are not held by it. Applied in
      * arrange(), from the layers' states then: a layer hidden, waiting,
-     * dropped or gone with its client releases its hold in that tick, and
-     * the videos go back to their own clocks. With no such layer nothing
-     * of this runs. */
+     * dropped or gone with its client releases its hold in the first
+     * arrange() that sees it, and the videos go back to their own clocks.
+     * With no such layer nothing of this runs. */
     static const uint32_t kOthersFpsFloor = 15;
     struct FpsRequest {
         uint64_t owner = 0;

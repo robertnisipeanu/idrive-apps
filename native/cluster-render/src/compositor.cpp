@@ -938,8 +938,9 @@ void Compositor::cap_videos(int64_t now_ms)
             continue;
         std::string reason;
         if (state(kv.first, &reason) == LayerState::Shown)
-            fps_requests_.push_back(
-                FpsRequest{kv.second.owner, kv.first, std::max(l.params.others_fps, kOthersFpsFloor)});
+            fps_requests_.push_back(FpsRequest{kv.second.owner, kv.first,
+                                               l.params.others_fps < kOthersFpsFloor ? kOthersFpsFloor
+                                                                                     : l.params.others_fps});
     }
     if (fps_requests_.empty() && !capped_)
         return;
@@ -955,13 +956,14 @@ void Compositor::cap_videos(int64_t now_ms)
             if (e.layer->target() != (int)ti || std::strcmp(e.layer->kind(), "video"))
                 continue;
             const uint32_t cap = fps_cap(e.owner);
+            /* a composite's source too, so it draws itself at its client's
+             * rate when the composite goes */
+            static_cast<VideoLayer *>(e.layer.get())->cap_fps(cap, now_ms);
             if (e.composited) {
                 sources = true;
                 unheld = unheld || !cap;
                 composite_cap = std::max(composite_cap, cap);
-                continue;
             }
-            static_cast<VideoLayer *>(e.layer.get())->cap_fps(cap, now_ms);
         }
         if (targets_[ti].composite)
             targets_[ti].composite->cap_fps(sources && !unheld ? composite_cap : 0, now_ms);

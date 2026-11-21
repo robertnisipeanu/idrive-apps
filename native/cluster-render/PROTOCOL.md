@@ -458,7 +458,8 @@ layers the lowest `others_fps` holds; a client's own videos are never held
 by its own layers. 15 is the least: half the 30 a second a map is made at,
 below which a panning map visibly stutters.
 
-The hold ends in the tick the layer stops being shown: hidden, waiting
+The hold ends as soon as the service sees the layer is not shown (within
+its next loop, at most 250 ms): hidden, waiting
 (its target taken or not shown yet), dropped, `set` with `others_fps` 0,
 or its client gone, whatever way the connection ends. Nothing is kept: a
 service restarted holds nothing until a layer asks again, and the held

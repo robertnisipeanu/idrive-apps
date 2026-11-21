@@ -58,7 +58,7 @@ struct LayerOptions {
     bool yield = true;               /* false: the target stays shown over the stock HMI's pop-ups while this layer wants it */
     /* While this layer is shown, every other client's video at most this
      * many updates a second (15 at least), so this app gets the upload
-     * bandwidth they leave; 0: no request (PROTOCOL.md "others_fps"). Sent
+     * bandwidth they leave; 0: no request (PROTOCOL.md "Bandwidth for a layer"). Sent
      * when set, and with set() also when it goes back to 0. */
     unsigned others_fps = 0;
     float opacity = 1.0f;

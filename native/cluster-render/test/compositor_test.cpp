@@ -2252,6 +2252,34 @@ static void others_fps()
     cv = r.comp->composite(r.map);
     ok("others_fps: its client gone: nothing requested, every clock its own",
        r.comp->fps_requests().empty() && r.comp->fps_cap(1) == 0 && cv && cv->clock_fps() == 30);
+
+    /* Held while it draws itself, then composed, released while composed,
+     * and drawing itself again: at its own rate. */
+    CompositorLimits one;
+    one.videos = 1;
+    Rig q(0, one);
+    const uint32_t map = q.comp->add_video(1, q.map, params(Klass::Content, R(0, 0, W, H)), VideoParams(), q.now, &err);
+    VideoLayer *mv = static_cast<VideoLayer *>(q.comp->layer(1, map));
+    mv->offer(big.data(), q.now);
+    const uint32_t req = q.comp->add_image(3, q.panel, ask, 8, 8, 30, Sampling::Nearest, q.now, &err);
+    static_cast<ImageLayer *>(q.comp->layer(3, req))->update({}, px.data(), px.size(), &err);
+    q.run(100);
+    q.slots.on_shown(0x010004f0, q.now);
+    q.slots.on_shown(0x01000400, q.now);
+    q.run(100);
+    const bool held = mv->clock_fps() == 20;
+    const uint32_t other = q.comp->add_video(2, q.map, c1, cam, q.now, &err);
+    static_cast<VideoLayer *>(q.comp->layer(2, other))->offer(small.data(), q.now);
+    q.run(100);
+    const bool composed = q.comp->composite(q.map) != nullptr;
+    Layer *rl = q.comp->layer(3, req);
+    rl->params.others_fps = 0;
+    q.comp->changed(rl);
+    q.run(100);
+    q.comp->remove_owner(2);
+    q.run(1500);
+    ok("others_fps: released while composed: drawing itself again, at its own rate",
+       held && composed && !q.comp->composite(q.map) && !mv->source() && mv->clock_fps() == 30);
 }
 
 int main()
