@@ -56,6 +56,11 @@ struct LayerOptions {
     bool contend = false;            /* retries a slot the stock HMI takes */
     bool guide_hold = true;          /* false: the stock HMI's guidance box shows while this layer wants the map */
     bool yield = true;               /* false: the target stays shown over the stock HMI's pop-ups while this layer wants it */
+    /* While this layer is shown, every other client's video at most this
+     * many updates a second (15 at least), so this app gets the upload
+     * bandwidth they leave; 0: no request (PROTOCOL.md "others_fps"). Sent
+     * when set, and with set() also when it goes back to 0. */
+    unsigned others_fps = 0;
     float opacity = 1.0f;
     /* Video, image and effect layers: turned (degrees clockwise) and scaled about
      * the pivot, in pixels from the layer's top-left (its centre unless
@@ -296,6 +301,13 @@ public:
      * hosted now, by name (none while not connected). */
     std::function<void(const Host &h)> on_host;
     std::map<std::string, Host> hosts;
+    /* Another client's layer shown with others_fps holds this client's
+     * videos to fps_cap updates a second (0: none; app: that client's
+     * name), from the service's fps_cap events; 0 while not connected.
+     * on_fps_cap: it changed, also to 0 when the connection goes. */
+    unsigned fps_cap = 0;
+    std::string fps_cap_app;
+    std::function<void(unsigned fps, const std::string &app)> on_fps_cap;
     void request_status();
     /* The service's hello: its backend ("id7", "id8") and targets ("map:1088x480,..."). */
     std::string backend, targets;
@@ -303,6 +315,8 @@ public:
     bool takes_always_packed() const { return always_packed_; }
     /* The service's hello knows a layer's preload (LayerOptions). */
     bool takes_preload() const { return preload_; }
+    /* The service's hello knows a layer's others_fps (LayerOptions). */
+    bool takes_others_fps() const { return others_fps_; }
 
 private:
     struct Part {
@@ -393,6 +407,7 @@ private:
     bool repeats_ = false;          /* the service takes repeats (its hello) */
     bool always_packed_ = false;    /* and always_packed */
     bool preload_ = false;          /* and knows preload */
+    bool others_fps_ = false;       /* and others_fps */
 };
 
 }  // namespace cr

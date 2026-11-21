@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-A head unit that is short of CPU can run the map at a lower frame rate:
-`target_fps` and `picture_fps` can be set in
-`/var/opt/waze-on-cluster/features.conf` (README, "A lower frame rate").
-Without them nothing changes.
+While another app's content on the cluster asks for upload bandwidth
+(cluster-render's `others_fps`), the map runs at the lower frame rate it
+asks for and makes no more pictures than that, and goes back to its own
+rate when that app hides its content or exits.
 
 ## 0.11.0
 

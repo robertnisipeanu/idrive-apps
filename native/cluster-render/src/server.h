@@ -68,6 +68,7 @@ private:
         uint64_t host_gen = 0;                          /* the Server's hosts_gen_ it was compared with */
         std::map<uint32_t, std::string> frame_error;  /* by ref: the last frame error sent */
         std::string budget_sent;
+        uint32_t fps_cap_sent = 0;   /* the fps of its last fps_cap event; 0: none or none sent */
         bool closing = false;
     };
 
@@ -96,6 +97,8 @@ private:
     void op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *l, const cr::Json &j);
     void op_uniform(Client &c, uint32_t ref, Layer *l, const cr::Json &j);
     bool apply(Layer *l, const cr::Json &j, std::string *err);
+    /* The app name of the client with this id; "?" for none. */
+    std::string app_of(uint64_t id) const;
 
     Compositor *comp_;
     SlotManager *slots_;
@@ -111,6 +114,8 @@ private:
      * counts each time they were made again (report()). */
     std::map<std::string, std::string> hosts_;
     uint64_t hosts_serial_ = 0, hosts_gen_ = 0;
+    /* The others_fps requests as last logged (report()). */
+    std::string fps_requests_;
 };
 
 }  // namespace crs

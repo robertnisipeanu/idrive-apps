@@ -431,7 +431,10 @@ void MapFeed::send_pending(int64_t now_ms)
     if (worker_.submit(&held_, id_, shape_)) {
         held_new_ = false;
         in_worker_ = true;
-        next_send_ms_ = now_ms + (cfg_.video.fps ? 1000 / (int64_t)cfg_.video.fps : 0);
+        unsigned fps = cfg_.video.fps;
+        if (fps_cap() && (!fps || fps_cap() < fps))
+            fps = fps_cap();
+        next_send_ms_ = now_ms + (fps ? 1000 / (int64_t)fps : 0);
     }
 }
 

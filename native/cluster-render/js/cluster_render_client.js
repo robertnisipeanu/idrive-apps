@@ -12,6 +12,7 @@
  *   cr.on('layer', (ref, state, reason) => { ... });   // shown, waiting, suspended, stalled, hidden, error
  *   cr.on('target', (name, state, holder, reason, guideDisabled, disabled) => { ... });
  *   cr.on('budget', (capKb, maxKb, reason) => { ... });
+ *   cr.on('fps_cap', (fps, app) => { ... });   // another app holds this one's videos (0: released)
  *   cr.on('ready', () => cr.pixels(badge, null, rgba));   // after every (re)connect
  *   cr.connect();
  *   ...
@@ -55,7 +56,7 @@ const MESH_T = 0x4d;    /* 'M' */
 const MAX_DIRTY = 16;
 const BACKOFF_MS = [250, 500, 1000, 2000];
 const SET_KEYS = ['klass', 'z', 'x', 'y', 'w', 'h', 'visible', 'exclusive', 'prewarm', 'preload', 'contend',
-    'guide_hold', 'yield', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
+    'guide_hold', 'yield', 'others_fps', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
 const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'cz', 'crx', 'cry', 'crz'];
 const UNIFORM_WIDTH = { float: 1, vec2: 2, vec3: 3, vec4: 4, mat4: 16 };
 
@@ -141,6 +142,8 @@ class ClusterRender extends EventEmitter {
         this.inbuf = Buffer.alloc(0);
         this.backend = '';
         this.targets = '';
+        this.fpsCap = 0;        /* another app's others_fps holding this one's videos (fps_cap); 0: none */
+        this.fpsCapApp = '';
     }
 
     connect() {
@@ -155,6 +158,7 @@ class ClusterRender extends EventEmitter {
         if (this.sock) this.sock.destroy();
         this.sock = null;
         this.ready = false;
+        this._releaseFpsCap();
     }
 
     _open() {
@@ -198,6 +202,7 @@ class ClusterRender extends EventEmitter {
             this.ready = false;
             this.connected = false;
             this.pendingFrames.clear();
+            this._releaseFpsCap();
             if (wasReady) this.emit('disconnected');
             if (this.closed) return;
             const ms = BACKOFF_MS[Math.min(this.backoff, BACKOFF_MS.length - 1)];
@@ -230,6 +235,7 @@ class ClusterRender extends EventEmitter {
             this.targets = ev.targets;
             this.hostEdge = ev.host_edge === 1;   /* takes a host's edge_* */
             this.preload = ev.preload === 1;      /* knows a layer's preload */
+            this.othersFps = ev.others_fps === 1;   /* knows a layer's others_fps */
             this.ready = true;
             this.backoff = 0;
             this._pump();
@@ -240,6 +246,10 @@ class ClusterRender extends EventEmitter {
             this.emit('target', ev.target, ev.state, ev.holder, ev.reason, ev.guide_disabled === 1, ev.disabled === 1);
         } else if (ev.ev === 'budget') {
             this.emit('budget', ev.cap_kb_per_s, ev.max_kb_per_s, ev.reason);
+        } else if (ev.ev === 'fps_cap') {
+            this.fpsCap = ev.fps || 0;
+            this.fpsCapApp = this.fpsCap ? ev.app || '' : '';
+            this.emit('fps_cap', this.fpsCap, this.fpsCapApp);
         } else if (ev.ev === 'error') {
             /* a host refused is not sent again after a reconnect */
             const l = ev.op === 'host' ? this.layers.get(ev.ref) : null;
@@ -250,6 +260,14 @@ class ClusterRender extends EventEmitter {
         } else if (ev.ev === 'host') {
             this.emit('host', ev.target, ev);   /* ev.into empty: not hosted any more */
         }
+    }
+
+    /* The connection gone: no other app's request holds this one any more. */
+    _releaseFpsCap() {
+        if (!this.fpsCap) return;
+        this.fpsCap = 0;
+        this.fpsCapApp = '';
+        this.emit('fps_cap', 0, '');
     }
 
     _send(obj) { this._write(jsonMessage(obj)); }
@@ -372,7 +390,7 @@ class ClusterRender extends EventEmitter {
     }
 
     /* opts: target, klass, z, x, y, w, h, visible, exclusive, prewarm,
-     * preload, contend, guide_hold, yield, opacity, rotate, sx, sy, px, py, then per kind (see
+     * preload, contend, guide_hold, yield, others_fps, opacity, rotate, sx, sy, px, py, then per kind (see
      * PROTOCOL.md); an image's iw and ih default to its w and h; an
      * effect's time: true takes u_time from the renderer's clock. A mesh's:
      * projection, fov, ortho_h, near, far and its camera cx, cy, cz, crx,

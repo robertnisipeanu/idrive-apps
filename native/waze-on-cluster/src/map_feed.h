@@ -26,8 +26,9 @@
  * visible, so the renderer never draws an older picture first. A new
  * layer (a host taking or dropping the map, a new size) starts from a copy
  * of the old one's newest. A layer that scales (the HUD's) keeps the
- * newest picture whole, scales it once, at most video.fps a second, and
- * sends a repeat as a repeat of its last scaled frame.
+ * newest picture whole, scales it once, at most video.fps a second (the
+ * renderer's fps_cap when lower), and sends a repeat as a repeat of its
+ * last scaled frame.
  *
  * The app's status line follows the stream, the layer and its target: idle
  * until the first frame or while the stream is not live, idle with kWaiting
@@ -235,6 +236,13 @@ public:
      * asked for again once the last request is answered. */
     void request_report();
     const std::string &report() const { return report_; }
+    /* Another app's layer on the cluster asks for the other videos' upload
+     * bandwidth (cluster-render PROTOCOL.md "others_fps"): the renderer
+     * writes this feed's layer at most this many times a second, and a
+     * layer that scales scales no more often; 0: not held, and while the
+     * renderer is not reachable. */
+    unsigned fps_cap() const { return client_.fps_cap; }
+    const std::string &fps_cap_app() const { return client_.fps_cap_app; }
 
 private:
     void make_layer();

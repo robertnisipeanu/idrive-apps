@@ -86,6 +86,13 @@ public:
     void request_report();
     std::string report() const;
 
+    /* The cluster's renderer holds its map layer to this many updates a
+     * second for another app (MapFeed::fps_cap); 0: not held, or no
+     * cluster feed. The HUD's pictures come from the same decode at
+     * hud_fps, which picture_rate keeps as a floor. */
+    unsigned fps_cap() const { return cluster_ ? cluster_->fps_cap() : 0; }
+    std::string fps_cap_app() const { return cluster_ ? cluster_->fps_cap_app() : std::string(); }
+
     /* The cluster's feed while there is one, else null. */
     MapFeed *cluster() { return cluster_.get(); }
     /* The HUD's feed while there is one, else null. */

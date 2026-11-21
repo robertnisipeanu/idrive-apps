@@ -325,6 +325,29 @@ public:
     int64_t wake_in_ms(int64_t now_ms) const;
 
     LayerState state(uint32_t id, std::string *reason) const;
+
+    /* Bandwidth for a client's layer (PROTOCOL.md "others_fps"): while a
+     * layer with others_fps is shown, every video layer of the other
+     * clients updates at most that many times a second (its own fps when
+     * lower), and a target's composite at the highest rate its sources'
+     * clients are held to (its own when one of them is not held). Below
+     * kOthersFpsFloor counts as it; of several such layers the lowest
+     * holds. Its own client's videos are not held by it. Applied in
+     * arrange(), from the layers' states then: a layer hidden, waiting,
+     * dropped or gone with its client releases its hold in that tick, and
+     * the videos go back to their own clocks. With no such layer nothing
+     * of this runs. */
+    static const uint32_t kOthersFpsFloor = 15;
+    struct FpsRequest {
+        uint64_t owner = 0;
+        uint32_t layer = 0;
+        uint32_t fps = 0;   /* kOthersFpsFloor at least */
+    };
+    /* The layers shown with others_fps, as of the last arrange(). */
+    const std::vector<FpsRequest> &fps_requests() const { return fps_requests_; }
+    /* The rate owner's videos are held to; 0: none. *by: the request that
+     * holds them. */
+    uint32_t fps_cap(uint64_t owner, const FpsRequest **by = nullptr) const;
     Governor &governor() { return governor_; }
     /* The target's layers whose change waits to uncover a video's tiles
      * (defer_uncover). */
@@ -555,6 +578,9 @@ private:
      * or once allowed: kRemakeMs, kShrinkMs); *pl becomes the plan it is
      * made with when it does not. */
     bool keep_composite(int ti, VideoPlan *pl);
+    /* The shown others_fps requests (fps_requests_), and every video's
+     * clock held to its client's cap (fps_cap). */
+    void cap_videos(int64_t now_ms);
     void reconcile_drop(int ti, VideoPlan &pl);
     void reconcile_make(int ti, const VideoPlan &pl);
     void attach_composite(Target &t);
@@ -681,6 +707,8 @@ private:
     uint64_t seq_ = 0;
     uint64_t host_serial_ = 0;
     int64_t now_ms_ = 0;
+    std::vector<FpsRequest> fps_requests_;
+    bool capped_ = false;   /* a video's clock may be held: cap_videos() has work */
 };
 
 }  // namespace crs

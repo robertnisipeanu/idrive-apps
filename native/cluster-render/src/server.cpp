@@ -219,6 +219,9 @@ bool layer_params(const cr::Json &j, LayerParams *p, std::string *err)
         !fnum(j, "sy", -1000, 1000, &n.sy, err) || !fnum(j, "px", -8192, 8192, &n.px, err) ||
         !fnum(j, "py", -8192, 8192, &n.py, err))
         return false;
+    v = n.others_fps;
+    if (!num(j, "others_fps", 0, 60, &v, err)) return false;
+    n.others_fps = (uint32_t)v;
     n.pivot_x = n.pivot_x || j.count("px");
     n.pivot_y = n.pivot_y || j.count("py");
     struct Flag { const char *key; bool *field; } flags[] = {
@@ -607,8 +610,10 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"repeat", "1"},
                                  {"always_packed", "1"},
                                  {"host_edge", "1"},
-                                 {"preload", "1"}}));
+                                 {"preload", "1"},
+                                 {"others_fps", "1"}}));
         c.target_sent.clear();
+        c.fps_cap_sent = 0;
         c.host_sent.clear();
         c.host_gen = 0;
         log_info("client %llu: %s", (unsigned long long)c.id, c.app.c_str());
@@ -1154,9 +1159,31 @@ void Server::report(int64_t now_ms)
                                             {"src_h", std::to_string(h.src.h)}});
         }
     }
+    /* others_fps (PROTOCOL.md): who holds the others' videos, logged as it
+     * changes. */
+    std::string requests;
+    for (const Compositor::FpsRequest &r : comp_->fps_requests())
+        requests += (requests.empty() ? "" : ", ") + app_of(r.owner) + " layer " + std::to_string(r.layer) + " " +
+                    std::to_string(r.fps);
+    if (requests != fps_requests_) {
+        if (requests.empty())
+            log_info("others_fps: no layer asks; every video at its own rate");
+        else
+            log_info("others_fps: shown with it: %s; the other clients' videos at most that a second",
+                     requests.c_str());
+        fps_requests_ = requests;
+    }
     for (Client &c : clients_) {
         if (c.closing || c.app.empty())
             continue;
+        const Compositor::FpsRequest *by = nullptr;
+        const uint32_t cap = comp_->fps_cap(c.id, &by);
+        if (cap != c.fps_cap_sent) {
+            c.fps_cap_sent = cap;
+            send(c, cr::json_object({{"ev", cr::json_quote("fps_cap")},
+                                     {"fps", std::to_string(cap)},
+                                     {"app", cr::json_quote(by ? app_of(by->owner) : std::string())}}));
+        }
         if (c.host_gen != hosts_gen_) {
             c.host_gen = hosts_gen_;
             for (auto it = c.host_sent.begin(); it != c.host_sent.end();) {
@@ -1232,6 +1259,14 @@ void Server::report(int64_t now_ms)
             drop_client(i);
 }
 
+std::string Server::app_of(uint64_t id) const
+{
+    for (const Client &c : clients_)
+        if (c.id == id)
+            return c.app;
+    return "?";
+}
+
 std::string Server::status_text(int64_t now_ms) const
 {
     std::string s;
@@ -1246,6 +1281,8 @@ std::string Server::status_text(int64_t now_ms) const
     s += line;
     if (ceiling_text)
         s += ceiling_text();
+    if (!fps_requests_.empty())
+        s += "others_fps: " + fps_requests_ + "\n";
     for (size_t t = 0; t < slots_->targets().size(); t++) {
         const TargetSpec &spec = slots_->targets()[t];
         const TargetStatus &st = slots_->status((int)t);

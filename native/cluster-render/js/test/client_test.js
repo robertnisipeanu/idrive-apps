@@ -15,7 +15,9 @@
  * host ended when it is dropped; a hidden preload layer keeping its target
  * loaded, shown when made visible and loaded again after the linger, made
  * again with preload after the restart, and preload 0 releasing the target;
- * close() and connect() in one tick making one connection. */
+ * a layer's others_fps holding the other client (fps_cap) and releasing it
+ * when set to 0, dropped, or the held client closes; close() and connect()
+ * in one tick making one connection. */
 'use strict';
 
 const assert = require('assert');
@@ -227,6 +229,33 @@ async function main() {
     ok('hosted again', await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000));
     ovl.drop(over);
     ok('dropped: the map not hosted any more', await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
+
+    /* others_fps: the overlay's layer asks for the others' bandwidth. */
+    const caps = [];
+    waze.on('fps_cap', (fps, app) => caps.push(fps + ':' + app));
+    ok('the hello says the service knows others_fps', ovl.othersFps === true && waze.othersFps === true);
+    const ask = ovl.image({ target: 'panel', klass: 'overlay', others_fps: 20, w: 16, h: 16, iw: 16, ih: 16 });
+    ovl.pixels(ask, null, Buffer.alloc(16 * 16 * 4, 255));
+    ok('shown with others_fps 20: the other client told who asks, the asking one nothing',
+        await until(() => waze.fpsCap === 20, 3000) && waze.fpsCapApp === 'overlay' && ovl.fpsCap === 0 &&
+        caps.join() === '20:overlay');
+    ovl.set(ask, { others_fps: 0 });
+    ok('others_fps 0: released', await until(() => waze.fpsCap === 0, 2000) && caps.join() === '20:overlay,0:');
+    ovl.set(ask, { others_fps: 20 });
+    const held = await until(() => waze.fpsCap === 20, 2000);
+    ovl.drop(ask);
+    ok('dropped: released', held && await until(() => waze.fpsCap === 0, 2000));
+    const ask2 = ovl.image({ target: 'panel', klass: 'overlay', others_fps: 20, w: 16, h: 16, iw: 16, ih: 16 });
+    ovl.pixels(ask2, null, Buffer.alloc(16 * 16 * 4, 255));
+    const again = await until(() => waze.fpsCap === 20, 3000);
+    const before = caps.length;
+    waze.close();
+    ok('the held client closing: released here, told 0', again && waze.fpsCap === 0 && caps.length === before + 1 &&
+        caps[caps.length - 1] === '0:');
+    waze.connect();
+    ok('connected again: held again', await until(() => waze.fpsCap === 20, 3000));
+    ovl.drop(ask2);
+    ok('the request dropped: released', await until(() => waze.fpsCap === 0, 2000));
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',

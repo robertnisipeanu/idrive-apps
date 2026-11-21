@@ -47,7 +47,9 @@
  *   then brought to their own opacity over fade_ms in a few flushes; when
  *   nothing wants the target they stay drawn while they fade out, and it is
  *   released after the fade and the linger; a slot the display takes goes
- *   at once; a parked target stages nothing. */
+ *   at once; a parked target stages nothing;
+ * - others_fps: a shown layer holding the other clients' videos and
+ *   composites, and releasing them. */
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -2191,6 +2193,67 @@ static void kept_through_lock()
                                                                p.port.requests == 1 && p.port.remaps == 1);
 }
 
+/* others_fps (Compositor::fps_cap): a shown image asking 20 holds the other
+ * clients' videos, and the composite of three of them, to 20 updates a
+ * second, its own client's video not; with a source of its own client in
+ * the composite, the composite keeps its own rate; its client gone, every
+ * clock back. */
+static void others_fps()
+{
+    CompositorLimits lim;
+    lim.videos = 2;   /* the map's three videos compose; the panel's draws itself */
+    Rig r(0, lim);
+    std::string err;
+    VideoParams cam;
+    cam.w = 320;
+    cam.h = 240;
+    const std::vector<uint8_t> big = frame(1), small((size_t)320 * 360, 128);
+    auto video = [&](uint64_t owner, int target, const LayerParams &lp, const VideoParams &vp,
+                     const std::vector<uint8_t> &px) {
+        const uint32_t id = r.comp->add_video(owner, target, lp, vp, r.now, &err);
+        if (id)
+            static_cast<VideoLayer *>(r.comp->layer(owner, id))->offer(px.data(), r.now);
+        return id;
+    };
+    LayerParams c1 = params(Klass::Content, R(64, 64, 320, 240)), c2 = params(Klass::Content, R(704, 192, 320, 240));
+    c1.z = 1;
+    c2.z = 2;
+    video(1, r.map, params(Klass::Content, R(0, 0, W, H)), VideoParams(), big);
+    video(2, r.map, c1, cam, small);
+    video(4, r.map, c2, cam, small);
+    const uint32_t own = video(3, r.panel, params(Klass::Content, R(0, 0, 320, 240)), cam, small);
+    r.run(100);
+    r.slots.on_shown(0x010004f0, r.now);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(100);
+    const CompositeVideo *cv = r.comp->composite(r.map);
+    const VideoLayer *mine = static_cast<VideoLayer *>(r.comp->layer(3, own));
+    ok("others_fps: none asks: every clock its own, nothing requested",
+       cv && cv->clock_fps() == 30 && mine && mine->clock_fps() == 30 && r.comp->fps_requests().empty());
+    LayerParams ask = params(Klass::Overlay, R(400, 0, 8, 8));
+    ask.others_fps = 20;
+    const uint32_t img = r.comp->add_image(3, r.panel, ask, 8, 8, 30, Sampling::Nearest, r.now, &err);
+    std::vector<uint8_t> px(8 * 8 * 4, 1);
+    static_cast<ImageLayer *>(r.comp->layer(3, img))->update({}, px.data(), px.size(), &err);
+    r.run(100);
+    std::string why;
+    ok("others_fps: shown asking 20: the other clients' composite held at 20, its own client's video not",
+       r.comp->state(img, &why) == LayerState::Shown && r.comp->fps_requests().size() == 1 &&
+           r.comp->fps_cap(1) == 20 && r.comp->fps_cap(3) == 0 && cv->clock_fps() == 20 && mine->clock_fps() == 30);
+    LayerParams c3 = params(Klass::Content, R(400, 300, 320, 240));
+    c3.z = 3;
+    video(3, r.map, c3, cam, small);
+    r.run(100);
+    cv = r.comp->composite(r.map);
+    ok("others_fps: a source of the asking client in the composite: the composite at its own rate",
+       cv && cv->sources() == 4 && cv->clock_fps() == 30);
+    r.comp->remove_owner(3);
+    r.run(100);
+    cv = r.comp->composite(r.map);
+    ok("others_fps: its client gone: nothing requested, every clock its own",
+       r.comp->fps_requests().empty() && r.comp->fps_cap(1) == 0 && cv && cv->clock_fps() == 30);
+}
+
 int main()
 {
     image_first_upload();
@@ -2228,6 +2291,7 @@ int main()
     animations();
     fades();
     kept_through_lock();
+    others_fps();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

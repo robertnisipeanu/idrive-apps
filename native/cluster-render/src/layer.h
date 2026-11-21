@@ -55,6 +55,9 @@ struct LayerParams {
     bool preload = false;     /* its target's scene kept fetched, not mapped, while nothing shows it (slots.h) */
     bool guide_hold = true;   /* false: no guide hold for its target while it wants it (slots.h) */
     bool yield = true;        /* false: its target gives way to no stock pop-up while it wants it (slots.h) */
+    /* While it is shown, every other client's video at most this many
+     * updates a second (Compositor::fps_cap); 0: no request. */
+    uint32_t others_fps = 0;
     Rect rect;
     float opacity = 1.0f;
     /* A quad turned (degrees clockwise) and scaled about its pivot: px, py

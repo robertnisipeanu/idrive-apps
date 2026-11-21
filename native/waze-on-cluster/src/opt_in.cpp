@@ -12,7 +12,7 @@
 
 namespace woc {
 
-const FeatureKey kFeatureKeys[4] = {{"hosted_vpp_scale", 1}, {"always_packed", 1}, {"target_fps", 60}, {"picture_fps", 60}};
+const char *const kFeatureKeys[2] = {"hosted_vpp_scale", "always_packed"};
 
 namespace {
 
@@ -22,15 +22,10 @@ std::string trim(const std::string &s)
     return a == std::string::npos ? "" : s.substr(a, b - a + 1);
 }
 
-/* An opt-in key's value: a whole number from 0 to its hi, written without
- * a sign or a leading 0 (Config::num reads one as octal). */
-bool feature_value(const std::string &key, const std::string &value)
+bool feature_key(const std::string &key)
 {
-    const FeatureKey *k = std::find_if(std::begin(kFeatureKeys), std::end(kFeatureKeys),
-                                       [&](const FeatureKey &f) { return key == f.key; });
-    return k != std::end(kFeatureKeys) && !value.empty() && value.size() <= 9 &&
-           value.find_first_not_of("0123456789") == std::string::npos && (value == "0" || value[0] != '0') &&
-           std::stol(value) <= k->hi;
+    return std::find_if(std::begin(kFeatureKeys), std::end(kFeatureKeys), [&](const char *k) { return key == k; }) !=
+           std::end(kFeatureKeys);
 }
 
 /* The key of a key = value or key += value line. */
@@ -62,7 +57,7 @@ void load_features(cld::Config *cfg, const std::string &path)
             continue;
         const size_t eq = line.find('=');
         const std::string key = key_of(line), value = eq == std::string::npos ? "" : trim(line.substr(eq + 1));
-        if (!feature_value(key, value) || !cfg->set_pair(key + "=" + value, &err)) {
+        if (!feature_key(key) || (value != "0" && value != "1") || !cfg->set_pair(key + "=" + value, &err)) {
             log_warn("%s: \"%s\" left out", path.c_str(), trim(line).c_str());
             continue;
         }

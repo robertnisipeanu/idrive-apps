@@ -116,7 +116,13 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = false;
+    if (fps_cap) {
+        fps_cap = 0;
+        fps_cap_app.clear();
+        if (on_fps_cap)
+            on_fps_cap(0, "");
+    }
     cur_.clear();
     cur_px_.clear();
     cur_off_ = 0;
@@ -191,6 +197,7 @@ void Client::read_events()
             repeats_ = j["repeat"] == "1";
             always_packed_ = j["always_packed"] == "1";
             preload_ = j["preload"] == "1";
+            others_fps_ = j["others_fps"] == "1";
             ready_ = true;
             backoff_ = 0;
             if (on_ready)
@@ -217,6 +224,11 @@ void Client::read_events()
         } else if (ev == "budget" && on_budget) {
             on_budget((unsigned)std::strtoul(j["cap_kb_per_s"].c_str(), nullptr, 10),
                       (unsigned)std::strtoul(j["max_kb_per_s"].c_str(), nullptr, 10), j["reason"]);
+        } else if (ev == "fps_cap") {
+            fps_cap = (unsigned)std::strtoul(j["fps"].c_str(), nullptr, 10);
+            fps_cap_app = fps_cap ? j["app"] : std::string();
+            if (on_fps_cap)
+                on_fps_cap(fps_cap, fps_cap_app);
         } else if (ev == "status" && on_status) {
             on_status(j["text"]);
         } else if (ev == "host") {
@@ -356,6 +368,8 @@ std::vector<std::pair<std::string, std::string>> Client::fields(const char *op, 
         kv.push_back({"w", num(lo.w)});
         kv.push_back({"h", num(lo.h)});
     }
+    if (lo.others_fps)
+        kv.push_back({"others_fps", num(lo.others_fps)});
     return kv;
 }
 
@@ -595,9 +609,12 @@ void Client::set(uint32_t ref, const LayerOptions &lo)
     if (it == layers_.end() || it->second.kind == "asset" || it->second.kind == "scene")
         return;
     const std::string target = it->second.lo.target;
+    const unsigned others_fps = it->second.lo.others_fps;
     it->second.lo = lo;
     it->second.lo.target = target;
     std::vector<std::pair<std::string, std::string>> kv = fields("set", ref, it->second.lo);
+    if (others_fps && !lo.others_fps)
+        kv.push_back({"others_fps", "0"});   /* the request ends */
     if (it->second.kind != "mesh")
         turn_fields(&kv, it->second.lo);
     queue(json_object(kv));

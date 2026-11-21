@@ -99,6 +99,7 @@ Layer fields (all optional):
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
 | `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's turn box shows (README.md "Arbitration") |
 | `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Arbitration") |
+| `others_fps` | 0 | 15-60: bandwidth for this client ([below](#bandwidth-for-a-layer)); 1-14 count as 15; 0: no request. Send it only to a service whose hello has `others_fps` 1 (an older one ignores it) |
 | `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |
@@ -446,16 +447,38 @@ videos only, and not for videos the target draws through one composite.
 Send them only to a service whose hello has `host_edge` 1 (an older one
 ignores them, and draws no edge).
 
+### Bandwidth for a layer
+
+While a layer with `others_fps` is `shown`, every video layer of the other
+clients is written at most `others_fps` times a second (its own `fps` when
+that is lower), so this client's layers get the upload budget they leave.
+A target's videos composed into one go at the highest rate their clients
+are held to, or at their own when one of them is not held. Of several such
+layers the lowest `others_fps` holds; a client's own videos are never held
+by its own layers. 15 is the least: half the 30 a second a map is made at,
+below which a panning map visibly stutters.
+
+The hold ends in the tick the layer stops being shown: hidden, waiting
+(its target taken or not shown yet), dropped, `set` with `others_fps` 0,
+or its client gone, whatever way the connection ends. Nothing is kept: a
+service restarted holds nothing until a layer asks again, and the held
+videos' own `fps` is never changed. Each held client gets an `fps_cap`
+event when its hold starts, changes or ends, so a producer can make
+pictures no faster than they are written; a client never held gets none.
+The same on iDrive 7 and iDrive 8: the budget and the videos' clocks are
+the service's on both.
+
 ## Service to client
 
 Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
+| `fps_cap` | `fps` (0: not held any more), `app` (the client whose layer holds it; empty with 0) | another client's `others_fps` holds this client's video layers to `fps` updates a second, at another rate, or no longer ([above](#bandwidth-for-a-layer)) |
 | `error` | `op`, `ref`, `reason`; `line` for an edit line; `target` for a `host` | a message was refused, or an edit line changed nothing |
 | `status` | `text` | after a status request; among its lines, one for each slot the KOMBI's latest reports name: `slot 0x203 status 2: 0x1000400 class 0 map 1, ...` (each row's content, class and map status) |
 | `host` | `target`, `into` (the hosting scene's target; empty: `target` is not hosted any more), `shown`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h` | after the client's hello for each hosted target, and to every client when a host comes, changes or ends ([above](#hosting-another-target)) |

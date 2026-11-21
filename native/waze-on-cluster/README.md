@@ -153,31 +153,14 @@ panel. The patch advertises exactly that, so `tex_size` must equal it.
 `map_rect` draws the map stretched into a rect of the map slot.
 `target_fps` (30) caps the frame rate; `picture_fps` (0: every frame) makes
 at most that many pictures a second, which saves CPU when the phone sends
-more than the cluster takes (set it to `target_fps` then). Both can be
-lowered in `features.conf` ("A lower frame rate" below).
+more than the cluster takes (set it to `target_fps` then). While another
+app's layer on the cluster asks for upload bandwidth (cluster-render's
+`others_fps`), the renderer writes the map at most at the rate it asks, 15
+a second at the least, and the pictures follow; when that app hides its
+content or exits, both go back to these settings. Nothing is written to
+disk for it.
 `always_packed = 1` sends fewer bytes for the same map ("Experimental:
 hosted_vpp_scale and always_packed" below).
-
-### A lower frame rate
-
-On a head unit that is short of CPU, the map can run at fewer frames a
-second. Add both lines to `/var/opt/waze-on-cluster/features.conf`, which
-updates keep, each a whole number from 0 to 60:
-
-```
-target_fps = 20
-picture_fps = 20
-```
-
-The map then moves less smoothly, and the head unit makes and sends fewer
-pictures a second. A `picture_fps` below `target_fps` (or `hud_fps`) is
-raised to it, so set both. Without the lines nothing changes (`target_fps`
-30, `picture_fps` 0). They take effect when waze-on-cluster next starts,
-and the log names them (`opt-in settings from ...: target_fps 20,
-picture_fps 20`); a value out of range is left out, with a warning.
-Versions up to 0.11.0 leave them out of `features.conf` and keep 30 and 0.
-patchd moves any it finds in `waze-on-cluster.local.conf` to
-`features.conf`.
 
 ### Experimental: hosted_vpp_scale and always_packed
 

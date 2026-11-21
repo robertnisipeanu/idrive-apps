@@ -190,6 +190,14 @@ within one budget (`src/governor.h`, `kit/upload_pacer.h`):
   picture writes nothing. waze-on-cluster's `always_packed` key uses it
   (its README, "Experimental: hosted_vpp_scale and always_packed"). Layers
   without it write as above.
+- **Bandwidth for a layer.** A layer sent with `others_fps` (PROTOCOL.md
+  "Bandwidth for a layer"; only to a service whose hello has `others_fps`
+  1) holds every other client's videos to at most that many writes a
+  second, 15 at the least, while it is shown, so a client drawing its own
+  cluster gets the bandwidth a map at 30 a second would take. The hold
+  ends as soon as the layer is hidden, waits, goes or its client goes, and
+  nothing of it is kept. The held clients get an `fps_cap` event; the
+  status lists who asks.
 - **The HUD's share.** While `hud` has a layer, its layers and assets write
   from up to half of the budget, only as much as they spend; what the HUD
   leaves goes to the cluster. With the cluster idle the HUD gets the whole

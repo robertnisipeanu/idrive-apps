@@ -915,6 +915,57 @@ void Compositor::arrange(int64_t now_ms)
         if (t.composite && t.composite->arranged())
             t.dirty = true;
     }
+    cap_videos(now_ms);
+}
+
+uint32_t Compositor::fps_cap(uint64_t owner, const FpsRequest **by) const
+{
+    const FpsRequest *low = nullptr;
+    for (const FpsRequest &r : fps_requests_)
+        if (r.owner != owner && (!low || r.fps < low->fps))
+            low = &r;
+    if (by)
+        *by = low;
+    return low ? low->fps : 0;
+}
+
+void Compositor::cap_videos(int64_t now_ms)
+{
+    fps_requests_.clear();
+    for (const auto &kv : layers_) {
+        const Layer &l = *kv.second.layer;
+        if (!l.params.others_fps)
+            continue;
+        std::string reason;
+        if (state(kv.first, &reason) == LayerState::Shown)
+            fps_requests_.push_back(
+                FpsRequest{kv.second.owner, kv.first, std::max(l.params.others_fps, kOthersFpsFloor)});
+    }
+    if (fps_requests_.empty() && !capped_)
+        return;
+    /* the last tick of a hold puts every clock back */
+    capped_ = !fps_requests_.empty();
+    for (size_t ti = 0; ti < targets_.size(); ti++) {
+        /* a composite: the highest cap of its sources' clients, none when
+         * one of them is not held */
+        uint32_t composite_cap = 0;
+        bool sources = false, unheld = false;
+        for (auto &kv : layers_) {
+            Entry &e = kv.second;
+            if (e.layer->target() != (int)ti || std::strcmp(e.layer->kind(), "video"))
+                continue;
+            const uint32_t cap = fps_cap(e.owner);
+            if (e.composited) {
+                sources = true;
+                unheld = unheld || !cap;
+                composite_cap = std::max(composite_cap, cap);
+                continue;
+            }
+            static_cast<VideoLayer *>(e.layer.get())->cap_fps(cap, now_ms);
+        }
+        if (targets_[ti].composite)
+            targets_[ti].composite->cap_fps(sources && !unheld ? composite_cap : 0, now_ms);
+    }
 }
 
 VideoEdge Compositor::edge_for(int ti, const Entry &e) const
