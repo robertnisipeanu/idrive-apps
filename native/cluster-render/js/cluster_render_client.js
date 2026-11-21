@@ -54,8 +54,8 @@ const FRAME_T = 0x46;   /* 'F' */
 const MESH_T = 0x4d;    /* 'M' */
 const MAX_DIRTY = 16;
 const BACKOFF_MS = [250, 500, 1000, 2000];
-const SET_KEYS = ['klass', 'z', 'x', 'y', 'w', 'h', 'visible', 'exclusive', 'prewarm', 'contend', 'guide_hold', 'yield',
-    'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
+const SET_KEYS = ['klass', 'z', 'x', 'y', 'w', 'h', 'visible', 'exclusive', 'prewarm', 'preload', 'contend',
+    'guide_hold', 'yield', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
 const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'cz', 'crx', 'cry', 'crz'];
 const UNIFORM_WIDTH = { float: 1, vec2: 2, vec3: 3, vec4: 4, mat4: 16 };
 
@@ -229,6 +229,7 @@ class ClusterRender extends EventEmitter {
             this.backend = ev.backend;
             this.targets = ev.targets;
             this.hostEdge = ev.host_edge === 1;   /* takes a host's edge_* */
+            this.preload = ev.preload === 1;      /* knows a layer's preload */
             this.ready = true;
             this.backoff = 0;
             this._pump();
@@ -371,7 +372,7 @@ class ClusterRender extends EventEmitter {
     }
 
     /* opts: target, klass, z, x, y, w, h, visible, exclusive, prewarm,
-     * contend, guide_hold, yield, opacity, rotate, sx, sy, px, py, then per kind (see
+     * preload, contend, guide_hold, yield, opacity, rotate, sx, sy, px, py, then per kind (see
      * PROTOCOL.md); an image's iw and ih default to its w and h; an
      * effect's time: true takes u_time from the renderer's clock. A mesh's:
      * projection, fov, ortho_h, near, far and its camera cx, cy, cz, crx,

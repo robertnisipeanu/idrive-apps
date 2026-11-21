@@ -222,8 +222,8 @@ bool layer_params(const cr::Json &j, LayerParams *p, std::string *err)
     n.pivot_x = n.pivot_x || j.count("px");
     n.pivot_y = n.pivot_y || j.count("py");
     struct Flag { const char *key; bool *field; } flags[] = {
-        {"visible", &n.visible}, {"exclusive", &n.exclusive}, {"prewarm", &n.prewarm}, {"contend", &n.contend},
-        {"guide_hold", &n.guide_hold}, {"yield", &n.yield}};
+        {"visible", &n.visible}, {"exclusive", &n.exclusive}, {"prewarm", &n.prewarm}, {"preload", &n.preload},
+        {"contend", &n.contend}, {"guide_hold", &n.guide_hold}, {"yield", &n.yield}};
     for (const Flag &f : flags) {
         v = *f.field ? 1 : 0;
         if (!num(j, f.key, 0, 1, &v, err)) return false;
@@ -606,7 +606,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"targets", cr::json_quote(targets)},
                                  {"repeat", "1"},
                                  {"always_packed", "1"},
-                                 {"host_edge", "1"}}));
+                                 {"host_edge", "1"},
+                                 {"preload", "1"}}));
         c.target_sent.clear();
         c.host_sent.clear();
         c.host_gen = 0;

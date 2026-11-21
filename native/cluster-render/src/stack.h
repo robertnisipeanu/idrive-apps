@@ -16,7 +16,9 @@
  * content), or visible and prewarm (it asks for the slot before its first
  * content, so that content shows at once). It contends with the stock HMI
  * while any wanting layer does (slots.h), and lets the guide holds that
- * follow it hold their slots unless a wanting layer has guide_hold false. */
+ * follow it hold their slots unless a wanting layer has guide_hold false.
+ * It is preloaded while any layer, visible or not, has preload (slots.h
+ * "Preload"). */
 #ifndef CRS_STACK_H
 #define CRS_STACK_H
 
@@ -36,7 +38,7 @@ struct StackItem {
     int z = 0;
     uint64_t seq = 0;   /* creation order */
     bool visible = true, ready = false, exclusive = false, prewarm = false, contend = false, guide_hold = true;
-    bool yield = true;
+    bool yield = true, preload = false;
     bool shown = true;   /* its pixels are on the display (Layer::on_display) */
 };
 
@@ -44,7 +46,7 @@ struct Arrangement {
     std::vector<uint32_t> order;       /* every layer, bottom to top */
     std::vector<uint32_t> drawn;       /* visible, ready and not below a drawn, shown exclusive layer */
     std::vector<uint32_t> suspended;   /* visible and ready, but below a drawn, shown exclusive layer */
-    bool wanted = false, contend = false, guide_hold = true, yield = true;
+    bool wanted = false, contend = false, guide_hold = true, yield = true, preload = false;
 };
 
 Arrangement arrange(std::vector<StackItem> items);

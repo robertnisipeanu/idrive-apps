@@ -843,6 +843,7 @@ void Compositor::arrange(int64_t now_ms)
             it.ready = l.ready(now_ms) && assets_have(e);
             it.exclusive = l.params.exclusive;
             it.prewarm = l.params.prewarm;
+            it.preload = l.params.preload;
             it.contend = l.params.contend;
             it.guide_hold = l.params.guide_hold;
             it.yield = l.params.yield;
@@ -860,7 +861,7 @@ void Compositor::arrange(int64_t now_ms)
             t.arr.contend = t.arr.contend || scenes_[sc].contend;
         }
         fade((int)ti, t, now_ms);
-        slots_->want((int)ti, t.arr.wanted, t.arr.contend, t.arr.guide_hold, t.arr.yield);
+        slots_->want((int)ti, t.arr.wanted, t.arr.contend, t.arr.guide_hold, t.arr.yield, t.arr.preload);
         if (!t.graph)
             continue;
         const bool cv = t.composite && t.composite->attached();
@@ -1017,11 +1018,12 @@ void Compositor::render(int64_t now_ms)
     bool sharing = false;
     for (const auto &kv : layers_) {
         const int ti = kv.second.layer->target();
-        sharing = sharing || (slots_->targets()[ti].share && slots_->requested(ti));
+        sharing = sharing || (slots_->targets()[ti].share && (slots_->requested(ti) || slots_->loaded(ti)));
     }
     pacer_.set_share(sharing ? kSharePct : 0);
     /* Released, or kept through a lock: nothing of a target is asked for,
-     * and a kept scene keeps its last flush. Parked or being mapped again
+     * and a kept scene keeps its last flush. Loaded (preload): its scene is
+     * fetched, not mapped, and stages as a shown one's. Parked or being mapped again
      * after a lock: nothing of it is on screen, and the link carries the
      * HMI's content too. It stages again once shown. Each target staging is told what covers its videos; one
      * with held tiles to uncover, or an alert waiting for its first write,
@@ -1727,11 +1729,11 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             best = w;
     };
     for (const auto &kv : layers_)
-        if (slots_->requested(kv.second.layer->target()))
+        if (slots_->requested(kv.second.layer->target()) || slots_->loaded(kv.second.layer->target()))
             at(kv.second.layer->wake_in_ms(now_ms));
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         const Target &t = targets_[ti];
-        if (t.composite && slots_->requested((int)ti))
+        if (t.composite && (slots_->requested((int)ti) || slots_->loaded((int)ti)))
             at(t.composite->wake_in_ms(now_ms));
         if (t.remake_ms >= 0)
             at(std::max<int64_t>(1, t.remake_ms - now_ms));

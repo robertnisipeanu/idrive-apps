@@ -61,7 +61,7 @@ int Service::timeout_ms(int64_t now_ms) const
 {
     bool active = false;
     for (size_t i = 0; i < slots_.targets().size(); i++)
-        active = active || slots_.requested((int)i);
+        active = active || slots_.requested((int)i) || slots_.loaded((int)i);
     /* Idle: four times a second, so a stalled layer's state, a slot poll and
      * the status file stay current. */
     int64_t t = active ? 1000 / std::max(1, cfg_.fps) : 250;

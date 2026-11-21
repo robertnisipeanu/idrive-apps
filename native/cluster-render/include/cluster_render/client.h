@@ -52,6 +52,7 @@ struct LayerOptions {
     bool visible = true;
     bool exclusive = false;          /* hides every layer below it while drawn */
     bool prewarm = false;            /* asks for the slot before the first content */
+    bool preload = false;            /* keeps the target's scene loaded on the display while not shown */
     bool contend = false;            /* retries a slot the stock HMI takes */
     bool guide_hold = true;          /* false: the stock HMI's guidance box shows while this layer wants the map */
     bool yield = true;               /* false: the target stays shown over the stock HMI's pop-ups while this layer wants it */
@@ -300,6 +301,8 @@ public:
     std::string backend, targets;
     /* The service's hello takes a video layer's always_packed (VideoOptions). */
     bool takes_always_packed() const { return always_packed_; }
+    /* The service's hello knows a layer's preload (LayerOptions). */
+    bool takes_preload() const { return preload_; }
 
 private:
     struct Part {
@@ -389,6 +392,7 @@ private:
     uint32_t last_frame_ref_ = 0;   /* the layer whose frame went last; cur_px_'s while it is sent */
     bool repeats_ = false;          /* the service takes repeats (its hello) */
     bool always_packed_ = false;    /* and always_packed */
+    bool preload_ = false;          /* and knows preload */
 };
 
 }  // namespace cr

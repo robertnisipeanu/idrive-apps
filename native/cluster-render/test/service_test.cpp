@@ -44,7 +44,8 @@
  * released nor asked for again; its client gone, kept through the linger
  * and then released. The HUD's layers choose whether it gives way to the
  * stock pop-ups (yield), a client without the field getting it. A scene
- * with layers and a host of the map (layers_and_hosting). */
+ * with layers and a host of the map (layers_and_hosting). A layer's
+ * preload, end to end (preload). */
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -1470,6 +1471,62 @@ static void layers_and_hosting()
     (void)removed;
 }
 
+/* Preload with the C++ client: the hello says the service knows it; a
+ * hidden preload layer has its target fetched and not mapped (loaded, in
+ * the status too); shown, the target is mapped with no second fetch;
+ * hidden again, unmapped after the linger and loaded, not released; the
+ * service restarting under the client, the field is sent again and the
+ * target loaded again; preload 0 releases it. */
+static void preload()
+{
+    Rig r;
+    cr::Client c("preload", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("preload: the hello says the service knows preload", e.ready == 1 && c.takes_preload());
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.w = lo.h = 64;
+    lo.visible = false;
+    lo.preload = true;
+    cr::ImageOptions io;
+    io.w = io.h = 64;
+    const uint32_t img = c.image(lo, io);
+    std::vector<uint8_t> px(64 * 64 * 4, 200);
+    c.pixels(img, {}, px.data(), px.size());
+    r.pump(300);
+    ok("preload: a hidden preload layer: its target loaded, fetched and not mapped",
+       e.target["panel"] == "loaded" && e.layer[img] == "hidden" && r.port.loads == 1 && r.port.requests == 0 &&
+           !r.port.row(0x203, 0x01000400));
+    ok("preload: the status names the target loaded",
+       has(r.svc->server().status_text(r.now), "target panel: slot 0x203 scene 0x1000400 1920x720: loaded; scene "
+                                               "fetched, not mapped (preload)"));
+    lo.visible = true;
+    c.set(img, lo);
+    r.pump(1000);   /* the map spaced 1 s from the load */
+    ok("preload: made visible: shown, mapped with no second fetch", e.layer[img] == "shown" &&
+                                                                      e.target["panel"] == "shown" &&
+                                                                      r.port.remaps == 1 && r.port.loads == 1 &&
+                                                                      r.port.requests == 0);
+    lo.visible = false;
+    c.set(img, lo);
+    r.pump(4000);
+    ok("preload: hidden again: unmapped after the linger, loaded, not released",
+       e.target["panel"] == "loaded" && r.port.releases == 0 && !r.port.row(0x203, 0x01000400));
+    r.svc.reset();
+    r.start();
+    e.target.clear();
+    r.pump(2000);
+    ok("preload: the service restarted: the client sends preload again, the target loaded again",
+       e.ready == 2 && e.target["panel"] == "loaded" && r.port.loads == 2 && r.port.requests == 0);
+    lo.preload = false;
+    c.set(img, lo);
+    r.pump(100);
+    ok("preload: preload 0: released", e.target["panel"] == "idle" && r.port.releases == 1);
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -1978,6 +2035,7 @@ int main()
     framing();
     scene_files();
     layers_and_hosting();
+    preload();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

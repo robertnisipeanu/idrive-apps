@@ -12,8 +12,10 @@
  * layers there waiting, its edit lines kept by key, a malformed one and one
  * changing nothing reported, and dropped; one with layers, the layers drawn
  * over it, hosting the map, shown and hidden, the other client told, and the
- * host ended when it is dropped; close() and connect() in one tick making one
- * connection. */
+ * host ended when it is dropped; a hidden preload layer keeping its target
+ * loaded, shown when made visible and loaded again after the linger, made
+ * again with preload after the restart, and preload 0 releasing the target;
+ * close() and connect() in one tick making one connection. */
 'use strict';
 
 const assert = require('assert');
@@ -139,16 +141,35 @@ async function main() {
     ovl.status();
     ok('the status names the asset', await until(() => status.indexOf('asset') >= 0 && status.indexOf('r8 64x32') >= 0, 1000));
 
+    ok('the hello says the service knows preload', ovl.preload === true);
+    const pre = ovl.image({ target: 'hud', visible: false, preload: true, w: 32, h: 32, iw: 32, ih: 32 });
+    ovl.pixels(pre, null, Buffer.alloc(32 * 32 * 4, 77));
+    ok('a hidden preload layer: its target loaded, the layer hidden',
+        await until(() => eo.target.hud === 'loaded', 2000) && eo.layer[pre] === 'hidden');
+    status = '';
+    ovl.status();
+    ok('the status names the target loaded', await until(() => status.indexOf('target hud') >= 0, 1000) &&
+        /target hud: [^\n]*: loaded/.test(status));
+    ovl.set(pre, { visible: true });
+    ok('made visible: shown', await until(() => eo.layer[pre] === 'shown' && eo.target.hud === 'shown', 3000));
+    ovl.set(pre, { visible: false });
+    ok('hidden again: loaded after the linger', await until(() => eo.target.hud === 'loaded', 5000));
+
     svc.kill();
     await new Promise((r) => svc.once('exit', r));
     ok('the service gone: both clients notice', await until(() => eo.gone === 1 && ew.gone === 1, 1000));
     eo.layer = {};
     ew.layer = {};
+    eo.target = {};
     svc = await startService();
     ok('it comes back: both clients reconnect and their layers are shown again',
         await until(() => eo.layer[badge] === 'shown' && ew.layer[map] === 'shown', 5000) && eo.ready >= 2);
     ok('the asset, its effect, the mesh part and its geometry are made again',
         await until(() => eo.layer[label] === 'shown' && eo.layer[car] === 'shown', 2000));
+    ok('the preload layer is made again with preload: its target loaded',
+        await until(() => eo.target.hud === 'loaded', 3000) && eo.layer[pre] === 'hidden');
+    ovl.set(pre, { preload: false });
+    ok('preload 0: the target released', await until(() => eo.target.hud === 'idle', 2000));
 
     const file = path.join(scenes, 'gauge.scene');
     fs.writeFileSync(file, GAUGE);
