@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+`hud_black_background` is saved in `map.state.conf` and changed live by the
+render's `{"cmd":"hud","hud_black_background":"0"|"1"}` and patchd's
+`{"cmd":"hud-black-background","on":0|1}`, per driver profile; the render's
+status carries it. Changed, the newest picture is scaled again at once.
+
 ## 0.11.0
 
 CarPlay's cluster map patch is applied in CarPlay's memory each time it

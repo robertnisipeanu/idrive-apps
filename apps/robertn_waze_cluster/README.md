@@ -70,6 +70,10 @@ The app is in the head unit's display language.
 - **Keep HUD map over BMW's pop-ups:** unticked (the default), the map steps
   aside while BMW's media and list pop-ups show on the HUD. Ticked, it
   stays.
+- **Hide the night map's background on the HUD:** ticked (the default), a
+  night map's dark background is made black, which the HUD shows as
+  nothing, so only the roads, the route and the labels show. Unticked, the
+  HUD shows the map as the phone sends it, its background included.
 - **Size:** how wide the map is on the HUD.
 - **Move left / Move right / Move up / Move down** and **Centre:** where the
   map sits on the HUD.

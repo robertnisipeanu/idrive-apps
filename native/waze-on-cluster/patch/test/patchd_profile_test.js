@@ -107,8 +107,9 @@ function state() {
     return s;
 }
 function profiles() { var t = fs.readFileSync(PROFILES, 'utf8'); try { return JSON.parse(t); } catch (e) { throw new Error(e.message + ': ' + t); } }
-function settings(cluster, hud, pct, x, y, keep) {
-    return { cluster: cluster, hud: hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y, hud_keep_shown: keep || 0 };
+function settings(cluster, hud, pct, x, y, keep, black) {
+    return { cluster: cluster, hud: hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y, hud_keep_shown: keep || 0,
+        hud_black_background: black === undefined ? 1 : black };
 }
 function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 /* For a check that nothing is written: past the save's delay. */
@@ -224,9 +225,10 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
 
     /* The format a patchd and render without profiles read. */
     var lines = fs.readFileSync(STATE, 'utf8').split('\n').filter(Boolean);
-    ok('map.state.conf: only "key = whole number" lines of the six map keys (0.9.x reads them, leaving out hud_keep_shown)',
-        lines.length === 6 && lines.every(function (l) {
-            return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y|hud_keep_shown) = -?\d+$/.test(l);
+    ok('map.state.conf: only "key = whole number" lines of the seven map keys (0.9.x reads them, leaving out ' +
+        'hud_keep_shown and hud_black_background)',
+        lines.length === 7 && lines.every(function (l) {
+            return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y|hud_keep_shown|hud_black_background) = -?\d+$/.test(l);
         }), lines.join('|'));
 
     /* Untick: the shared settings back, the copy gone. */
@@ -420,7 +422,8 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     var OFF = settings(0, 0, 0, 0, 0), ON = settings(1, 0, 0, 0, 0);
     /* map.state.conf's settings, in whatever order its lines are */
     var sameKeys = function (a, b) { return Object.keys(b).length === Object.keys(a).length && Object.keys(b).every(function (k) { return a[k] === b[k]; }); };
-    fs.writeFileSync(STATE, 'cluster = 1\nhud = 0\nhud_width_pct = 0\nhud_offset_x = 0\nhud_offset_y = 0\nhud_keep_shown = 0\n');
+    fs.writeFileSync(STATE, 'cluster = 1\nhud = 0\nhud_width_pct = 0\nhud_offset_x = 0\nhud_offset_y = 0\nhud_keep_shown = 0\n' +
+        'hud_black_background = 1\n');
     await start();
     await ask({ cmd: 'profile', id: A });
     await ask({ cmd: 'profile-own', id: A, on: 1 });
@@ -457,7 +460,7 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     lines = fs.readFileSync(STATE, 'utf8').split('\n').filter(Boolean);
     ok('started again: the shared Off kept, map.state.conf in the lines an earlier version reads', r.ok && !r.changed && same(r.settings, OFF) &&
         lines.indexOf('cluster = 0') >= 0 && lines.indexOf('hud = 0') >= 0 &&
-        lines.every(function (l) { return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y|hud_keep_shown) = -?\d+$/.test(l); }),
+        lines.every(function (l) { return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y|hud_keep_shown|hud_black_background) = -?\d+$/.test(l); }),
         lines.join('|'));
     r = await ask({ cmd: 'cluster', on: 1 });
     ok('the cluster again from Off: saved', r.ok && await when(function () { return sameKeys(state(), ON); }), JSON.stringify(state()));
@@ -485,8 +488,9 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     var mark = out.length;
     await start();
     r = await ask({ cmd: 'profile', id: A });
-    ok('a profiles.json from before hud_keep_shown: A keeps its own settings, giving way', r.ok && r.own &&
-        same(r.settings, settings(1, 1, 50, 0, 0, 0)) && !/WARNING: driver profiles/.test(out.slice(mark)), JSON.stringify(r));
+    ok('a profiles.json from before hud_keep_shown and hud_black_background: A keeps its own settings, giving way, ' +
+        'the background made black', r.ok && r.own &&
+        same(r.settings, settings(1, 1, 50, 0, 0, 0, 1)) && !/WARNING: driver profiles/.test(out.slice(mark)), JSON.stringify(r));
     r = await ask({ cmd: 'hud-keep-shown', on: 1 });
     ok('kept shown as A\'s own: in A\'s copy and map.state.conf', r.ok && r.hud_keep_shown === 1 && await when(function () {
         return state().hud_keep_shown === 1 && profiles().own[A].hud_keep_shown === 1;
@@ -497,6 +501,18 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: A });
     ok('back to A: kept shown, changed', r.ok && r.own && r.changed && r.settings.hud_keep_shown === 1 &&
         await when(function () { return state().hud_keep_shown === 1; }), JSON.stringify(r));
+
+    /* A night map's background on the HUD, per profile. */
+    r = await ask({ cmd: 'hud-black-background', on: 0 });
+    ok('the map as sent as A\'s own: in A\'s copy and map.state.conf', r.ok && r.hud_black_background === 0 && await when(function () {
+        return state().hud_black_background === 0 && profiles().own[A].hud_black_background === 0;
+    }), JSON.stringify(profiles()));
+    r = await ask({ cmd: 'profile', id: B });
+    ok('B without its own: the background made black, changed', r.ok && !r.own && r.changed && r.settings.hud_black_background === 1 &&
+        await when(function () { return state().hud_black_background === 1; }), JSON.stringify(r));
+    r = await ask({ cmd: 'profile', id: A });
+    ok('back to A: as sent, changed', r.ok && r.own && r.changed && r.settings.hud_black_background === 0 &&
+        await when(function () { return state().hud_black_background === 0; }), JSON.stringify(r));
 })().catch(function (e) {
     ok('no error: ' + e.message, false);
 }).then(function () {
