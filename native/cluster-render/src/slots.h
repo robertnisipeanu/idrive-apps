@@ -220,9 +220,8 @@
  *   (the unmap not done) is released and loaded again on the ladder. A
  *   target that leaves Loading before its fetch completes (a pop-up it
  *   gives way to) is released and loaded again: Loaded always follows a
- *   completed fetch. A
- *   kept target (Kept through a lock) nothing wants is Loaded, its fetch
- *   kept. A lock leaves a Loaded target as it is: it is not mapped. With no
+ *   completed fetch. A kept target (Kept through a lock) nothing wants is
+ *   Loaded, its fetch kept. A lock leaves a Loaded target as it is: it is not mapped. With no
  *   preload layer left, a Loading or Loaded target nothing wants is
  *   released (unfetched) at once. A fetch the display drops while Loaded
  *   (on_lost), or one loaded when the heartbeat replies stop (drop_kept),
