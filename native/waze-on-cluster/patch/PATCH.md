@@ -907,6 +907,7 @@ version patched (`rollback_test.js` runs each one from its release tag):
 | 0.9.12–0.10.1 (F) | stock | as E | as E |
 | 0.10.2–0.10.3 (G) | stock | as E | Edits 1–4 and Edit 5 with the URL with ETA written, Edit 6 kept |
 | 0.10.4–0.10.6 (H) | stock | stock | 0.10.4–0.10.5: nothing to write; 0.10.6: its safe area 476x306 written |
+| 0.11.0–0.12.0 (I) | stock | stock | as this version: carplay put back to stock, the patch planned in memory |
 
 Every release reads this version's Edit 4 as patched (138x61 mm, a safe
 area inside the frame), and its activate writes its own safe area. A and B

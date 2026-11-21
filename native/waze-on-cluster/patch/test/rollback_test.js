@@ -29,12 +29,15 @@
  *   H 0.10.4-0.10.12 G, writing F's URL again, and the ShowUI URL edit;
  *                  0.10.6 writes the safe area 476x306 at 306,72, every
  *                  other release and this version's plan 504x368 at 286,72
- * Groups A-D know four edits, E-G five, H and this version six. E and F write
- * and know the map URL (`maps:/car/instrumentcluster/map`) only, G writes the
- * URL with `?showETA=yes` and restores either, H writes the map URL and the
- * ShowUI URL, and H and this version restore either form of the map URL.
- * Only H and this version know the ShowUI URL edit. The app's patch on disk
- * is the one the last of them (earlier_patcher.js) writes.
+ *   I 0.11.0-      as this version: the patch planned in memory, carplay
+ *                  stock on disk; an earlier patch in the file put back
+ * Groups A-D know four edits, E-G five, H, I and this version six. E and F
+ * write and know the map URL (`maps:/car/instrumentcluster/map`) only, G
+ * writes the URL with `?showETA=yes` and restores either, H writes the map
+ * URL and the ShowUI URL, and H, I and this version restore either form of
+ * the map URL. Only H, I and this version know the ShowUI URL edit. The app's
+ * patch on disk is the one the last of H (earlier_patcher.js) writes; I and
+ * this version write none.
  *
  * With CARPLAY_BIN every release runs on a copy of carplay 22.28.3; without
  * it B-G run on a synthetic build (synthetic_carplay.js), A not at all.
@@ -70,7 +73,7 @@ function semver(v) { return v.split('.').map(Number); }
 function cmp(a, b) { a = semver(a); b = semver(b); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
 function group(v) {
     return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' :
-        cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : cmp(v, '0.10.3') <= 0 ? 'G' : 'H';
+        cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : cmp(v, '0.10.3') <= 0 ? 'G' : cmp(v, '0.10.12') <= 0 ? 'H' : 'I';
 }
 
 function tags() {
@@ -130,7 +133,7 @@ function removePatch(d) { return patcher(d, ['revert', '--target', TGT, '--yes']
 function uninstall(d) { return patcher(d, ['revert', '--target', TGT, '--yes', '--drop-backup']); }
 
 /* Boot recovery's restore of each release, as its boot step and watcher run
- * it once carplay failed enough: D-G plan from the trusted backup
+ * it once carplay failed enough: D-I plan from the trusted backup
  * (restoreTarget), C and earlier classify carplay with their patcher's
  * status and, when it is restorable, run their realRestore. */
 var DRIVER = path.join(dir, 'recover.js');
@@ -138,7 +141,7 @@ fs.writeFileSync(DRIVER, [
     '"use strict";',
     'var d = process.argv[2], g = process.argv[3], cp = require("child_process"), rec = require(d + "/recovery.js");',
     'function done(e, r) { process.stdout.write("RESULT " + (e ? "error " + e.message : "ok " + (r || "")) + "\\n"); process.exit(0); }',
-    'if (/^[DEFGHN]$/.test(g)) {',
+    'if (/^[DEFGHIN]$/.test(g)) {',
     '    var t = rec.TARGETS.carplay;',
     '    rec.restoreTarget(t, false, 3, done);',
     '} else {',
@@ -183,33 +186,41 @@ var SD = path.join(W, 'var');
 fs.mkdirSync(SD, { recursive: true });
 var IENV = Object.assign({}, ENV, { WOC_STATE_DIR: SD, WOC_PRELOAD_DIR: path.join(W, 'run'), WOC_CODING: car.CODING });
 function clearInmem() { fs.readdirSync(SD).forEach(function (f) { try { fs.unlinkSync(path.join(SD, f)); } catch (e) {} }); }
-function inmemKind() {
-    var r = cp.spawnSync(process.execPath, ['-e', 'console.log(String(require(process.argv[1]).kind("carplay")))', path.join(NEW, 'inmem.js')], { encoding: 'utf8', env: IENV });
+/* The in-memory patch's kind ('proven', 'unproven', 'null') and a plan of
+ * the app's patch, by the inmem.js in folder d (default this version's). */
+function inmemKind(d) {
+    var r = cp.spawnSync(process.execPath, ['-e', 'console.log(String(require(process.argv[1]).kind("carplay")))', path.join(d || NEW, 'inmem.js')], { encoding: 'utf8', env: IENV });
     return (r.stdout || '').trim();
 }
-function makePlan() {
+function makePlan(d) {
     var r = cp.spawnSync(process.execPath, ['-e', 'require(process.argv[1]).makePlan("carplay", ["--panel", "high", "--coding", process.argv[2]].concat(process.argv[3] ? ["--unproven"] : []), 60000, function (e) { console.log(e ? "ERR " + e.message : "OK"); })',
-        path.join(NEW, 'inmem.js'), car.CODING, BIN ? '' : '1'], { encoding: 'utf8', env: IENV });
+        path.join(d || NEW, 'inmem.js'), car.CODING, BIN ? '' : '1'], { encoding: 'utf8', env: IENV });
     return (r.stdout || '').trim();
 }
-/* This version's activate, as its patcher steps (patchd.js inmemApply;
- * patchd_activate_test.js runs patchd itself): a file the patcher does not
- * recognise, or with another tool's change besides ours, is left as it is;
- * an earlier release's patch, or our backup, is put back to stock with the
- * backup dropped; then the plan is made from the stock file. 'planned'
- * (carplay stock, no backup, the plan and its record), 'left' (nothing
- * written), or what failed. */
-function activateNew() {
-    var st = patcher(NEW, ['status', '--target', TGT]).out;
+function readPlan() { try { return fs.readFileSync(path.join(SD, 'inmem-carplay.plan'), 'utf8'); } catch (e) { return null; } }
+/* The activate of this version or of an I release (folder d), as its
+ * patcher steps (patchd.js inmemApply; patchd_activate_test.js runs patchd
+ * itself): a file the patcher does not recognise, or with another tool's
+ * change besides ours, is left as it is; an earlier release's patch, or our
+ * backup, is put back to stock with the backup dropped; then the plan is
+ * made from the stock file. 'planned' (carplay stock, no backup, the plan
+ * and its record), 'left' (nothing written), or what failed. */
+function activateIn(d) {
+    var st = patcher(d, ['status', '--target', TGT]).out;
     if (/known:\s+NO/.test(st) || /^foreign:\s+yes$/m.test(st)) return 'left';
     if (/^restorable:\s+yes$/m.test(st) || fs.existsSync(TGT + '.woc-orig')) {
-        var rv = uninstall(NEW);
+        var rv = uninstall(d);
         if (rv.code !== 0) return 'revert failed: ' + rv.out.slice(-160);
     }
-    var mp = makePlan();
+    var mp = makePlan(d);
     if (mp !== 'OK') return 'plan: ' + mp;
-    return holds() === 'stock' && !fs.existsSync(TGT + '.woc-orig') && inmemKind() !== 'null' ? 'planned' : 'not stock: ' + holds();
+    return holds() === 'stock' && !fs.existsSync(TGT + '.woc-orig') && inmemKind(d) !== 'null' ? 'planned' : 'not stock: ' + holds();
 }
+function activateNew() { return activateIn(NEW); }
+/* Stock carplay with the plan of the version in folder d, its record
+ * describing that very file (a record describes the file by its inode, so
+ * each case plans afresh): 'planned' or what failed. */
+function plannedBy(d) { clear(); clearInmem(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 }); return activateIn(d); }
 
 /* ---- the patches -------------------------------------------------------- */
 
@@ -239,18 +250,22 @@ function imm(buf, o) { return buf.slice(o, o + 8); }
 var SAFE_0106 = [Buffer.from('00000000dc010000', 'hex'), Buffer.from('3201000032014800', 'hex')];
 
 function relGroup(v) { return v === 'this' ? 'N' : group(v); }
+/* Whether a version plans the patch in memory and writes none to the file:
+ * I and this version. */
+function inMem(v) { return /^[IN]$/.test(relGroup(v)); }
 /* Whether a version writes the map URL edit on the build the test runs on:
  * 0.9.11 knows it at carplay 22.28.3's offsets only, 0.9.12 and later
  * wherever its sites are found. */
-function knowsMapUrl(v) { return /^[FGHN]$/.test(relGroup(v)) || (group(v) === 'E' && !!BIN); }
-/* The map URL a version writes: 'eta' (G), 'map' (E, F, H). */
+function knowsMapUrl(v) { return /^[FGHIN]$/.test(relGroup(v)) || (relGroup(v) === 'E' && !!BIN); }
+/* The map URL a version writes or plans: 'eta' (G), 'map' (E, F, H, I and
+ * this version). */
 function mapForm(v) { return relGroup(v) === 'G' ? 'eta' : 'map'; }
 /* Whether version q restores the map URL edit version p wrote: q knows the
- * edit, and p's URL (G, H and this version know both). */
-function restoresMapOf(q, p) { return knowsMapUrl(q) && (/^[GHN]$/.test(relGroup(q)) || mapForm(p) === 'map'); }
-/* Whether a version writes, and so restores, the ShowUI URL edit: H and
- * this version. */
-function knowsShowUi(v) { return /^[HN]$/.test(relGroup(v)); }
+ * edit, and p's URL (G, H, I and this version know both). */
+function restoresMapOf(q, p) { return knowsMapUrl(q) && (/^[GHIN]$/.test(relGroup(q)) || mapForm(p) === 'map'); }
+/* Whether a version writes or plans, and so restores, the ShowUI URL edit:
+ * H, I and this version. */
+function knowsShowUi(v) { return /^[HIN]$/.test(relGroup(v)); }
 /* What a revert by version q leaves of version p's patch: 'stock' or what
  * holds() calls the URL edits left. */
 function leftBy(q, p) {
@@ -258,10 +273,11 @@ function leftBy(q, p) {
     return map && show ? 'URL edits left' : map ? 'map URL left' : show ? 'ShowUI URL left' : 'stock';
 }
 /* Whether version q's boot recovery writes the whole trusted backup: D on. */
-function wholeBackup(q) { return /^[DEFGHN]$/.test(relGroup(q)); }
+function wholeBackup(q) { return /^[DEFGHIN]$/.test(relGroup(q)); }
 
 RELEASES.forEach(function (v) {
     var d = path.join(dir, 'rel', v), g = group(v);
+    if (g === 'I') { inMemRelease(v, d); return; }
 
     /* 1. The deploy tool's rollback, downgrade or removal of this version:
      * its deactivate leaves carplay stock with no backup; then the release's
@@ -301,31 +317,73 @@ RELEASES.forEach(function (v) {
     }
 });
 
+/* 1 and 2 for a release that plans the patch in memory (I), as this
+ * version does. 1: after this version's deactivate (carplay stock, no
+ * plan), its activate plans the app's patch in memory over stock; its boot
+ * recovery's file restore, its patcher's revert and its removal leave
+ * carplay stock and the plan in place (turning the plan off is
+ * recovery_test.js's and patchd's tests'). 2: each reads the other's record
+ * as the patch for carplay as it is; this version's file restore and revert
+ * leave carplay stock and the plan in place, and its activate plans again
+ * over stock. */
+function inMemRelease(v, d) {
+    var up = plannedBy(d), relPlan = readPlan(), relKind = inmemKind(d), newKind = inmemKind();
+    var rec = recover(d, 'I'), recH = holds(), recKind = inmemKind(d);
+    var live = plannedBy(d) === 'planned'; r = removePatch(d); var rmH = r.code ? 'refused-' + holds() : holds(), rmKind = inmemKind(d);
+    live = plannedBy(d) === 'planned' && live; r = uninstall(d); var unH = r.code ? 'refused-' + holds() : holds(), unKind = inmemKind(d);
+    var laid = null;
+    try { laid = require(path.join(d, 'carplay_patch.js')).overlay(STOCK, relPlan); } catch (e) { laid = { err: e.message }; }
+    var isApp = !!laid && !laid.err && laid.buf.equals(APP_PATCH['']);
+    ok(v + ' (I) after this version\'s deactivate: its activate plans the app\'s patch in memory over stock carplay; its file restore, revert and removal leave carplay stock and the plan in place',
+        up === 'planned' && isApp && live && relKind !== 'null' && recH === 'stock' && recKind !== 'null' && /stock$/.test(rmH) && rmKind !== 'null' && /stock$/.test(unH) && unKind !== 'null',
+        [up, laid && laid.err || isApp, live, relKind, rec, recH, recKind, rmH, rmKind, unH, unKind].join(' '));
+    clearInmem(); var ours = makePlan(), backKind = inmemKind(d);
+    live = plannedBy(d) === 'planned'; rec = recover(NEW, 'N'); var nRecH = holds(), nRecKind = inmemKind();
+    live = plannedBy(d) === 'planned' && live; r = removePatch(NEW); var nRmH = r.code ? 'refused-' + holds() : holds(), nRmKind = inmemKind();
+    live = plannedBy(d) === 'planned' && live; var nUp = activateNew();
+    ok(v + ' (I)\'s patch in memory under this version: each reads the other\'s record; this version\'s file restore and revert leave carplay stock and the plan in place, its activate plans again over stock',
+        live && ours === 'OK' && newKind !== 'null' && backKind !== 'null' &&
+        nRecH === 'stock' && nRecKind !== 'null' && /stock$/.test(nRmH) && nRmKind !== 'null' && nUp === 'planned',
+        [live, ours, newKind, backKind, rec, nRecH, nRecKind, nRmH, nRmKind, nUp].join(' '));
+    clearInmem();
+}
+
 /* 3. Release to release, both ways and to itself: the first and last
  * release of each group. The one that patched is P, the one installed after
  * it Q (a release, or this version), with no deactivate between: a crash
- * loop under Q, its Remove patch and its activate. */
+ * loop under Q, its Remove patch and its activate. P of I leaves carplay
+ * stock with its plan: a crash loop and Remove patch under any Q leave it
+ * stock. Q of I and this version put carplay back to stock and plan in
+ * memory; Q of A-H patch the file. */
 var REPS = [];
-['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach(function (g) {
+['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].forEach(function (g) {
     var inG = RELEASES.filter(function (v) { return group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
 });
 function relDir(v) { return v === 'this' ? NEW : path.join(dir, 'rel', v); }
 REPS.forEach(function (p) {
-    clear(); clearInmem(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
-    r = apply(relDir(p));
-    var pPatch = snapshot();
-    ok(p + ' patches', r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(p) && showUiIn() === knowsShowUi(p), r.out);
+    var pIn = inMem(p), pPatch = null;
+    if (pIn) {
+        var pUp = plannedBy(relDir(p));
+        ok(p + ' plans in memory over stock carplay', pUp === 'planned', pUp);
+    } else {
+        clear(); clearInmem(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
+        r = apply(relDir(p));
+        pPatch = snapshot();
+        ok(p + ' patches', r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(p) && showUiIn() === knowsShowUi(p), r.out);
+    }
+    /* each case from P's patch: its file, or stock carplay with its plan */
+    function start() { if (pIn) return plannedBy(relDir(p)) === 'planned'; put(pPatch); return true; }
     REPS.concat(['this']).forEach(function (q) {
-        var qd = relDir(q);
-        put(pPatch); var rec = recover(qd, relGroup(q)), recH = holds();
-        put(pPatch); r = removePatch(qd); var rmH = r.code ? 'refused' : holds();
-        put(pPatch); clearInmem();
-        var up = q === 'this' ? activateNew() : (r = apply(qd), r.code === 0 && holds() === 'patched' ? 'patched' : 'failed');
-        var wantRm = leftBy(q, p), wantRec = wholeBackup(q) ? 'stock' : wantRm, wantUp = q === 'this' ? 'planned' : 'patched';
-        ok(p + '\'s patch under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate ' + (q === 'this' ? 'plans in memory over stock' : 'patches'),
-            recH === wantRec && rmH === wantRm && up === wantUp, [rec, recH, rmH, up].join(' '));
+        var qd = relDir(q), live = start();
+        var rec = recover(qd, relGroup(q)), recH = holds();
+        live = start() && live; r = removePatch(qd); var rmH = r.code ? (pIn ? 'refused-' + holds() : 'refused') : holds();
+        live = start() && live; if (!pIn) clearInmem();
+        var up = inMem(q) ? activateIn(qd) : (r = apply(qd), r.code === 0 && holds() === 'patched' ? 'patched' : 'failed');
+        var wantRm = pIn ? 'stock' : leftBy(q, p), wantRec = pIn || wholeBackup(q) ? 'stock' : wantRm, wantUp = inMem(q) ? 'planned' : 'patched';
+        ok(p + '\'s ' + (pIn ? 'patch in memory' : 'patch') + ' under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate ' + (inMem(q) ? 'plans in memory over stock' : 'patches'),
+            live && recH === wantRec && (rmH === wantRm || (pIn && rmH === 'refused-stock')) && up === wantUp, [rec, recH, rmH, up].join(' '));
     });
 });
 
@@ -432,14 +490,14 @@ REPS.forEach(function (p) {
 
 /* 6. The patch in memory (PATCH.md "In memory"): this version leaves
  * carplay stock on disk with a plan and a record on /var/opt, which no
- * release reads. Each release then meets a stock carplay with no backup:
- * its crash loop and Remove patch leave it stock, and its activate writes
- * its own patch, as on a car it is installed on first. That patch is
- * another file than the record describes, so this version's boot recovery
- * never arms the plan over it and restores it as its own (stock), and its
- * deactivate reverts it. This version over its own layout: a crash loop and
- * Remove patch leave carplay stock and the plan armable, and its activate
- * plans again over stock. */
+ * release before I reads. Each of those then meets a stock carplay with
+ * no backup: its crash loop and Remove patch leave it stock, and its
+ * activate writes its own patch, as on a car it is installed on first. That
+ * patch is another file than the record describes, so this version's boot
+ * recovery never arms the plan over it and restores it as its own (stock),
+ * and its deactivate reverts it. A release of I and this version over that
+ * layout: the file restore and the revert leave carplay stock and the plan
+ * in place, and the activate plans again over stock. */
 (function () {
     clear(); clearInmem(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
     var mp = makePlan();
@@ -450,6 +508,16 @@ REPS.forEach(function (p) {
     function fresh() { put(inmemState); return makePlan() === 'OK' && inmemKind() !== 'null'; }
     RELEASES.forEach(function (v) {
         var vd = relDir(v), g = relGroup(v), live = true;
+        if (g === 'I') {
+            /* I over the patch in memory: as this version over its own. */
+            live = fresh(); var iRec = recover(vd, g), iRecH = holds(), iRecKind = inmemKind(vd);
+            live = fresh() && live; r = removePatch(vd); var iRmH = r.code ? 'refused-' + holds() : holds(), iRmKind = inmemKind(vd);
+            live = fresh() && live; var iUp = activateIn(vd), iKind = inmemKind();
+            ok(v + ' (I) over the patch in memory: its file restore and revert leave carplay stock and the plan in place, its activate plans again over stock, which this version reads as its patch',
+                live && iRecH === 'stock' && iRecKind !== 'null' && /stock$/.test(iRmH) && iRmKind !== 'null' && iUp === 'planned' && iKind !== 'null',
+                [live, iRec, iRecH, iRecKind, iRmH, iRmKind, iUp, iKind].join(' '));
+            return;
+        }
         live = fresh() && live; var rec = recover(vd, g), recH = holds(), recKind = inmemKind();
         live = fresh() && live; r = removePatch(vd); var rmH = r.code ? 'refused-' + holds() : holds(), rmKind = inmemKind();
         live = fresh() && live; r = apply(vd); var apH = r.code === 0 ? holds() : 'failed';

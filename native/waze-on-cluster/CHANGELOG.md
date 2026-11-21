@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The rollback tests treat 0.11.0 and later as releases that patch CarPlay in
+memory.
+
 ## 0.12.0
 
 While another app's content on the cluster asks for upload bandwidth
