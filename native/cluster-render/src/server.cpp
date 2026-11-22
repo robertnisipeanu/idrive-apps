@@ -84,6 +84,106 @@ bool choice(const cr::Json &j, const char *key, const std::vector<std::string> &
     return false;
 }
 
+/* The render state fields onto *look: a mesh part's, or an effect layer's
+ * (quad: its depth and culling fields are ignored, as a field the service
+ * does not know). A blend field over a preset makes the preset custom. */
+bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err)
+{
+    static const std::vector<std::string> presets = {"alpha", "add", "none", "premultiplied", "max", "min", "subtract"};
+    static const std::vector<std::string> factors = {"zero",      "one",           "src_alpha",
+                                                     "one_minus_src_alpha", "dst_alpha", "one_minus_dst_alpha"};
+    static const std::vector<std::string> ops = {"add", "subtract", "reverse_subtract", "min", "max"};
+    static const std::vector<std::string> funcs = {"less",    "less_equal",    "equal", "not_equal",
+                                                   "greater", "greater_equal", "always", "never"};
+    int blend = (int)look->blend;
+    if (!choice(j, "blend", presets, &blend, err))
+        return false;
+    if (j.count("blend")) {
+        look->blend = (Blend)blend;
+        look->has_custom = false;
+    }
+    BlendState b = look->blending();
+    int src = (int)b.src, dst = (int)b.dst, src_a = (int)b.src_alpha, dst_a = (int)b.dst_alpha;
+    int op = (int)b.op, op_a = (int)b.op_alpha;
+    if (!choice(j, "blend_src", factors, &src, err) || !choice(j, "blend_dst", factors, &dst, err) ||
+        !choice(j, "blend_src_alpha", factors, &src_a, err) || !choice(j, "blend_dst_alpha", factors, &dst_a, err) ||
+        !choice(j, "blend_op", ops, &op, err) || !choice(j, "blend_op_alpha", ops, &op_a, err))
+        return false;
+    if (j.count("blend_src") || j.count("blend_dst") || j.count("blend_src_alpha") || j.count("blend_dst_alpha") ||
+        j.count("blend_op") || j.count("blend_op_alpha")) {
+        if (!b.on) {
+            *err = "blend none takes no blend factors or operations";
+            return false;
+        }
+        b.src = (BlendFactor)src;
+        b.dst = (BlendFactor)dst;
+        b.src_alpha = (BlendFactor)src_a;
+        b.dst_alpha = (BlendFactor)dst_a;
+        b.op = (BlendOp)op;
+        b.op_alpha = (BlendOp)op_a;
+        look->custom = b;
+        look->has_custom = true;
+    }
+    if (j.count("color_mask")) {
+        const std::string m = str(j, "color_mask");
+        uint8_t bits = 0;
+        bool good = !m.empty() && m.size() <= 4;
+        for (char ch : m == "none" ? std::string() : m) {
+            const uint8_t bit = ch == 'r' ? kMaskR : ch == 'g' ? kMaskG : ch == 'b' ? kMaskB : ch == 'a' ? kMaskA : 0;
+            good = good && bit && !(bits & bit);
+            bits |= bit;
+        }
+        if (!good) {
+            *err = "color_mask must be none or some of r, g, b and a, each once (rgba: all)";
+            return false;
+        }
+        look->color_mask = bits;
+    }
+    if (quad)
+        return true;
+    double depth = look->depth ? 1 : 0, write = look->depth_write ? 1 : 0;
+    int func = (int)look->depth_func - 1, cull = look->cull == Cull::Back ? 0 : look->cull == Cull::Front ? 1 : 2;
+    if (!num(j, "depth", 0, 1, &depth, err) || !choice(j, "depth_func", funcs, &func, err) ||
+        !num(j, "depth_write", 0, 1, &write, err) || !choice(j, "cull", {"back", "front", "none"}, &cull, err))
+        return false;
+    look->depth = depth != 0;
+    look->depth_func = (DepthFunc)(func + 1);
+    look->depth_write = write != 0;
+    look->cull = cull == 0 ? Cull::Back : cull == 1 ? Cull::Front : Cull::None;
+    if (!look->depth && (j.count("depth_func") || j.count("depth_write"))) {
+        *err = "depth 0 takes no depth_func or depth_write";
+        return false;
+    }
+    return true;
+}
+
+/* An asset's sampling, wrap and anisotropy fields (PROTOCOL.md "Client to
+ * service"). */
+bool sampler_fields(const cr::Json &j, Sampler *s, std::string *err)
+{
+    int sampling = 0, wrap = 0;
+    double aniso = 1;
+    if (!choice(j, "sampling",
+                {"nearest", "bilinear", "nearest_mips", "bilinear_mips", "trilinear", "min_linear_mag_nearest",
+                 "min_nearest_mag_linear"},
+                &sampling, err) ||
+        !choice(j, "wrap", {"clamp", "repeat", "mirror"}, &wrap, err) || !num(j, "anisotropy", 1, 16, &aniso, err))
+        return false;
+    int u = wrap, v = wrap;
+    if (!choice(j, "wrap_u", {"clamp", "repeat", "mirror"}, &u, err) ||
+        !choice(j, "wrap_v", {"clamp", "repeat", "mirror"}, &v, err))
+        return false;
+    if (aniso != (double)(uint32_t)aniso) {
+        *err = "anisotropy must be a whole number from 1 to 16";
+        return false;
+    }
+    s->sampling = (Sampling)sampling;
+    s->u = (Wrap)u;
+    s->v = (Wrap)v;
+    s->anisotropy = (uint32_t)aniso;
+    return true;
+}
+
 /* A mesh layer's projection and camera fields present in j, over *mp. */
 bool mesh_params(const cr::Json &j, MeshParams *mp, std::string *err)
 {
@@ -463,6 +563,12 @@ bool Server::apply(Layer *l, const cr::Json &j, std::string *err)
     LayerParams p = l->params;
     if (!layer_params(j, &p, err))
         return false;
+    /* An effect layer's render state; on other layers its fields are
+     * ignored (a mesh part's is set by its part message). */
+    EffectLayer *fx = std::string(l->kind()) == "effect" ? static_cast<EffectLayer *>(l) : nullptr;
+    PartLook look = fx ? fx->look() : PartLook();
+    if (fx && !look_fields(j, true, &look, err))
+        return false;
     MeshLayer *m = std::string(l->kind()) == "mesh" ? static_cast<MeshLayer *>(l) : nullptr;
     MeshParams mp;
     if (m) {
@@ -478,6 +584,8 @@ bool Server::apply(Layer *l, const cr::Json &j, std::string *err)
         return false;
     if (m)
         m->mesh = mp;
+    if (fx && look != fx->look())
+        fx->set_look(look);
     l->params = p;
     comp_->changed(l);
     return true;
@@ -565,9 +673,16 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
             error(c, "layer", ref, "fs (the fragment shader) missing");
             return;
         }
+        PartLook look = quad_look();
+        if (!look_fields(j, true, &look, &err)) {
+            error(c, "layer", ref, err);
+            return;
+        }
         id = comp_->add_effect(c.id, target, lp, str(j, "vs"), str(j, "fs"), (uint32_t)v, now_ms, &err);
         if (id && clock)
             static_cast<EffectLayer *>(comp_->layer(c.id, id))->cluster_time();
+        if (id && look != quad_look())
+            static_cast<EffectLayer *>(comp_->layer(c.id, id))->set_look(look);
     } else if (kind == "mesh") {
         MeshParams mp;
         if (!mesh_params(j, &mp, &err)) {
@@ -611,7 +726,9 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"always_packed", "1"},
                                  {"host_edge", "1"},
                                  {"preload", "1"},
-                                 {"others_fps", "1"}}));
+                                 {"others_fps", "1"},
+                                 {"render_state", "1"},
+                                 {"samplers", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();
@@ -718,11 +835,10 @@ void Server::op_asset(Client &c, const cr::Json &j)
         return;
     }
     AssetParams ap;
-    int format = 0, sampling = 0, wrap = 0;
+    int format = 0;
     if (!num(j, "w", 1, 2048, &w, &err) || !num(j, "h", 1, 2048, &h, &err) ||
         !choice(j, "format", {"rgba8", "r8", "etc2rgba", "etc2rgb"}, &format, &err) ||
-        !choice(j, "sampling", {"nearest", "bilinear"}, &sampling, &err) ||
-        !choice(j, "wrap", {"clamp", "repeat"}, &wrap, &err)) {
+        !sampler_fields(j, &ap.sampler, &err)) {
         error(c, "asset", ref, err);
         return;
     }
@@ -734,16 +850,14 @@ void Server::op_asset(Client &c, const cr::Json &j)
     ap.h = (uint32_t)h;
     static const TexFormat kFormats[] = {TexFormat::RGBA8, TexFormat::R8, TexFormat::ETC2RGBA, TexFormat::ETC2RGB};
     ap.format = kFormats[format];
-    ap.sampling = sampling ? Sampling::Bilinear : Sampling::Nearest;
-    ap.wrap = wrap ? Wrap::Repeat : Wrap::Clamp;
     const uint32_t id = comp_->add_asset(c.id, target, ap, &err);
     if (!id) {
         error(c, "asset", ref, err);
         return;
     }
     c.assets[ref] = id;
-    log_info("client %llu (%s): asset %u on %s (%s %ux%u)", (unsigned long long)c.id, c.app.c_str(), id,
-             slots_->targets()[target].name.c_str(), tex_format_name(ap.format), ap.w, ap.h);
+    log_info("client %llu (%s): asset %u on %s (%s %ux%u, %u levels)", (unsigned long long)c.id, c.app.c_str(), id,
+             slots_->targets()[target].name.c_str(), tex_format_name(ap.format), ap.w, ap.h, ap.levels());
 }
 
 void Server::op_scene(Client &c, const cr::Json &j)
@@ -907,21 +1021,14 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             error(c, op, ref, err);
     } else if (op == "part") {
         PartLook look;
-        double depth = 1;
-        int cull = 0, blend = 0;
         if (!mesh)
             err = "parts are for mesh layers";
         else if (part == 0)
             err = "parts are numbered from 1";
         else if (str(j, "vs").empty() || str(j, "fs").empty())
             err = "a part needs vs and fs";
-        else if (num(j, "depth", 0, 1, &depth, &err) && choice(j, "cull", {"back", "front", "none"}, &cull, &err) &&
-                 choice(j, "blend", {"alpha", "add", "none"}, &blend, &err)) {
-            look.depth = depth != 0;
-            look.cull = cull == 0 ? Cull::Back : cull == 1 ? Cull::Front : Cull::None;
-            look.blend = blend == 0 ? Blend::Alpha : blend == 1 ? Blend::Add : Blend::None;
+        else if (look_fields(j, false, &look, &err))
             comp_->add_part(c.id, l->id(), part, str(j, "vs"), str(j, "fs"), look, &err);
-        }
         if (!err.empty())
             error(c, op, ref, err);
     } else if (op == "transform") {
@@ -1309,8 +1416,11 @@ std::string Server::status_text(int64_t now_ms) const
         for (const auto &kv : c.assets)
             for (const Asset *a : comp_->assets())
                 if (a->id() == kv.second) {
-                    std::snprintf(line, sizeof line, "asset %u %s %ux%u of %s on %s: %s\n", a->id(),
-                                  tex_format_name(a->params().format), a->params().w, a->params().h,
+                    const std::string levels = a->params().levels() > 1
+                                                   ? " (" + std::to_string(a->params().levels()) + " mip levels)"
+                                                   : "";
+                    std::snprintf(line, sizeof line, "asset %u %s %ux%u%s of %s on %s: %s\n", a->id(),
+                                  tex_format_name(a->params().format), a->params().w, a->params().h, levels.c_str(),
                                   c.app.c_str(), slots_->targets()[a->target()].name.c_str(), a->stats().c_str());
                     s += line;
                 }

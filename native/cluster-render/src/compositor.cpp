@@ -326,6 +326,10 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
         *err = "unknown target";
         return 0;
     }
+    if (vs.size() > kMaxShader || fs.size() > kMaxShader) {
+        *err = "a shader is at most " + std::to_string(kMaxShader) + " bytes";
+        return 0;
+    }
     const int fx = gpu_->effect(vs.empty() ? kQuadVertexShader : vs.c_str(), fs.c_str(), err);
     if (!fx)
         return 0;
@@ -376,6 +380,10 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
         *err = "part " + std::to_string(part) + " exists";
         return false;
     }
+    if (vs.size() > kMaxShader || fs.size() > kMaxShader) {
+        *err = "a shader is at most " + std::to_string(kMaxShader) + " bytes";
+        return false;
+    }
     const int fx = gpu_->effect(vs.c_str(), fs.c_str(), err);
     if (!fx)
         return false;
@@ -424,7 +432,7 @@ uint32_t Compositor::add_asset(uint64_t owner, int target, const AssetParams &ap
         *err = "unknown target";
         return 0;
     }
-    if (const char *e = Asset::size_error(ap.format, ap.w, ap.h)) {
+    if (const char *e = Asset::size_error(ap)) {
         *err = e;
         return 0;
     }

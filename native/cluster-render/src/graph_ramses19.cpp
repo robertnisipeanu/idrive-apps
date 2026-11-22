@@ -18,39 +18,80 @@ namespace {
 
 bool ok(ramses::status_t s) { return s == ramses::StatusOK; }
 
-/* Blend over what is below at the effect's alpha; no depth, no culling: flat
- * quads. */
-void flat_blended(ramses::Appearance &app)
+/* The display's enums for the graph's (graph.h). */
+ramses::ETextureAddressMode wrap19(Wrap w)
 {
-    app.setBlendingFactors(ramses::EBlendFactor_SrcAlpha, ramses::EBlendFactor_OneMinusSrcAlpha,
-                           ramses::EBlendFactor_One, ramses::EBlendFactor_OneMinusSrcAlpha);
-    app.setBlendingOperations(ramses::EBlendOperation_Add, ramses::EBlendOperation_Add);
-    app.setDepthFunction(ramses::EDepthFunc_Disabled);
-    app.setDepthWrite(false);
-    app.setCullingMode(ramses::ECullMode_Disabled);
+    return w == Wrap::Repeat   ? ramses::ETextureAddressMode_Repeat
+           : w == Wrap::Mirror ? ramses::ETextureAddressMode_Mirror
+                               : ramses::ETextureAddressMode_Clamp;
 }
 
-bool part_look(ramses::Appearance &app, const PartLook &look)
+ramses::ETextureSamplingMethod sampling19(Sampling s)
 {
-    bool good = ok(app.setDepthFunction(look.depth ? ramses::EDepthFunc_LessEqual : ramses::EDepthFunc_Disabled)) &&
-                ok(app.setDepthWrite(look.depth)) &&
+    switch (s) {
+    case Sampling::Bilinear: return ramses::ETextureSamplingMethod_Bilinear;
+    case Sampling::NearestMips: return ramses::ETextureSamplingMethod_NearestWithMipmaps;
+    case Sampling::BilinearMips: return ramses::ETextureSamplingMethod_BilinearWithMipMaps;
+    case Sampling::Trilinear: return ramses::ETextureSamplingMethod_Trilinear;
+    case Sampling::MinLinearMagNearest: return ramses::ETextureSamplingMethod_MinLinearMagNearest;
+    case Sampling::MinNearestMagLinear: return ramses::ETextureSamplingMethod_MinNearestMagLinear;
+    default: return ramses::ETextureSamplingMethod_Nearest;
+    }
+}
+
+ramses::EBlendFactor factor19(BlendFactor f)
+{
+    switch (f) {
+    case BlendFactor::Zero: return ramses::EBlendFactor_Zero;
+    case BlendFactor::One: return ramses::EBlendFactor_One;
+    case BlendFactor::SrcAlpha: return ramses::EBlendFactor_SrcAlpha;
+    case BlendFactor::DstAlpha: return ramses::EBlendFactor_DstAlpha;
+    case BlendFactor::OneMinusDstAlpha: return ramses::EBlendFactor_OneMinusDstAlpha;
+    default: return ramses::EBlendFactor_OneMinusSrcAlpha;
+    }
+}
+
+ramses::EBlendOperation op19(BlendOp o)
+{
+    switch (o) {
+    case BlendOp::Subtract: return ramses::EBlendOperation_Subtract;
+    case BlendOp::ReverseSubtract: return ramses::EBlendOperation_ReverseSubtract;
+    case BlendOp::Min: return ramses::EBlendOperation_Min;
+    case BlendOp::Max: return ramses::EBlendOperation_Max;
+    default: return ramses::EBlendOperation_Add;
+    }
+}
+
+ramses::EDepthFunc depth19(DepthFunc d)
+{
+    switch (d) {
+    case DepthFunc::Less: return ramses::EDepthFunc_Less;
+    case DepthFunc::LessEqual: return ramses::EDepthFunc_LessEqual;
+    case DepthFunc::Equal: return ramses::EDepthFunc_Equal;
+    case DepthFunc::NotEqual: return ramses::EDepthFunc_NotEqual;
+    case DepthFunc::Greater: return ramses::EDepthFunc_Greater;
+    case DepthFunc::GreaterEqual: return ramses::EDepthFunc_GreaterEqual;
+    case DepthFunc::Always: return ramses::EDepthFunc_Always;
+    case DepthFunc::Never: return ramses::EDepthFunc_Never;
+    default: return ramses::EDepthFunc_Disabled;
+    }
+}
+
+/* The appearance draws as look has it (graph.h PartLook). */
+bool apply_look(ramses::Appearance &app, const PartLook &look)
+{
+    const BlendState b = look.blending();
+    bool good = ok(app.setDepthFunction(depth19(look.depth_test()))) && ok(app.setDepthWrite(look.depth_writes())) &&
                 ok(app.setCullingMode(look.cull == Cull::Back    ? ramses::ECullMode_BackFacing
                                       : look.cull == Cull::Front ? ramses::ECullMode_FrontFacing
-                                                                 : ramses::ECullMode_Disabled));
-    switch (look.blend) {
-    case Blend::Alpha:
-        return good &&
-               ok(app.setBlendingFactors(ramses::EBlendFactor_SrcAlpha, ramses::EBlendFactor_OneMinusSrcAlpha,
-                                         ramses::EBlendFactor_One, ramses::EBlendFactor_OneMinusSrcAlpha)) &&
-               ok(app.setBlendingOperations(ramses::EBlendOperation_Add, ramses::EBlendOperation_Add));
-    case Blend::Add:
-        return good &&
-               ok(app.setBlendingFactors(ramses::EBlendFactor_SrcAlpha, ramses::EBlendFactor_One,
-                                         ramses::EBlendFactor_One, ramses::EBlendFactor_OneMinusSrcAlpha)) &&
-               ok(app.setBlendingOperations(ramses::EBlendOperation_Add, ramses::EBlendOperation_Add));
-    default:
+                                                                 : ramses::ECullMode_Disabled)) &&
+                ok(app.setColorWriteMask(look.color_mask & kMaskR, look.color_mask & kMaskG, look.color_mask & kMaskB,
+                                         look.color_mask & kMaskA));
+    if (!b.on)
         return good && ok(app.setBlendingOperations(ramses::EBlendOperation_Disabled, ramses::EBlendOperation_Disabled));
-    }
+    return good &&
+           ok(app.setBlendingFactors(factor19(b.src), factor19(b.dst), factor19(b.src_alpha), factor19(b.dst_alpha))) &&
+           ok(app.setBlendingOperations(op19(b.op), op19(b.op_alpha)));
 }
 
 /* name appears in src as a whole identifier. */
@@ -178,48 +219,55 @@ public:
 
     int buffer(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap) override
     {
-        const ramses::ETextureAddressMode mode =
-            wrap == Wrap::Repeat ? ramses::ETextureAddressMode_Repeat : ramses::ETextureAddressMode_Clamp;
+        Sampler smp;
+        smp.sampling = s;
+        smp.u = smp.v = wrap;
+        return buffer(f, w, h, smp, 1);
+    }
+
+    int buffer(TexFormat f, uint32_t w, uint32_t h, const Sampler &s, uint32_t levels) override
+    {
+        if (tex_compressed(f) || levels < 1 || levels > mip_levels(w, h))
+            return 0;
         ramses::Texture2DBuffer *b = scene_->createTexture2DBuffer(
-            1, w, h, f == TexFormat::R8 ? ramses::ETextureFormat_R8 : ramses::ETextureFormat_RGBA8);
+            levels, w, h, f == TexFormat::R8 ? ramses::ETextureFormat_R8 : ramses::ETextureFormat_RGBA8);
         ramses::TextureSampler *smp =
-            b ? scene_->createTextureSampler(mode, mode,
-                                             s == Sampling::Nearest ? ramses::ETextureSamplingMethod_Nearest
-                                                                    : ramses::ETextureSamplingMethod_Bilinear,
-                                             *b)
+            b ? scene_->createTextureSampler(wrap19(s.u), wrap19(s.v), sampling19(s.sampling), *b, s.anisotropy)
               : nullptr;
         if (!smp) {
             if (b)
                 scene_->destroy(*b);
-            log_error("ramses: %ux%u %s texture buffer refused", w, h, f == TexFormat::R8 ? "R8" : "RGBA8");
+            log_error("ramses: %ux%u %s texture buffer of %u levels refused", w, h, f == TexFormat::R8 ? "R8" : "RGBA8",
+                      levels);
             return 0;
         }
         buffers_[next_] = Buffer{b, smp, f == TexFormat::R8 ? 1u : 4u};
+        buffers_[next_].levels = levels;
         return next_++;
     }
 
     /* ETC2RGBA or ETC2RGB: a client resource, sent with the next flush and
      * uploaded by the display's renderer. */
-    int immutable_texture(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap, const uint8_t *data,
-                          size_t n) override
+    int immutable_texture(TexFormat f, uint32_t w, uint32_t h, const Sampler &s, uint32_t levels,
+                          const uint8_t *data, size_t n) override
     {
-        if (!tex_compressed(f))
+        if (!tex_compressed(f) || levels < 1 || levels > mip_levels(f, w, h) || n != tex_chain_bytes(f, w, h, levels))
             return 0;
-        const ramses::ETextureAddressMode mode =
-            wrap == Wrap::Repeat ? ramses::ETextureAddressMode_Repeat : ramses::ETextureAddressMode_Clamp;
-        const ramses::MipLevelData mip((uint32_t)n, data);
+        std::vector<ramses::MipLevelData> mips;
+        for (uint32_t l = 0; l < levels; l++) {
+            const size_t bytes = tex_level_bytes(f, w, h, l);
+            mips.emplace_back((uint32_t)bytes, data);
+            data += bytes;
+        }
         ramses::Texture2D *tex = client_.createTexture2D(
-            w, h, f == TexFormat::ETC2RGB ? ramses::ETextureFormat_ETC2RGB : ramses::ETextureFormat_ETC2RGBA, 1, &mip,
-            false);
+            w, h, f == TexFormat::ETC2RGB ? ramses::ETextureFormat_ETC2RGB : ramses::ETextureFormat_ETC2RGBA, levels,
+            mips.data(), false);
         ramses::TextureSampler *smp =
-            tex ? scene_->createTextureSampler(mode, mode,
-                                               s == Sampling::Nearest ? ramses::ETextureSamplingMethod_Nearest
-                                                                      : ramses::ETextureSamplingMethod_Bilinear,
-                                               *tex)
+            tex ? scene_->createTextureSampler(wrap19(s.u), wrap19(s.v), sampling19(s.sampling), *tex, s.anisotropy)
                 : nullptr;
         if (!smp) {
-            log_error("ramses: %ux%u %s texture of %zu bytes refused by %s", w, h, tex_format_name(f), n,
-                      tex ? "createTextureSampler" : "createTexture2D");
+            log_error("ramses: %ux%u %s texture of %u levels, %zu bytes, refused by %s", w, h, tex_format_name(f),
+                      levels, n, tex ? "createTextureSampler" : "createTexture2D");
             if (tex)
                 client_.destroy(*tex);
             return 0;
@@ -232,12 +280,19 @@ public:
 
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
     {
+        return write_level(buf, 0, x, y, w, h, px);
+    }
+
+    bool write_level(int buf, uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                     const uint8_t *px) override
+    {
         auto it = buffers_.find(buf);
-        if (it == buffers_.end() || !it->second.buffer)
+        if (it == buffers_.end() || !it->second.buffer || level >= it->second.levels)
             return false;
-        const ramses::status_t s = it->second.buffer->setData(reinterpret_cast<const char *>(px), 0, x, y, w, h);
+        const ramses::status_t s =
+            it->second.buffer->setData(reinterpret_cast<const char *>(px), level, x, y, w, h);
         if (!ok(s) && !write_failing_)
-            log_error("ramses: setData %ux%u at %u,%u: %s", w, h, x, y, client_.getStatusMessage(s));
+            log_error("ramses: setData %ux%u at %u,%u, level %u: %s", w, h, x, y, level, client_.getStatusMessage(s));
         write_failing_ = !ok(s);
         return ok(s);
     }
@@ -267,7 +322,7 @@ public:
             if (app) scene_->destroy(*app);
             return 0;
         }
-        flat_blended(*app);
+        apply_look(*app, quad_look());
         mesh->setAppearance(*app);
         mesh->setGeometryBinding(*geo);
         mesh->setVisibility(false);
@@ -314,6 +369,17 @@ public:
             return false;
         it->second.t = t;
         return lay_out(it->second);
+    }
+
+    bool style(int quad, const PartLook &look) override
+    {
+        auto q = quads_.find(quad);
+        if (q == quads_.end())
+            return false;
+        PartLook flat = look;
+        flat.depth = false;
+        flat.cull = Cull::None;
+        return apply_look(*q->second.app, flat);
     }
 
     bool texture(int quad, const char *uniform, int buf) override
@@ -476,7 +542,7 @@ public:
         ramses::Appearance *app = scene_->createAppearance(*fx->second);
         ramses::GeometryBinding *geo = scene_->createGeometryBinding(*fx->second);
         ramses::MeshNode *mesh = scene_->createMeshNode();
-        if (!app || !geo || !mesh || !part_look(*app, look) || !ok(mesh->setAppearance(*app)) ||
+        if (!app || !geo || !mesh || !apply_look(*app, look) || !ok(mesh->setAppearance(*app)) ||
             !ok(mesh->setGeometryBinding(*geo)) || !ok(mesh->setParent(*v->second.root))) {
             if (mesh) scene_->destroy(*mesh);
             if (geo) scene_->destroy(*geo);
@@ -489,7 +555,7 @@ public:
         p.app = app;
         p.geo = geo;
         p.effect = fx->second;
-        p.depth = look.depth;
+        p.depth = look.depth_test() != DepthFunc::Off || look.depth_writes();
         parts_[next_] = p;
         clear_depth(v->second, view);
         return next_++;
@@ -632,6 +698,7 @@ private:
         ramses::TextureSampler *sampler;
         uint32_t bpp;
         const ramses::Texture2D *tex = nullptr;
+        uint32_t levels = 1;   /* mip levels */
     };
     struct Quad {
         ramses::MeshNode *mesh = nullptr;

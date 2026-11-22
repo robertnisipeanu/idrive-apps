@@ -226,6 +226,10 @@ struct Host {
 
 class Compositor : public Scenes {
 public:
+    /* A client's vertex or fragment shader, in bytes: compiled in the
+     * render loop, so kept small. */
+    static const size_t kMaxShader = 65536;
+
     /* The byte budget all layers share starts at budget.max_bps (0: none)
      * and follows the governor (governor.h). */
     Compositor(Gpu *gpu, SlotManager *slots, const GovernorConfig &budget, int upload_burst_ms,

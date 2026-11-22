@@ -17,7 +17,11 @@ u32 length (little-endian: the bytes after it) | u8 type | body
 | `F` (0x46) | `u32 ref, u64 frame id, u16 rect count, rect count x {u16 x, y, w, h}, pixels` (little-endian) |
 | `M` (0x4D) | a mesh part's geometry ([below](#mesh-geometry-m)) |
 
-A message is at most 5,529,664 bytes (a whole 1920x720 RGBA image). The C++
+A message is at most 5,529,664 bytes (a whole 1920x720 RGBA image). A
+vertex or fragment shader is at most 65,536 bytes (past it, `a shader is
+at most 65536 bytes`): shaders are compiled in the render loop, and one
+that does not compile is refused with an `error` event before anything
+reaches the display. The C++
 client is `include/cluster_render/client.h`, the Node 8 client
 `js/cluster_render_client.js`; both reconnect by themselves and make their
 assets and layers again, with their pixels, uniforms, parts and geometry,
@@ -35,11 +39,11 @@ lacks.
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
 | `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
-| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
+| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`; with mipmaps `nearest_mips`, `bilinear_mips`, `trilinear`, and `min_linear_mag_nearest`, `min_nearest_mag_linear`: [below](#mipmaps-and-samplers)), `wrap` (`clamp` default, `repeat`, `mirror`), `wrap_u`, `wrap_v` (each axis in place of `wrap`), `anisotropy` (1 default, to 16) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
-| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`) |
+| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
 | `stop` | `ref`, `anim` |
@@ -124,6 +128,7 @@ Kind fields:
 | | `vs` | the service's | a vertex shader with `attribute vec2 a_position` and `uniform mat4 u_mvp` |
 | | `time_fps` | 0 | `u_time` (seconds since the layer was made) updated this often |
 | | `time` | 0 | 1: `u_time` from the renderer's own clock, seconds from 0 to 3600 and again, nothing sent per frame (declare it `highp`); excludes `time_fps` |
+| | `blend`, `blend_*`, `color_mask` | `alpha`, `rgba` | how its quad blends and which channels it writes ([below](#render-state)); a `set` changes them |
 | mesh | `projection` | `perspective` | or `ortho`; set when the layer is made |
 | | `fov` | 30 | perspective: the vertical field of view, degrees (1-179) |
 | | `ortho_h` | 2 | ortho: the height seen, in scene units |
@@ -146,7 +151,8 @@ Frames (`F`):
   one rect after another; with none, the whole image.
 - **asset**: the same, RGBA or one byte a pixel (`r8`).
 - **asset** `etc2rgba`, `etc2rgb`: no rects, and the whole texture once,
-  `w` and `h` multiples of 4, blocks in rows top to bottom:
+  `w` and `h` multiples of 4, blocks in rows top to bottom (sampled with
+  mipmaps, each mip level after it, [below](#mipmaps-and-samplers)):
   - `etc2rgba`: ETC2 RGBA with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`),
     16 bytes a 4x4 block, each the alpha block then the colour block:
     `(w/4) * (h/4) * 16` bytes, a quarter of `rgba8`'s.
@@ -296,6 +302,63 @@ F ref 1, no rects, the sheet's 131,072 bytes
 `u_cell` is the frame's top-left and size in texture coordinates (x, y, w,
 h). Keep frames on 4-pixel boundaries for the compressed formats, and with
 `bilinear` sampling leave a pixel of gap between them.
+
+### Render state
+
+Send these only to a service whose hello has `render_state` 1 (an older
+one ignores them, and takes only the `blend` values `alpha`, `add` and
+`none` of a part). An effect layer takes the blend fields and
+`color_mask`, when it is made and in a `set` (the fields sent change, the
+others stay); a mesh part takes them all with its `part` message. On a
+video, image or mesh layer's `set` they are ignored.
+
+| Field | Default | |
+|---|---|---|
+| `blend` | `alpha` | a preset: `alpha` (over what is below at source alpha), `add` (added at source alpha), `none` (written over), `premultiplied` (a colour already multiplied by its alpha, over), `max`, `min` (each channel's larger or smaller), `subtract` (taken away at source alpha) |
+| `blend_src`, `blend_dst` | the preset's | the colour's factors: `zero`, `one`, `src_alpha`, `one_minus_src_alpha`, `dst_alpha`, `one_minus_dst_alpha` |
+| `blend_src_alpha`, `blend_dst_alpha` | the preset's | alpha's factors, the same names |
+| `blend_op`, `blend_op_alpha` | the preset's | `add`, `subtract` (source minus destination), `reverse_subtract`, `min`, `max` |
+| `color_mask` | `rgba` | the channels written: some of `r`, `g`, `b`, `a`, each once, or `none` |
+| `depth_func` | `less_equal` | parts: `less`, `less_equal`, `equal`, `not_equal`, `greater`, `greater_equal`, `always`, `never`; with `depth` 1 |
+| `depth_write` | 1 | parts: 0 tests depth without writing it; with `depth` 1 |
+
+A `blend_*` field changes the preset it is sent with (or the look the layer
+has) into a custom one; with `blend` `none` it is refused. The factors are
+the ones RAMSES 19 has: no colour or constant factors, on iDrive 7 and
+iDrive 8 alike. A quad tests no depth and culls nothing; an effect layer's
+`depth` and `cull` fields are ignored. Every value is checked before the
+renderer sees it: a name outside these is refused with an `error` event
+and nothing is made.
+
+What a layer draws stays in its rect's place in the stack: a blend that
+reads or clears the destination changes only the pixels its own quad or
+part covers, as an opaque layer there would. A part's depth test sees only
+its own layer's depth: each mesh layer's pass clears depth first.
+
+### Mipmaps and samplers
+
+Send these only to a service whose hello has `samplers` 1 (an older one
+refuses the new `sampling` and `wrap` values and ignores the rest).
+
+An asset sampled with `nearest_mips`, `bilinear_mips` (bilinear within the
+nearest level) or `trilinear` (between the two nearest) has mip levels: an
+`rgba8` or `r8` asset every level down to 1x1, which the service makes
+from its pixels (each pixel the mean of the four above it; RGBA weighted by
+alpha, so transparent pixels lend no colour) and writes with them: whole
+with the asset, and again in the rectangles a change touches, each level's
+under it, within the upload budget. A compressed asset's levels come from
+the client, after its picture in its one frame, down to the last level
+whose sides are both multiples of 4 (a 64x32 `etc2rgba` asset: 64x32,
+32x16, 16x8 and 8x4, 10,240 bytes in all; RAMSES 27 warns that a smaller
+ETC2 level may fail to upload). Its frame is that chain or is refused
+(`a whole asset is N bytes`). The levels count in the pixel memory (an
+`rgba8` asset's about a third more).
+
+`min_linear_mag_nearest` and `min_nearest_mag_linear` sample linear when
+the asset is drawn smaller and nearest when larger, or the other way round,
+from its picture alone. `mirror` repeats the asset mirrored. `anisotropy`
+2-16 samples a surface seen at a slant sharper, as far as the display's GPU
+goes (iDrive 7 and iDrive 8 not checked on a car).
 
 ### Scene files
 
@@ -475,7 +538,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

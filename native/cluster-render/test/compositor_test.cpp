@@ -1354,8 +1354,8 @@ static void assets()
     ap.format = TexFormat::R8;
     ap.w = 64;
     ap.h = 32;
-    ap.sampling = Sampling::Bilinear;
-    ap.wrap = Wrap::Repeat;
+    ap.sampler.sampling = Sampling::Bilinear;
+    ap.sampler.u = ap.sampler.v = Wrap::Repeat;
     const uint32_t atlas = r.comp->add_asset(1, r.panel, ap, &err);
     AssetParams sp;
     sp.w = sp.h = 16;
@@ -2282,6 +2282,206 @@ static void others_fps()
        held && composed && !q.comp->composite(q.map) && !mv->source() && mv->clock_fps() == 30);
 }
 
+/* PROTOCOL.md "Render state": an effect layer's blending and colour mask,
+ * applied with its quad and changed in place; a mesh part's depth test,
+ * depth writes, custom blending and colour mask; shaders past the limit
+ * refused before they are compiled. */
+static void render_state()
+{
+    Rig r;
+    std::string err;
+    const uint32_t plain = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+                                              r.now, &err);
+    const uint32_t glow = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(64, 0, 64, 64)), "", kSample, 0,
+                                             r.now, &err);
+    PartLook add = quad_look();
+    add.blend = Blend::Premultiplied;
+    add.color_mask = kMaskR | kMaskG | kMaskB;
+    static_cast<EffectLayer *>(r.comp->layer(1, glow))->set_look(add);
+    r.run(100);
+    FakeGraph *g = r.g("panel");
+    const FakeQuad *pq = nullptr, *gq = nullptr;
+    if (g)   /* pointers into what is shown, valid until the next flush */
+        for (const auto &kv : g->shown.quads)
+            (kv.second.r.x == 0 ? pq : gq) = &kv.second;
+    ok("render state: a layer with the default look is never styled", pq && pq->styles == 0 && pq->look == quad_look());
+    ok("render state: one with its own is styled with its quad: premultiplied, no alpha written",
+       gq && gq->styles == 1 && gq->look.blending() == blend_state(Blend::Premultiplied) &&
+           gq->look.color_mask == (kMaskR | kMaskG | kMaskB));
+    PartLook sub = quad_look();
+    sub.has_custom = true;
+    sub.custom.src = BlendFactor::DstAlpha;
+    sub.custom.op = BlendOp::ReverseSubtract;
+    static_cast<EffectLayer *>(r.comp->layer(1, glow))->set_look(sub);
+    const uint64_t before = g->flushes;
+    r.step(10);
+    for (const auto &kv : g->shown.quads)
+        if (kv.second.r.x == 64)
+            gq = &kv.second;
+    ok("render state: changed in place with the next flush",
+       g->flushes == before + 1 && gq->styles == 2 && gq->look.blending().src == BlendFactor::DstAlpha &&
+           gq->look.blending().op == BlendOp::ReverseSubtract && gq->look.color_mask == kMaskRGBA);
+    r.step(10);
+    for (const auto &kv : g->shown.quads)
+        if (kv.second.r.x == 64)
+            gq = &kv.second;
+    ok("render state: and once", gq->styles == 2);
+
+    MeshParams mp;
+    const uint32_t mesh = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 100, 640, 480)), mp, r.now, &err);
+    PartLook decal;
+    decal.depth_func = DepthFunc::Equal;
+    decal.depth_write = false;
+    decal.has_custom = true;
+    decal.custom.src = BlendFactor::One;
+    decal.custom.dst = BlendFactor::One;
+    decal.custom.op = BlendOp::Max;
+    decal.color_mask = kMaskA;
+    ok("render state: a part with its own depth test, blending and mask",
+       r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, decal, &err) &&
+           r.comp->geometry(1, mesh, 1, fan(4, true), r.now, &err));
+    r.run(200);
+    const FakePart *part = nullptr;
+    for (const auto &kv : g->shown.parts)
+        part = &kv.second;
+    ok("render state: the part drawn so",
+       part && part->look.depth_test() == DepthFunc::Equal && !part->look.depth_writes() &&
+           part->look.blending().op == BlendOp::Max && part->look.blending().dst == BlendFactor::One &&
+           part->look.color_mask == kMaskA);
+
+    const std::string huge(Compositor::kMaxShader + 1, ' ');
+    const int effects = r.gpu.next_effect;
+    ok("render state: a fragment shader past the limit refused, never compiled",
+       !r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", huge + kSample, 0, r.now, &err) &&
+           err.find("at most 65536 bytes") != std::string::npos && r.gpu.next_effect == effects);
+    ok("render state: and a part's vertex shader",
+       !r.comp->add_part(1, mesh, 2, huge + kLitVs, kPartFs, PartLook(), &err) &&
+           err.find("at most 65536 bytes") != std::string::npos && r.gpu.next_effect == effects);
+    (void)plain;
+}
+
+/* The mean of a 2x2 RGBA block weighted by alpha, as Asset makes levels. */
+static std::vector<uint8_t> mean4(const uint8_t *a, const uint8_t *b, const uint8_t *c, const uint8_t *d)
+{
+    const uint8_t *p[4] = {a, b, c, d};
+    std::vector<uint8_t> o(4);
+    uint32_t al = 0;
+    for (auto q : p)
+        al += q[3];
+    for (int ch = 0; ch < 3; ch++) {
+        uint32_t s = 0, plain = 0;
+        for (auto q : p) {
+            s += q[ch] * q[3];
+            plain += q[ch];
+        }
+        o[ch] = (uint8_t)(al ? (s + al / 2) / al : (plain + 2) / 4);
+    }
+    o[3] = (uint8_t)((al + 2) / 4);
+    return o;
+}
+
+/* Assets sampled with mipmaps (PROTOCOL.md "Mipmaps"): an rgba8 asset's
+ * levels made by the service, weighted by alpha, written whole with it and
+ * again in the rects a change touches; charged to the pixel memory and the
+ * budget; a compressed one's chain taken from its frame; samplers with
+ * mirror, wrap per axis and anisotropy. */
+static void mipmapped_assets()
+{
+    Rig r;
+    std::string err;
+    AssetParams ap;
+    ap.w = 40;
+    ap.h = 20;   /* levels 40x20, 20x10, 10x5, 5x2, 2x1, 1x1 */
+    ap.sampler.sampling = Sampling::Trilinear;
+    ap.sampler.u = Wrap::Mirror;
+    ap.sampler.v = Wrap::Repeat;
+    ap.sampler.anisotropy = 4;
+    ok("mipmaps: every level down to 1x1", ap.levels() == 6 && mip_levels(1, 1) == 1 && mip_levels(2048, 4) == 12);
+    const size_t chain = tex_chain_bytes(TexFormat::RGBA8, 40, 20, 6);
+    ok("mipmaps: the chain's bytes", chain == (40 * 20 + 20 * 10 + 10 * 5 + 5 * 2 + 2 * 1 + 1) * 4u &&
+                                         Asset::memory(ap) == chain * 2);
+    const uint32_t a = r.comp->add_asset(1, r.panel, ap, &err);
+    std::vector<uint8_t> px(40 * 20 * 4);
+    for (size_t i = 0; i < 40 * 20; i++) {
+        px[i * 4] = (uint8_t)(i * 7);
+        px[i * 4 + 1] = (uint8_t)(i * 3);
+        px[i * 4 + 2] = (uint8_t)i;
+        px[i * 4 + 3] = (uint8_t)((i % 3) ? 255 : 0);   /* some transparent */
+    }
+    r.comp->asset(1, a)->update({}, px.data(), px.size(), &err);
+    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 40, 20)), "", kSample, 0,
+                                           r.now, &err);
+    r.comp->bind(1, fx, 0, "u_atlas", a, &err);
+    r.run(100);
+    FakeGraph *g = r.g("panel");
+    const FakeBuffer *b = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.buffers)
+            if (kv.second.w == 40)
+                b = &kv.second;
+    ok("mipmaps: the buffer has every level and the sampler as asked",
+       b && b->levels == 6 && b->mips.size() == 5 && b->sampler.sampling == Sampling::Trilinear &&
+           b->sampler.u == Wrap::Mirror && b->sampler.v == Wrap::Repeat && b->sampler.anisotropy == 4);
+    const std::vector<uint8_t> want = mean4(&px[0], &px[4], &px[40 * 4], &px[41 * 4]);
+    ok("mipmaps: level 1 is the alpha-weighted mean of the 2x2 above",
+       b && std::vector<uint8_t>(b->mips[0].begin(), b->mips[0].begin() + 4) == want && want[3] == 191);
+    const std::vector<uint8_t> l1(b ? b->mips[0] : std::vector<uint8_t>());
+    const std::vector<uint8_t> want2 = mean4(&l1[0], &l1[4], &l1[20 * 4], &l1[21 * 4]);
+    ok("mipmaps: and each level of the one above",
+       b && std::vector<uint8_t>(b->mips[1].begin(), b->mips[1].begin() + 4) == want2 && b->mips[4].size() == 4);
+    ok("mipmaps: written whole with the asset, every level charged",
+       b && b->level_writes == 5 && g->flushed_bytes >= chain);
+
+    /* A change in one corner: each level rewritten only under it. */
+    const uint64_t levels_before = b->level_writes;
+    const uint64_t bytes_before = g->flushed_bytes;
+    std::vector<uint8_t> patch(4 * 4 * 4, 255);
+    r.comp->asset(1, a)->update({crk::PixelRect{36, 16, 4, 4}}, patch.data(), patch.size(), &err);
+    r.step(10);
+    for (const auto &kv : g->shown.buffers)
+        if (kv.second.w == 40)
+            b = &kv.second;
+    const size_t corner = (4 * 4 + 2 * 2 + 1 * 1 + 1 + 1 + 1) * 4;   /* the rects under it at each level */
+    ok("mipmaps: a change rewrites each level under it only", b->level_writes == levels_before + 5 &&
+                                                                  g->flushed_bytes - bytes_before == corner);
+    ok("mipmaps: the levels follow the change", b->mips[0][(9 * 20 + 19) * 4] == 255 && b->mips[1][(4 * 10 + 9) * 4] == 255 &&
+                                                    b->mips[0][0] == want[0]);
+
+    /* A compressed asset brings its chain in its frame. */
+    AssetParams cp;
+    cp.format = TexFormat::ETC2RGBA;
+    cp.w = 16;
+    cp.h = 8;   /* 16x8 and 8x4, then no more whole blocks: 8 + 2 blocks */
+    cp.sampler.sampling = Sampling::BilinearMips;
+    const size_t cbytes = tex_chain_bytes(cp.format, 16, 8, cp.levels());
+    ok("mipmaps: a compressed chain stops at the last level of whole blocks",
+       cp.levels() == 2 && cbytes == 10 * 16u && mip_levels(TexFormat::ETC2RGB, 64, 32) == 4 &&
+                                                                  Asset::memory(cp) == cbytes);
+    const uint32_t c = r.comp->add_asset(1, r.panel, cp, &err);
+    std::vector<uint8_t> blocks(cbytes, 7);
+    ok("mipmaps: the level 0 bytes alone are refused",
+       !r.comp->asset(1, c)->update({}, blocks.data(), tex_bytes(cp.format, 16, 8), &err) &&
+           err.find(std::to_string(cbytes)) != std::string::npos);
+    ok("mipmaps: the chain is taken", r.comp->asset(1, c)->update({}, blocks.data(), blocks.size(), &err));
+    r.comp->bind(1, fx, 0, "u_atlas", c, &err);
+    r.run(100);
+    const FakeBuffer *cb = nullptr;
+    for (const auto &kv : g->shown.buffers)
+        if (kv.second.f == TexFormat::ETC2RGBA)
+            cb = &kv.second;
+    ok("mipmaps: its texture made with its levels", cb && cb->levels == 2 && cb->mips.size() == 1 &&
+                                                       cb->px.size() == 8 * 16u && cb->mips[0].size() == 2 * 16u);
+    AssetParams huge;
+    huge.format = TexFormat::ETC2RGBA;
+    huge.w = huge.h = 2048;
+    ok("mipmaps: a compressed asset whose chain passes one frame message is refused",
+       !Asset::size_error(huge) && (huge.sampler.sampling = Sampling::Trilinear, Asset::size_error(huge)));
+    AssetParams aniso;
+    aniso.w = aniso.h = 4;
+    aniso.sampler.anisotropy = 17;
+    ok("mipmaps: anisotropy past 16 refused", Asset::size_error(aniso) != nullptr);
+}
+
 int main()
 {
     image_first_upload();
@@ -2320,6 +2520,8 @@ int main()
     fades();
     kept_through_lock();
     others_fps();
+    render_state();
+    mipmapped_assets();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

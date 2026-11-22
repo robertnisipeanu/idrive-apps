@@ -92,6 +92,20 @@ struct ImageOptions {
     bool bilinear = false;
 };
 
+/* How an effect layer or a mesh part is drawn (PROTOCOL.md "Render
+ * state"), to a service whose hello has render_state
+ * (Client::takes_render_state()). An empty field is not sent: the
+ * service's default. */
+struct RenderState {
+    std::string blend;   /* alpha, add, none, premultiplied, max, min or subtract */
+    /* zero, one, src_alpha, one_minus_src_alpha, dst_alpha, one_minus_dst_alpha */
+    std::string blend_src, blend_dst, blend_src_alpha, blend_dst_alpha;
+    std::string blend_op, blend_op_alpha;   /* add, subtract, reverse_subtract, min or max */
+    std::string color_mask;                 /* some of r, g, b and a, or none */
+    std::string depth_func;   /* parts: less, less_equal, equal, not_equal, greater, greater_equal, always, never */
+    int depth_write = -1;     /* parts: 0 or 1; -1: as depth */
+};
+
 /* GLSL ES 1.00; the fragment shader gets varying vec2 v_uv (0,0 at the
  * top-left). vs empty: the service's quad vertex shader. */
 struct EffectOptions {
@@ -108,6 +122,18 @@ struct AssetOptions {
     unsigned w = 0, h = 0;
     bool bilinear = false;
     bool repeat = false;   /* wraps; else clamps */
+};
+
+/* More of an asset's sampler, to a service whose hello has samplers
+ * (Client::takes_samplers()): sampling by name, in place of
+ * AssetOptions::bilinear (nearest, bilinear, nearest_mips, bilinear_mips,
+ * trilinear, min_linear_mag_nearest, min_nearest_mag_linear; with mipmaps
+ * the service makes the asset's levels from its pixels), wrap_u and wrap_v
+ * in place of AssetOptions::repeat (clamp, repeat or mirror), anisotropy
+ * 1-16. Empty, 0: not sent. */
+struct SamplerOptions {
+    std::string sampling, wrap_u, wrap_v;
+    unsigned anisotropy = 0;
 };
 
 enum class UniformType { Float, Vec2, Vec3, Vec4, Mat4 };
@@ -215,10 +241,14 @@ public:
     /* With cluster_time, u_time comes from the renderer's own clock: seconds
      * from 0 to 3600, then again, with nothing sent per frame. */
     uint32_t effect(const LayerOptions &lo, const EffectOptions &eo, bool cluster_time);
+    /* With its render state: its blending and colour mask (RenderState). */
+    uint32_t effect(const LayerOptions &lo, const EffectOptions &eo, bool cluster_time, const RenderState &look);
     /* A 3D layer: its parts drawn in its own pass over lo's rect. */
     uint32_t mesh(const LayerOptions &lo, const MeshOptions &mo);
     /* An asset; 0 when its size is out of range. */
     uint32_t asset(const AssetOptions &ao);
+    /* With more of its sampler (SamplerOptions). */
+    uint32_t asset(const AssetOptions &ao, const SamplerOptions &so);
     /* A scene file as the target's scene; 0 without a file or a hash for
      * each file. */
     uint32_t scene(const SceneOptions &so);
@@ -236,6 +266,8 @@ public:
     bool host(uint32_t ref, const Host &h);
     /* Everything of lo but its target. */
     void set(uint32_t ref, const LayerOptions &lo);
+    /* An effect layer's render state, in place of its EffectOptions'. */
+    void set_look(uint32_t ref, const RenderState &look);
     /* A mesh layer's camera and projection (orthographic or not as made). */
     void camera(uint32_t ref, const MeshOptions &mo);
     void uniform(uint32_t ref, const std::string &name, const std::vector<float> &v);
@@ -247,6 +279,9 @@ public:
     void bind(uint32_t ref, const std::string &sampler, uint32_t asset, uint32_t part = 0);
     /* A mesh layer's part, numbered from 1; false when it exists. */
     bool part(uint32_t ref, uint32_t part, const PartOptions &po);
+    /* With the rest of its render state; look.blend, when set, in place of
+     * po.blend. */
+    bool part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look);
     /* The part's geometry; the service takes a new one at most once a
      * second. False when it is out of range. */
     bool geometry(uint32_t ref, uint32_t part, const Geometry &g);
@@ -254,6 +289,9 @@ public:
     /* Returns the animation's number (0: refused here); playing it again
      * means stop() and animate(). */
     uint32_t animate(uint32_t ref, const AnimationOptions &a);
+    /* Replaces the layer's animation anim (one animate() returned) with a;
+     * returns anim, or 0 when the layer has no such animation. */
+    uint32_t animate(uint32_t ref, const AnimationOptions &a, uint32_t anim);
     void stop(uint32_t ref, uint32_t anim);
     /* A layer or an asset; an asset a layer samples stays (the service
      * refuses it). */
@@ -317,6 +355,12 @@ public:
     bool takes_preload() const { return preload_; }
     /* The service's hello knows a layer's others_fps (LayerOptions). */
     bool takes_others_fps() const { return others_fps_; }
+    /* The service's hello takes a render state's blend factors, depth_func
+     * and color_mask (RenderState). */
+    bool takes_render_state() const { return render_state_; }
+    /* The service's hello takes an asset's sampling by name, wrap_u, wrap_v
+     * and anisotropy (AssetOptions). */
+    bool takes_samplers() const { return samplers_; }
 
 private:
     struct Part {
@@ -327,6 +371,8 @@ private:
     struct Layer {
         std::string kind;                /* video, image, effect, mesh, asset or scene */
         LayerOptions lo;
+        RenderState look;                /* an effect layer's */
+        SamplerOptions sampler;          /* an asset's */
         VideoOptions vo;
         ImageOptions io;
         EffectOptions eo;
@@ -408,6 +454,8 @@ private:
     bool always_packed_ = false;    /* and always_packed */
     bool preload_ = false;          /* and knows preload */
     bool others_fps_ = false;       /* and others_fps */
+    bool render_state_ = false;     /* and render state */
+    bool samplers_ = false;         /* and samplers */
 };
 
 }  // namespace cr

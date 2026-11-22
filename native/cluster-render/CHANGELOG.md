@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Effect layers and mesh parts choose how they blend (presets such as
+`premultiplied`, `max` and `subtract`, or their own factors and
+operations) and which colour channels they write, and a part its depth
+test. Assets can be sampled with mipmaps (the service makes the levels of
+`rgba8` and `r8` assets; a compressed one brings its own), mirrored, with
+each axis wrapped its own way and anisotropically. A shader is at most
+64 KB.
+
 ## 0.8.0
 
 A layer can ask for upload bandwidth while it is shown (`others_fps`): the

@@ -46,7 +46,8 @@
  * stock pop-ups (yield), a client without the field getting it. A scene
  * with layers and a host of the map (layers_and_hosting). A layer's
  * preload, end to end (preload). A layer's others_fps holding another
- * client's video and releasing it (others_fps). */
+ * client's video and releasing it (others_fps). Render state and samplers
+ * (render_state_and_samplers). */
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -1694,6 +1695,146 @@ static void others_fps()
     ok("others_fps: its client gone: released", w.fps_cap == 0 && caps.back() == "0 " && video_clock(r) == 30);
 }
 
+/* PROTOCOL.md "Render state" and "Mipmaps", over the socket with the C++
+ * client: the hello says the service takes them; an asset with a
+ * mipmapped, mirrored, anisotropic sampler, an effect layer blending
+ * premultiplied without writing alpha, changed in place, and a mesh part
+ * with its own depth test and blending, made again with all of it after a
+ * service restart; malformed fields refused with an error event and
+ * nothing made. */
+static void render_state_and_samplers()
+{
+    Rig r;
+    cr::Client c("gauges", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("render state: the hello says the service takes render state and samplers",
+       c.takes_render_state() && c.takes_samplers());
+    cr::AssetOptions ao;
+    ao.target = "panel";
+    ao.w = 64;
+    ao.h = 32;
+    cr::SamplerOptions so;
+    so.sampling = "trilinear";
+    so.wrap_u = "mirror";
+    so.wrap_v = "repeat";
+    so.anisotropy = 8;
+    const uint32_t dial = c.asset(ao, so);
+    std::vector<uint8_t> px(64 * 32 * 4, 180);
+    c.pixels(dial, {}, px.data(), px.size());
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.x = 100;
+    lo.y = 100;
+    lo.w = 64;
+    lo.h = 32;
+    cr::RenderState glow;
+    glow.blend = "premultiplied";
+    glow.color_mask = "rgb";
+    const uint32_t fx = c.effect(lo,
+                                 cr::EffectOptions{"#version 100\nprecision mediump float;\nuniform sampler2D u_dial;\n"
+                                                   "varying vec2 v_uv;\nvoid main(){gl_FragColor=texture2D(u_dial,v_uv);}",
+                                                   "", 0},
+                                 false, glow);
+    c.bind(fx, "u_dial", dial);
+    cr::LayerOptions ml = lo;
+    ml.x = 600;
+    ml.w = 400;
+    ml.h = 300;
+    cr::MeshOptions mo;
+    mo.cz = 6;
+    const uint32_t box = c.mesh(ml, mo);
+    cr::PartOptions po;
+    po.vs = "#version 100\nattribute vec3 a_position;\nattribute vec3 a_normal;\nuniform mat4 u_mvp;\n"
+            "varying vec3 v_n;\nvoid main(){v_n=a_normal;gl_Position=u_mvp*vec4(a_position,1.0);}";
+    po.fs = "#version 100\nprecision mediump float;\nvarying vec3 v_n;\nvoid main(){gl_FragColor=vec4(v_n,1.0);}";
+    cr::RenderState decal;
+    decal.depth_func = "greater_equal";
+    decal.depth_write = 0;
+    decal.blend_src = "one";
+    decal.blend_dst = "one";
+    decal.blend_op = "max";
+    ok("render state: a part with its own render state is taken",
+       c.part(box, 1, po, decal) && c.geometry(box, 1, cube()));
+    r.pump(400);
+    auto check = [&](const char *when, bool rgb_only) {
+        FakeGraph *g = r.gpu.graph("panel");
+        const FakeBuffer *b = nullptr;
+        const FakeQuad *q = nullptr;
+        const FakePart *p = nullptr;
+        if (g) {
+            for (const auto &kv : g->shown.buffers)
+                if (kv.second.w == 64 && kv.second.h == 32)
+                    b = &kv.second;
+            for (const auto &kv : g->shown.quads)
+                if (kv.second.textures.count("u_dial"))
+                    q = &kv.second;
+            for (const auto &kv : g->shown.parts)
+                p = &kv.second;
+        }
+        const uint8_t mask = rgb_only ? (kMaskR | kMaskG | kMaskB) : kMaskRGBA;
+        ok((std::string("render state: ") + when + ": the asset with every level and its sampler").c_str(),
+           b && b->levels == 7 && b->sampler.sampling == Sampling::Trilinear && b->sampler.u == Wrap::Mirror &&
+               b->sampler.v == Wrap::Repeat && b->sampler.anisotropy == 8 && b->mips.back().size() == 4 &&
+               b->mips.back()[0] == 180);
+        ok((std::string("render state: ") + when + ": the effect layer blends as asked").c_str(),
+           q && q->look.blending() == blend_state(Blend::Premultiplied) && q->look.color_mask == mask);
+        ok((std::string("render state: ") + when + ": the part drawn as asked").c_str(),
+           p && p->look.depth_test() == DepthFunc::GreaterEqual && !p->look.depth_writes() &&
+               p->look.blending().src == BlendFactor::One && p->look.blending().op == BlendOp::Max);
+    };
+    check("made", true);
+    cr::RenderState all;
+    all.blend = "premultiplied";
+    c.set_look(fx, all);
+    r.pump(50);
+    check("set_look", false);
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    check("after a service restart", false);
+    ok("render state: no error so far", e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"layer\",\"ref\":1,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"blend_src\":\"src_color\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":2,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"color_mask\":\"rgbx\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":3,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"blend\":\"none\",\"blend_op\":\"max\"}");
+    raw.send("{\"op\":\"asset\",\"ref\":4,\"target\":\"panel\",\"w\":8,\"h\":8,\"sampling\":\"anisotropic\"}");
+    raw.send("{\"op\":\"asset\",\"ref\":5,\"target\":\"panel\",\"w\":8,\"h\":8,\"anisotropy\":2.5}");
+    raw.send("{\"op\":\"asset\",\"ref\":6,\"target\":\"panel\",\"w\":8,\"h\":8,\"wrap_v\":\"spiral\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":7,\"target\":\"panel\",\"kind\":\"mesh\"}");
+    raw.send("{\"op\":\"part\",\"ref\":7,\"part\":1,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"depth\":0,\"depth_func\":\"less\"}");
+    raw.send("{\"op\":\"part\",\"ref\":7,\"part\":2,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"depth_func\":\"sometimes\"}");
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("render state: a colour blend factor RAMSES 19 lacks is refused",
+       refused("layer", 1, "blend_src must be zero, one, src_alpha"));
+    ok("render state: a malformed colour mask is refused", refused("layer", 2, "color_mask must be"));
+    ok("render state: blend factors with blend none are refused", refused("layer", 3, "blend none takes no"));
+    ok("render state: an unknown sampling is refused", refused("asset", 4, "sampling must be nearest, bilinear"));
+    ok("render state: a fractional anisotropy is refused", refused("asset", 5, "anisotropy must be a whole number"));
+    ok("render state: an unknown wrap is refused", refused("asset", 6, "wrap_v must be clamp, repeat or mirror"));
+    ok("render state: a depth test without depth is refused", refused("part", 7, "depth 0 takes no depth_func"));
+    ok("render state: an unknown depth test is refused", refused("part", 7, "depth_func must be less"));
+    size_t layers = 0;
+    for (const Layer *l : r.svc->compositor().layers())
+        layers += std::string(l->kind()) == "effect";
+    ok("render state: nothing refused was made", layers == 1 && r.svc->compositor().assets().size() == 1);
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -2204,6 +2345,7 @@ int main()
     layers_and_hosting();
     preload();
     others_fps();
+    render_state_and_samplers();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

@@ -16,8 +16,11 @@
  * loaded, shown when made visible and loaded again after the linger, made
  * again with preload after the restart, and preload 0 releasing the target;
  * a layer's others_fps holding the other client (fps_cap) and releasing it
- * when set to 0, dropped, or the held client closes; close() and connect()
- * in one tick making one connection. */
+ * when set to 0, dropped, or the held client closes; render state and
+ * samplers: an effect layer's blending set and changed, a part's depth
+ * test, an rgba8 asset whose mip levels the service makes and an etc2rgba
+ * one sent with its chain, and a factor the service lacks refused;
+ * close() and connect() in one tick making one connection. */
 'use strict';
 
 const assert = require('assert');
@@ -256,6 +259,44 @@ async function main() {
     ok('connected again: held again', await until(() => waze.fpsCap === 20, 3000));
     ovl.drop(ask2);
     ok('the request dropped: released', await until(() => waze.fpsCap === 0, 2000));
+
+    /* Render state and samplers (PROTOCOL.md "Render state", "Mipmaps"). */
+    const refusedBefore = eo.refused.length;
+    ok('render state: the hello says the service takes render state and samplers',
+        ovl.renderState === true && ovl.samplers === true);
+    const dial = ovl.asset({ target: 'panel', w: 64, h: 32, sampling: 'trilinear', wrap: 'repeat', wrap_u: 'mirror',
+        anisotropy: 4 });
+    ovl.pixels(dial, null, Buffer.alloc(64 * 32 * 4, 200));
+    const sheet = ovl.asset({ target: 'panel', format: 'etc2rgba', w: 16, h: 8, sampling: 'bilinear_mips' });
+    const chain = (8 + 2) * 16;   /* 16x8 and 8x4: the levels of whole blocks */
+    ovl.pixels(sheet, null, Buffer.alloc(chain, 7));
+    const glow = ovl.effect({ target: 'panel', klass: 'overlay', x: 0, y: 0, w: 64, h: 32, blend: 'premultiplied',
+        color_mask: 'rgb', fs: 'precision mediump float;uniform sampler2D u_dial;varying vec2 v_uv;' +
+            'void main(){gl_FragColor=texture2D(u_dial,v_uv);}' });
+    ovl.bind(glow, 'u_dial', dial);
+    const gear = ovl.mesh({ target: 'panel', x: 100, y: 0, w: 200, h: 200, cz: 5 });
+    ovl.part(gear, 1, { vs: 'attribute vec3 a_position;uniform mat4 u_mvp;void main(){gl_Position=u_mvp*vec4(a_position,1.0);}',
+        fs: 'void main(){gl_FragColor=vec4(1.0);}', depth_func: 'greater', depth_write: false, blend: 'max' });
+    ovl.geometry(gear, 1, { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] });
+    ok('render state: the effect layer and the part shown', await until(() => eo.layer[glow] === 'shown' &&
+        eo.layer[gear] === 'shown', 3000));
+    ovl.set(glow, { blend: 'subtract', color_mask: 'rgba' });
+    const a1 = ovl.animate(glow, { property: 'rotate', keys: '0:0 1000:90' });
+    const a2 = ovl.animate(glow, { property: 'rotate', keys: '0:90 1000:45', anim: a1 });
+    const a3 = ovl.animate(glow, { property: 'rotate', keys: '0:0 1000:45', anim: 99 });
+    ok('render state: an animation replaced by its number, an unknown number a new one',
+        a1 > 0 && a2 === a1 && a3 !== a1 && ovl.layers.get(glow).anims.size === 2 &&
+        ovl.layers.get(glow).anims.get(a1).keys === '0:90 1000:45');
+    status = '';
+    ovl.status();
+    ok('render state: the assets with their mip levels', await until(() => status.indexOf('64x32 (7 mip levels)') >= 0, 1000) &&
+        status.indexOf('etc2rgba 16x8 (2 mip levels)') >= 0);
+    ok('render state: nothing refused', eo.refused.length === refusedBefore);
+    const bad = ovl.effect({ target: 'panel', fs: 'void main(){}', blend_dst: 'one_minus_src_color' });
+    ok('render state: a factor the service lacks refused',
+        await until(() => eo.refused.some((r) => r.indexOf('layer: blend_dst must be') === 0), 1000));
+    [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
+    eo.refused.length = refusedBefore;   /* the bad one's refusal, expected */
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',

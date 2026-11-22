@@ -67,8 +67,76 @@ inline size_t tex_bytes(TexFormat f, uint32_t w, uint32_t h)
         return (size_t)(w / 4) * (h / 4) * (f == TexFormat::ETC2RGB ? 8 : 16);
     return (size_t)w * h * (f == TexFormat::R8 ? 1 : 4);
 }
-enum class Sampling { Nearest, Bilinear };
-enum class Wrap { Clamp, Repeat };
+/* How a texture is sampled: nearest or bilinear within its picture, or from
+ * its mip levels (Mips: the nearest level; Trilinear: between two), or
+ * linear one way and nearest the other (minified, magnified). */
+enum class Sampling {
+    Nearest,
+    Bilinear,
+    NearestMips,
+    BilinearMips,
+    Trilinear,
+    MinLinearMagNearest,
+    MinNearestMagLinear
+};
+inline bool sampling_mips(Sampling s)
+{
+    return s == Sampling::NearestMips || s == Sampling::BilinearMips || s == Sampling::Trilinear;
+}
+enum class Wrap { Clamp, Repeat, Mirror };
+/* A texture's sampler: its sampling, its wrap along u and v, and its
+ * anisotropy (1: isotropic; up to 16, as far as the display's GPU goes). */
+struct Sampler {
+    Sampling sampling = Sampling::Nearest;
+    Wrap u = Wrap::Clamp, v = Wrap::Clamp;
+    uint32_t anisotropy = 1;
+};
+inline bool operator==(const Sampler &a, const Sampler &b)
+{
+    return a.sampling == b.sampling && a.u == b.u && a.v == b.v && a.anisotropy == b.anisotropy;
+}
+/* What the old buffer() takes: nearest or bilinear, one wrap, isotropic. */
+inline bool sampler_plain(const Sampler &s)
+{
+    return (s.sampling == Sampling::Nearest || s.sampling == Sampling::Bilinear) && s.u == s.v &&
+           s.u != Wrap::Mirror && s.anisotropy == 1;
+}
+
+/* Mip levels: level l of a w x h texture is max(1, w >> l) x max(1, h >> l),
+ * down to 1x1 (mip_levels() of them in all). A compressed texture's go down
+ * to the last level whose sides are both multiples of 4 (mip_levels(f, w,
+ * h)): RAMSES 27 warns that a smaller ETC2 level may fail to upload
+ * (VERIFIED, make test-ramses27), and the renderers allocate the levels
+ * given (GLES 3 texture storage), so a shorter chain samples whole. */
+inline uint32_t mip_levels(uint32_t w, uint32_t h)
+{
+    uint32_t n = 1;
+    for (uint32_t d = w > h ? w : h; d > 1; d >>= 1)
+        n++;
+    return n;
+}
+inline uint32_t mip_levels(TexFormat f, uint32_t w, uint32_t h)
+{
+    if (!tex_compressed(f))
+        return mip_levels(w, h);
+    uint32_t n = 1;
+    while (n < 32 && (w >> n) && (h >> n) && (w >> n) % 4 == 0 && (h >> n) % 4 == 0)
+        n++;
+    return n;
+}
+inline uint32_t mip_size(uint32_t d, uint32_t level) { return d >> level ? d >> level : 1; }
+inline size_t tex_level_bytes(TexFormat f, uint32_t w, uint32_t h, uint32_t level)
+{
+    return tex_bytes(f, mip_size(w, level), mip_size(h, level));
+}
+/* Bytes of levels 0 to levels - 1, one after another. */
+inline size_t tex_chain_bytes(TexFormat f, uint32_t w, uint32_t h, uint32_t levels)
+{
+    size_t n = 0;
+    for (uint32_t l = 0; l < levels; l++)
+        n += tex_level_bytes(f, w, h, l);
+    return n;
+}
 
 enum class UniformType { Float, Vec2, Vec3, Vec4, Mat4 };
 /* Floats in one element of t (a mat4 is 16, in GLSL's column order). */
@@ -109,14 +177,85 @@ struct Pose {
 };
 
 enum class Cull { None, Back, Front };
-enum class Blend { Alpha, Add, None };
-/* How a part is drawn: depth tested (less or equal) and written, which faces
- * are culled, and how it blends over what is below. */
+/* Blending presets: Alpha, source alpha over what is below; Add, added at
+ * source alpha; None, replaced; Premultiplied, a colour already multiplied
+ * by its alpha over what is below; Max and Min, the larger or smaller of
+ * each channel; Subtract, taken away at source alpha. */
+enum class Blend { Alpha, Add, None, Premultiplied, Max, Min, Subtract };
+/* The blend factors and operations every display takes (RAMSES 19 has no
+ * colour or constant factors). */
+enum class BlendFactor { Zero, One, SrcAlpha, OneMinusSrcAlpha, DstAlpha, OneMinusDstAlpha };
+enum class BlendOp { Add, Subtract, ReverseSubtract, Min, Max };
+/* colour = op(src * colour_src, dst * colour_dst), and alpha the same with
+ * the alpha factors and op; off: written over what is below. */
+struct BlendState {
+    bool on = true;
+    BlendFactor src = BlendFactor::SrcAlpha, dst = BlendFactor::OneMinusSrcAlpha;
+    BlendFactor src_alpha = BlendFactor::One, dst_alpha = BlendFactor::OneMinusSrcAlpha;
+    BlendOp op = BlendOp::Add, op_alpha = BlendOp::Add;
+};
+inline bool operator==(const BlendState &a, const BlendState &b)
+{
+    return a.on == b.on && (!a.on || (a.src == b.src && a.dst == b.dst && a.src_alpha == b.src_alpha &&
+                                      a.dst_alpha == b.dst_alpha && a.op == b.op && a.op_alpha == b.op_alpha));
+}
+inline BlendState blend_state(Blend b)
+{
+    BlendState s;
+    switch (b) {
+    case Blend::Add: s.dst = BlendFactor::One; break;
+    case Blend::None: s.on = false; break;
+    case Blend::Premultiplied: s.src = BlendFactor::One; break;
+    case Blend::Max:
+    case Blend::Min:
+        s.src = s.dst = s.src_alpha = s.dst_alpha = BlendFactor::One;
+        s.op = s.op_alpha = b == Blend::Max ? BlendOp::Max : BlendOp::Min;
+        break;
+    case Blend::Subtract:
+        s.dst = BlendFactor::One;
+        s.op = BlendOp::ReverseSubtract;
+        break;
+    default: break;
+    }
+    return s;
+}
+/* Depth tests; Off: neither tested nor written. */
+enum class DepthFunc { Off, Less, LessEqual, Equal, NotEqual, Greater, GreaterEqual, Always, Never };
+/* Colour channels written, as bits. */
+const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;
+/* How a part (or a quad, with style()) is drawn: depth tested with
+ * depth_func and written when depth_write (depth false: neither), which
+ * faces are culled, how it blends over what is below (the blend preset, or
+ * custom when has_custom), and the colour channels it writes. */
 struct PartLook {
     bool depth = true;
+    DepthFunc depth_func = DepthFunc::LessEqual;
+    bool depth_write = true;
     Cull cull = Cull::Back;
     Blend blend = Blend::Alpha;
+    bool has_custom = false;
+    BlendState custom;
+    uint8_t color_mask = kMaskRGBA;
+
+    BlendState blending() const { return has_custom ? custom : blend_state(blend); }
+    DepthFunc depth_test() const { return depth ? depth_func : DepthFunc::Off; }
+    bool depth_writes() const { return depth && depth_write; }
 };
+inline bool operator==(const PartLook &a, const PartLook &b)
+{
+    return a.depth_test() == b.depth_test() && a.depth_writes() == b.depth_writes() && a.cull == b.cull &&
+           a.blending() == b.blending() && a.color_mask == b.color_mask;
+}
+inline bool operator!=(const PartLook &a, const PartLook &b) { return !(a == b); }
+/* A quad's look unless styled: blended at source alpha, no depth, no
+ * culling, every channel. */
+inline PartLook quad_look()
+{
+    PartLook l;
+    l.depth = false;
+    l.cull = Cull::None;
+    return l;
+}
 
 /* Vertex attributes, as bits of a mask: what a part's geometry carries and
  * what its vertex shader reads (a_position, a_normal, a_texcoord, a_color). */
@@ -153,16 +292,36 @@ public:
     /* Likewise, with the sampler's wrap. */
     virtual int buffer(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap) = 0;
     virtual bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) = 0;
-    /* An immutable texture of n bytes (one mip level) and its sampler,
-     * handled as a buffer (texture(), drop_buffer()) but never written.
-     * Only a compressed format, only where the backend takes it: 0 otherwise. */
-    virtual int immutable_texture(TexFormat, uint32_t, uint32_t, Sampling, Wrap, const uint8_t *, size_t) { return 0; }
+    /* A persistent texture buffer of levels mip levels (1 to
+     * mip_levels(w, h)) and its sampler s. write() writes level 0,
+     * write_level() any. 0 where the backend has no such sampler. */
+    virtual int buffer(TexFormat f, uint32_t w, uint32_t h, const Sampler &s, uint32_t levels)
+    {
+        return levels == 1 && sampler_plain(s) ? buffer(f, w, h, s.sampling, s.u) : 0;
+    }
+    virtual bool write_level(int buf, uint32_t level, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                             const uint8_t *px)
+    {
+        return level == 0 && write(buf, x, y, w, h, px);
+    }
+    /* An immutable texture of levels mip levels, data their n bytes one
+     * level after another (tex_chain_bytes), and its sampler, handled as a
+     * buffer (texture(), drop_buffer()) but never written. Only a compressed
+     * format, only where the backend takes it: 0 otherwise. */
+    virtual int immutable_texture(TexFormat, uint32_t, uint32_t, const Sampler &, uint32_t, const uint8_t *, size_t)
+    {
+        return 0;
+    }
     /* A quad over r drawn by effect, hidden until show(). Blended over what
      * is below (source alpha), no depth test. */
     virtual int quad(int effect, const Rect &r) = 0;
     virtual bool place(int quad, const Rect &r) = 0;
     /* Turns and scales the quad within its rect's place. */
     virtual bool turn(int quad, const Turn &t) = 0;
+    /* Draws the quad with look's blending and colour mask (its depth and
+     * culling are not used: a quad tests no depth and culls nothing). False
+     * where the backend has no such state. */
+    virtual bool style(int, const PartLook &) { return false; }
     /* texture(), uniform() and uniform_array() take a quad or a part. */
     virtual bool texture(int quad, const char *uniform, int buf) = 0;
     /* A float, vec2, vec3 or vec4 uniform (n 1-4). */

@@ -58,6 +58,24 @@ const BACKOFF_MS = [250, 500, 1000, 2000];
 const SET_KEYS = ['klass', 'z', 'x', 'y', 'w', 'h', 'visible', 'exclusive', 'prewarm', 'preload', 'contend',
     'guide_hold', 'yield', 'others_fps', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
 const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'cz', 'crx', 'cry', 'crz'];
+/* An effect layer's or mesh part's render state (PROTOCOL.md "Render
+ * state"); a part's also takes PART_LOOK_KEYS. */
+const LOOK_KEYS = ['blend', 'blend_src', 'blend_dst', 'blend_src_alpha', 'blend_dst_alpha', 'blend_op',
+    'blend_op_alpha', 'color_mask'];
+const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull'];
+const MIPMAPPED = ['nearest_mips', 'bilinear_mips', 'trilinear'];
+
+/* Bytes of an asset's pixels: with mips, its mip levels too, a compressed
+ * one's down to the last level of whole 4x4 blocks (PROTOCOL.md
+ * "Mipmaps"). */
+function assetBytes(w, h, bpp, block, mips) {
+    let n = 0;
+    for (let lw = w, lh = h; ; lw = Math.max(1, lw >> 1), lh = Math.max(1, lh >> 1)) {
+        n += block ? (lw / 4) * (lh / 4) * block : lw * lh * bpp;
+        if (!mips || (lw === 1 && lh === 1)) return n;
+        if (block && ((lw >> 1) % 4 || (lh >> 1) % 4 || !(lw >> 1) || !(lh >> 1))) return n;
+    }
+}
 const UNIFORM_WIDTH = { float: 1, vec2: 2, vec3: 3, vec4: 4, mat4: 16 };
 
 function message(type, body) {
@@ -236,6 +254,8 @@ class ClusterRender extends EventEmitter {
             this.hostEdge = ev.host_edge === 1;   /* takes a host's edge_* */
             this.preload = ev.preload === 1;      /* knows a layer's preload */
             this.othersFps = ev.others_fps === 1;   /* knows a layer's others_fps */
+            this.renderState = ev.render_state === 1;   /* takes blend factors, depth_func, color_mask */
+            this.samplers = ev.samplers === 1;   /* takes mipmapped sampling, mirror, wrap_u/v, anisotropy */
             this.ready = true;
             this.backoff = 0;
             this._pump();
@@ -320,8 +340,10 @@ class ClusterRender extends EventEmitter {
             return m;
         }
         if (l.kind === 'asset') {
-            return { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
+            const m = { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
                 sampling: o.sampling || 'nearest', wrap: o.wrap || 'clamp' };
+            ['wrap_u', 'wrap_v', 'anisotropy'].forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
+            return m;
         }
         const m = { op: 'layer', ref: ref, target: o.target, kind: l.kind };
         this._setFields(m, o);
@@ -342,6 +364,7 @@ class ClusterRender extends EventEmitter {
             if (o.vs) m.vs = o.vs;
             if (o.time_fps !== undefined) m.time_fps = o.time_fps;
             if (o.time) m.time = 1;
+            LOOK_KEYS.forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
         }
         return m;
     }
@@ -377,7 +400,9 @@ class ClusterRender extends EventEmitter {
             l.bpp = o.format === 'r8' || l.compressed ? 1 : 4;
             if (!(o.w > 0 && o.h > 0 && o.w <= 2048 && o.h <= 2048)) return 0;
             if (l.compressed && (o.w % 4 || o.h % 4)) return 0;
-            l.bytes = l.compressed ? (o.w / 4) * (o.h / 4) * block : o.w * o.h * l.bpp;
+            /* A compressed asset sampled with mipmaps is sent with every
+             * level; the service makes an uncompressed one's. */
+            l.bytes = assetBytes(o.w, o.h, l.bpp, block, l.compressed && MIPMAPPED.indexOf(o.sampling) >= 0);
             if (l.bytes > 1920 * 720 * 4) return 0;
             l.iw = o.w;
             l.ih = o.h;
@@ -392,7 +417,10 @@ class ClusterRender extends EventEmitter {
     /* opts: target, klass, z, x, y, w, h, visible, exclusive, prewarm,
      * preload, contend, guide_hold, yield, others_fps, opacity, rotate, sx, sy, px, py, then per kind (see
      * PROTOCOL.md); an image's iw and ih default to its w and h; an
-     * effect's time: true takes u_time from the renderer's clock. A mesh's:
+     * effect's time: true takes u_time from the renderer's clock, and its
+     * render state blend, blend_src, blend_dst, blend_src_alpha,
+     * blend_dst_alpha, blend_op, blend_op_alpha, color_mask (to a service
+     * whose hello has render_state; set() changes them). A mesh's:
      * projection, fov, ortho_h, near, far and its camera cx, cy, cz, crx,
      * cry, crz (degrees, right-handed). Returns the layer's ref, 0 when
      * refused. */
@@ -402,7 +430,12 @@ class ClusterRender extends EventEmitter {
     mesh(opts) { return this._add('mesh', opts); }
     /* opts: target, format ('rgba8', 'r8'; 'etc2rgba', 'etc2rgb', w and h
      * multiples of 4, its blocks sent whole), w, h (up to 2048), sampling
-     * ('nearest', 'bilinear'), wrap ('clamp', 'repeat'). */
+     * ('nearest', 'bilinear'; with mipmaps, to a service whose hello has
+     * samplers: 'nearest_mips', 'bilinear_mips', 'trilinear', and
+     * 'min_linear_mag_nearest', 'min_nearest_mag_linear'), wrap ('clamp',
+     * 'repeat'; 'mirror'), wrap_u, wrap_v, anisotropy (1-16). Sampled with
+     * mipmaps, a compressed asset's frame carries every level after its
+     * picture (PROTOCOL.md "Mipmaps"). */
     asset(opts) { return this._add('asset', opts); }
     /* A scene file as the target's scene (PROTOCOL.md "Scene files"): opts
      * target, file (an absolute path), res (its resource files' paths),
@@ -472,11 +505,11 @@ class ClusterRender extends EventEmitter {
     set(ref, opts) {
         const l = this.layers.get(ref);
         if (!l || l.kind === 'asset' || l.kind === 'scene') return;
-        const keys = l.kind === 'mesh' ? SET_KEYS.concat(MESH_KEYS) : SET_KEYS;
-        keys.forEach((k) => { if (opts[k] !== undefined) l.opts[k] = opts[k]; });
+        const own = l.kind === 'mesh' ? MESH_KEYS : l.kind === 'effect' ? LOOK_KEYS : [];
+        SET_KEYS.concat(own).forEach((k) => { if (opts[k] !== undefined) l.opts[k] = opts[k]; });
         const m = { op: 'set', ref: ref };
         this._setFields(m, opts);
-        if (l.kind === 'mesh') MESH_KEYS.forEach((k) => { if (opts[k] !== undefined) m[k] = opts[k]; });
+        own.forEach((k) => { if (opts[k] !== undefined) m[k] = opts[k]; });
         this._send(m);
     }
 
@@ -509,14 +542,20 @@ class ClusterRender extends EventEmitter {
     }
 
     /* A mesh layer's part, numbered from 1: opts vs, fs, depth, cull
-     * ('back', 'front', 'none'), blend ('alpha', 'add', 'none'). */
+     * ('back', 'front', 'none'), blend ('alpha', 'add', 'none'), and, to a
+     * service whose hello has render_state, the rest of its render state
+     * (PROTOCOL.md "Render state"): blend 'premultiplied', 'max', 'min',
+     * 'subtract', blend_src, blend_dst, blend_src_alpha, blend_dst_alpha,
+     * blend_op, blend_op_alpha, color_mask, depth_func, depth_write. */
     part(ref, part, opts) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'mesh' || !(part > 0) || l.parts.has(part)) return false;
         const m = { op: 'part', ref: ref, part: part, vs: opts.vs, fs: opts.fs };
         if (opts.depth !== undefined) m.depth = flag(opts.depth);
-        if (opts.cull) m.cull = opts.cull;
-        if (opts.blend) m.blend = opts.blend;
+        if (opts.depth_write !== undefined) m.depth_write = flag(opts.depth_write);
+        LOOK_KEYS.concat(PART_LOOK_KEYS).forEach((k) => {
+            if (opts[k] !== undefined && m[k] === undefined) m[k] = opts[k];
+        });
         l.parts.set(part, { msg: m, geometry: null, transform: null });
         this._send(m);
         return true;
@@ -559,14 +598,18 @@ class ClusterRender extends EventEmitter {
 
     /* opts: part, property ('rotate', 'translate', 'scale', 'uniform'),
      * name (the uniform's), keys ("t:v[,v,v] ..." or [[t, v...], ...], t in
-     * ms), loop, interp ('linear', 'step'). Returns the animation's number,
-     * 0 when refused here. */
+     * ms), loop, interp ('linear', 'step'), anim (a number this returned:
+     * that animation replaced). Returns the animation's number, 0 when
+     * refused here. */
     animate(ref, opts) {
         const l = this.layers.get(ref);
         if (!l || !opts.property || !opts.keys) return 0;
         const keys = typeof opts.keys === 'string' ? opts.keys
             : opts.keys.map((k) => k[0] + ':' + k.slice(1).join(',')).join(' ');
-        const anim = l.nextAnim++;
+        /* opts.anim: that animation of the layer's (one animate() returned)
+         * replaced, so a needle sent to new values keeps one animation;
+         * its first key is where the needle is now. */
+        const anim = opts.anim > 0 && l.anims.has(opts.anim) ? opts.anim : l.nextAnim++;
         const m = { op: 'animate', ref: ref, anim: anim, property: opts.property, keys: keys,
             loop: flag(opts.loop), interp: opts.interp || 'linear' };
         if (opts.part) m.part = opts.part;
