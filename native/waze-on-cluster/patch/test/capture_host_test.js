@@ -7,15 +7,24 @@
  *   - the same socket protocol and capture lifecycle as the service on its
  *     own; a stop restores a capture it owns before the daemon exits;
  *   - a failure of the service (a start or a restore that throws) restarts
- *     the service, never the daemon, and a capture left open is restored
- *     once it starts again;
- *   - patchd runs it only with --dlt-capture, and not while an earlier
- *     version's waze-on-cluster-capture.service is installed or running,
- *     then takes it over once that is gone; patchd's capture commands reach
- *     it as before, and a SIGTERM restores an open capture before patchd
- *     exits;
+ *     the service, never the daemon, with no limit on the restarts, and a
+ *     capture left open is restored once it starts again;
+ *   - patchd runs it only with --dlt-capture, and not while a
+ *     waze-on-cluster-capture.service is installed or running, then takes it
+ *     over once that is gone; patchd's capture commands reach it as before,
+ *     and a SIGTERM restores an open capture before patchd exits;
+ *   - when a capture unit starts while patchd serves the capture, patchd
+ *     stops serving it and leaves that unit's socket and capture alone, also
+ *     at its own SIGTERM;
+ *   - the service's lines stay out of patchd's own log (the app's log view
+ *     and its backlog) and go to the logs reply's "capture";
+ *   - one restore at a time: a stop while the start's restore runs does not
+ *     send the daemon a second one;
+ *   - the registered-client check reads /proc asynchronously and checks the
+ *     dlt-daemon it found first, without scanning /proc again;
  *   - the patchd unit's ExecStopPost restores a capture left open, except
- *     while the earlier unit is installed (its own ExecStopPost does then).
+ *     while a capture unit is installed or runs (its own ExecStopPost does
+ *     then).
  *
  *   node capture_host_test.js
  */
@@ -105,7 +114,8 @@ function pcmd(cmd, ev) {
 
 (async function () {
     dlt = await require('./fake_dlt.js')(path.join(dir, 'dlt'));
-    ENV = Object.assign({}, process.env, dlt.env, { WOC_CAPTURE_MS: '60000', WOC_CAPTURE_RETRY_MS: '80', WOC_CAPTURE_RESTART_MS: '100' });
+    ENV = Object.assign({}, process.env, dlt.env, { WOC_CAPTURE_MS: '60000', WOC_CAPTURE_RETRY_MS: '80', WOC_CAPTURE_RESTART_MS: '100',
+        WOC_CAPTURE_RESTART_MAX_MS: '150' });
     STATE = path.join(dlt.env.WOC_CAPTURE_DIR, 'state.json');
     CTL = dlt.env.WOC_CAPTURE_SOCK;
     modes = dlt.modes; state = dlt.state; command = dlt.command; trace = dlt.trace;
@@ -113,6 +123,8 @@ function pcmd(cmd, ev) {
     [PD, path.join(PD, 'state'), BIN, path.dirname(CAPTURE_UNIT)].forEach(function (d) { fs.mkdirSync(d, { recursive: true }); });
     fs.writeFileSync(path.join(BIN, 'journalctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(BIN, 'systemctl'), '#!/bin/sh\ncat ' + JSON.stringify(UNIT_STATE) + ' 2>/dev/null || echo inactive\n', { mode: 0o755 });
+    /* systemctl -q is-active <unit>: 0 while UNIT_STATE says active */
+    fs.writeFileSync(path.join(BIN, 'systemctl-q'), '#!/bin/sh\ngrep -qx active ' + JSON.stringify(UNIT_STATE) + ' 2>/dev/null\n', { mode: 0o755 });
     PENV = Object.assign({}, ENV, {
         PATH: BIN + path.delimiter + process.env.PATH,
         WOC_PATCH_SOCK: PSOCK, WOC_PATCH_GROUP: '', WOC_PATCH_LOGS_GROUP: '',
@@ -163,6 +175,20 @@ function pcmd(cmd, ev) {
     fs.rmdirSync(STATE + '.tmp');
     ok('hosted: started again, it restores the capture it left', await until(function () { return state().state === 'closed' && !tcpOpen(); }) &&
         modes[modes.length - 1] === 2 && alive(h) && !!(await command('status')), JSON.stringify(state()) + ' ' + h.out.slice(-300));
+
+    /* 4b. A restore that keeps failing past 20 restarts: the service keeps
+     * trying, and restores the capture once it can. */
+    ok('hosted: a capture open before a long restore failure', await openCapture(command));
+    before = (h.out.match(/starts again/g) || []).length;
+    fs.mkdirSync(STATE + '.tmp');
+    await command('stop');
+    await until(function () { return (h.out.match(/starts again/g) || []).length >= before + 25; }, 20000);
+    ok('hosted: 25 restarts and more with the restore failing, the waits bounded, the capture still left',
+        alive(h) && (h.out.match(/starts again/g) || []).length >= before + 25 && state().owned === true && !!tcpOpen() &&
+        !/stays off/.test(h.out), h.out.slice(-300));
+    fs.rmdirSync(STATE + '.tmp');
+    ok('hosted: after them it restores the capture it left', await until(function () { return state().state === 'closed' && !tcpOpen(); }, 5000) &&
+        modes[modes.length - 1] === 2 && alive(h), JSON.stringify(state()) + ' ' + h.out.slice(-300));
     h.kill('SIGTERM');
     await h.done;
 
@@ -173,7 +199,7 @@ function pcmd(cmd, ev) {
     ok('patchd without --dlt-capture: no capture service', alive(p) && !(await command('status')), p.out.slice(-300));
     p.kill('SIGKILL'); await p.done;
 
-    /* 6. Not while an earlier version's capture unit is installed or runs;
+    /* 6. Not while a capture unit is installed or runs;
      * taken over once it is gone. */
     fs.writeFileSync(CAPTURE_UNIT, '[Service]\n');
     p = patchd();
@@ -208,6 +234,7 @@ function pcmd(cmd, ev) {
     ok('the patchd unit restores in ExecStopPost, guarded by the earlier unit', /dlt_capture\.js restore/.test(stopPost) &&
         stopPost.indexOf('/etc/systemd/system/waze-on-cluster-capture.service') >= 0, stopPost);
     var cmdline = stopPost.split('/etc/systemd/system/waze-on-cluster-capture.service').join(CAPTURE_UNIT)
+        .split('systemctl -q is-active').join(path.join(BIN, 'systemctl-q'))
         .split('/usr/bin/node').join(process.execPath).split('/var/opt/waze-on-cluster/current/').join(path.join(__dirname, '..') + '/');
     p = patchd();
     await until(async function () { return !!(await command('status')); });
@@ -227,6 +254,112 @@ function pcmd(cmd, ev) {
     sr = await stopPostRun();
     ok('ExecStopPost: restores the capture patchd left open', sr.status === 0 && state().state === 'closed' && !tcpOpen() &&
         modes[modes.length - 1] === 2, sr.status + ' ' + sr.out + ' ' + JSON.stringify(state()));
+    p = patchd();
+    await until(async function () { return !!(await command('status')); });
+    ok('patchd: a capture open before a SIGKILL, again', await openCapture(command));
+    p.kill('SIGKILL'); await p.done;
+    fs.writeFileSync(UNIT_STATE, 'active\n');
+    sr = await stopPostRun();
+    ok('ExecStopPost, a capture unit running (its file gone): leaves the capture to it', sr.status === 0 && state().owned === true && !!tcpOpen(),
+        sr.status + ' ' + sr.out + ' ' + JSON.stringify(state()));
+    fs.writeFileSync(UNIT_STATE, 'inactive\n');
+    sr = await stopPostRun();
+    ok('ExecStopPost: restores it once no capture unit runs', sr.status === 0 && state().state === 'closed' && !tcpOpen(), sr.out);
+
+    /* 9. A capture unit starts while patchd serves the capture (an Undo
+     * update that starts it before patchd restarts): patchd stops serving it
+     * at its next check, and neither then nor at its own SIGTERM removes the
+     * unit's socket or restores the capture the unit opened. */
+    p = patchd();
+    await until(async function () { return !!(await command('status')); });
+    var unitProc = spawn([HELPER]);
+    fs.writeFileSync(UNIT_STATE, 'active\n');
+    await until(function () { return /served by waze-on-cluster-capture\.service \(active\); stopped here/.test(p.out); });
+    ok('a capture unit starts: patchd stops serving the capture, the unit\'s socket answers',
+        /stopped here/.test(p.out) && await until(async function () { return !!(await command('status')); }) && alive(unitProc), p.out.slice(-300));
+    ok('the capture unit opens a capture', await openCapture(command));
+    p.kill('SIGTERM');
+    r = await p.done;
+    await sleep(300);
+    ok('patchd\'s SIGTERM leaves the unit\'s socket and its open capture alone', r.code === 0 && fs.existsSync(CTL) &&
+        !!(await command('status')) && state().owned === true && state().state === 'open' && !!tcpOpen() && alive(unitProc),
+        JSON.stringify(r) + ' ' + JSON.stringify(state()) + ' ' + p.out.slice(-300));
+    unitProc.kill('SIGTERM');
+    await unitProc.done;
+    await (function () { var c = spawn([HELPER, 'restore']); return c.done; })();
+    fs.writeFileSync(UNIT_STATE, 'inactive\n');
+    ok('the unit\'s ExecStopPost restores its capture', state().state === 'closed' && !tcpOpen(), JSON.stringify(state()));
+
+    /* 10. A capture failing at every start: its lines go to the journal and
+     * the logs reply's "capture" (at most 40), not to patchd's own log, which
+     * the app shows and replays to each new client. */
+    fs.unlinkSync(STATE);
+    fs.mkdirSync(STATE);
+    p = patchd();
+    await until(function () { return (p.out.match(/dlt-capture: .*starts again/g) || []).length >= 70; }, 30000);
+    var lr = await pcmd('logs', 'logs');
+    var backlog = await (function () {
+        return new Promise(function (resolve) {
+            var c = net.connect(PSOCK), buf = '', lines = [];
+            c.setEncoding('utf8');
+            c.on('data', function (d) {
+                buf += d;
+                var i;
+                while ((i = buf.indexOf('\n')) >= 0) { try { var m = JSON.parse(buf.slice(0, i)); if (m.ev === 'log') lines.push(m.line); } catch (e) {} buf = buf.slice(i + 1); }
+            });
+            c.on('error', function () {});
+            setTimeout(function () { c.destroy(); resolve(lines); }, 700);
+        });
+    })();
+    ok('a capture failing 70 times: patchd\'s own log keeps its lines, none of the capture\'s',
+        (p.out.match(/dlt-capture: .*starts again/g) || []).length >= 70 && !!lr && lr.patchd.some(function (l) { return /patchd listening on/.test(l); }) &&
+        !lr.patchd.some(function (l) { return /dlt-capture|DLT capture/.test(l); }), String(JSON.stringify(lr && lr.patchd)).slice(-400));
+    ok('the app\'s backlog on connect has patchd\'s lines, none of the capture\'s', backlog.some(function (l) { return /patchd listening on/.test(l); }) &&
+        !backlog.some(function (l) { return /dlt-capture|DLT capture/.test(l); }), JSON.stringify(backlog).slice(-300));
+    ok('the logs reply (Save logs) has the capture\'s own lines, the newest 40', !!lr && Array.isArray(lr.capture) && lr.capture.length === 40 &&
+        lr.capture.every(function (l) { return /dlt-capture|DLT capture/.test(l); }), String(JSON.stringify(lr && lr.capture)).slice(-300));
+    p.kill('SIGKILL'); await p.done;
+    fs.rmdirSync(STATE);
+
+    /* 11. One restore at a time: a capture left open (its daemon killed),
+     * then a daemon that starts and is stopped while its start's restore
+     * waits for the DLT daemon: one mode request reaches the daemon. */
+    h = hostDaemon();
+    await until(async function () { return !!(await command('status')); });
+    ok('hosted: a capture open, then its daemon killed', await openCapture(command));
+    h.kill('SIGKILL'); await h.done;
+    var sent = modes.length;
+    dlt.delay = 400;
+    h = hostDaemon();
+    await until(function () { return modes.length > sent; }, 5000);
+    h.kill('SIGTERM');
+    r = await h.done;
+    dlt.delay = 0;
+    ok('a stop while the start\'s restore runs: one restore, DLT put back', r.code === 0 && modes.length === sent + 1 && modes[modes.length - 1] === 2 &&
+        state().state === 'closed' && !tcpOpen(), modes.slice(sent).join() + ' ' + JSON.stringify(state()) + ' ' + h.out);
+
+    /* 12. The registered-client check: asynchronous, and the dlt-daemon it
+     * found is checked first, /proc not scanned again (a pid whose comm
+     * cannot be read without blocking, added after, is never read). */
+    var P2 = path.join(dir, 'proc2');
+    fs.mkdirSync(path.join(P2, '9', 'fd'), { recursive: true });
+    fs.writeFileSync(path.join(P2, '9', 'comm'), 'dlt-daemon\n');
+    fs.symlinkSync('/run/dlt-files/dltpipes/dlt99', path.join(P2, '9', 'fd', '10'));
+    var probe = spawn(['-e', [
+        'var dc = require(' + JSON.stringify(HELPER) + '), fs = require("fs"), cp = require("child_process"), ticks = 0;',
+        'setInterval(function () { ticks++; }, 10);',
+        'var first = dc.registeredClient();',
+        'if (!first || typeof first.then !== "function") { console.log("not a promise"); process.exit(1); }',
+        'first.then(function (a) {',
+        '    fs.mkdirSync(' + JSON.stringify(path.join(P2, '5')) + ');',
+        '    cp.execFileSync("mkfifo", [' + JSON.stringify(path.join(P2, '5', 'comm')) + ']);',
+        '    return dc.registeredClient().then(function (b) { console.log("result " + a + " " + b + " ticks " + (ticks > 0)); process.exit(0); });',
+        '});'].join('\n')], Object.assign({}, ENV, { WOC_DLT_PROC: P2 }));
+    var probeTimer = setTimeout(function () { probe.kill('SIGKILL'); }, 5000);
+    r = await probe.done;
+    clearTimeout(probeTimer);
+    ok('the registered-client check: a promise, the dlt-daemon found first checked again, /proc not scanned again',
+        r.code === 0 && /result true true ticks true/.test(probe.out), JSON.stringify(r) + ' ' + probe.out);
 
     process.stdout.write(fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n');
     process.exit(fails ? 1 : 0);

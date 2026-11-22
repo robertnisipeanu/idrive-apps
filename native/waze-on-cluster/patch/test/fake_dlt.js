@@ -15,6 +15,7 @@
  *   dlt.trace(m)   the daemon's record of mode m (0 OFF, 2 BUFFER)
  *   dlt.state()    the capture's state.json, {} when unreadable
  *   dlt.command(c) one command on the capture's socket: its reply, or null
+ *   dlt.delay      ms the daemon waits before each acknowledgement (0)
  *   dlt.close()
  */
 'use strict';
@@ -78,13 +79,15 @@ module.exports = async function fakeDlt(dir) {
                 if (mode === 1) await openTCP(); else { await closeTCP(); trace(mode); }
                 reply = '3500001b4d47485300000000260141505000434f4e00130f000000';
             } else return;
+            if (api.delay) await new Promise(function (r) { setTimeout(r, api.delay); });
             c.end(Buffer.from(reply, 'hex'));
         });
     });
     netState(false);
     trace(2);
     await listen(ctrl, env.WOC_DLT_SOCKET);
-    return {
+    var api = {
+        delay: 0,
         env: env,
         modes: modes,
         open: function () { return !!tcp; },
@@ -107,4 +110,5 @@ module.exports = async function fakeDlt(dir) {
         },
         close: async function () { await closeTCP(); await new Promise(function (r) { ctrl.close(r); }); },
     };
+    return api;
 };

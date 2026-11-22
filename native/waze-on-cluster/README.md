@@ -256,8 +256,9 @@ and reporting a problem"), or run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh [-o <folder>]`: it
 writes `woc-logs-<UTC date and time>.tar.gz` into the folder (`/tmp` by
 default) and prints its path. The archive holds both tools' logs, the kept
-journal, patchd's CarPlay and DLT lines (`patchd-logs.json`), the status
-files, the patchers' state and the head unit's restart records.
+journal, patchd's CarPlay and DLT lines and the DLT capture's own log
+(`patchd-logs.json`), the status files, the patchers' state and the head
+unit's restart records.
 `incidents.txt` lists the tools' `INCIDENT` lines (each time the map was
 lost), the boots and the time of the export, oldest first. Every file is
 scrubbed before it goes in: VINs, MAC addresses, IP addresses outside the
@@ -308,9 +309,10 @@ The DLT capture runs inside patchd: both run as root, and a failure of the
 capture restarts the capture, not patchd. Boot recovery stays a process of
 its own, so a hang, crash or out-of-memory in any other part can never
 delay or stop it from recording a crash and turning a patch off. The journal
-keeper stays unprivileged, so it never runs as root. Versions up to 0.14.3
-ran the capture in `waze-on-cluster-capture.service`. While a downgrade
-has that unit installed, it serves the capture and patchd doesn't.
+keeper stays unprivileged, so it never runs as root. A downgrade lays a
+`waze-on-cluster-capture.service` that runs the capture on its own; while
+that unit is installed or runs, it serves the capture and patchd doesn't.
+The capture's own log is in Save logs' `patchd-logs.json` (`capture`).
 
 ### The patches
 

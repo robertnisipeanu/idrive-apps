@@ -811,40 +811,20 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
 
 /* ---- 8. the DLT capture: a release's capture service, this version's in patchd */
 
-/* Which units serve the capture's socket for a mix of units and files:
- * code, the files current points to ('rel' or 'new'); pu, whose patchd unit
- * is installed; cap, whether the release's capture unit is installed. A
- * capture unit runs whichever dlt_capture.js current holds; this version's
- * patchd.js runs it itself only when its unit passes --dlt-capture and no
- * capture unit is installed. */
 var NEW_PATCHD_UNIT = fs.readFileSync(path.join(NEW, '..', 'systemd', 'waze-on-cluster-patchd.service'), 'utf8');
-var NEW_PATCHD = fs.readFileSync(path.join(NEW, 'patchd.js'), 'utf8');
 var NEW_COMPONENT = JSON.parse(fs.readFileSync(path.join(NEW, '..', 'component.json'), 'utf8'));
-function passesFlag(unitText) { return /^ExecStart=\/usr\/bin\/node \/var\/opt\/waze-on-cluster\/current\/patchd\.js --dlt-capture$/m.test(unitText); }
-function servers(s, relPatchdUnit) {
-    var hosts = s.code === 'new' && passesFlag(s.pu === 'new' ? NEW_PATCHD_UNIT : relPatchdUnit) && !s.cap;
-    return (s.cap ? 1 : 0) + (hosts ? 1 : 0);
-}
-/* The deploy tool's steps, each a point a power cut or a kill may stop it
- * at (mgu-deploy installTool, cmdRollback): an update switches current,
- * then in one rootfs window copies the changed units (patchd's) and deletes
- * the ones this version no longer lists (the capture unit); a rollback
- * switches current, then lays the release's missing units (the capture
- * unit; patchd's stays this version's until the next install); an install
- * of the release over this version switches current, then copies its
- * units in its list's order (patchd's, then the capture unit). */
-var STEPS8 = {
-    'an update': [{ code: 'rel', pu: 'rel', cap: true }, { code: 'new', pu: 'rel', cap: true }, { code: 'new', pu: 'new', cap: true },
-        { code: 'new', pu: 'new', cap: false }],
-    'a rollback': [{ code: 'new', pu: 'new', cap: false }, { code: 'rel', pu: 'new', cap: false }, { code: 'rel', pu: 'new', cap: true }],
-    'an install of the release over this version': [{ code: 'new', pu: 'new', cap: false }, { code: 'rel', pu: 'new', cap: false },
-        { code: 'rel', pu: 'rel', cap: false }, { code: 'rel', pu: 'rel', cap: true }],
-};
 function relFile(v, f) { try { return git(['show', 'waze-on-cluster@' + v + ':native/waze-on-cluster/' + f]); } catch (e) { return null; } }
 function unitLine(text, key) { var m = new RegExp('^' + key + '=(.*)$', 'm').exec(text || ''); return m ? m[1] : null; }
 
+/* Each release's files as a downgrade lays them, and what the process model
+ * below runs of them: its capture unit runs current/dlt_capture.js with
+ * `restore` in ExecStopPost, which this version's dlt_capture.js keeps (an
+ * update cut short runs this version's files under it); its patchd unit
+ * runs current/patchd.js with no arguments and nothing in ExecStopPost; its
+ * patchd.js has no capture code and runs as its daemon with --dlt-capture
+ * (a downgrade keeps this version's patchd unit until the next install). */
 var ALL = list.map(function (t) { return t.slice('waze-on-cluster@'.length); }).filter(function (v) { return /^\d+\.\d+\.\d+$/.test(v); }).sort(cmp);
-var byBlob = {};
+var byBlob = {}, kinds = {};
 ALL.forEach(function (v) {
     var cap = relFile(v, 'systemd/waze-on-cluster-capture.service'), pu = relFile(v, 'systemd/waze-on-cluster-patchd.service');
     var pd = relFile(v, 'patch/patchd.js') || '', dc = relFile(v, 'patch/dlt_capture.js');
@@ -852,31 +832,41 @@ ALL.forEach(function (v) {
         unitLine(cap, 'ExecStart') === '/usr/bin/node /var/opt/waze-on-cluster/current/dlt_capture.js' &&
         unitLine(cap, 'ExecStopPost') === '/usr/bin/node /var/opt/waze-on-cluster/current/dlt_capture.js restore' && dc !== null,
         unitLine(cap, 'ExecStart') + ' | ' + unitLine(cap, 'ExecStopPost'));
-    /* a downgrade keeps this version's patchd unit: the release's patchd.js
-     * reads only activate or deactivate in argv, anything else is its daemon */
+    ok(v + '\'s patchd unit runs current/patchd.js with no arguments, nothing in ExecStopPost',
+        unitLine(pu, 'ExecStart') === '/usr/bin/node /var/opt/waze-on-cluster/current/patchd.js' && unitLine(pu, 'ExecStopPost') === null,
+        unitLine(pu, 'ExecStart') + ' | ' + unitLine(pu, 'ExecStopPost'));
     var argv = pd.match(/process\.argv[^\n]*/g) || [];
-    ok(v + '\'s patchd.js runs as the daemon with --dlt-capture', argv.length === 1 &&
+    ok(v + '\'s patchd.js has no capture code and runs as the daemon with --dlt-capture', argv.length === 1 &&
         /^process\.argv\[2\] === 'activate' \|\| process\.argv\[2\] === 'deactivate'\) oneShot\(process\.argv\[2\]\);$/.test(argv[0]) &&
-        /oneShot\(process\.argv\[2\]\);\s*\nelse main\(\);/.test(pd), argv.join(' / '));
-    ok(v + '\'s patchd unit does not pass --dlt-capture', !passesFlag(pu || ''));
-    Object.keys(STEPS8).forEach(function (how) {
-        var counts = STEPS8[how].map(function (s) { return servers(s, pu); });
-        var gaps = STEPS8[how].filter(function (s, i) { return counts[i] === 0 && !(s.code === 'rel' && !s.cap); });
-        ok(v + ', ' + how + ' cut short at any step: the capture served once or not at all, never twice; not at all only while ' + v +
-            '\'s files run before its capture unit is laid again; served at the end', counts.every(function (n) { return n <= 1; }) &&
-            !gaps.length && counts[counts.length - 1] === 1, counts.join(','));
-    });
-    if (dc !== null) (byBlob[dc] = byBlob[dc] || []).push(v);
+        /oneShot\(process\.argv\[2\]\);\s*\nelse main\(\);/.test(pd) && !/dlt_capture\.js|--dlt-capture/.test(pd), argv.join(' / '));
+    if (dc === null) return;
+    (byBlob[dc] = byBlob[dc] || []).push(v);
+    if (!kinds[dc]) kinds[dc] = { v: v, unit: pu };
 });
-ok('this version runs the capture in patchd, with no capture unit and its recmgr name kept', passesFlag(NEW_PATCHD_UNIT) &&
+ok('this version runs the capture in patchd, with no capture unit and its recmgr name kept',
+    /^ExecStart=\/usr\/bin\/node \/var\/opt\/waze-on-cluster\/current\/patchd\.js --dlt-capture$/m.test(NEW_PATCHD_UNIT) &&
     !NEW_COMPONENT.units.some(function (u) { return u.name === 'waze-on-cluster-capture.service'; }) &&
-    NEW_COMPONENT.recmgr.indexOf('waze-on-cluster-capture') >= 0 &&
-    NEW_PATCHD.indexOf("'/etc/systemd/system/waze-on-cluster-capture.service'") >= 0 &&
-    NEW_PATCHD_UNIT.indexOf('[ -e /etc/systemd/system/waze-on-cluster-capture.service ] ||') >= 0);
+    NEW_COMPONENT.recmgr.indexOf('waze-on-cluster-capture') >= 0);
 
-/* A capture each one left open (its process SIGKILLed) is restored by the
- * other's: each distinct dlt_capture.js the releases ship. */
 (async function () {
+    /* The process model (capture_units_model.js), for each distinct
+     * dlt_capture.js the releases ship: every step of an update, an Undo
+     * update (also one that starts the capture unit before patchd
+     * restarts) and an install of the release, whole and cut short by a
+     * power cut after each step, counting the capture servers that run. */
+    if (process.platform !== 'linux') process.stdout.write('SKIP the capture\'s process model: Linux only (/proc/net/unix)\n');
+    else {
+        var blobs8 = Object.keys(byBlob);
+        for (var b = 0; b < blobs8.length; b++) {
+            var vs8 = byBlob[blobs8[b]], relDlt = path.join(dir, 'model-dlt-' + vs8[0] + '.js');
+            fs.writeFileSync(relDlt, blobs8[b]);
+            await require('./capture_units_model.js')({ dir: path.join(dir, 'model-' + vs8[0]), newDir: NEW, newUnit: NEW_PATCHD_UNIT,
+                relDlt: relDlt, relUnit: kinds[blobs8[b]].unit, name: vs8[0] + (vs8.length > 1 ? '-' + vs8[vs8.length - 1] : ''), ok: ok });
+        }
+    }
+
+    /* A capture each one left open (its process SIGKILLed) is restored by
+     * the other's: each distinct dlt_capture.js the releases ship. */
     var dlt = await require('./fake_dlt.js')(path.join(dir, 'dlt'));
     var CENV = Object.assign({}, process.env, dlt.env, { WOC_CAPTURE_MS: '60000', WOC_CAPTURE_RETRY_MS: '80' });
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }

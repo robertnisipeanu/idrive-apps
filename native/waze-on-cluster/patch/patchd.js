@@ -17,8 +17,9 @@
  * It applies no patch on its own. Explicit
  * capture commands go to the DLT capture service on its own socket; reading
  * logs does not change tracing mode. Started with --dlt-capture (its unit),
- * the daemon runs that service too (dlt_capture.js host, hostCapture): a
- * failure of it restarts the service, never the daemon. It also reads which Wi-Fi band wireless CarPlay
+ * the daemon runs that service too (dlt_capture.js host, captureCheck): a
+ * failure of it restarts the service, never the daemon, and its lines are
+ * kept apart from the daemon's own log. It also reads which Wi-Fi band wireless CarPlay
  * runs on (wifi_band.js), from wpa_supplicant's D-Bus, which only root may
  * use, and reports it in its status.
  *
@@ -42,7 +43,8 @@
  *                                   or Android Auto's, is pending; never
  *                                   stops/restarts carplay or aapd.
  *                                   reboot-reply carries ok/reason.
- *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log
+ *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log,
+ *                                   the capture service's log ("capture")
  *                                   (to the asker, read-only). LOGS_SOCK
  *                                   (root:systemd-journal, 0660: Save logs)
  *                                   takes this command alone, one a connection,
@@ -1433,49 +1435,78 @@ function dltRetryNow() {
 }
 
 /* The capture service (dlt_capture.js) runs in this daemon when its unit
- * starts it with --dlt-capture, in place of waze-on-cluster-capture.service,
- * which earlier versions ran it in. While that unit is installed (a
- * downgrade, an update cut short) or still runs, it serves the capture
- * instead and this daemon checks again every CAPTURE_RECHECK_MS, so the
- * capture's socket has one server. */
+ * starts it with --dlt-capture. A waze-on-cluster-capture.service, which a
+ * downgrade lays and an update removes, runs the same service on its own:
+ * while that unit is installed or runs, or control.sock is no longer the
+ * service's own socket here, the capture is not served here (one serving
+ * here is stopped, which leaves the other's socket and capture alone).
+ * Checked at start and every CAPTURE_RECHECK_MS, so the socket has one
+ * server. The service's lines go to the journal and to captureLines (the
+ * logs reply's "capture"), not to this daemon's own log. */
 var HOSTS_CAPTURE = process.argv.slice(2).indexOf('--dlt-capture') >= 0;
 var CAPTURE_UNIT = process.env.WOC_CAPTURE_UNIT || '/etc/systemd/system/waze-on-cluster-capture.service';
 var CAPTURE_RECHECK_MS = parseInt(process.env.WOC_CAPTURE_RECHECK_MS, 10) || 30000;
 var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
+var CAPTURE_RING = 40;
+var captureLines = [];
 var capture = null;          /* the capture service, while it runs here */
-var captureElsewhere = false;
-function hostCapture() {
-    if (quitting || capture) return;
+var captureStopping = 0;     /* stops of it in progress */
+var captureWhere = null;     /* 'here' | why it is not, as last logged */
+function captureLog(line) {
+    var l = '[' + new Date().toISOString() + '] ' + line;
+    captureLines.push(l);
+    if (captureLines.length > CAPTURE_RING) captureLines.shift();
+    process.stdout.write(l + '\n');
+}
+function captureCheck() {
+    if (quitting) return;
     var installed = fs.existsSync(CAPTURE_UNIT);
     cp.execFile(SYSTEMCTL, ['is-active', path.basename(CAPTURE_UNIT)], { timeout: 15000 }, function (err, out) {
-        if (quitting || capture) return;
+        if (quitting) return;
         var unitState = String(out || '').trim();
-        if (installed || /^(active|activating|deactivating|reloading)$/.test(unitState)) {
-            if (!captureElsewhere) log('DLT capture: served by ' + path.basename(CAPTURE_UNIT) + ' (' + (installed ? 'installed' : unitState) + ')');
-            captureElsewhere = true;
-            setTimeout(hostCapture, CAPTURE_RECHECK_MS);
-            return;
+        var other = installed ? 'installed' : /^(active|activating|deactivating|reloading)$/.test(unitState) ? unitState : null;
+        var why = other ? 'served by ' + path.basename(CAPTURE_UNIT) + ' (' + other + ')' :
+            capture && capture.ownsSocket() === false ? 'control.sock taken by another server' : null;
+        if (why && why !== captureWhere) captureLog('DLT capture: ' + why + (capture ? '; stopped here' : ''));
+        if (why && capture) {
+            var c = capture;
+            capture = null;
+            captureStopping++;
+            c.stop(function (e) {
+                if (e) captureLog('DLT capture: ' + e.message);
+                captureStopping--;
+                quitWhenIdle();
+            });
+        } else if (!other && !capture && !captureStopping) {
+            if (captureWhere !== null) captureLog('DLT capture: served here');
+            capture = require('./dlt_capture.js').host(captureLog);
+            why = 'here';
         }
-        if (captureElsewhere) log('DLT capture: served here');
-        capture = require('./dlt_capture.js').host(log);
+        captureWhere = why || captureWhere;
+        setTimeout(captureCheck, CAPTURE_RECHECK_MS);
     });
 }
 
-/* SIGTERM: the capture service here restores a capture it owns, an active
- * patch operation finishes, then the daemon exits. */
+/* SIGTERM: the capture service here restores a capture it opened, an
+ * active patch operation finishes, then the daemon exits. */
 function quit() {
     if (quitting) return;
     quitting = true;
     flushMapSettings();
-    if (capture) capture.stop(function (err) {
-        if (err) log('DLT capture: ' + err.message);
+    if (capture) {
+        var c = capture;
         capture = null;
-        quitWhenIdle();
-    });
+        captureStopping++;
+        c.stop(function (err) {
+            if (err) captureLog('DLT capture: ' + err.message);
+            captureStopping--;
+            quitWhenIdle();
+        });
+    }
     quitWhenIdle();
 }
 function quitWhenIdle() {
-    if (!quitting || busy || capture) return;
+    if (!quitting || busy || captureStopping) return;
     flushMapSettings();
     process.exit(0);
 }
@@ -2263,7 +2294,8 @@ function operate(target, label, fn) {
  * against. */
 function logsRings() {
     return { ev: 'logs', now: Date.now(), carplay: carplayLines.slice(), markers: markerLines.slice(), avb: avbLines.slice(),
-             dlt: Object.assign({}, dlt, { window: undefined }), patchd: logLines.slice() };
+             dlt: Object.assign({}, dlt, { window: undefined }), patchd: logLines.slice(),
+             capture: captureLines.slice() };
 }
 
 /* For the remote diagnostic endpoint: the rings with the capture window and
@@ -2589,7 +2621,7 @@ function listenLogs() {
 }
 
 function main() {
-    if (HOSTS_CAPTURE) hostCapture();
+    if (HOSTS_CAPTURE) captureCheck();
     var dir = path.dirname(SOCK);
     ensureDir(dir);
     moveFeatures();
