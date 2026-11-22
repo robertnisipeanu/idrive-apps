@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The Wi-Fi band test waits for each sample to finish, so it passes on a
+busy machine too.
+
 ## 0.14.0
 
 Android Auto: the cluster map starts at every connection, also after you
