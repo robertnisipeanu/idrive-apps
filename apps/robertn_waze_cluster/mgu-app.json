@@ -11,7 +11,8 @@
     "src/logs_control.js",
     "src/qr.js",
     "src/qrcodegen.js",
-    "src/profile_sync.js"
+    "src/profile_sync.js",
+    "src/drive_mode.js"
   ],
   "sdk": [
     "oap-sdk/src/core/OnlineApp.js",

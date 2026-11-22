@@ -261,6 +261,32 @@
             }
           ]
         },
+        "64": {
+          "type": "checkBox",
+          "name": "wocHudSport",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Hide HUD map in Sport mode",
+                "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": false,
+                "type": "Bool"
+              }
+            }
+          ]
+        },
         "52": {
           "type": "slider",
           "name": "wocHudSize",
