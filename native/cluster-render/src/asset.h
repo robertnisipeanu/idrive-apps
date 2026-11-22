@@ -20,8 +20,10 @@
  * to 1x1. An rgba8 or r8 asset's levels are made here from its pixels (each
  * pixel of a level the mean of four of the level above; RGBA weighted by
  * alpha, so transparent pixels lend no colour), again in the rectangles a
- * change touches, and written with them; a compressed asset's come from
- * the client, after its picture, in its one frame. */
+ * change touches, and written with them. They are made when a write goes
+ * (stage()), not as messages come: however fast a client sends, the levels
+ * are made no more often than the upload budget writes them. A compressed
+ * asset's come from the client, after its picture, in its one frame. */
 #ifndef CRS_ASSET_H
 #define CRS_ASSET_H
 
@@ -53,14 +55,6 @@ public:
     /* Why an asset of this size cannot be: it must fit one frame message
      * (a compressed one with its mip levels). */
     static const char *size_error(const AssetParams &p);
-    static const char *size_error(TexFormat f, uint32_t w, uint32_t h)
-    {
-        AssetParams p;
-        p.format = f;
-        p.w = w;
-        p.h = h;
-        return size_error(p);
-    }
 
     uint32_t id() const { return id_; }
     int target() const { return target_; }
@@ -112,6 +106,9 @@ private:
     std::vector<uint8_t> px_, scratch_;
     std::vector<std::vector<uint8_t>> mips_;                /* levels 1 and up, uncompressed */
     std::vector<std::vector<crk::PixelRect>> mip_dirty_;   /* their rects to write, as dirty_ */
+    /* Level 0's changes the levels do not have yet: rects, or all of it. */
+    std::vector<crk::PixelRect> mips_stale_;
+    bool mips_stale_all_ = false;
     std::string refused_;
     std::vector<crk::PixelRect> dirty_;
     bool whole_ = true, have_ = false, clean_ = false, staged_whole_ = false;

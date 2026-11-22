@@ -27,8 +27,6 @@ struct FakeBuffer {
     TexFormat f;
     uint32_t w, h;
     std::vector<uint8_t> px;
-    Sampling sampling = Sampling::Nearest;
-    Wrap wrap = Wrap::Clamp;
     Sampler sampler;
     uint32_t levels = 1;
     std::vector<std::vector<uint8_t>> mips;   /* levels 1 and up */
@@ -42,8 +40,6 @@ inline FakeBuffer fake_buffer(TexFormat f, uint32_t w, uint32_t h, std::vector<u
     b.w = w;
     b.h = h;
     b.px = std::move(px);
-    b.sampling = s.sampling;
-    b.wrap = s.u;
     b.sampler = s;
     return b;
 }

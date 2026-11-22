@@ -62,8 +62,8 @@ bool Asset::update(const std::vector<crk::PixelRect> &rects, const uint8_t *data
         whole_ = true;
         dirty_.clear();
         have_ = true;
-        if (!compressed())
-            make_mips({});
+        mips_stale_all_ = p_.levels() > 1;
+        mips_stale_.clear();
         return true;
     }
     size_t need = 0;
@@ -92,7 +92,14 @@ bool Asset::update(const std::vector<crk::PixelRect> &rects, const uint8_t *data
         }
     }
     have_ = true;
-    make_mips(rects);
+    if (p_.levels() > 1 && !mips_stale_all_) {
+        if (mips_stale_.size() + rects.size() > kMaxRects) {
+            mips_stale_all_ = true;
+            mips_stale_.clear();
+        } else {
+            mips_stale_.insert(mips_stale_.end(), rects.begin(), rects.end());
+        }
+    }
     return true;
 }
 
@@ -109,6 +116,22 @@ crk::PixelRect halved(const crk::PixelRect &r, uint32_t lw, uint32_t lh)
     o.h = std::min((r.y + r.h - 1) / 2, lh - 1) - o.y + 1;
     return o;
 }
+
+/* (n + a / 2) / a for the alpha sums a of four pixels (1-1020) and
+ * n < 2^19: n times ceil(2^32 / a), the top 32 bits. Exact: the product's
+ * error, under n / 2^32 < 2^-13, is less than the 1 / a a quotient's
+ * fraction is from the next whole number. */
+struct Reciprocals {
+    uint64_t r[1021];
+    Reciprocals()
+    {
+        r[0] = 0;
+        for (uint32_t a = 1; a < 1021; a++)
+            r[a] = ((1ull << 32) + a - 1) / a;
+    }
+};
+const Reciprocals kRecip;
+inline uint8_t divide(uint32_t n, uint32_t a) { return (uint8_t)(((uint64_t)n * kRecip.r[a]) >> 32); }
 
 /* dst's rect r (dw wide) from src (sw x sh): each pixel the mean of the
  * 2x2 above it, clamped to src. RGBA weights colour by alpha. */
@@ -130,7 +153,7 @@ void reduce(const uint8_t *src, uint32_t sw, uint32_t sh, uint8_t *dst, uint32_t
             for (int ch = 0; ch < 3; ch++) {
                 if (a) {
                     const uint32_t sum = p[0][ch] * p[0][3] + p[1][ch] * p[1][3] + p[2][ch] * p[2][3] + p[3][ch] * p[3][3];
-                    o[ch] = (uint8_t)((sum + a / 2) / a);
+                    o[ch] = divide(sum + a / 2, a);
                 } else {
                     o[ch] = (uint8_t)((p[0][ch] + p[1][ch] + p[2][ch] + p[3][ch] + 2) / 4);
                 }
@@ -228,6 +251,11 @@ Stage Asset::stage(int64_t now_ms)
     }
     if (!g_ || !have_ || (!whole_ && dirty_.empty()) || !pacer_.ready(now_ms))
         return Stage::Idle;
+    if (mips_stale_all_ || !mips_stale_.empty()) {
+        make_mips(mips_stale_all_ ? std::vector<crk::PixelRect>() : mips_stale_);
+        mips_stale_all_ = false;
+        mips_stale_.clear();
+    }
     const std::vector<crk::PixelRect> all{crk::PixelRect{0, 0, p_.w, p_.h}};
     bool written = true;
     staged_whole_ = whole_;

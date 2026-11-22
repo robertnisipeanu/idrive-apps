@@ -416,13 +416,19 @@ static void backend(Gpu &gpu)
     const BlendFactor factors[] = {BlendFactor::Zero,     BlendFactor::One,      BlendFactor::SrcAlpha,
                                    BlendFactor::OneMinusSrcAlpha, BlendFactor::DstAlpha, BlendFactor::OneMinusDstAlpha};
     const BlendOp ops[] = {BlendOp::Add, BlendOp::Subtract, BlendOp::ReverseSubtract, BlendOp::Min, BlendOp::Max};
+    /* Each of the four factors takes every factor, each operation every
+     * operation, on colour and alpha. */
     bool styled = true;
-    for (BlendFactor f : factors)
-        for (BlendOp o : ops) {
+    for (int f = 0; f < 6; f++)
+        for (int o = 0; o < 5; o++) {
             PartLook look = quad_look();
             look.has_custom = true;
-            look.custom.src = look.custom.dst_alpha = f;
-            look.custom.op = look.custom.op_alpha = o;
+            look.custom.src = factors[f];
+            look.custom.dst = factors[(f + 1) % 6];
+            look.custom.src_alpha = factors[(f + 2) % 6];
+            look.custom.dst_alpha = factors[(f + 3) % 6];
+            look.custom.op = ops[o];
+            look.custom.op_alpha = ops[(o + 1) % 5];
             look.color_mask = kMaskR | kMaskB;
             styled = styled && g->style(q0, look);
         }

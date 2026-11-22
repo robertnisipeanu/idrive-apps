@@ -7,7 +7,7 @@
  * the service and prints them for three phases of 10 s each.
  *
  *   setup    the assets and layers, sent once: a 256x256 dial face (rgba8,
- *            mipmapped by the service), a 512x32 r8 seven-segment font,
+ *            mipmapped by the service), a 256x32 r8 seven-segment font,
  *            the background, two dials, two needles and the readout;
  *   idle     nothing changes;
  *   sweep    both needles sweep without end: one looping animation each,

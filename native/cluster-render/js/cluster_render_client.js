@@ -63,6 +63,16 @@ const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'c
 const LOOK_KEYS = ['blend', 'blend_src', 'blend_dst', 'blend_src_alpha', 'blend_dst_alpha', 'blend_op',
     'blend_op_alpha', 'color_mask'];
 const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull'];
+const BLEND_KEYS = LOOK_KEYS.filter((k) => k.indexOf('blend_') === 0);
+
+/* An effect layer's kept look takes a set's look fields as the service
+ * does: a blend preset replaces the custom factors and operations (they go),
+ * and blend none takes none (the service refuses them). */
+function setLook(kept, opts) {
+    if (opts.blend !== undefined) BLEND_KEYS.forEach((k) => { delete kept[k]; });
+    LOOK_KEYS.forEach((k) => { if (opts[k] !== undefined) kept[k] = opts[k]; });
+    if (kept.blend === 'none') BLEND_KEYS.forEach((k) => { delete kept[k]; });
+}
 const MIPMAPPED = ['nearest_mips', 'bilinear_mips', 'trilinear'];
 
 /* Bytes of an asset's pixels: with mips, its mip levels too, a compressed
@@ -506,7 +516,8 @@ class ClusterRender extends EventEmitter {
         const l = this.layers.get(ref);
         if (!l || l.kind === 'asset' || l.kind === 'scene') return;
         const own = l.kind === 'mesh' ? MESH_KEYS : l.kind === 'effect' ? LOOK_KEYS : [];
-        SET_KEYS.concat(own).forEach((k) => { if (opts[k] !== undefined) l.opts[k] = opts[k]; });
+        SET_KEYS.concat(l.kind === 'mesh' ? MESH_KEYS : []).forEach((k) => { if (opts[k] !== undefined) l.opts[k] = opts[k]; });
+        if (l.kind === 'effect') setLook(l.opts, opts);
         const m = { op: 'set', ref: ref };
         this._setFields(m, opts);
         own.forEach((k) => { if (opts[k] !== undefined) m[k] = opts[k]; });

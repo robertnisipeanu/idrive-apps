@@ -349,7 +349,7 @@ with the asset, and again in the rectangles a change touches, each level's
 under it, within the upload budget. A compressed asset's levels come from
 the client, after its picture in its one frame, down to the last level
 whose sides are both multiples of 4 (a 64x32 `etc2rgba` asset: 64x32,
-32x16, 16x8 and 8x4, 10,240 bytes in all; RAMSES 27 warns that a smaller
+32x16, 16x8 and 8x4, 2,720 bytes in all; RAMSES 27 warns that a smaller
 ETC2 level may fail to upload). Its frame is that chain or is refused
 (`a whole asset is N bytes`). The levels count in the pixel memory (an
 `rgba8` asset's about a third more).

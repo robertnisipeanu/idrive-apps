@@ -95,7 +95,8 @@ inline bool operator==(const Sampler &a, const Sampler &b)
 {
     return a.sampling == b.sampling && a.u == b.u && a.v == b.v && a.anisotropy == b.anisotropy;
 }
-/* What the old buffer() takes: nearest or bilinear, one wrap, isotropic. */
+/* What buffer(f, w, h, Sampling, Wrap) takes: nearest or bilinear, one wrap
+ * for both axes, isotropic. */
 inline bool sampler_plain(const Sampler &s)
 {
     return (s.sampling == Sampling::Nearest || s.sampling == Sampling::Bilinear) && s.u == s.v &&
@@ -106,8 +107,19 @@ inline bool sampler_plain(const Sampler &s)
  * down to 1x1 (mip_levels() of them in all). A compressed texture's go down
  * to the last level whose sides are both multiples of 4 (mip_levels(f, w,
  * h)): RAMSES 27 warns that a smaller ETC2 level may fail to upload
- * (VERIFIED, make test-ramses27), and the renderers allocate the levels
- * given (GLES 3 texture storage), so a shorter chain samples whole. */
+ * (VERIFIED, make test-ramses27). A shorter chain samples whole because the
+ * renderers allocate a texture with exactly the levels given, as immutable
+ * GLES 3 storage, whose levels past those given do not count:
+ * - RAMSES 27.0.116 (its source): Device_GL::allocateTexture2D takes
+ *   glTexStorage2D(target, mipLevelCount, ...), compressed levels go by
+ *   glCompressedTexSubImage2D; glTexImage2D only for stream textures, and
+ *   GL_TEXTURE_MAX_LEVEL is never set.
+ * - The head unit's RAMSES 19 (its binary, ../abi/ABI.md): the same calls
+ *   (four glTexStorage2D sites, compressed uploads only by
+ *   glCompressedTexSubImage2D, one glTexImage2D at level 0, no 0x813D), and
+ *   a 64x32 etc2rgba chain stopping at 8x4, sampled trilinear, drawn by its
+ *   renderer with each level's colour at its size (VERIFIED by running).
+ * The KOMBI's own renderer build is not checked (only a car can). */
 inline uint32_t mip_levels(uint32_t w, uint32_t h)
 {
     uint32_t n = 1;

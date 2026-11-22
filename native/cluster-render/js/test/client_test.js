@@ -15,6 +15,8 @@
  * host ended when it is dropped; a hidden preload layer keeping its target
  * loaded, shown when made visible and loaded again after the linger, made
  * again with preload after the restart, and preload 0 releasing the target;
+ * an effect layer's look set with a preset or none, kept as the service
+ * keeps it and made again so after the restart;
  * a layer's others_fps holding the other client (fps_cap) and releasing it
  * when set to 0, dropped, or the held client closes; render state and
  * samplers: an effect layer's blending set and changed, a part's depth
@@ -160,6 +162,21 @@ async function main() {
     ovl.set(pre, { visible: false });
     ok('hidden again: loaded after the linger', await until(() => eo.target.hud === 'loaded', 5000));
 
+    /* An effect layer's look kept as the service keeps it: a preset sent
+     * with set replaces custom factors, blend none drops them; both made
+     * again so after the restart below. */
+    const plain = 'precision mediump float;void main(){gl_FragColor=vec4(1.0);}';
+    const custom = { target: 'panel', klass: 'overlay', y: 600, w: 8, h: 8, fs: plain, blend_src: 'one', blend_dst: 'one' };
+    const toPre = ovl.effect(Object.assign({ x: 10 }, custom));
+    const toNone = ovl.effect(Object.assign({ x: 30 }, custom));
+    ovl.set(toPre, { blend: 'premultiplied' });
+    ovl.set(toNone, { blend: 'none' });
+    const kept = (ref) => ovl._layerMsg(ref, ovl.layers.get(ref));
+    ok('look: a preset sent with set drops the custom factors the client keeps',
+        kept(toPre).blend === 'premultiplied' && kept(toPre).blend_src === undefined && kept(toPre).blend_dst === undefined);
+    ok('look: so does blend none', kept(toNone).blend === 'none' && kept(toNone).blend_src === undefined &&
+        kept(toNone).blend_dst === undefined);
+
     svc.kill();
     await new Promise((r) => svc.once('exit', r));
     ok('the service gone: both clients notice', await until(() => eo.gone === 1 && ew.gone === 1, 1000));
@@ -171,6 +188,11 @@ async function main() {
         await until(() => eo.layer[badge] === 'shown' && ew.layer[map] === 'shown', 5000) && eo.ready >= 2);
     ok('the asset, its effect, the mesh part and its geometry are made again',
         await until(() => eo.layer[label] === 'shown' && eo.layer[car] === 'shown', 2000));
+    ok('look: both layers made again with the look set last, shown, neither refused',
+        await until(() => eo.layer[toPre] === 'shown' && eo.layer[toNone] === 'shown', 3000) &&
+        !eo.refused.some((r) => r.indexOf('blend none takes no') >= 0));
+    ovl.drop(toPre);
+    ovl.drop(toNone);
     ok('the preload layer is made again with preload: its target loaded',
         await until(() => eo.target.hud === 'loaded', 3000) && eo.layer[pre] === 'hidden');
     ovl.set(pre, { preload: false });

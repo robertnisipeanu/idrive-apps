@@ -359,7 +359,7 @@ public:
      * and color_mask (RenderState). */
     bool takes_render_state() const { return render_state_; }
     /* The service's hello takes an asset's sampling by name, wrap_u, wrap_v
-     * and anisotropy (AssetOptions). */
+     * and anisotropy (SamplerOptions). */
     bool takes_samplers() const { return samplers_; }
 
 private:

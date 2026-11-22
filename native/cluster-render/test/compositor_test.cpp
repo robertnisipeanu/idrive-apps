@@ -1340,6 +1340,16 @@ static Animation keys(Animated prop, uint32_t width, std::vector<uint32_t> t, st
     return a;
 }
 
+/* Why an asset of format f, w x h, sampled without mipmaps, cannot be. */
+static const char *asset_size_error(TexFormat f, uint32_t w, uint32_t h)
+{
+    AssetParams p;
+    p.format = f;
+    p.w = w;
+    p.h = h;
+    return Asset::size_error(p);
+}
+
 static const FakeBuffer *buffer_of(FakeGraph *g, int handle)
 {
     auto it = g->shown.buffers.find(handle);
@@ -1382,8 +1392,8 @@ static void assets()
             abuf = kv.first;
     const FakeBuffer *ab = g ? buffer_of(g, abuf) : nullptr;
     ok("its pixels: the target is published and the asset written whole in the first flush, as asked",
-       r.port.requests == 1 && g && g->flushes == 1 && ab && ab->px == glyphs && ab->wrap == Wrap::Repeat &&
-           ab->sampling == Sampling::Bilinear);
+       r.port.requests == 1 && g && g->flushes == 1 && ab && ab->px == glyphs && ab->sampler.u == Wrap::Repeat &&
+           ab->sampler.v == Wrap::Repeat && ab->sampler.sampling == Sampling::Bilinear);
     ok("the layer sampling it is drawn from the next flush, bound to it",
        g && g->visible().empty() && (r.step(10), g->visible().size() == 1) &&
            g->shown.quads[g->visible()[0]].textures["u_atlas"] == abuf);
@@ -1524,15 +1534,15 @@ static void compressed_assets()
     ap.w = 250;
     ap.h = 280;
     ok("etc2rgba: w and h are multiples of 4",
-       Asset::size_error(ap.format, 250, 280) && Asset::size_error(ap.format, 252, 278) &&
-           !Asset::size_error(ap.format, 252, 280));
+       asset_size_error(ap.format, 250, 280) && asset_size_error(ap.format, 252, 278) &&
+           !asset_size_error(ap.format, 252, 280));
     ok("its bytes: 16 a 4x4 block", tex_bytes(TexFormat::ETC2RGBA, 252, 280) == 63u * 70u * 16u);
     AssetParams big;
     big.format = TexFormat::ETC2RGBA;
     big.w = 2048;
     big.h = 1024;
     ok("a 2048x1024 atlas fits one frame message and takes 2 MiB of the pixel memory",
-       !Asset::size_error(big.format, big.w, big.h) && Asset::memory(big) == 2u << 20);
+       !asset_size_error(big.format, big.w, big.h) && Asset::memory(big) == 2u << 20);
     const size_t n = 63 * 70 * 16;
     CompositorLimits lim;
     lim.pixel_bytes = n + 1024;   /* its blocks, and room for an 8x8 image */
@@ -1608,7 +1618,7 @@ static void compressed_assets()
     rgb.h = 280;
     const size_t m = 63 * 70 * 8;
     ok("etc2rgb: 8 bytes a 4x4 block, charged once",
-       tex_bytes(rgb.format, 252, 280) == m && Asset::memory(rgb) == m && Asset::size_error(rgb.format, 250, 280));
+       tex_bytes(rgb.format, 252, 280) == m && Asset::memory(rgb) == m && asset_size_error(rgb.format, 250, 280));
     Rig r3;
     const uint32_t c = r3.comp->add_asset(1, r3.panel, rgb, &err);
     std::vector<uint8_t> rgb_blocks(m, 0x5a);
@@ -2360,26 +2370,6 @@ static void render_state()
     (void)plain;
 }
 
-/* The mean of a 2x2 RGBA block weighted by alpha, as Asset makes levels. */
-static std::vector<uint8_t> mean4(const uint8_t *a, const uint8_t *b, const uint8_t *c, const uint8_t *d)
-{
-    const uint8_t *p[4] = {a, b, c, d};
-    std::vector<uint8_t> o(4);
-    uint32_t al = 0;
-    for (auto q : p)
-        al += q[3];
-    for (int ch = 0; ch < 3; ch++) {
-        uint32_t s = 0, plain = 0;
-        for (auto q : p) {
-            s += q[ch] * q[3];
-            plain += q[ch];
-        }
-        o[ch] = (uint8_t)(al ? (s + al / 2) / al : (plain + 2) / 4);
-    }
-    o[3] = (uint8_t)((al + 2) / 4);
-    return o;
-}
-
 /* Assets sampled with mipmaps (PROTOCOL.md "Mipmaps"): an rgba8 asset's
  * levels made by the service, weighted by alpha, written whole with it and
  * again in the rects a change touches; charged to the pixel memory and the
@@ -2401,13 +2391,21 @@ static void mipmapped_assets()
     ok("mipmaps: the chain's bytes", chain == (40 * 20 + 20 * 10 + 10 * 5 + 5 * 2 + 2 * 1 + 1) * 4u &&
                                          Asset::memory(ap) == chain * 2);
     const uint32_t a = r.comp->add_asset(1, r.panel, ap, &err);
-    std::vector<uint8_t> px(40 * 20 * 4);
-    for (size_t i = 0; i < 40 * 20; i++) {
-        px[i * 4] = (uint8_t)(i * 7);
-        px[i * 4 + 1] = (uint8_t)(i * 3);
-        px[i * 4 + 2] = (uint8_t)i;
-        px[i * 4 + 3] = (uint8_t)((i % 3) ? 255 : 0);   /* some transparent */
-    }
+    /* Known 2x2 blocks at the top-left of level 0 and 1, the rest grey:
+     * (0,0) red opaque, (1,0) blue transparent, (0,1) green at alpha 85,
+     * (1,1) white at alpha 170; (2,0)-(3,1) all transparent black. */
+    std::vector<uint8_t> px(40 * 20 * 4, 128);
+    auto put = [&](uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+        uint8_t *q = &px[(y * 40 + x) * 4];
+        q[0] = r; q[1] = g; q[2] = b; q[3] = a;
+    };
+    put(0, 0, 255, 0, 0, 255);
+    put(1, 0, 0, 0, 255, 0);
+    put(0, 1, 0, 255, 0, 85);
+    put(1, 1, 255, 255, 255, 170);
+    for (uint32_t x = 2; x < 4; x++)
+        for (uint32_t y = 0; y < 2; y++)
+            put(x, y, 0, 0, 0, 0);
     r.comp->asset(1, a)->update({}, px.data(), px.size(), &err);
     const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 40, 20)), "", kSample, 0,
                                            r.now, &err);
@@ -2422,13 +2420,21 @@ static void mipmapped_assets()
     ok("mipmaps: the buffer has every level and the sampler as asked",
        b && b->levels == 6 && b->mips.size() == 5 && b->sampler.sampling == Sampling::Trilinear &&
            b->sampler.u == Wrap::Mirror && b->sampler.v == Wrap::Repeat && b->sampler.anisotropy == 4);
-    const std::vector<uint8_t> want = mean4(&px[0], &px[4], &px[40 * 4], &px[41 * 4]);
+    /* By hand: alpha (255 + 0 + 85 + 170 + 2) / 4 = 128; red (255*255 +
+     * 255*170 + 255) / 510 = 213, green (255*85 + 255*170 + 255) / 510 = 128,
+     * blue (255*170 + 255) / 510 = 85: the transparent blue lends nothing. */
+    const std::vector<uint8_t> want = {213, 128, 85, 128};
     ok("mipmaps: level 1 is the alpha-weighted mean of the 2x2 above",
-       b && std::vector<uint8_t>(b->mips[0].begin(), b->mips[0].begin() + 4) == want && want[3] == 191);
-    const std::vector<uint8_t> l1(b ? b->mips[0] : std::vector<uint8_t>());
-    const std::vector<uint8_t> want2 = mean4(&l1[0], &l1[4], &l1[20 * 4], &l1[21 * 4]);
+       b && std::vector<uint8_t>(b->mips[0].begin(), b->mips[0].begin() + 4) == want);
+    ok("mipmaps: four transparent pixels: the plain mean of their colour, alpha 0",
+       b && std::vector<uint8_t>(b->mips[0].begin() + 4, b->mips[0].begin() + 8) == std::vector<uint8_t>({0, 0, 0, 0}));
+    /* Level 2 from level 1's (0,0) above, (1,0) transparent and (0,1),
+     * (1,1) grey 128 at alpha 128: alpha (128 + 0 + 128 + 128 + 2) / 4 =
+     * 96; red (213*128 + 128*128*2 + 192) / 384 = 156, green (128*128*3 +
+     * 192) / 384 = 128, blue (85*128 + 128*256 + 192) / 384 = 114. */
     ok("mipmaps: and each level of the one above",
-       b && std::vector<uint8_t>(b->mips[1].begin(), b->mips[1].begin() + 4) == want2 && b->mips[4].size() == 4);
+       b && std::vector<uint8_t>(b->mips[1].begin(), b->mips[1].begin() + 4) ==
+                std::vector<uint8_t>({156, 128, 114, 96}) && b->mips[4].size() == 4);
     ok("mipmaps: written whole with the asset, every level charged",
        b && b->level_writes == 5 && g->flushed_bytes >= chain);
 
@@ -2445,7 +2451,7 @@ static void mipmapped_assets()
     ok("mipmaps: a change rewrites each level under it only", b->level_writes == levels_before + 5 &&
                                                                   g->flushed_bytes - bytes_before == corner);
     ok("mipmaps: the levels follow the change", b->mips[0][(9 * 20 + 19) * 4] == 255 && b->mips[1][(4 * 10 + 9) * 4] == 255 &&
-                                                    b->mips[0][0] == want[0]);
+                                                    b->mips[0][0] == 213);
 
     /* A compressed asset brings its chain in its frame. */
     AssetParams cp;
