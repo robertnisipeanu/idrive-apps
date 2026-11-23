@@ -90,18 +90,8 @@ struct FakePart {
     std::map<std::string, UniformType> types;
 };
 
-struct FakeAnimation {
-    int node = 0;
-    Animation a;           /* what plays, once made */
-    bool made = false;     /* made at a flush, within the key allowance */
-    uint64_t due_seq = 0;
-    /* A replacement waiting for its flush, a playing meanwhile, as the
-     * backends keep it; restore: run once a stops. */
-    bool replacing = false;
-    int next_node = 0;
-    Animation next;
-    std::function<void()> restore;
-};
+/* Kept as the backends keep theirs (AnimTable), with no objects. */
+struct FakeAnimation : AnimState {};
 
 struct FakeState {
     std::map<int, FakeBuffer> buffers;
@@ -370,44 +360,18 @@ public:
             return 0;
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
-        FakeAnimation fa;
-        fa.node = node;
-        fa.a = a;
-        fa.due_seq = keys_.next_seq();
-        pending.animations[next] = fa;
+        table().add(next, node, a);
         return next++;
     }
-    void stop(int anim) override
-    {
-        auto it = pending.animations.find(anim);
-        if (it == pending.animations.end())
-            return;
-        if (it->second.restore)
-            it->second.restore();
-        pending.animations.erase(it);
-    }
-    /* In place, the old one playing until the replacement is made, as the
-     * backends do. */
+    void stop(int anim) override { table().stop(anim, [](FakeAnimation &) {}); }
+    /* In place, the old one playing until the replacement is made, by the
+     * backends' own state machine (AnimTable). */
     int replace(int anim, int node, const Animation &a, std::function<void()> restore) override
     {
         if (!pending.animations.count(anim))
             return animate(node, a);
         replaces++;
-        FakeAnimation &fa = pending.animations[anim];
-        if (!fa.made) {
-            fa.node = node;
-            fa.a = a;
-            return anim;
-        }
-        if (!fa.replacing)
-            fa.due_seq = keys_.next_seq();
-        fa.replacing = true;
-        fa.next_node = node;
-        fa.next = a;
-        if (restore) {
-            std::function<void()> before = fa.restore;
-            fa.restore = before ? [before, restore]() { before(); restore(); } : restore;
-        }
+        table().replace(anim, node, a, std::move(restore));
         return anim;
     }
     uint64_t take_animation_bytes() override
@@ -419,33 +383,22 @@ public:
     bool animations_due() const override
     {
         for (const auto &kv : pending.animations)
-            if (!kv.second.made || kv.second.replacing)
+            if (kv.second.due)
                 return true;
         return false;
     }
-    /* Through the backends' gate (Graph::keys_). */
+    /* Through the backends' gate and state machine. */
     void make_animations()
     {
-        std::vector<KeyGate::Due> due;
-        for (const auto &kv : pending.animations)
-            if (!kv.second.made || kv.second.replacing)
-                due.push_back(KeyGate::Due{kv.second.due_seq,
-                                           kv.second.replacing ? kv.second.next.owner : kv.second.a.owner, kv.first});
-        keys_.run(due, [this](int handle) {
-            FakeAnimation &fa = pending.animations[handle];
-            if (fa.replacing) {
-                if (fa.restore)
-                    fa.restore();
-                fa.node = fa.next_node;
-                fa.a = fa.next;
-                fa.replacing = false;
-                fa.restore = nullptr;
-            }
-            fa.made = true;
-            made_by[fa.a.owner] += key_bytes(fa.a);
-            return key_bytes(fa.a);
+        table().make([this](FakeAnimation &an, FakeAnimation &, bool) {
+            AnimTable<FakeAnimation>::Built b;
+            b.ok = true;
+            b.bytes = key_bytes(an.a);
+            made_by[an.a.owner] += b.bytes;
+            return b;
         });
     }
+    AnimTable<FakeAnimation> table() { return AnimTable<FakeAnimation>(pending.animations, keys_); }
     std::map<uint64_t, uint64_t> made_by;   /* key bytes made, by owner */
     int replaces = 0;                 /* replace() calls on a playing animation */
     uint64_t animation_taken = 0;     /* key bytes taken by take_animation_bytes(), in all */
@@ -584,27 +537,7 @@ public:
     }
 
 private:
-    /* As the backends: one moving away from node keeps its replacement,
-     * one moving to it goes whole, its old target restored. */
-    void stop_on(int node)
-    {
-        for (auto it = pending.animations.begin(); it != pending.animations.end();) {
-            FakeAnimation &fa = it->second;
-            if (fa.replacing && fa.node == node && fa.next_node != node) {
-                fa.node = fa.next_node;
-                fa.a = fa.next;
-                fa.made = fa.replacing = false;
-                fa.restore = nullptr;
-                ++it;
-            } else if (fa.node == node || (fa.replacing && fa.next_node == node)) {
-                if (fa.restore && fa.node != node)
-                    fa.restore();
-                it = pending.animations.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
+    void stop_on(int node) { table().stop_on(node, [](FakeAnimation &) {}); }
 };
 
 /* What a file scene shows, by object name: a node's visibility, its pose

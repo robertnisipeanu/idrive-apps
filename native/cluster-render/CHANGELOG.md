@@ -20,9 +20,12 @@ smooth curve through their keys, played by the cluster with nothing sent
 per frame. A mesh part can follow another part or a pivot that draws
 nothing, so one animation moves everything attached to it. On iDrive 7,
 replacing or stopping an animation (a needle sent a new value) no longer
-makes every animation on the cluster again: it sends only its own keys.
-Animation keys go within a share of the upload cap of their own, split
-between the targets, so animations and writes never wait on each other.
+makes every animation on the cluster again each time: a replacement sends
+its own keys, and only once the replaced and stopped ones' keys outnumber
+the live ones' are the live ones made again, a few at a time. Animation keys
+go within a share of the upload cap of their own, split between the
+targets, so animations and writes never wait on each other, and together
+stay within the cap.
 
 ## 0.8.3
 

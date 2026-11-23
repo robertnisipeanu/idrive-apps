@@ -2878,6 +2878,16 @@ static void motion_over_socket()
     ok("motion: a curve past the float range refused",
        raw.events().find("the curve leaves the numbers a key holds") != std::string::npos);
     ok("motion: a pivot's geometry refused", ev.find("a pivot draws nothing") != std::string::npos);
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":3,\"node\":1,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\"}");
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":4,\"node\":1,\"fs\":\"void main(){}\"}");
+    r.pump(50);
+    const std::string later = raw.events();
+    size_t n = 0;
+    for (size_t at = later.find("a pivot (node 1) has no shaders"); at != std::string::npos;
+         at = later.find("a pivot (node 1) has no shaders", at + 1))
+        n++;
+    ok("motion: a pivot sent with shaders refused, nothing made", n == 2 && rm && !rm->has_part(3) && !rm->has_part(4));
 }
 
 /* A reconnect under a small upload budget: the client sends every animation

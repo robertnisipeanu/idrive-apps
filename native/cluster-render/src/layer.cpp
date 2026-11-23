@@ -128,14 +128,17 @@ bool Layer::play(uint32_t anim, uint32_t part, const Animation &a, std::string *
     auto now = played_.find(anim);
     if (g_ && !defer_starts_ && now != played_.end() && now->second.handle && !now->second.pending) {
         const int node = animated(part);
-        /* moved to another part, property or uniform: the old one goes back
-         * to what the client set once the replacement is made, the old
-         * animation driving it until then */
+        /* What gives the target of the one sent before its own value back,
+         * should the replacement play elsewhere: the graph keeps the one
+         * for the target that plays (Graph::replace), and runs it once the
+         * replacement is made, the old animation driving it until then. Its
+         * target alone, not its keys. */
         const uint32_t was_part = now->second.part;
-        const Animation was = now->second.a;
-        std::function<void()> back;
-        if (was_part != part || was.property != a.property || was.uniform != a.uniform)
-            back = [this, was_part, was]() { restore(was_part, was); };
+        Animation was;
+        was.property = now->second.a.property;
+        was.uniform = now->second.a.uniform;
+        was.width = now->second.a.width;
+        std::function<void()> back = [this, was_part, was]() { restore(was_part, was); };
         const int handle = node ? g_->replace(now->second.handle, node, a, back) : 0;
         if (!handle) {
             if (node)

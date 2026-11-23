@@ -255,17 +255,22 @@ back to what the client set. A layer plays at most 16. An animation's keys
 go to the renderer with the scene (about 8 bytes a key with one value) out
 of a share of the upload cap of their own: an eighth of it, split evenly
 between the targets, the rest pacing the layers' writes while an animation
-waits for its keys (with none waiting, the writes have the whole cap), so
-animations and writes never wait on each other, nor one target's
-animations on another's. A target's flush makes waiting animations while its share has
+waits for its keys (with none waiting, the writes have the whole cap, and
+the share fills only while they have the rest), so animations and writes
+never wait on each other, nor one target's animations on another's, and
+together stay within the cap. A target's flush makes waiting animations while its share has
 bytes left, the connections with animations waiting taking turns, and those
 left start at its next flushes; a flush goes past the share by less than
 one animation (at most 20,480 bytes, 1,024 keys of four values), which its
 next refills repay. Nothing is refused for the budget: an animation sent
 again after a reconnect, or one a new scene makes again, waits its turn the
-same way. Replacing, stopping or dropping one sends only its own keys; a
-replacement that plays elsewhere gives the old part or uniform back its own
-value once it is made.
+same way. Replacing one sends its keys and stopping or dropping one sends
+none, except on iDrive 7: there the ones replaced, stopped or dropped stay
+in the renderer's animation system, and once their keys outnumber the live
+ones' (and 4,096), every animation still playing on the target is made
+again in a new system, a few a flush within the target's share, each going
+on from where it was. A replacement that plays elsewhere gives the old part
+or uniform back its own value once it is made.
 
 | Field | |
 |---|---|
@@ -301,10 +306,13 @@ Send these only to a service whose hello has `nodes` 1. A part sent with
 transform and animations are relative to its parent's, so turning a parent
 turns everything that follows it. A part sent with `node` 1 and no shaders
 is a pivot: it draws nothing and takes no geometry (`a pivot draws
-nothing`), and is transformed, animated and followed as a part. A parent
+nothing`), and is transformed, animated and followed as a part; one sent
+with `vs` or `fs` is refused (`a pivot (node 1) has no shaders`). A parent
 is made first, so a part never follows itself or a part that follows it; a
 part whose parent is not there is refused with nothing made (`a part's
-parent is another part of the layer, made before it`). Pivots and parents
+parent is another part of the layer, made before it`). A part dropped, a
+pivot or one that draws, leaves what followed it following the layer's
+camera view, as if sent with no parent. Pivots and parents
 work alike in a [canvas](#canvases). The parts of a layer are made again in
 each new scene, each with its parent; the client libraries send parts again
 after a reconnect in the order they were made.

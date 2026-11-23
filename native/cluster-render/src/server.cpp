@@ -1231,6 +1231,8 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             err = "parts are for mesh layers";
         else if (part == 0)
             err = "parts are numbered from 1";
+        else if (pivot && (!str(j, "vs").empty() || !str(j, "fs").empty()))
+            err = "a pivot (node 1) has no shaders";
         else if (num(j, "parent", 1, 4294967295.0, &parent, &err) && !pivot &&
                  (str(j, "vs").empty() || str(j, "fs").empty()))
             err = "a part needs vs and fs";

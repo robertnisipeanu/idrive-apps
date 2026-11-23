@@ -610,6 +610,24 @@ public:
         ramses::Node &n = node_of(c->second);
         return ok(n.removeParent()) && ok(n.setParent(node_of(p->second)));
     }
+    bool read_parent(int part, int *parent) override
+    {
+        auto c = parts_.find(part);
+        if (c == parts_.end())
+            return false;
+        const ramses::Node *up = node_of(c->second).getParent();
+        auto v = views_.find(c->second.view);
+        if (v != views_.end() && up == v->second.root) {
+            *parent = 0;
+            return true;
+        }
+        for (auto &kv : parts_)
+            if (up == &node_of(kv.second)) {
+                *parent = kv.first;
+                return true;
+            }
+        return false;
+    }
 
     bool geometry(int part, const Geometry &g) override
     {
@@ -687,11 +705,11 @@ public:
             return;
         stop_on(part);
         Part &p = it->second;
+        /* what follows it, a pivot or a mesh, follows the view again */
+        for (auto &kv : parts_)
+            if (&kv.second != &p && node_of(kv.second).getParent() == &node_of(p))
+                node_of(kv.second).setParent(*views_[p.view].root);
         if (p.pivot) {
-            /* what follows it follows the view again */
-            for (auto &kv : parts_)
-                if (&kv.second != &p && node_of(kv.second).getParent() == p.pivot)
-                    node_of(kv.second).setParent(*views_[p.view].root);
             scene_->destroy(*p.pivot);
             parts_.erase(it);
             return;
@@ -718,22 +736,16 @@ public:
         ramses::UniformInput in;
         if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a, &target, &app, &in))
             return 0;
-        Anim an;
-        an.node = node;
-        an.a = a;
-        an.due = true;
-        an.due_seq = keys_.next_seq();
-        anims_[next_] = an;
+        table().add(next_, node, a);
         return next_++;
     }
 
     /* Made at a flush, where the newest of several replacements is made
-     * alone; the old one plays until then (Anim::replacing), then retires
-     * (retire()) and restore runs. */
+     * alone (AnimTable); the old one plays until then, then retires
+     * (retire()). */
     int replace(int anim, int node, const Animation &a, std::function<void()> restore) override
     {
-        auto it = anims_.find(anim);
-        if (it == anims_.end())
+        if (!anims_.count(anim))
             return animate(node, a);
         ramses::Node *target = nullptr;
         ramses::Appearance *app = nullptr;
@@ -742,42 +754,19 @@ public:
             stop(anim);
             return 0;
         }
-        Anim &an = it->second;
-        if (!an.seq) {
-            /* not playing yet: this one in its place */
-            an.node = node;
-            an.a = a;
-            an.start = 0;
-        } else {
-            an.replacing = true;
-            an.next_node = node;
-            an.next = a;
-            if (restore) {
-                std::function<void()> before = an.restore;
-                an.restore = before ? [before, restore]() { before(); restore(); } : restore;
-            }
-        }
-        if (!an.due)
-            an.due_seq = keys_.next_seq();   /* one still due keeps its place */
-        an.due = true;
+        table().replace(anim, node, a, std::move(restore));
         return anim;
     }
 
     void stop(int anim) override
     {
-        auto it = anims_.find(anim);
-        if (it == anims_.end())
-            return;
-        retire(it->second);
-        if (it->second.restore)
-            it->second.restore();
-        anims_.erase(it);
+        table().stop(anim, [this](Anim &an) { retire(an); });
     }
 
     bool animations_due() const override
     {
         for (const auto &kv : anims_)
-            if (kv.second.due || kv.second.moving)
+            if (kv.second.due)
                 return true;
         return false;
     }
@@ -1091,26 +1080,17 @@ private:
         ramses::Node *pivot = nullptr;   /* a node(): draws nothing */
     };
     ramses::Node &node_of(Part &p) { return p.mesh ? *(ramses::Node *)p.mesh : *p.pivot; }
-    struct Anim {
-        int node = 0;
-        Animation a;
+    /* Its state (AnimTable) and the objects of the one playing. */
+    struct Anim : AnimState {
         ramses::globalTimeStamp_t start = 0;   /* 0: not started yet */
         ramses::AnimationSequence *seq = nullptr;
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
         ramses::Spline *spline = nullptr;
         ramses::AnimationSystemRealTime *sys = nullptr;   /* the system its objects are in */
-        bool due = false;      /* new or replaced: made at a flush */
         bool moving = false;   /* playing in old_: made again in anim_ at a flush */
-        uint64_t due_seq = 0;  /* when it fell due: the longest due first, in its owner's turns */
-        /* A replacement waiting for its flush, this one playing meanwhile:
-         * its node and animation, and what gives the old target its own
-         * value back once this one stops. */
-        bool replacing = false;
-        int next_node = 0;
-        Animation next;
-        std::function<void()> restore;
     };
+    AnimTable<Anim> table() { return AnimTable<Anim>(anims_, keys_); }
 
     /* What animation a on node plays: the node a quad, part or view turns,
      * and for a uniform its appearance and input, of a's width (where the
@@ -1184,19 +1164,14 @@ private:
             old_ = anim_;
             anim_ = nullptr;
             retired_keys_ = 0;
+            AnimTable<Anim> t = table();
             for (auto &kv : anims_) {
                 kv.second.moving = kv.second.sys == old_;
-                if (kv.second.moving && !kv.second.due)
-                    kv.second.due_seq = keys_.next_seq();
+                if (kv.second.moving)
+                    t.again(kv.second);
             }
         }
-        std::vector<KeyGate::Due> due;
-        for (const auto &kv : anims_)
-            if (kv.second.due || kv.second.moving)
-                due.push_back(KeyGate::Due{kv.second.due_seq, kv.second.replacing ? kv.second.next.owner
-                                                                                  : kv.second.a.owner,
-                                           kv.first});
-        keys_.run(due, [this](int handle) { return make(handle); });
+        table().make([this](Anim &an, Anim &was, bool replaced) { return make(an, was, replaced); });
         if (old_) {
             bool left = false;
             for (const auto &kv : anims_)
@@ -1207,47 +1182,36 @@ private:
             }
         }
     }
-    /* Animation handle made at a flush: a replacement in place of the one
-     * playing, which retires then (unplayed where it was moving) and whose
-     * target restore gives back its own value; one moving made again in the
-     * new system from when it started. The bytes sent. */
-    uint64_t make(int handle)
+    /* An animation made at a flush (AnimTable::make): a replacement in
+     * place of the one playing (was), which retires then (unplayed where it
+     * was moving); one moving made again in the new system from when it
+     * started. */
+    AnimTable<Anim>::Built make(Anim &an, Anim &was, bool replaced)
     {
-        auto it = anims_.find(handle);
-        Anim &an = it->second;
-        Anim was = an;   /* the objects playing, if any */
-        if (an.replacing) {
-            an.node = an.next_node;
-            an.a = an.next;
+        if (replaced)
             an.start = 0;
-        }
         an.seq = nullptr;
         an.anim = nullptr;
         an.prop = nullptr;
         an.spline = nullptr;
         an.sys = nullptr;
+        an.moving = false;
         bool half = false;
-        const bool built = build(an, &half);
+        AnimTable<Anim>::Built b;
+        b.ok = build(an, &half);
         if (was.seq) {
             if (was.moving)
                 unplay(was);
             else
                 retire(was);
         }
-        if (was.restore)
-            was.restore();
-        const uint64_t bytes = built || half ? key_bytes(an.a) : 0;
-        an.replacing = an.moving = false;
-        an.restore = nullptr;
-        if (built) {
-            an.due = false;
-            return bytes;
+        b.bytes = b.ok || half ? key_bytes(an.a) : 0;
+        if (!b.ok) {
+            log_error("ramses: an animation refused");
+            if (half)
+                retired_keys_ = SIZE_MAX;   /* half made: the system goes */
         }
-        log_error("ramses: animation %d refused", handle);
-        if (half)
-            retired_keys_ = SIZE_MAX;   /* half made: the system goes */
-        anims_.erase(it);
-        return bytes;
+        return b;
     }
 
     /* Makes an's objects in the animation system (made when there is none)
@@ -1446,34 +1410,15 @@ private:
         return nullptr;
     }
 
-    /* A node going: its animations retired, as stop() does, the system made
-     * again only once the retired keys outnumber the live ones. One moving
-     * from it to another node by a replacement loses its playing objects
-     * and waits for the replacement; one moving to it goes whole, its old
-     * target given back its own value. */
+    /* A node going: what plays on it retired, as stop() does
+     * (AnimTable::stop_on), the system made again only once the retired
+     * keys outnumber the live ones. */
     void stop_on(int node)
     {
-        for (auto it = anims_.begin(); it != anims_.end();) {
-            Anim &an = it->second;
-            if (an.replacing && an.node == node && an.next_node != node) {
-                retire(an);
-                an.node = an.next_node;
-                an.a = an.next;
-                an.start = 0;
-                an.replacing = false;
-                an.restore = nullptr;
-                ++it;
-                continue;
-            }
-            if (an.node != node && !(an.replacing && an.next_node == node)) {
-                ++it;
-                continue;
-            }
+        table().stop_on(node, [this](Anim &an) {
             retire(an);
-            if (an.restore && an.node != node)
-                an.restore();
-            it = anims_.erase(it);
-        }
+            an.start = 0;
+        });
     }
 
     /* Puts every quad and view in its pass, in draw order (plan_passes). */

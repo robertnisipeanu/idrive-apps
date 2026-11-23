@@ -258,15 +258,20 @@ public:
                   const PartLook &look, uint32_t parent, std::string *err);
     /* Animation keys go to the renderer as scene data, out of a share of
      * the upload cap of their own: 1/kKeyShare of it, the rest pacing the
-     * writes (pacer()) while an animation waits for its keys on any target;
-     * with none waiting the writes have the whole cap. The keys' share is
-     * split evenly into a bucket per target, refilled every tick whatever
-     * the order targets flush in and holding at most kKeyHeldMs of its
-     * rate; a target's flush makes its due animations while its bucket is
-     * above 0 (Graph::key_allowance()), so the bucket goes below 0 by less
-     * than one animation: at most kMaxKeyBytes. Keys never touch the
-     * writes' pacer, nor writes a bucket: neither starves the other, nor
-     * one target's keys another's. */
+     * writes (pacer()) while an animation waits for its keys on a target
+     * that flushes; with none waiting the writes have the whole cap. The
+     * keys' share is split evenly into a bucket per target, refilled every
+     * tick whatever the order targets flush in, but only for the time the
+     * writes ran at the cap less the share, and holding at most kKeyHeldMs
+     * of its rate; the pacer is brought up to the time at its old rate
+     * before it takes a new one. A target's flush makes its due animations
+     * while its bucket is above 0 (Graph::key_allowance()), so the bucket
+     * goes below 0 by less than one animation: at most kMaxKeyBytes. Keys
+     * never touch the writes' pacer, nor writes a bucket: neither starves
+     * the other, nor one target's keys another's. So over any span, writes
+     * and keys together take at most the cap for the span, plus the
+     * pacer's burst and one write past it, plus for each target kKeyHeldMs
+     * of its share and kMaxKeyBytes. */
     static const uint64_t kKeyShare = 8;
     static const int64_t kKeyHeldMs = 100;
     /* One animation's keys at most: 1,024 keys of a time and four values. */
@@ -800,9 +805,11 @@ private:
     int64_t keys_refilled_ms_ = -1;   /* the key buckets' last refill */
     bool keys_waiting_ = false;       /* an animation waits for its keys: the writes at writes_rate() */
     /* The writes' pacer at the whole cap, or less the keys' share while an
-     * animation waits for its keys. */
-    void pace_writes();
-    /* Every target's key bucket brought up to now_ms. */
+     * animation waits for its keys; settled at its old rate up to now_ms
+     * first. */
+    void pace_writes(int64_t now_ms);
+    /* Every target's key bucket brought up to now_ms, for the time since
+     * the last refill that the writes ran at writes_rate(). */
     void refill_keys(int64_t now_ms);
     /* A layer's entry, in the stack or a canvas (*in, null for the stack);
      * null when none. */

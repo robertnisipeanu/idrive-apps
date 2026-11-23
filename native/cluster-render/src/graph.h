@@ -370,6 +370,189 @@ private:
     uint64_t last_ = 0;                 /* the owner whose turn came last */
 };
 
+/* What every graph keeps of an animation (AnimTable); a backend's adds the
+ * objects of the one playing. */
+struct AnimState {
+    int node = 0;
+    Animation a;            /* what plays, or will once made */
+    bool made = false;      /* its objects play */
+    bool due = false;       /* to make at a flush: new, replaced, or made again */
+    uint64_t due_seq = 0;   /* when it fell due (KeyGate::Due::seq) */
+    /* A replacement waiting for its flush, the one made playing on until
+     * then: only the newest of several is kept, and one restore, the one
+     * the playing animation's target needs (it gives the target its own
+     * value back once a replacement elsewhere is made, or this stops). */
+    bool replacing = false;
+    int next_node = 0;
+    Animation next;
+    std::function<void()> restore;
+};
+
+/* The animations of a graph, as every graph (both backends, the fake one)
+ * keeps them, over its map of A (an AnimState with its backend's objects):
+ * made at flushes through the key gate; a replacement waiting in place of
+ * the one playing, which plays on until the replacement is made; a node
+ * going taking what plays on it. The backend makes and tears down its own
+ * objects, through the callbacks. */
+template <typename A> class AnimTable {
+public:
+    AnimTable(std::map<int, A> &m, KeyGate &keys) : m_(m), keys_(keys) {}
+
+    void add(int handle, int node, const Animation &a)
+    {
+        A an;
+        an.node = node;
+        an.a = a;
+        fall_due(an);
+        m_[handle] = std::move(an);
+    }
+
+    /* handle's replaced by a on node; false when there is none. Not made
+     * yet: a in its place. Made: a waits for a flush, the one made playing
+     * on, and replaces any replacement waiting before it. restore is the
+     * target's of the one playing: kept from the first replacement while
+     * one waits (what plays does not change until then), never chained, and
+     * called only when the replacement made plays on another target, or
+     * when this stops while one waits. */
+    bool replace(int handle, int node, const Animation &a, std::function<void()> restore)
+    {
+        auto it = m_.find(handle);
+        if (it == m_.end())
+            return false;
+        A &an = it->second;
+        if (!an.made) {
+            an.node = node;
+            an.a = a;
+        } else {
+            if (!an.replacing)
+                an.restore = std::move(restore);
+            an.replacing = true;
+            an.next_node = node;
+            an.next = a;
+        }
+        fall_due(an);
+        return true;
+    }
+
+    /* To make again at a flush (a backend's move to new objects), keeping
+     * its place among those due when it is due already. */
+    void again(A &an) { fall_due(an); }
+
+    bool any_due() const
+    {
+        for (const auto &kv : m_)
+            if (kv.second.due)
+                return true;
+        return false;
+    }
+
+    /* down(A &): tears down what plays (called made or not). */
+    template <typename Down> bool stop(int handle, Down down)
+    {
+        auto it = m_.find(handle);
+        if (it == m_.end())
+            return false;
+        down(it->second);
+        std::function<void()> owed;
+        if (it->second.replacing)
+            owed = std::move(it->second.restore);
+        m_.erase(it);
+        if (owed)
+            owed();
+        return true;
+    }
+
+    /* A node going: what plays on it goes, the old target of one waiting to
+     * move to it given its own value back; one waiting to move away from it
+     * loses what plays, and waits unmade for its flush. */
+    template <typename Down> void stop_on(int node, Down down)
+    {
+        std::vector<std::function<void()>> owed;
+        for (auto it = m_.begin(); it != m_.end();) {
+            A &an = it->second;
+            if (an.replacing && an.node == node && an.next_node != node) {
+                down(an);
+                an.node = an.next_node;
+                an.a = std::move(an.next);
+                an.next = Animation();
+                an.made = an.replacing = false;
+                an.restore = nullptr;
+                ++it;
+            } else if (an.node == node || (an.replacing && an.next_node == node)) {
+                down(an);
+                if (an.replacing && an.node != node && an.restore)
+                    owed.push_back(std::move(an.restore));
+                it = m_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto &f : owed)
+            f();
+    }
+
+    /* What build() did: made, and the bytes it sent (a half-made one may
+     * have sent some). */
+    struct Built {
+        bool ok = false;
+        uint64_t bytes = 0;
+    };
+    /* Before a flush: the due ones made through the key gate. build(A &an,
+     * A &was, bool replaced) makes an's objects for an.node and an.a; was
+     * is an as it was (what played, its objects and animation), whose
+     * objects build tears down; replaced: a replacement is being made. One
+     * build refuses goes. The restore a replacement owes runs after it. */
+    template <typename Build> void make(Build build)
+    {
+        std::vector<KeyGate::Due> due;
+        for (const auto &kv : m_)
+            if (kv.second.due)
+                due.push_back(KeyGate::Due{kv.second.due_seq,
+                                           kv.second.replacing ? kv.second.next.owner : kv.second.a.owner, kv.first});
+        keys_.run(due, [&](int handle) -> uint64_t {
+            auto it = m_.find(handle);
+            A &an = it->second;
+            const bool replaced = an.replacing;
+            Animation incoming;
+            std::function<void()> owed;
+            if (replaced) {
+                incoming = std::move(an.next);
+                an.next = Animation();
+                if (an.node != an.next_node || an.a.property != incoming.property || an.a.uniform != incoming.uniform)
+                    owed = std::move(an.restore);
+                an.restore = nullptr;
+                an.replacing = false;
+            }
+            A was = an;
+            if (replaced) {
+                an.node = an.next_node;
+                an.a = std::move(incoming);
+            }
+            const Built b = build(an, was, replaced);
+            if (b.ok) {
+                an.made = true;
+                an.due = false;
+            } else {
+                m_.erase(it);
+            }
+            if (owed)
+                owed();
+            return b.bytes;
+        });
+    }
+
+private:
+    void fall_due(A &an)
+    {
+        if (!an.due)
+            an.due_seq = keys_.next_seq();   /* one due already keeps its place */
+        an.due = true;
+    }
+
+    std::map<int, A> &m_;
+    KeyGate &keys_;
+};
+
 /* An off-screen canvas (Graph::canvas): w x h RGBA8 the scene's own passes
  * draw into before the target's, with a depth-stencil buffer when depth,
  * cleared to clear (RGBA) at the start of each frame it is drawn, and
@@ -477,6 +660,9 @@ public:
     /* The part (or node) follows parent's pose: its own is then relative to
      * parent's. Both of one view. */
     virtual bool parent(int, int) { return false; }
+    /* The part (or node) it follows as the library holds it, 0 for the
+     * view; false where the backend cannot say (tests). */
+    virtual bool read_parent(int, int *) { return false; }
 
     /* Plays a by the renderer, nothing sent per frame, on:
      * - a quad: Rotate 1 value (degrees clockwise about its pivot), Translate
@@ -498,9 +684,10 @@ public:
     /* Animation anim (animate()'s) replaced by a on node: its handle, the
      * same or a new one; 0 when refused, anim then stopped. A graph may make
      * it at a flush, keeping only the newest of several replacements, the
-     * old one playing until then. restore: called once the old one stops
-     * (made, or stopped while waiting), to give its target back its own
-     * value where the new one plays elsewhere. */
+     * old one playing until then (AnimTable). restore gives the target of
+     * the one playing its own value back: called when the replacement made
+     * plays on another target, or when it is stopped while one waits; of
+     * several replacements before a flush, the first's is the one kept. */
     virtual int replace(int anim, int node, const Animation &a, std::function<void()> restore = nullptr)
     {
         stop(anim);

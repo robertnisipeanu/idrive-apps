@@ -1762,11 +1762,13 @@ void Compositor::render(int64_t now_ms)
             break;
         }
     if (governor_.tick(now_ms))
-        pace_writes();
+        pace_writes(now_ms);
 }
 
-void Compositor::pace_writes()
+void Compositor::pace_writes(int64_t now_ms)
 {
+    /* the allowance brought up to now at the rate it had, then the new one */
+    pacer_.ready(now_ms);
     pacer_.set_rate(keys_waiting_ ? writes_rate(governor_.cap()) : governor_.cap());
 }
 
@@ -1774,20 +1776,24 @@ void Compositor::refill_keys(int64_t now_ms)
 {
     if (targets_.empty())
         return;
+    /* The buckets fill only over the time the writes ran at the cap less the
+     * keys' share (keys_waiting_ since the last refill): the two together
+     * never take more than the cap (compositor.h). */
+    const int64_t rate = int64_t(governor_.cap() / kKeyShare / targets_.size()), held = rate * kKeyHeldMs / 1000;
+    const int64_t gap = keys_refilled_ms_ < 0 ? 0 : std::min<int64_t>(now_ms - keys_refilled_ms_, 1000);
+    keys_refilled_ms_ = now_ms;
+    if (keys_waiting_ && gap > 0)
+        for (Target &t : targets_)
+            t.key_tokens = std::min(held, t.key_tokens + rate * gap / 1000);
+    /* Waiting only where a flush can make them: a target that is not
+     * flushing (parked, or its scene not shown) holds no other's writes. */
     bool waiting = false;
-    for (const Target &t : targets_)
-        waiting = waiting || (t.graph && t.graph->animations_due());
+    for (int ti : render_order_)
+        waiting = waiting || (targets_[ti].graph && targets_[ti].graph->animations_due());
     if (waiting != keys_waiting_) {
         keys_waiting_ = waiting;
-        pace_writes();
+        pace_writes(now_ms);
     }
-    const int64_t rate = int64_t(governor_.cap() / kKeyShare / targets_.size()), held = rate * kKeyHeldMs / 1000;
-    const int64_t gap = keys_refilled_ms_ < 0 ? kKeyHeldMs : std::min<int64_t>(now_ms - keys_refilled_ms_, 1000);
-    keys_refilled_ms_ = now_ms;
-    if (gap <= 0)
-        return;
-    for (Target &t : targets_)
-        t.key_tokens = std::min(held, t.key_tokens + rate * gap / 1000);
 }
 
 void Compositor::render_target(int ti, Target &t, int64_t now_ms)

@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -540,9 +541,25 @@ static void backend(Gpu &gpu)
        pivot && follower && g->geometry(follower, cube.geometry()) && g->parent(follower, pivot) &&
            g->pose(pivot, tilt) && smooth.t.size() == 33 && g->animate(pivot, smooth) && g->flush(8));
     ok("hierarchy: a pivot has no geometry", !g->geometry(pivot, cube.geometry()));
+    int up = -1;
+    ok("hierarchy: the follower's parent the pivot, as the library holds it",
+       g->read_parent(follower, &up) && up == pivot);
     g->drop_part(pivot);
-    ok("hierarchy: the pivot dropped, what followed it follows the view", g->flush(9));
+    up = -1;
+    ok("hierarchy: the pivot dropped, what followed it follows the view",
+       g->flush(9) && g->read_parent(follower, &up) && up == 0);
+    /* A part under a drawn part: the parent dropped, the child follows the
+     * view, drawn on. */
+    const int under = g->part(v1, lit_fx, PartLook());
+    up = -1;
+    ok("hierarchy: a part following a drawn part",
+       under && g->geometry(under, cube.geometry()) && g->parent(under, follower) && g->flush(10) &&
+           g->read_parent(under, &up) && up == follower);
     g->drop_part(follower);
+    up = -1;
+    ok("hierarchy: the drawn parent dropped, its follower follows the view",
+       g->flush(11) && g->read_parent(under, &up) && up == 0);
+    g->drop_part(under);
 #ifndef CRS_RAMSES27
     ok("hierarchy: the scene described whole", described("check"));
 #endif
@@ -706,6 +723,40 @@ static void backend(Gpu &gpu)
            restored == 1 && g->flush(16) && !g->animations_due() && g->take_animation_bytes() == 0);
         g->drop_quad(qb);
         g->drop_quad(qc);
+        g->flush(16);
+    }
+    /* Thousands of replacements alternating between properties while one
+     * waits: one restore held (no chain), run once when the newest is made
+     * elsewhere; one back on the property that plays restores nothing. */
+    {
+        Rect wr;
+        wr.w = wr.h = 32;
+        const int q = g->quad(glyph_fx, wr);
+        auto token = std::make_shared<int>(0);
+        const int wa = g->animate(q, keyed(Animated::Rotate, 1, {0, 1000}, {0, 90}));
+        const bool first = wa && g->flush(16);
+        g->take_animation_bytes();
+        g->key_allowance(0);
+        const Animation grow = keyed(Animated::Scale, 3, {0, 1000}, {1, 1, 1, 2, 2, 2});
+        const Animation slide = keyed(Animated::Translate, 3, {0, 1000}, {0, 0, 0, 9, 9, 0});
+        bool taken = true;
+        for (int i = 0; i < 4000; i++) {
+            taken = taken && g->replace(wa, q, i % 2 ? slide : grow, [token]() { ++*token; }) == wa;
+            if (i % 500 == 499)
+                taken = taken && g->flush(16) && g->take_animation_bytes() == 0;
+        }
+        ok("animations: 4,000 alternating replacements waiting, one restore held, none run",
+           first && taken && token.use_count() == 2 && *token == 0 && g->animations_due());
+        g->key_allowance(UINT64_MAX);
+        ok("animations: the newest made, the restore run once and let go",
+           g->flush(16) && g->take_animation_bytes() == key_bytes(slide) && *token == 1 && token.use_count() == 1);
+        g->key_allowance(0);
+        for (int i = 0; i < 1000; i++)
+            g->replace(wa, q, i % 2 ? slide : grow, [token]() { ++*token; });
+        g->key_allowance(UINT64_MAX);
+        ok("animations: the newest back on the property that plays, nothing restored",
+           g->flush(16) && g->take_animation_bytes() == key_bytes(slide) && *token == 1 && token.use_count() == 1);
+        g->drop_quad(q);
         g->flush(16);
     }
     for (size_t i = 0; i < dials.size(); i++) {
