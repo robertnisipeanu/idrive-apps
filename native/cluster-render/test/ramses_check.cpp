@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../src/compositor.h"
+#include "cluster_render/text.h"
 #include "../src/curves.h"
 #include "fake_port.h"
 #include "log.h"
@@ -1161,6 +1162,28 @@ static void backend(Gpu &gpu)
     ok("values: the scene described whole", described("check"));
 #endif
     gpu.drop_effect(lvl_fx);
+
+    /* The text helper's shader (cluster_render/text.h), at 1 glyph and the
+     * most: a loop over a uniform array, compiled and drawn. */
+    bool texts = true;
+    for (unsigned n : {1u, cr::kMaxTextGlyphs}) {
+        const int tfx = gpu.effect(kQuadVertexShader, cr::text_fragment_shader(n).c_str(), &err);
+        Rect tr;
+        tr.w = 200;
+        tr.h = 32;
+        const int tq = tfx ? g->quad(tfx, tr) : 0;
+        std::vector<float> boxes(n * 4, 0.0f);
+        boxes[1] = 0.5f;
+        boxes[3] = 1.0f;
+        const float count = 1, white[4] = {1, 1, 1, 1};
+        texts = texts && tq && g->uniform_array(tq, "u_glyphs", UniformType::Vec4, boxes.data(), n) &&
+                g->uniform(tq, "u_count", &count, 1) && g->uniform(tq, "u_color", white, 4) && g->show(tq, true) &&
+                g->flush(17);
+        g->drop_quad(tq);
+        if (tfx)
+            gpu.drop_effect(tfx);
+    }
+    ok("text: its shader at 1 and 14 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
