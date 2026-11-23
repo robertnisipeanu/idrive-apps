@@ -154,6 +154,8 @@ Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned pag
             g.left = field(line, "xoffset");
             g.top = field(line, "yoffset");
             g.advance = field(line, "xadvance");
+            if (g.advance < 0)
+                return Font();
             if (gx < 0 || gy < 0 || gx + g.w > page_w || gy + g.h > page_h)
                 return Font();
             g.pixels.resize((size_t)g.w * g.h);

@@ -367,7 +367,7 @@ change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
   bitmaps (any rasteriser the app has, at build time or on the unit), a
   monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
   pixels, R8 or the alpha of RGBA; one page, glyphs not packed in
-  channels).
+  channels, inside the page, no negative `xadvance`).
 - **A string** is an effect layer, its rect one line high, whose fragment
   shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
   u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in

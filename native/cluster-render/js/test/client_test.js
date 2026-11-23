@@ -524,6 +524,9 @@ async function main() {
         throws('common lineHeight=8 pages=2\n' + glyph + '\n') && throws('common lineHeight=8 packed=1\n' + glyph + '\n') &&
         throws('common lineHeight=8\n' + glyph + ' page=1\n') && throws('common lineHeight=8\n' + glyph + ' chnl=4\n') &&
         throws('common lineHeight=8\nchar id=65 x=6 y=0 width=4 height=6 xadvance=5\n'));
+    ok('text: a BMFont of a negative xadvance refused; a glyph bitmap\'s negative advance its width, as in C++',
+        throws('common lineHeight=8\nchar id=65 x=0 y=0 width=4 height=6 xadvance=-3\n') &&
+        Font.fromGlyphs(8, [{ char: 'x', w: 4, h: 8, advance: -5, pixels: Buffer.alloc(32, 9) }]).layout('xx', 8).width === 8);
     const fontRef = font.asset(ovl, 'panel');
     const label = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 40, w: 200, h: 32,
         align: 'center', maxGlyphs: 4 });
@@ -550,6 +553,21 @@ async function main() {
     full.drop();
     label.drop();
     ovl.drop(fontRef);
+    }
+
+    {   /* The showcase's label page: each line's texts within its line on the
+         * panel, set() taking them whole. */
+    const { dotFont, LABEL_LINES, LABEL_STATES } = require('../showcase.js');
+    const dots = dotFont(Font, 8);
+    const speeds = [];
+    for (let v = 0; v < 180; v += 7) speeds.push(v + ' KM/H');
+    const texts = { clock: ['00:00:00', '23:59:59', '08:08:08'], speed: speeds, status: LABEL_STATES };
+    const over = [];
+    Object.keys(texts).forEach((k) => {
+        const at = LABEL_LINES[k], w = Math.round(1920 * at[3]), h = Math.round(720 * at[2]);
+        texts[k].forEach((t) => { if (dots.layout(t, h).width > w) over.push(k + ' "' + t + '"'); });
+    });
+    ok('showcase: each label line wide enough for its texts on the panel', over.length === 0, over.join(', '));
     }
 
     {   /* The showcase's header names every file it needs on the unit. */

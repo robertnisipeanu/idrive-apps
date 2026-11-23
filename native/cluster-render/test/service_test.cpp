@@ -74,6 +74,7 @@
 #include "../src/log.h"
 #include "../src/service.h"
 #include "cluster_render/client.h"
+#include "cluster_render/text.h"
 #include "fake_graph.h"
 #include "fake_port.h"
 
@@ -3162,6 +3163,18 @@ static void text_helper()
     ok("text: a BMFont of several pages, packed in channels, a glyph on another page or in one channel refused",
        !bmfont("pages=2", one_char) && !bmfont("packed=1", one_char) && !bmfont("", one_char + " page=1") &&
            !bmfont("", one_char + " chnl=4"));
+    ok("text: a BMFont glyph outside the page, or of a negative xadvance, refused",
+       !bmfont("", "char id=65 x=6 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
+           !bmfont("", "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=-3"));
+    std::vector<cr::GlyphBitmap> back(1);
+    back[0].code = 'x';
+    back[0].w = 4;
+    back[0].h = 8;
+    back[0].advance = -5;
+    back[0].pixels.assign(32, 9);
+    float back_w = 0;
+    cr::Font::from_glyphs(8, back).layout("xx", 8, 0, &back_w);
+    ok("text: a glyph bitmap's negative advance its width, as in Node", back_w == 8);
     std::vector<cr::GlyphBitmap> wide(300);
     for (size_t i = 0; i < wide.size(); i++) {
         wide[i].code = (uint32_t)i;

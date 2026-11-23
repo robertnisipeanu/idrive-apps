@@ -27,7 +27,7 @@
  *           a field of points, all turned by the renderer;
  *   label   text from the text helper (cluster_render_text.js): a clock,
  *           a speed and a status line in a proportional 5x7 font made here,
- *           each changed by one uniform array;
+ *           each changed by two uniforms (its glyph boxes and their count);
  *   values  eight lamps whose glow follows one shared value the renderer
  *           animates, all in step, and whose rims follow a second value
  *           set every two seconds (a service whose hello has values);
@@ -258,6 +258,13 @@ function dotFont(Font, s) {
     glyphs.push({ char: ' ', w: 0, h: 0, top: 0, advance: 3 * s, pixels: Buffer.alloc(0) });
     return Font.fromGlyphs(9 * s, glyphs);
 }
+
+/* The label page's lines, [x, y, h, w] as fractions of the target: each
+ * wide enough for its longest text in dotFont() on the panel. */
+const LABEL_LINES = { clock: [0.05, 0.12, 0.18, 0.31], speed: [0.37, 0.38, 0.3, 0.58],
+    status: [0.05, 0.78, 0.1, 0.9] };
+/* The status line's states: 14 glyphs at most, of the font's letters. */
+const LABEL_STATES = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];
 
 /* A lamp: its colour lit by u_glow, a rim of u_rim; premultiplied. */
 const LAMP_FS = `#version 100
@@ -653,33 +660,40 @@ function main() {
     }
 
     if (on('label')) {
-        /* Three Text layers from one atlas sent once; each change sends one
-         * uniform array of glyph boxes. */
+        /* Three Text layers from one atlas sent once; each change sends two
+         * uniforms, its glyph boxes and their count. */
         const { Font, Text } = require('./cluster_render_text.js');
         const font = dotFont(Font, 8);
         const atlas = name(font.asset(cr, target), 'dot font atlas');
-        const line = (x, y, h, w, opts) => new Text(cr, font, atlas, Object.assign({ target: target, x: Math.round(W * x),
-            y: Math.round(H * y), w: Math.round(W * w), h: Math.round(H * h) }, opts));
-        const clock = line(0.05, 0.12, 0.18, 0.3, { color: [1, 1, 1, 1], maxGlyphs: 8 });
-        const speed = line(0.4, 0.38, 0.3, 0.55, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
-        const status = line(0.05, 0.78, 0.1, 0.9, { color: [1, 0.75, 0.2, 1], align: 'center' });
+        const line = (at, opts) => new Text(cr, font, atlas, Object.assign({ target: target, x: Math.round(W * at[0]),
+            y: Math.round(H * at[1]), w: Math.round(W * at[3]), h: Math.round(H * at[2]) }, opts));
+        const clock = line(LABEL_LINES.clock, { color: [1, 1, 1, 1], maxGlyphs: 8 });
+        const speed = line(LABEL_LINES.speed, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
+        const status = line(LABEL_LINES.status, { color: [1, 0.75, 0.2, 1], align: 'center' });
+        /* a target narrower than the panel may cut a line: said once */
+        let cut = false;
+        const show = (t, text, what) => {
+            const fits = t.set(text);
+            if (!fits && !cut) log(what + ' "' + text + '" is wider than its line on this target: shown cut');
+            cut = cut || !fits;
+        };
         name(clock.ref, 'clock');
         name(speed.ref, 'speed');
         name(status.ref, 'status');
-        const states = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];   /* 14 glyphs at most, the font's letters */
+        const states = LABEL_STATES;
         let v = 0, k = 0;
         const tick = () => {
             const d = new Date();
-            clock.set(('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
-                ('0' + d.getSeconds()).slice(-2));
+            show(clock, ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
+                ('0' + d.getSeconds()).slice(-2), 'the clock');
             v = (v + 7) % 180;
-            speed.set(v + ' KM/H');
+            show(speed, v + ' KM/H', 'the speed');
             speed.color(v > 130 ? [1, 0.3, 0.25, 1] : [0.3, 0.85, 1, 1]);
         };
         tick();
-        status.set(states[0]);
+        show(status, states[0], 'the status');
         setInterval(tick, 500);
-        setInterval(() => status.set(states[++k % states.length]), 2000);
+        setInterval(() => show(status, states[++k % states.length], 'the status'), 2000);
     }
 
     if (on('values')) {
@@ -733,4 +747,6 @@ function main() {
     cr.connect();
 }
 
-main();
+/* Run, or required (the test): the label page's font and lines. */
+if (require.main === module) main();
+else module.exports = { dotFont, LABEL_LINES, LABEL_STATES };

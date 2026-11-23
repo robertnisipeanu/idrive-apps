@@ -33,7 +33,7 @@ struct GlyphBitmap {
     uint32_t code = 0;   /* a Unicode code point */
     unsigned w = 0, h = 0;
     int top = 0, left = 0;
-    int advance = -1;   /* -1: its width */
+    int advance = -1;   /* negative: its width */
     std::vector<uint8_t> pixels;
 };
 
@@ -56,7 +56,8 @@ public:
                           const std::string &chars, unsigned bpp = 1, unsigned advance = 0);
     /* An AngelCode BMFont: its text .fnt and its one page's pixels (R8, or
      * RGBA with bpp 4: its alpha). Empty for a font of several pages, of
-     * glyphs packed in channels, or of a glyph outside the page. */
+     * glyphs packed in channels, of a glyph outside the page or of a
+     * negative xadvance. */
     static Font from_bmfont(const std::string &fnt, const uint8_t *page, unsigned page_w, unsigned page_h,
                             unsigned bpp = 1);
 

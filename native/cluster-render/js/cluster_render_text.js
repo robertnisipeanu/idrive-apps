@@ -75,7 +75,8 @@ class Font {
     }
 
     /* Glyphs of bitmaps (each w x h R8, top: its first row's distance below
-     * the line's top) in a line lineHeight high. */
+     * the line's top) in a line lineHeight high; an advance absent or
+     * negative: the glyph's width. */
     static fromGlyphs(lineHeight, glyphs, kerning) {
         return new Font(lineHeight, glyphs.map((g) => {
             const px = Buffer.alloc(g.w * lineHeight);
@@ -84,7 +85,7 @@ class Font {
                 if (row >= 0 && row < lineHeight) g.pixels.copy(px, row * g.w, y * g.w, y * g.w + g.w);
             }
             const code = typeof g.char === 'string' ? g.char.codePointAt(0) : g.code;
-            return { code: code, w: g.w, advance: g.advance === undefined ? g.w : g.advance, left: g.left || 0,
+            return { code: code, w: g.w, advance: g.advance === undefined || g.advance < 0 ? g.w : g.advance, left: g.left || 0,
                 pixels: px };
         }), kerning);
     }
@@ -107,8 +108,8 @@ class Font {
 
     /* An AngelCode BMFont (its text .fnt) and its page's pixels (page.w x
      * page.h, R8, or RGBA with bpp 4: its alpha). Throws for a font of
-     * several pages, of glyphs packed in channels, or of a glyph outside the
-     * page. */
+     * several pages, of glyphs packed in channels, of a glyph outside the
+     * page or of a negative xadvance. */
     static fromBMFont(fnt, page) {
         const bpp = page.bpp || 1;
         const field = (line, k) => { const m = new RegExp('\\b' + k + '=(-?\\d+)').exec(line); return m ? Number(m[1]) : 0; };
@@ -126,6 +127,7 @@ class Font {
                 if (field(line, 'page') || (chnl && chnl !== 15)) throw new Error('a BMFont of one page, unpacked');
                 if (g.x < 0 || g.y < 0 || g.w < 0 || g.h < 0 || g.x + g.w > page.w || g.y + g.h > page.h)
                     throw new Error('glyph ' + g.code + ' outside the page');
+                if (g.advance < 0) throw new Error('glyph ' + g.code + ': a negative xadvance');
                 const px = Buffer.alloc(g.w * g.h);
                 for (let y = 0; y < g.h; y++)
                     for (let x = 0; x < g.w; x++)

@@ -4,10 +4,11 @@
  * context on the host (Mesa's software renderer, through EGL loaded at run
  * time): "AV" with kerning that pulls V over A's box, both glyphs hollow, so
  * a pixel two boxes cover shows the lit one. Skipped, and says so, where the
- * host has no EGL. */
+ * host has no EGL; failed instead with CR_REQUIRE_GL set (CI). */
 #include <dlfcn.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -181,6 +182,10 @@ int main()
 {
     std::string why;
     if (!context(&why)) {
+        if (std::getenv("CR_REQUIRE_GL")) {
+            std::printf("FAIL text GL: %s, and CR_REQUIRE_GL is set\n", why.c_str());
+            return 1;
+        }
         std::printf("skip text_gl_check: %s: the text shader is not drawn on this host\n", why.c_str());
         return 0;
     }
