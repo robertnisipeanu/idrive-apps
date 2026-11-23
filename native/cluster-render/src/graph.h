@@ -271,7 +271,6 @@ template <class E, class L, class F> int unmap(L lib, int n, F forward)
 
 /* Instances a part draws at most, and their vertices together at most. */
 const uint32_t kMaxInstances = 256;
-const uint64_t kMaxInstancedVertices = 1048576;
 /* What the GPU draws, in indices drawn (a part's indices times its
  * instances): a part at most kMaxPartIndices (as many as one part's
  * geometry holds, 65,535 triangles), a mesh layer's parts together
@@ -758,6 +757,10 @@ public:
      * fresh, a new appearance of the part's effect, as the library makes
      * it. False where it cannot say (tests). */
     virtual bool read_look(int, PartLook *, bool = false) { return false; }
+    /* The same as the library's own numbers: draw mode, cull mode, depth
+     * function, the four blend factors, the two blend operations, stencil
+     * function and its three operations (tests). */
+    virtual bool read_look_raw(int, std::vector<int> *) { return false; }
     /* A canvas not drawn once: drawn each frame while enabled (as it is
      * made), not drawn at all while not, keeping its last picture. */
     virtual bool enable_canvas(int, bool) { return false; }

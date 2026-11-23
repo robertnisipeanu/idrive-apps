@@ -116,10 +116,6 @@ bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std
         *err = std::string("the part's indices are ") + kinds[(int)p.look.draw];
         return false;
     }
-    if ((uint64_t)data.vertices * p.look.instances > kMaxInstancedVertices) {
-        *err = "a part's vertices times its instances are at most 1048576";
-        return false;
-    }
     const uint64_t drawn = (uint64_t)indices * p.look.instances;
     if (drawn > kMaxPartIndices) {
         *err = "a part draws at most 196605 indices: its indices times its instances";

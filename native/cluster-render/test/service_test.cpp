@@ -2897,6 +2897,14 @@ static void motion_over_socket()
     cr::Geometry seg;
     seg.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
     seg.indices = {0, 1, 2, 3};
+    ok("draw: instances off as shipped, the hello says so", !c.takes_instances() && c.part(box, 7, po, lines) &&
+                                                                 (r.pump(100), true) &&
+                                                                 std::any_of(e.errors.begin(), e.errors.end(),
+                                                                             [](const std::string &x) {
+                                                                                 return x.find("instances are off") !=
+                                                                                        std::string::npos;
+                                                                             }));
+    r.svc->compositor().set_instancing(true);
     ok("draw: a part of 4 instances of lines", c.part(box, 3, po, lines) && c.geometry(box, 3, seg));
     r.pump(300);
     FakeGraph *g = r.gpu.graph("panel");

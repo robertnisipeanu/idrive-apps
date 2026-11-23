@@ -466,6 +466,10 @@ public:
     void set_file_tick_ms(int ms) { file_tick_ms_ = ms; }
     /* How long a fade in or out takes; 0: none. */
     void set_fade_ms(int ms) { fade_ms_ = ms; }
+    /* Parts drawn more than once (instances): off until the cluster is
+     * known to draw them (cluster-render.conf instancing). */
+    void set_instancing(bool on) { instancing_ = on; }
+    bool instancing() const { return instancing_; }
     static const int64_t kFadeStepMs = 50;
     /* A composite is made again for its videos' rect growing past it, or a
      * joining video's settings, at most this often; it is then made over
@@ -782,6 +786,7 @@ private:
     int64_t slow_flush_us_ = 150000;
     int64_t file_tick_ms_ = 0;
     int fade_ms_ = 0;
+    bool instancing_ = false;
     /* Bytes written this second, flushed or not: the link counts as
      * carrying load (for the governor's evidence and healthy time) from
      * kLoadBytes a second. */

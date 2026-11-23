@@ -445,6 +445,8 @@ public:
     bool takes_nodes() const { return nodes_; }
     /* The service's hello takes a part's draw mode and instances (RenderState). */
     bool takes_draw() const { return draw_; }
+    /* The service's hello takes a part's instances above 1 (RenderState). */
+    bool takes_instances() const { return instances_; }
 
 private:
     struct Part {
@@ -564,7 +566,8 @@ private:
     bool canvas_ = false;           /* and canvases */
     bool curves_ = false;           /* and eased curves */
     bool nodes_ = false;            /* and pivots and parents */
-    bool draw_ = false;             /* and draw modes and instances */
+    bool draw_ = false;             /* and draw modes */
+    bool instances_ = false;        /* and instances above 1 */
     uint64_t parts_made_ = 0;
 };
 

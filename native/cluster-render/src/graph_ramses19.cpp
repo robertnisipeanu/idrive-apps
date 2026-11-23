@@ -986,6 +986,30 @@ public:
         return true;
     }
 
+    bool read_look_raw(int part, std::vector<int> *out) override
+    {
+        auto it = parts_.find(part);
+        if (it == parts_.end() || !it->second.app)
+            return false;
+        const ramses::Appearance &app = *it->second.app;
+        ramses::EDrawMode draw;
+        ramses::ECullMode cull;
+        ramses::EDepthFunc depth;
+        ramses::EBlendFactor bs, bd, bsa, bda;
+        ramses::EBlendOperation oc, oa;
+        ramses::EStencilFunc sf;
+        ramses::EStencilOperation fail, dfail, pass;
+        uint32_t ref = 0;
+        uint8_t mask = 0;
+        if (!ok(app.getDrawMode(draw)) || !ok(app.getCullingMode(cull)) || !ok(app.getDepthFunction(depth)) ||
+            !ok(app.getBlendingFactors(bs, bd, bsa, bda)) || !ok(app.getBlendingOperations(oc, oa)) ||
+            !ok(app.getStencilFunction(sf, ref, mask)) || !ok(app.getStencilOperation(fail, dfail, pass)))
+            return false;
+        *out = {(int)draw, (int)cull, (int)depth, (int)bs, (int)bd, (int)bsa, (int)bda,
+                (int)oc,   (int)oa,   (int)sf,    (int)fail, (int)dfail, (int)pass};
+        return true;
+    }
+
     bool read_look(int part, PartLook *out, bool fresh) override
     {
         auto it = parts_.find(part);

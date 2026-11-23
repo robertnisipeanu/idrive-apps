@@ -809,7 +809,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"canvas", "1"},
                                  {"curves", "1"},
                                  {"nodes", "1"},
-                                 {"draw", "1"}}));
+                                 {"draw", "1"},
+                                 {"instances", comp_->instancing() ? "1" : "0"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();

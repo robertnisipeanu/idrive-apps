@@ -292,7 +292,8 @@ class ClusterRender extends EventEmitter {
             this.canvases = ev.canvas === 1;   /* takes canvases and layers drawn in them */
             this.curves = ev.curves === 1;   /* takes interp ease_in, ease_out, ease_in_out, smooth */
             this.nodes = ev.nodes === 1;   /* takes pivot parts and parents */
-            this.draw = ev.draw === 1;   /* takes a part's draw mode and instances */
+            this.draw = ev.draw === 1;   /* takes a part's draw mode */
+            this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */

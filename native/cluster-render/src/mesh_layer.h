@@ -69,7 +69,7 @@ public:
      * bound (graph.h kMaxPartIndices), or the part's last geometry came less
      * than kGeometryMs ago. */
     bool set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std::string *err,
-                      uint64_t target_room = kMaxTargetIndices);
+                      uint64_t target_room);
     bool set_pose(uint32_t part, const Pose &p);
     /* The part's pose as the client set it. */
     Pose pose(uint32_t part) const;

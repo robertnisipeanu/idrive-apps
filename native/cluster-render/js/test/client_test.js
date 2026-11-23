@@ -439,14 +439,19 @@ async function main() {
     ovl.drop(rig);
 
     /* Draw modes and instances. */
-    ok('draw: the hello says the service takes draw modes', ovl.draw === true);
+    ok('draw: the hello says the service takes draw modes, not instances', ovl.draw === true && ovl.instances === false);
+    const many = ovl.mesh({ target: 'panel', x: 300, y: 300, w: 50, h: 50 });
+    ovl.part(many, 1, { vs: 'attribute vec3 a_position;void main(){}', fs: 'void main(){}', instances: 4 });
+    ok('draw: instances off as shipped: refused', await until(() =>
+        eo.refused.some((r) => r.indexOf('part: instances are off on this cluster') === 0), 2000));
+    ovl.drop(many);
     const pts = ovl.mesh({ target: 'panel', x: 0, y: 300, w: 200, h: 200, cz: 5 });
     ovl.part(pts, 1, { vs: '#version 300 es\nin vec3 a_position;uniform mat4 u_mvp;void main(){gl_PointSize=2.0;' +
         'gl_Position=u_mvp*vec4(a_position+vec3(float(gl_InstanceID)*0.1,0.0,0.0),1.0);}',
-        fs: '#version 300 es\nprecision mediump float;out vec4 o;void main(){o=vec4(1.0);}', draw: 'points', instances: 8 });
+        fs: '#version 300 es\nprecision mediump float;out vec4 o;void main(){o=vec4(1.0);}', draw: 'points' });
     ovl.geometry(pts, 1, { positions: [0, 0, 0], indices: [0] });
-    ok('draw: points, 8 instances, one vertex: shown, nothing refused',
-        await until(() => eo.layer[pts] === 'shown', 3000) && eo.refused.length === refusedBefore + 2);
+    ok('draw: points from a GLSL ES 3.00 shader, one vertex: shown',
+        await until(() => eo.layer[pts] === 'shown', 3000));
     ovl.drop(pts);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */

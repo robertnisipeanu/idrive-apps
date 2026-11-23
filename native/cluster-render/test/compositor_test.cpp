@@ -3462,6 +3462,10 @@ static void draw_modes()
     lines.draw = Draw::Lines;
     PartLook many;
     many.instances = 200;
+    ok("draw: instances off unless the cluster is said to draw them",
+       !r.comp->add_part(1, id, 2, kLitVs, kPartFs, many, 0, &err) &&
+           err == "instances are off on this cluster (cluster-render.conf instancing)");
+    r.comp->set_instancing(true);
     ok("draw: a part of lines, one of 200 instances",
        r.comp->add_part(1, id, 1, kLitVs, kPartFs, lines, 0, &err) && r.comp->add_part(1, id, 2, kLitVs, kPartFs, many, 0, &err));
     MeshData odd = fan(4, true);
@@ -3471,8 +3475,6 @@ static void draw_modes()
     MeshData pairs = fan(4, true);
     pairs.index.resize(4);
     ok("draw: and are taken", r.comp->geometry(1, id, 1, std::move(pairs), r.now, &err));
-    ok("draw: 200 instances of 6000 vertices refused", !r.comp->geometry(1, id, 2, fan(6000, true), r.now, &err) &&
-                                                            err.find("1048576") != std::string::npos);
     ok("draw: of 4 taken", r.comp->geometry(1, id, 2, fan(4, true), r.now, &err));
     r.run(300);
     FakeGraph *g = r.g("panel");
@@ -3494,30 +3496,31 @@ static void draw_modes()
             d.index.insert(d.index.end(), {0, 1, 2});
         return d;
     };
+    r.comp->set_instancing(true);
     PartLook lots;
     lots.instances = 256;
-    r.comp->add_part(1, id, 3, kLitVs, kPartFs, lots, &err);
+    r.comp->add_part(1, id, 3, kLitVs, kPartFs, lots, 0, &err);
     ok("bound: a part of 65535 triangles drawn 256 times refused",
        !r.comp->geometry(1, id, 3, tris(65535), r.now, &err) &&
            err == "a part draws at most 196605 indices: its indices times its instances");
     ok("bound: of 255 triangles 256 times (195840 indices) taken", r.comp->geometry(1, id, 3, tris(255), r.now, &err));
-    r.comp->add_part(1, id, 4, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(1, id, 4, kLitVs, kPartFs, PartLook(), 0, &err);
     ok("bound: a layer's parts past 393216 indices together refused",
        !r.comp->geometry(1, id, 4, tris(65535), r.now, &err) &&
            err == "a mesh layer's parts draw at most 393216 indices together");
     ok("bound: within them taken", r.comp->geometry(1, id, 4, tris(60000), r.now, &err));
     const uint32_t id2 = r.comp->add_mesh(2, r.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
-    r.comp->add_part(2, id2, 1, kLitVs, kPartFs, PartLook(), &err);
-    r.comp->add_part(2, id2, 2, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(2, id2, 1, kLitVs, kPartFs, PartLook(), 0, &err);
+    r.comp->add_part(2, id2, 2, kLitVs, kPartFs, PartLook(), 0, &err);
     ok("bound: another client's layer of 393210 indices taken",
        r.comp->geometry(2, id2, 1, tris(65535), r.now, &err) && r.comp->geometry(2, id2, 2, tris(65535), r.now, &err));
     const uint32_t id3 = r.comp->add_mesh(2, r.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
-    r.comp->add_part(2, id3, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(2, id3, 1, kLitVs, kPartFs, PartLook(), 0, &err);
     ok("bound: the target's mesh layers past 786432 indices together refused",
        !r.comp->geometry(2, id3, 1, tris(10000), r.now, &err) &&
            err == "a target's mesh layers draw at most 786432 indices together");
     const uint32_t id4 = r.comp->add_mesh(2, r.map, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
-    r.comp->add_part(2, id4, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(2, id4, 1, kLitVs, kPartFs, PartLook(), 0, &err);
     ok("bound: another target's are its own", r.comp->geometry(2, id4, 1, tris(10000), r.now, &err));
 }
 

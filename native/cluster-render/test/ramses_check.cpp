@@ -846,19 +846,97 @@ static void backend(Gpu &gpu)
         looks.push_back(PartLook());
         looks.back().color_mask = (uint8_t)m;
     }
-    int read = 0;
+    int read_as_set = 0;
     for (const PartLook &l : looks) {
         const int p = g->part(v1, lit_fx, l);
         PartLook back;
         if (p && g->read_look(p, &back) && back == l)
-            read++;
+            read_as_set++;
         else
-            std::printf("     not read back: look %d\n", read);
+            std::printf("     not read back: look %d\n", read_as_set);
         g->drop_part(p);
     }
+    /* A round trip through the backend's own tables: what it checks is that
+     * no two values map to one. */
     ok("render state: every draw mode, cull mode, depth function, blend factor and operation, stencil function and "
        "operation and colour mask read back as set",
-       read == (int)looks.size());
+       read_as_set == (int)looks.size());
+#ifndef CRS_RAMSES27
+    /* The library's own numbers for our values, against the ones traced from
+     * each setter to the GL call (abi/ABI.md): a wrong name in the header, or
+     * a backend table out of order, reads another number. */
+    struct Traced {
+        PartLook look;
+        std::vector<int> raw;   /* as read_look_raw() gives them */
+    };
+    auto traced = [](Draw d, Cull c, DepthFunc df, BlendFactor b0, BlendFactor b1, BlendOp op, StencilFunc sf,
+                     StencilOp so, std::vector<int> raw) {
+        Traced t;
+        t.look.draw = d;
+        t.look.cull = c;
+        t.look.depth = df != DepthFunc::Off;
+        t.look.depth_func = df == DepthFunc::Off ? DepthFunc::LessEqual : df;
+        t.look.has_custom = true;
+        t.look.custom.src = b0;
+        t.look.custom.dst = b1;
+        t.look.custom.src_alpha = b1;
+        t.look.custom.dst_alpha = b0;
+        t.look.custom.op = t.look.custom.op_alpha = op;
+        t.look.stencil.func = sf;
+        t.look.stencil.fail = t.look.stencil.depth_fail = t.look.stencil.pass = so;
+        t.raw = raw;
+        return t;
+    };
+    const std::vector<Traced> cases = {
+        /* Points 0, Disabled 0, Greater 1, Zero 0 / OneMinusDstAlpha 5, Subtract 2, Never 1, Zero 1 */
+        traced(Draw::Points, Cull::None, DepthFunc::Greater, BlendFactor::Zero, BlendFactor::OneMinusDstAlpha,
+               BlendOp::Subtract, StencilFunc::Never, StencilOp::Zero, {0, 0, 1, 0, 5, 5, 0, 2, 2, 1, 1, 1, 1}),
+        /* Lines 1, FrontFacing 1, GreaterEqual 2, One 1 / DstAlpha 4, ReverseSubtract 3, Always 2, Replace 2 */
+        traced(Draw::Lines, Cull::Front, DepthFunc::GreaterEqual, BlendFactor::One, BlendFactor::DstAlpha,
+               BlendOp::ReverseSubtract, StencilFunc::Always, StencilOp::Replace, {1, 1, 2, 1, 4, 4, 1, 3, 3, 2, 2, 2, 2}),
+        /* Triangles 2, BackFacing 2, Less 3, SrcAlpha 2 / OneMinusSrcAlpha 3, Min 4, Equal 3, Increment 3 */
+        traced(Draw::Triangles, Cull::Back, DepthFunc::Less, BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha,
+               BlendOp::Min, StencilFunc::Equal, StencilOp::Increment, {2, 2, 3, 2, 3, 3, 2, 4, 4, 3, 3, 3, 3}),
+        /* TriangleStrip 3, LessEqual 4, Max 5, NotEqual 4, IncrementWrap 4 */
+        traced(Draw::TriangleStrip, Cull::Back, DepthFunc::LessEqual, BlendFactor::One, BlendFactor::One, BlendOp::Max,
+               StencilFunc::NotEqual, StencilOp::IncrementWrap, {3, 2, 4, 1, 1, 1, 1, 5, 5, 4, 4, 4, 4}),
+        /* LineLoop 4, Equal 5, Add 1, Less 5, Decrement 5 */
+        traced(Draw::LineLoop, Cull::None, DepthFunc::Equal, BlendFactor::One, BlendFactor::Zero, BlendOp::Add,
+               StencilFunc::Less, StencilOp::Decrement, {4, 0, 5, 1, 0, 0, 1, 1, 1, 5, 5, 5, 5}),
+        /* NotEqual 6, LessEqual 6, DecrementWrap 6 */
+        traced(Draw::Triangles, Cull::None, DepthFunc::NotEqual, BlendFactor::One, BlendFactor::Zero, BlendOp::Add,
+               StencilFunc::LessEqual, StencilOp::DecrementWrap, {2, 0, 6, 1, 0, 0, 1, 1, 1, 6, 6, 6, 6}),
+        /* Always 7, Greater 7, Invert 7 */
+        traced(Draw::Triangles, Cull::None, DepthFunc::Always, BlendFactor::One, BlendFactor::Zero, BlendOp::Add,
+               StencilFunc::Greater, StencilOp::Invert, {2, 0, 7, 1, 0, 0, 1, 1, 1, 7, 7, 7, 7}),
+        /* Never 8, GreaterEqual 8, Keep 0 */
+        traced(Draw::Triangles, Cull::None, DepthFunc::Never, BlendFactor::One, BlendFactor::Zero, BlendOp::Add,
+               StencilFunc::GreaterEqual, StencilOp::Keep, {2, 0, 8, 1, 0, 0, 1, 1, 1, 8, 0, 0, 0}),
+        /* depth Disabled 0, stencil Disabled 0 */
+        traced(Draw::Triangles, Cull::None, DepthFunc::Off, BlendFactor::One, BlendFactor::Zero, BlendOp::Add,
+               StencilFunc::Off, StencilOp::Keep, {2, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0}),
+    };
+    int as_traced = 0;
+    for (const Traced &t : cases) {
+        const int p = g->part(v1, lit_fx, t.look);
+        std::vector<int> raw;
+        if (p && g->read_look_raw(p, &raw) && raw == t.raw)
+            as_traced++;
+        else
+            std::printf("     not as traced: case %d\n", (int)(&t - &cases[0]));
+        g->drop_part(p);
+    }
+    ok("render state: the library's numbers for every value are the ones traced to the GL calls",
+       as_traced == (int)cases.size());
+    /* blending off: both operations Disabled 0 */
+    PartLook off;
+    off.blend = Blend::None;
+    const int op = g->part(v1, lit_fx, off);
+    std::vector<int> raw;
+    ok("render state: blending off reads Disabled 0 for both operations",
+       op && g->read_look_raw(op, &raw) && raw.size() == 13 && raw[7] == 0 && raw[8] == 0);
+    g->drop_part(op);
+#endif
     const int fresh_part = g->part(v1, lit_fx, PartLook());
     PartLook fresh;
     ok("render state: a new appearance reads triangles, back faces culled, depth less-or-equal and written, no "

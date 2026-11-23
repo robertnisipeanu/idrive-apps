@@ -146,7 +146,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -235,6 +235,7 @@ void Client::read_events()
             curves_ = j["curves"] == "1";
             nodes_ = j["nodes"] == "1";
             draw_ = j["draw"] == "1";
+            instances_ = j["instances"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */

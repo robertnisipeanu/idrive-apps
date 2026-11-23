@@ -227,7 +227,7 @@ why it is what it is, and the remembered ceiling.
 |---|---|---|
 | video | 4:2:0 atlases (`w*h*3/2` bytes) | one persistent buffer; only 64x64 tiles that changed past a noise filter are written, settled after `settle_ms`; packed 4x4 blocks for motion the budget cannot cover; newest frame only |
 | image | RGBA rectangles that changed | one persistent RGBA8 buffer, written in those rectangles at most `fps` a second |
-| effect | a GLSL ES 1.00 fragment shader, uniforms (arrays too), binds to assets, its blending and colour mask | a quad drawn by it; `u_time` at `time_fps`, or from the renderer's own clock |
+| effect | a fragment shader (GLSL ES 1.00, or 3.00 with a vertex shader of its own), uniforms (arrays too), binds to assets, its blending and colour mask | a quad drawn by it; `u_time` at `time_fps`, or from the renderer's own clock |
 | mesh | parts: shaders, geometry (`M`), transforms, uniforms, binds to assets, each part's depth test, blending and colour mask | a render pass of its own over its rect, with its own perspective or orthographic camera; geometry replaced at most once a second within the budget; depth cleared, never colour |
 
 Beside the layers:

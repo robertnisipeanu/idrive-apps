@@ -306,6 +306,7 @@ test-ramses:
 		if grep -q "\[ Error \]" $(T)/ramses_check.log; then echo "FAIL libramses logged errors"; exit 1; fi; exit $$rc'
 
 $(T)/ramses_check: test/ramses_check.cpp test/fake_port.h src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
+		$(wildcard abi/include/ramses19/*.h) \
 		$(T)/stub/$(RAMSES_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ test/ramses_check.cpp \
 		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(T)/stub/$(RAMSES_SONAME)
@@ -322,6 +323,7 @@ test-ramses27:
 		if grep -q "\[ Error \]" $(T)/ramses_check27.log; then echo "FAIL libramses logged errors"; exit 1; fi; exit $$rc'
 
 $(T)/ramses_check27: test/ramses_check.cpp test/fake_port.h src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
+		$(wildcard abi/include/ramses27/ramses-client-api/*.h) \
 		$(T)/stub/$(RAMSES27_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS27) -DCRS_RAMSES27 -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ \
 		test/ramses_check.cpp src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) $(T)/stub/$(RAMSES27_SONAME)
