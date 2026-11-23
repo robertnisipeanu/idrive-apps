@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-## 0.8.3
 A text helper for both client libraries: an app sends a font once (from
 glyph bitmaps, a monospace grid or a BMFont) and draws strings from it in
 effect layers, laid out with the font's advances and kerning, each change
