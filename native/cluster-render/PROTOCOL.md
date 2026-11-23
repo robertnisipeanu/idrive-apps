@@ -527,8 +527,9 @@ target's name, so the service knows it.
 
 - **Live.** A client's host is *eligible* while it is shown (`shown` 1:
   with `shown` 0 it would show the picture nowhere, so it is not live and
-  the picture stays on its own target), `into` is on screen (`shown` or
-  `lingering`), `into`'s layers are not waiting for a scene file (one with
+  the picture stays on its own target), `into` is on screen (its scene
+  published, and the target `shown`, `lingering`, or kept through a lock
+  with its last flush), `into`'s layers are not waiting for a scene file (one with
   `layers` 1 keeps them drawn), and the client has a layer drawn and seen
   over the host's rect: visible, ready, not suspended, overlapping the rect,
   at or above the client's own topmost `exclusive` layer, and, for a video
@@ -539,12 +540,13 @@ target's name, so the service knows it.
   picture. A host sent early with a small or low layer of a background app
   loses to the theme drawn over it; to win, a client must draw over the
   other hosts there, and the picture is then drawn over them too (below).
-  Of hosts on different `into`s, the `into` the live host is on keeps the
-  target while it has an eligible host there: a host on another `into`
-  waits, and takes over only once none on the holding one is eligible
-  (hidden, ended, `shown` 0, gone, its `into` off screen); with none
-  holding, the `into` whose host was sent first wins (a host ended and sent
-  again counts as sent then). None is live while a scene hosts the target: a scene's host is as without hosts
+  Of hosts on different `into`s, the `into` that holds the target (the
+  last live host's) keeps it while any host there is eligible, also after
+  that host ends or goes, and the rule above picks among them: a host on
+  another `into` waits, and takes over only once none on the holding one is
+  eligible (hidden, ended, `shown` 0, gone, its `into` off screen); with
+  none holding, the `into` whose host was sent first wins (a host ended and
+  sent again counts as sent then). None is live while a scene hosts the target: a scene's host is as without hosts
   from layers, and wins. Only the live host is in the `host` event; with
   none, the event says `target` is not hosted, so a producer goes back to
   its own target. This is decided again at every loop of the service, from
@@ -595,13 +597,18 @@ target's name, so the service knows it.
   refuses its layer there) keeps drawing on its own target until the host
   changes, so a host never leaves the picture nowhere; waze-on-cluster
   does. This holds for a scene's host too: one whose part misses the
-  picture, or lands smaller than 64x32, shows the picture on its own target
-  instead of nothing.
+  picture, or lands smaller than 64x32, shows the picture on its own
+  target.
 - **Known limits.** The service sees layers, not pixels. A client that
   draws a transparent effect or mesh over the theme, in a higher class, is
   taken as seen and can win on that `into`; the picture then shows at that
   client's rect (at least 64x32). Any client could already cover a theme
   with an exclusive alert layer, so this is no new way to hide content.
+  Across different `into`s the service cannot tell which screen the driver
+  wants: with nothing holding, the earliest eligible host wins and keeps
+  the picture while it stays eligible, so an app that drew something on
+  another target on screen first can keep the picture there, at least
+  64x32.
 - **Cost.** The producer's picture goes into `into` in place of its own
   target, as with a scene's host: one decode and one upload, of the part
   shown, at most its own target's size (a hosted map is at most its

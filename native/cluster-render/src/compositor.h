@@ -312,8 +312,9 @@ public:
      * at or above its own topmost exclusive layer (the lowest such is its
      * anchor). Of a target's eligible hosts on one into the one whose
      * client draws highest over its rect is live (on several intos: on the
-     * into that held the target while it has one, else the one sent
-     * first), and none while a scene hosts the target
+     * into holding the target, the last live host's, while it has one,
+     * also after that host ended; else the one sent first), and none while
+     * a scene hosts the target
      * (scene hosts are as without hosts from layers). The live host's
      * producer's videos (other clients' on into marked with hosted's name,
      * LayerParams::hosted) are stacked just under the anchor, or just over
@@ -754,6 +755,7 @@ private:
     std::map<uint32_t, SceneEntry> scenes_;
     std::map<std::pair<int, uint64_t>, LayerHost> layer_hosts_;   /* by (hosted target, owner) */
     uint64_t layer_host_seq_ = 0;
+    std::map<int, int> held_into_;   /* by hosted target: the into that holds it */
     /* The scene content id's layers are drawable: its file published with
      * the layers' graph (what it hosts can be drawn). */
     bool drawable(uint32_t id, const SceneEntry &s) const;
@@ -763,6 +765,8 @@ private:
     /* arrange(): which host from layers is live, and its producer's videos
      * restacked by its anchor; host_serial_ follows. In steps: */
     void arrange_layer_hosts();
+    /* Layer p of a is drawn, seen and over r. */
+    bool seen_over(const Arrangement &a, size_t p, const Rect &r) const;
     void host_eligibility(LayerHost &lh) const;
     std::map<int, const LayerHost *> host_winners(const std::vector<bool> &by_scene) const;
     void host_decided(int target, LayerHost &lh, const LayerHost *winner, bool by_scene);

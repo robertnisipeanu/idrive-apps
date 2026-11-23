@@ -45,7 +45,7 @@
  * and then released. The HUD's layers choose whether it gives way to the
  * stock pop-ups (yield), a client without the field getting it. A scene
  * with layers and a host of the map (layers_and_hosting); a host from a
- * client's layers, with no scene (hosting_from_layers, hosting_from_layers_more). A layer's
+ * client's layers, with no scene (hosting_from_layers, hosting_from_layers_more, holding_into). A layer's
  * preload, end to end (preload). A layer's others_fps holding another
  * client's video and releasing it (others_fps). Render state and samplers
  * (render_state_and_samplers). */
@@ -2426,6 +2426,82 @@ static void hosting_from_layers_more()
     ok("layer hosts: that one gone: the first live again", hosting_a["map"] == "live" && pm.hosts["map"].into == "panel");
 }
 
+/* The holding into keeps the map: themeA (panel, live), themeB (hud,
+ * waiting) and themeC (panel, eligible, drawn lower than themeA). themeA
+ * hidden, unhosted, or gone: themeC on the same into takes the map, not
+ * themeB; themeA back (shown, hosting again) wins again on the panel. */
+static void holding_into()
+{
+    Rig r;
+    TargetSpec u;
+    u.name = "hud"; u.slot = 0x323; u.scene_id = 0x010004f9; u.width = 800; u.height = 480; u.linger_ms = 3000;
+    r.sc.targets.push_back(u);
+    r.start();
+    std::unique_ptr<cr::Client> a(new cr::Client("themeA", r.path));
+    cr::Client bb("themeB", r.path), cc("themeC", r.path), pm("mapper", r.path);
+    std::map<std::string, std::string> hosting_b, hosting_c;
+    bb.on_hosting = [&hosting_b](const std::string &t, const std::string &, const std::string &state,
+                                 const std::string &why) { hosting_b[t] = state + (why.empty() ? "" : ": " + why); };
+    cc.on_hosting = [&hosting_c](const std::string &t, const std::string &, const std::string &state,
+                                 const std::string &why) { hosting_c[t] = state + (why.empty() ? "" : ": " + why); };
+    r.clients = {a.get(), &bb, &cc, &pm};
+    r.pump(50);
+    const cr::EffectOptions fx{"#version 100\nvoid main(){gl_FragColor=vec4(0.0);}", "", 0};
+    auto lo_at = [](const char *target, const Rect &q, const char *klass) {
+        cr::LayerOptions l;
+        l.target = target;
+        l.klass = klass;
+        l.x = q.x; l.y = q.y; l.w = q.w; l.h = q.h;
+        return l;
+    };
+    auto host = [](const char *into, int x, unsigned w, unsigned h) {
+        cr::Host o;
+        o.into = into; o.target = "map";
+        o.x = x; o.y = 100; o.w = w; o.h = h;
+        return o;
+    };
+    const cr::LayerOptions a_lo = lo_at("panel", Rect{0, 0, 1920, 720}, "content");
+    const uint32_t a_layer = a->effect(a_lo, fx);
+    bb.effect(lo_at("hud", Rect{0, 0, 800, 480}, "content"), fx);
+    cc.effect(lo_at("panel", Rect{800, 100, 560, 400}, "ambient"), fx);
+    r.pump(1500);
+    const cr::Host ha = host("panel", 100, 560, 400);
+    a->host(ha);
+    r.pump(300);
+    bb.host(host("hud", 100, 400, 240));
+    r.pump(300);
+    cc.host(host("panel", 800, 560, 400));
+    r.pump(500);
+    auto at = [&pm](const char *into, int x) { return pm.hosts.count("map") && pm.hosts["map"].into == into && pm.hosts["map"].x == x; };
+    ok("holding: themeA live on the panel, themeB on the hud waits, themeC lower on the panel waits",
+       at("panel", 100) && hosting_b["map"] == "waiting: target map is hosted by another client's layers on panel, there first" &&
+           hosting_c["map"] == "waiting: target map is hosted by another client's layers, drawn higher over it");
+
+    cr::LayerOptions hidden = a_lo;
+    hidden.visible = false;
+    a->set(a_layer, hidden);
+    r.pump(500);
+    ok("holding: themeA hidden: themeC on the panel takes the map, not themeB",
+       at("panel", 800) && hosting_c["map"] == "live" && hosting_b["map"].find("waiting") == 0);
+    a->set(a_layer, a_lo);
+    r.pump(500);
+    ok("holding: themeA shown again: live again", at("panel", 100));
+
+    a->unhost("map");
+    r.pump(500);
+    ok("holding: themeA unhosts: themeC on the panel takes the map, not themeB",
+       at("panel", 800) && hosting_c["map"] == "live" && hosting_b["map"].find("waiting") == 0);
+    a->host(ha);
+    r.pump(500);
+    ok("holding: themeA hosts again: live again on the panel", at("panel", 100));
+
+    r.clients = {&bb, &cc, &pm};
+    a.reset();
+    r.pump(500);
+    ok("holding: themeA gone: themeC on the panel takes the map, not themeB",
+       at("panel", 800) && hosting_c["map"] == "live" && hosting_b["map"].find("waiting") == 0);
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -2936,6 +3012,7 @@ int main()
     layers_and_hosting();
     hosting_from_layers();
     hosting_from_layers_more();
+    holding_into();
     preload();
     others_fps();
     render_state_and_samplers();

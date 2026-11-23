@@ -285,9 +285,11 @@ Beside the layers:
   hosts it, and when the app ends the host or exits. Of several apps
   hosting the same target into one target the one drawn highest over the
   picture wins, so a background app's early host loses to the visible
-  theme; one showing it on another target keeps it while it can, so hosts
-  on different targets don't take it from each other; the `hosting` event
-  tells each whether it is live and why not. Both backends.
+  theme; across targets the one holding it keeps it while it can, so a
+  host on another target waits (the service cannot tell which screen the
+  driver wants: an app first on another screen keeps it there); the
+  `hosting` event tells each whether it is live and why not. Both
+  backends.
 
 Each target's changes are flushed together once a tick, so the cluster never
 shows a half-written frame: a video or exclusive image left half written

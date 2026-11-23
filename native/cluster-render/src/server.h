@@ -95,7 +95,6 @@ private:
     /* The scene ref, or with into the client's layers there, hosts a target
      * (PROTOCOL.md "host", "Hosting from layers"). */
     void op_host(Client &c, uint32_t ref, const cr::Json &j);
-    /* That host ends (PROTOCOL.md "unhost"). */
     void op_unhost(Client &c, uint32_t ref, const cr::Json &j);
     /* For the status and the log: owner's host from layers of target
      * hosted, and whether it is live or why not. */

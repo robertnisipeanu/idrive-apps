@@ -508,7 +508,6 @@ class ClusterRender extends EventEmitter {
         return true;
     }
 
-    /* This app's layers host target no more. */
     /* Sent also with nothing kept here (a refusal of an older host may have
      * crossed a newer one): the service ends whatever this app hosts of
      * target, whatever its into. */

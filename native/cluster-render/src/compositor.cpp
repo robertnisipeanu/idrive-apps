@@ -711,6 +711,17 @@ static bool seen(const Layer &l)
     return (kind != "video" && kind != "image") || l.params.opacity > 0;
 }
 
+static bool listed(const std::vector<uint32_t> &v, uint32_t id)
+{
+    return std::find(v.begin(), v.end(), id) != v.end();
+}
+
+bool Compositor::seen_over(const Arrangement &a, size_t p, const Rect &r) const
+{
+    const Layer &l = *layers_.at(a.order[p]).layer;
+    return listed(a.drawn, a.order[p]) && seen(l) && overlaps(l.params.rect, r);
+}
+
 void Compositor::host_eligibility(LayerHost &lh) const
 {
     const std::string &into = slots_->targets()[lh.into].name;
@@ -734,7 +745,6 @@ void Compositor::host_eligibility(LayerHost &lh) const
      * exclusive layer up (nothing of it below that is drawn once it is):
      * the lowest is the anchor, the topmost decides who wins. */
     const Arrangement &a = t.arr;
-    auto listed = [](const std::vector<uint32_t> &v, uint32_t id) { return std::find(v.begin(), v.end(), id) != v.end(); };
     size_t from = 0;
     for (size_t p = 0; p < a.order.size(); p++) {
         const Entry &e = layers_.at(a.order[p]);
@@ -744,8 +754,7 @@ void Compositor::host_eligibility(LayerHost &lh) const
     }
     for (size_t p = from; p < a.order.size(); p++) {
         const Entry &e = layers_.at(a.order[p]);
-        if (e.owner != lh.owner || !listed(a.drawn, a.order[p]) || !seen(*e.layer) ||
-            !overlaps(e.layer->params.rect, lh.host.rect))
+        if (e.owner != lh.owner || !seen_over(a, p, lh.host.rect))
             continue;
         if (!lh.eligible) {
             lh.eligible = true;
@@ -761,15 +770,13 @@ void Compositor::host_eligibility(LayerHost &lh) const
 std::map<int, const Compositor::LayerHost *> Compositor::host_winners(const std::vector<bool> &by_scene) const
 {
     /* On one into, the host whose client draws highest over its rect. Of
-     * several intos, the one the live host is on keeps the target while it
-     * has an eligible host; else the one whose host was sent first (sent
-     * again after unhost, a host is sent later). */
+     * several intos, the one holding the target (held_into_: the last live
+     * host's, also after it ended) keeps it while it has an eligible host;
+     * else the one whose host was sent first (sent again after unhost, a
+     * host is sent later). */
     std::map<std::pair<int, int>, const LayerHost *> best;   /* by (target, into) */
-    std::map<int, int> held;                                 /* by target: the live host's into */
     for (const auto &kv : layer_hosts_) {
         const LayerHost &lh = kv.second;
-        if (lh.live)
-            held[kv.first.first] = lh.into;
         if (!lh.eligible || by_scene[kv.first.first])
             continue;
         const LayerHost *&b = best[std::make_pair(kv.first.first, lh.into)];
@@ -779,8 +786,8 @@ std::map<int, const Compositor::LayerHost *> Compositor::host_winners(const std:
     std::map<int, const LayerHost *> win;
     for (const auto &kv : best) {
         const int target = kv.first.first;
-        auto h = held.find(target);
-        auto keep = h == held.end() ? best.end() : best.find(std::make_pair(target, h->second));
+        auto h = held_into_.find(target);
+        auto keep = h == held_into_.end() ? best.end() : best.find(std::make_pair(target, h->second));
         if (keep != best.end()) {
             win[target] = keep->second;
             continue;
@@ -834,9 +841,7 @@ void Compositor::host_restack(int target, const LayerHost &lh)
             continue;
         for (size_t p = at + 1; p < a.order.size(); p++) {
             const Entry &e = layers_.at(a.order[p]);
-            if (e.owner == o.owner && seen(*e.layer) && overlaps(e.layer->params.rect, o.host.rect) &&
-                overlaps(e.layer->params.rect, lh.host.rect) &&
-                std::find(a.drawn.begin(), a.drawn.end(), a.order[p]) != a.drawn.end()) {
+            if (e.owner == o.owner && seen_over(a, p, o.host.rect) && seen_over(a, p, lh.host.rect)) {
                 at = p;
                 over = true;
             }
@@ -874,6 +879,11 @@ void Compositor::arrange_layer_hosts()
     for (auto &kv : layer_hosts_)
         host_eligibility(kv.second);
     const std::map<int, const LayerHost *> win = host_winners(by_scene);
+    /* The into that holds each target: the live host's, kept when that host
+     * ends, until no host on it is eligible. */
+    held_into_.clear();
+    for (const auto &kv : win)
+        held_into_[kv.first] = kv.second->into;
     for (auto &kv : layer_hosts_) {
         auto w = win.find(kv.first.first);
         host_decided(kv.first.first, kv.second, w == win.end() ? nullptr : w->second, by_scene[kv.first.first]);
@@ -1122,6 +1132,8 @@ void Compositor::arrange(int64_t now_ms)
     }
     if (!layer_hosts_.empty())
         arrange_layer_hosts();
+    else
+        held_into_.clear();
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
         if (const uint32_t sc = content((int)ti)) {
