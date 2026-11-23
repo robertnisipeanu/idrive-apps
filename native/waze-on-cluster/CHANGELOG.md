@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Uses about 10 MB less of the head unit's memory: the diagnostic DLT
+capture now runs inside the patch service instead of a service of its own.
+Boot recovery and the journal keeper stay separate.
+
 ## 0.14.5
 
 A cluster theme app that draws with layers only can show the map inside its
@@ -16,9 +20,6 @@ own place. Nothing else changes.
 The rollback and Android Auto tests pass when run side by side or on a busy
 machine, and the rollback test also checks this version as the release it
 becomes.
-Uses about 10 MB less of the head unit's memory: the diagnostic DLT
-capture now runs inside the patch service instead of a service of its own.
-Boot recovery and the journal keeper stay separate.
 
 ## 0.14.3
 
