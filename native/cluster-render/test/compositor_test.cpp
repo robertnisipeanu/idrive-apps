@@ -3450,8 +3450,10 @@ static void keys_waiting_where_parked()
        r.g("map") && r.g("map")->animations_due() && r.comp->pacer().allowance() == int64_t(64 * 1024 * 250 / 1000));
 }
 
-/* Draw modes and instances: a part's index count checked by its mode, its
- * vertices times its instances bounded, both given to the renderer. */
+/* Draw modes and instances: a part's index count checked by its mode,
+ * instances only where the cluster is said to draw them, the indices drawn
+ * bounded by part, layer and target, mode and instances given to the
+ * renderer. */
 static void draw_modes()
 {
     Rig r;

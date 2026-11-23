@@ -518,6 +518,38 @@ async function main() {
     rc.close();
     old.close();
 
+    {   /* The showcase's geometry page asks for instances once the hello
+         * says the service draws them. */
+        const seen = [];
+        const showSock = sock + '.show';
+        const show = net.createServer((s) => {
+            let buf = Buffer.alloc(0);
+            s.on('data', (d) => {
+                buf = Buffer.concat([buf, d]);
+                while (buf.length >= 5 && buf.length >= 4 + buf.readUInt32LE(0)) {
+                    const len = buf.readUInt32LE(0);
+                    if (buf[4] === 0x4a) seen.push(JSON.parse(buf.slice(5, 4 + len).toString('utf8')));
+                    buf = buf.slice(4 + len);
+                }
+            });
+            s.on('error', () => {});
+            const body = Buffer.from(JSON.stringify({ ev: 'hello', proto: 1, backend: 'id7', draw: 1, instances: 1,
+                targets: 'map:1088x480,panel:1920x720' }));
+            const head = Buffer.alloc(5);
+            head.writeUInt32LE(body.length + 1, 0);
+            head[4] = 0x4a;
+            s.write(Buffer.concat([head, body]));
+        });
+        await new Promise((r) => show.listen(showSock, r));
+        const child = spawn(process.execPath, [path.join(__dirname, '..', 'showcase.js'), 'geometry', '--socket', showSock],
+            { stdio: 'ignore' });
+        const asked = await until(() => seen.some((m) => m.op === 'part' && m.instances !== undefined), 5000);
+        child.kill('SIGTERM');
+        show.close();
+        ok('showcase: the geometry page draws 16 instances where the hello says the service draws them',
+            asked && seen.some((m) => m.op === 'part' && m.instances === 16));
+    }
+
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',
         await until(() => ew.layer[map] === 'stalled', 3000));

@@ -501,11 +501,15 @@ function main() {
         /* 16 cubes: one cube's geometry, drawn 16 times. */
         const grid = name(cr.mesh({ target: target, x: Math.round(W * 0.02), y: Math.round(H * 0.05),
             w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 22 }), 'instances');
-        /* one cube where the service does not draw instances */
-        if (!cr.instances) log('instances are off on this service: one cube');
-        cr.part(grid, 1, { vs: INSTANCED_VS, fs: INSTANCED_FS, depth: true, cull: 'back', instances: cr.instances ? 16 : 1 });
-        cr.geometry(grid, 1, cube());
-        cr.animate(grid, { part: 1, property: 'rotate', keys: '0:0,0,0 8000:0,360,0', loop: true });
+        /* made once the hello says whether the service draws instances: one
+         * cube where it does not */
+        cr.once('ready', () => {
+            if (!cr.instances) log('instances are off on this service: one cube');
+            cr.part(grid, 1, { vs: INSTANCED_VS, fs: INSTANCED_FS, depth: true, cull: 'back',
+                instances: cr.instances ? 16 : 1 });
+            cr.geometry(grid, 1, cube());
+            cr.animate(grid, { part: 1, property: 'rotate', keys: '0:0,0,0 8000:0,360,0', loop: true });
+        });
         /* A ring as a line loop and a field of points, turned together. */
         const sky = name(cr.mesh({ target: target, x: Math.round(W * 0.5), y: Math.round(H * 0.05),
             w: Math.round(W * 0.45), h: Math.round(H * 0.9), fov: 30, cz: 9 }), 'lines and points');

@@ -269,7 +269,7 @@ template <class E, class L, class F> int unmap(L lib, int n, F forward)
     return -1;
 }
 
-/* Instances a part draws at most, and their vertices together at most. */
+/* Instances a part draws at most. */
 const uint32_t kMaxInstances = 256;
 /* What the GPU draws, in indices drawn (a part's indices times its
  * instances): a part at most kMaxPartIndices (as many as one part's
