@@ -13,7 +13,8 @@
 #                             hidden tiles on a fake renderer, the receive buffer,
 #                             scene files and their edits, the settings and their
 #                             drop-ins, the service over its socket
-#                             with the C++ client, and the Node client
+#                             with the C++ client, its memory over a day of
+#                             idling on a simulated clock, and the Node client
 #   make test-kit             the kit's tests alone (for producers that link it)
 #   make test-x86             the C++ tests built and run with the unit's
 #                             toolchain in Docker (x86-64: the SSE2 paths)
@@ -72,7 +73,7 @@ CLIENT_SRC = client/client.cpp client/protocol.cpp client/text.cpp
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
 CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/ceiling_test $(H)/compositor_test $(H)/video_composite_test \
 	$(H)/occlusion_test \
-	$(H)/service_test \
+	$(H)/service_test $(H)/idle_memory_test \
 	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
 	$(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test $(H)/settings_test $(H)/text_gl_check
 
@@ -82,8 +83,9 @@ all: test
 # target (--output-sync keeps a test's lines together); occlusion_test, the
 # longest, in parts (its --part I/N), one per entry of OCC_PART_IDS.
 OCC_PART_IDS = 0 1 2 3 4 5 6 7
-CPP_RUNS = $(patsubst $(H)/%_test,run-%,$(filter-out $(H)/occlusion_test $(H)/text_gl_check,$(CPP_TESTS))) \
-	$(addprefix run-occlusion.,$(OCC_PART_IDS)) run-text_gl_check
+IDLE_PARTS = alone clients session
+CPP_RUNS = $(patsubst $(H)/%_test,run-%,$(filter-out $(H)/occlusion_test $(H)/idle_memory_test $(H)/text_gl_check,$(CPP_TESTS))) \
+	$(addprefix run-occlusion.,$(OCC_PART_IDS)) $(addprefix run-idle_memory.,$(IDLE_PARTS)) run-text_gl_check
 RUN_JOBS ?= $(JOBS)
 
 test:
@@ -98,6 +100,9 @@ run-%: $(H)/%_test
 
 run-occlusion.%: $(H)/occlusion_test
 	$(H)/occlusion_test --part $*/$(words $(OCC_PART_IDS))
+
+run-idle_memory.%: $(H)/idle_memory_test
+	$(H)/idle_memory_test $*
 
 run-head_unit: $(H)/head_unit_test
 	$(H)/head_unit_test test/head_unit_cases.jsonl
@@ -215,6 +220,9 @@ $(H)/text_gl_check: $(O)/test/text_gl_check.o $(O)/client/text.o $(O)/client/cli
 	$(CXX) $(CXXFLAGS) -o $@ $^ -ldl
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o $(O)/client/text.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(H)/idle_memory_test: $(O)/test/idle_memory_test.o $(CORE_OBJ) $(O)/client/client.o $(O)/client/text.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/host_service: $(O)/test/host_service.o $(CORE_OBJ)

@@ -275,7 +275,8 @@ none, except on iDrive 7: there the ones replaced, stopped or dropped stay
 in the renderer's animation system, and once their keys outnumber the live
 ones' (and 4,096), every animation still playing on the target is made
 again in a new system, a few a flush within the target's share, each going
-on from where it was. A replacement that plays elsewhere gives the old part
+on from where it was; once none plays on the target any more, the system
+goes with every one it kept at the next flush. A replacement that plays elsewhere gives the old part
 or uniform back its own value once it is made.
 
 | Field | |

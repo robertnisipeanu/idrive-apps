@@ -19,6 +19,7 @@
 
 #include <poll.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -77,7 +78,16 @@ public:
      * clean exit. */
     void shutdown(int64_t now_ms);
 
+    /* Called kTrimMs after the last requested target was released: gives
+     * the heap's free pages back to the system (malloc_trim with glibc), so
+     * what a session freed does not stay resident while the service idles. */
+    std::function<void()> release_memory;
+    static const int64_t kTrimMs = 10000;
+
 private:
+    bool requested_ = false;   /* a target was requested at the last turn */
+    int64_t released_ms_ = -1; /* when the last target was released, release_memory not yet called; -1: none */
+    void trim(int64_t now_ms);
     ServiceConfig cfg_;
     SlotManager slots_;
     std::unique_ptr<Compositor> comp_;

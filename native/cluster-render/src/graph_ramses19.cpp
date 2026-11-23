@@ -1412,8 +1412,8 @@ private:
      * library cannot describe, VERIFIED on the unit's libramses 19: it
      * crashes the process when a renderer subscribes to the scene again, or
      * when the scene is saved). Their keys count until settle_animations()
-     * has moved the animations to a new system; those of the system being
-     * left (old_) go with it. */
+     * has moved the animations to a new system, or until nothing plays in
+     * the system; those of a system dropped go with it. */
     void retire(Anim &an)
     {
         if (an.seq && an.sys == anim_)
@@ -1461,20 +1461,42 @@ private:
             for (const auto &kv : anims_)
                 left = left || kv.second.moving;
             if (!left) {
-                scene_->destroy(*old_);
-                for (auto &kv : values_)
-                    kv.second.systems.erase(old_);
-                for (auto o = orphans_.begin(); o != orphans_.end();) {
-                    o->systems.erase(old_);
-                    if (!o->systems.empty()) {
-                        ++o;
-                        continue;
-                    }
-                    scene_->destroy(*o->data);
-                    o = orphans_.erase(o);
-                }
+                drop_system(old_);
                 old_ = nullptr;
             }
+        }
+        /* Nothing plays in the system any more (its animations stopped, or
+         * their layers or their client gone), only retired ones are left
+         * there: the whole system goes with them, and the next animation
+         * makes a new one. Kept, they would stay until a later client's
+         * animations outnumbered them, a whole session's worth after it
+         * ended. */
+        if (!old_ && anim_ && retired_keys_ > 0) {
+            bool plays = false;
+            for (const auto &kv : anims_)
+                plays = plays || kv.second.sys == anim_;
+            if (!plays) {
+                drop_system(anim_);
+                anim_ = nullptr;
+                retired_keys_ = 0;
+            }
+        }
+    }
+    /* sys destroyed with every object in it, and the data objects of values
+     * gone that only it still named. */
+    void drop_system(ramses::AnimationSystemRealTime *sys)
+    {
+        scene_->destroy(*sys);
+        for (auto &kv : values_)
+            kv.second.systems.erase(sys);
+        for (auto o = orphans_.begin(); o != orphans_.end();) {
+            o->systems.erase(sys);
+            if (!o->systems.empty()) {
+                ++o;
+                continue;
+            }
+            scene_->destroy(*o->data);
+            o = orphans_.erase(o);
         }
     }
     /* An animation made at a flush (AnimTable::make): a replacement in

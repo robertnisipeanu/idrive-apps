@@ -4,6 +4,9 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 #include <algorithm>
 
@@ -44,6 +47,9 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     server_->ceiling_text = [memory]() { return memory->status_text(); };
     server_->set_scene_files(cfg_.scene_files);
     server_->set_drop_ins(cfg_.drop_ins);
+#ifdef __GLIBC__
+    release_memory = [] { malloc_trim(0); };
+#endif
 }
 
 bool Service::start(std::string *err)
@@ -103,6 +109,24 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
             else
                 unlink(tmp.c_str());
         }
+    }
+    trim(now_ms);
+}
+
+void Service::trim(int64_t now_ms)
+{
+    bool requested = false;
+    for (size_t i = 0; i < slots_.targets().size(); i++)
+        requested = requested || slots_.requested((int)i);
+    if (requested)
+        released_ms_ = -1;
+    else if (requested_)
+        released_ms_ = now_ms;
+    requested_ = requested;
+    if (released_ms_ >= 0 && now_ms - released_ms_ >= kTrimMs) {
+        released_ms_ = -1;
+        if (release_memory)
+            release_memory();
     }
 }
 

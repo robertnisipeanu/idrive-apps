@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+On iDrive 7, a cluster app's finished animations no longer stay in memory
+after its session ends: they used to pile up across sessions, a few hundred
+KB each, until a later app animated enough to replace them. Once the cluster
+has nothing of an app's to show, the service also gives the memory it freed
+back to the system, about 1.5 MB after a session.
+
 ## 0.8.5
 
 A text helper for both client libraries: an app sends a font once (from
