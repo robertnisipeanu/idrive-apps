@@ -1987,7 +1987,7 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 void Compositor::render_file(int ti, Target &t, int64_t now_ms)
 {
     if (stage_edits(t, now_ms) || t.dirty) {
-        t.dirty = !flush(ti, t, now_ms) || (t.graph && t.graph->animations_due());
+        t.dirty = !flush(ti, t, now_ms);
         t.file_flush_ms = now_ms;
     }
 }

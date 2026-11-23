@@ -382,10 +382,7 @@ public:
     }
     bool animations_due() const override
     {
-        for (const auto &kv : pending.animations)
-            if (kv.second.due)
-                return true;
-        return false;
+        return AnimTable<FakeAnimation>::any_due(pending.animations);
     }
     /* Through the backends' gate and state machine. */
     void make_animations()

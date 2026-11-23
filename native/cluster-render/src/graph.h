@@ -438,9 +438,10 @@ public:
      * its place among those due when it is due already. */
     void again(A &an) { fall_due(an); }
 
-    bool any_due() const
+    /* Whether any of m is due: what animations_due() says. */
+    static bool any_due(const std::map<int, A> &m)
     {
-        for (const auto &kv : m_)
+        for (const auto &kv : m)
             if (kv.second.due)
                 return true;
         return false;

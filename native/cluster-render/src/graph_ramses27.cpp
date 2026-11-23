@@ -806,10 +806,7 @@ public:
 
     bool animations_due() const override
     {
-        for (const auto &kv : anims_)
-            if (kv.second.due)
-                return true;
-        return false;
+        return AnimTable<Anim>::any_due(anims_);
     }
 
     /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
