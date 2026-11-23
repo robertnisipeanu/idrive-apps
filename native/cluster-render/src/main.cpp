@@ -88,9 +88,10 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     if (max_kb < 0 || max_kb > 1048576 || floor_kb < 0 || step_kb < 1 || cfg.num("upload_burst_ms") < 1 ||
         cfg.num("upload_burst_ms") > 1000 || cfg.num("fps") < 1 || cfg.num("fps") > 60 ||
         cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000 || cfg.num("fade_ms") < 0 ||
-        cfg.num("fade_ms") > 5000) {
+        cfg.num("fade_ms") > 5000 || (cfg.num("instancing") != 0 && cfg.num("instancing") != 1)) {
         *err = "upload_kb_per_s (0-1048576), upload_floor_kb_per_s (0 and up), upload_step_kb_per_s (1 and up), "
-               "upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60) or fade_ms (0-5000) out of range";
+               "upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60), fade_ms (0-5000) or instancing (0, "
+               "1) out of range";
         return false;
     }
     /* A ceiling set below the floor is the cap: the governor then has no
@@ -104,6 +105,7 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     sc.upload_burst_ms = (int)cfg.num("upload_burst_ms");
     sc.fps = (int)cfg.num("fps");
     sc.fade_ms = (int)cfg.num("fade_ms");
+    sc.instancing = cfg.num("instancing") == 1;
     sc.socket_path = cfg.str("socket_path");
     sc.socket_mode = (unsigned)std::strtoul(cfg.str("socket_mode").c_str(), nullptr, 8);
     sc.socket_group = cfg.str("socket_group");

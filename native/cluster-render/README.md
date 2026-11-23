@@ -26,6 +26,7 @@ slots between its clients, and spends one upload budget for all of them.
 | `src/` | the service: slot arbitration, the layer stack, layers, the upload governor, the iDrive 7 and iDrive 8 backends, the socket | — (one process, `hmi_5000`) |
 | `include/`, `client/` | the C++ client and protocol, `libcluster_render_client.a` on the unit | native producers |
 | `js/cluster_render_client.js` | the Node 8 client | OAP apps |
+| `js/cluster_render_text.js`, `include/cluster_render/text.h`, `client/text.cpp` | the text helper, for both clients (PROTOCOL.md "Text") | apps that draw text |
 | `dcsm/`, `abi/`, `tools/`, `docker/` | the Dcsm2 client ([dcsm/DCSM.md](dcsm/DCSM.md)), the units' RAMSES 19, RAMSES 27 and vsomeip ABI ([abi/ABI.md](abi/ABI.md), [abi/ABI27.md](abi/ABI27.md)), the ABI checks and the unit's toolchain | the service's build |
 
 Frames cross a socket: a whole 1088x480 video frame is 783 KB. An app's
@@ -39,6 +40,10 @@ takes them, a whole scene file a root install put in place ("Layers").
 - **OAP apps** copy `js/cluster_render_client.js` into their sources (Node 8,
   only the `net` and `events` builtins). The installed copy is
   `/var/opt/cluster-render/current/cluster_render_client.js`.
+- **Text:** `js/cluster_render_text.js` (installed beside the client) and
+  `include/cluster_render/text.h` (in `libcluster_render_client.a`) make a
+  font's atlas once and draw strings from it in effect layers, a change of
+  string two uniforms, under 700 bytes (PROTOCOL.md "Text").
 - Any other language speaks [PROTOCOL.md](PROTOCOL.md) over the socket.
 
 A client needs only the socket's group, `tm_oap_app`, which every OAP app
@@ -227,7 +232,7 @@ why it is what it is, and the remembered ceiling.
 |---|---|---|
 | video | 4:2:0 atlases (`w*h*3/2` bytes) | one persistent buffer; only 64x64 tiles that changed past a noise filter are written, settled after `settle_ms`; packed 4x4 blocks for motion the budget cannot cover; newest frame only |
 | image | RGBA rectangles that changed | one persistent RGBA8 buffer, written in those rectangles at most `fps` a second |
-| effect | a GLSL ES 1.00 fragment shader, uniforms (arrays too), binds to assets, its blending and colour mask | a quad drawn by it; `u_time` at `time_fps`, or from the renderer's own clock |
+| effect | a fragment shader (GLSL ES 1.00, or 3.00 with a vertex shader of its own), uniforms (arrays too), binds to assets, its blending and colour mask | a quad drawn by it; `u_time` at `time_fps`, or from the renderer's own clock |
 | mesh | parts: shaders, geometry (`M`), transforms, uniforms, binds to assets, each part's depth test, blending and colour mask | a render pass of its own over its rect, with its own perspective or orthographic camera; geometry replaced at most once a second within the budget; depth cleared, never colour |
 
 Beside the layers:
@@ -247,6 +252,10 @@ Beside the layers:
   and sent with a compressed one; its sampler may mirror, wrap each axis
   its own way and sample anisotropically (PROTOCOL.md "Mipmaps and
   samplers").
+- **Shared values:** a client's float or vector that uniforms of its layers
+  and mesh parts follow, set or animated once for all of them, which the
+  display holds once, so they never drift apart (PROTOCOL.md "Shared
+  values").
 - **Canvases:** a client's off-screen pictures (render targets): its
   effect and mesh layers draw in a canvas in passes of its own, and its
   layers on screen sample it as an asset. A canvas may have a depth-stencil
@@ -272,6 +281,11 @@ Beside the layers:
   offset and scale, a part's pose, a mesh camera, or a uniform, linear,
   stepped or eased (`ease_in`, `ease_out`, `ease_in_out`, `smooth`); nothing
   is sent per frame.
+- **Cube maps:** an asset of six square faces a shader samples by direction,
+  for reflections, skies and lit gauge bezels (PROTOCOL.md "Cube maps").
+- **Draw modes and instances:** a mesh part draws triangles, a triangle
+  strip, lines, a line loop or points, and its geometry up to 256 times in
+  one draw by `gl_InstanceID` (PROTOCOL.md "Draw modes and instances").
 - **Part hierarchies:** a mesh part can follow another part or a pivot that
   draws nothing, so one animation turns a whole assembly (PROTOCOL.md "Part
   hierarchies").

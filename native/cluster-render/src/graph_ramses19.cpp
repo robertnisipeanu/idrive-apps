@@ -3,6 +3,7 @@
 #include "graph_ramses19.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -77,21 +78,35 @@ ramses::EDepthFunc depth19(DepthFunc d)
     }
 }
 
-/* The same values as RAMSES 19's (VERIFIED, the get*String tables,
+/* The same values as RAMSES 19's (VERIFIED from each setter to the GL call,
  * ../abi/ABI.md): Disabled 0, then Never ... GreaterEqual; Keep 0 ... Invert. */
 ramses::EStencilFunc stencil_func(StencilFunc f) { return (ramses::EStencilFunc)(int)f; }
 ramses::EStencilOperation stencil_op(StencilOp o) { return (ramses::EStencilOperation)(int)o; }
+
+ramses::ECullMode cull_mode(Cull c)
+{
+    return c == Cull::Back ? ramses::ECullMode_BackFacing
+           : c == Cull::Front ? ramses::ECullMode_FrontFacing
+                              : ramses::ECullMode_Disabled;
+}
+
+ramses::EDrawMode draw_mode(Draw d)
+{
+    static const ramses::EDrawMode modes[] = {ramses::EDrawMode_Triangles, ramses::EDrawMode_TriangleStrip,
+                                              ramses::EDrawMode_Lines, ramses::EDrawMode_LineLoop,
+                                              ramses::EDrawMode_Points};
+    return modes[(int)d];
+}
 
 /* The appearance draws as look has it (graph.h PartLook). */
 bool apply_look(ramses::Appearance &app, const PartLook &look)
 {
     const BlendState b = look.blending();
     bool good = ok(app.setDepthFunction(depth19(look.depth_test()))) && ok(app.setDepthWrite(look.depth_writes())) &&
-                ok(app.setCullingMode(look.cull == Cull::Back    ? ramses::ECullMode_BackFacing
-                                      : look.cull == Cull::Front ? ramses::ECullMode_FrontFacing
-                                                                 : ramses::ECullMode_Disabled)) &&
+                ok(app.setCullingMode(cull_mode(look.cull))) &&
                 ok(app.setColorWriteMask(look.color_mask & kMaskR, look.color_mask & kMaskG, look.color_mask & kMaskB,
                                          look.color_mask & kMaskA));
+    good = good && ok(app.setDrawMode(draw_mode(look.draw)));
     const StencilState &st = look.stencil;
     good = good && ok(app.setStencilFunction(stencil_func(st.func), st.ref, st.mask)) &&
            ok(app.setStencilOperation(stencil_op(st.fail), stencil_op(st.depth_fail), stencil_op(st.pass)));
@@ -100,6 +115,65 @@ bool apply_look(ramses::Appearance &app, const PartLook &look)
     return good &&
            ok(app.setBlendingFactors(factor19(b.src), factor19(b.dst), factor19(b.src_alpha), factor19(b.dst_alpha))) &&
            ok(app.setBlendingOperations(op19(b.op), op19(b.op_alpha)));
+}
+
+/* app's render state as look_of() would set it (Graph::read_look). */
+bool look_of(const ramses::Appearance &app, PartLook *out)
+{
+    ramses::EDrawMode draw;
+    ramses::ECullMode cull;
+    ramses::EDepthFunc depth;
+    ramses::EDepthWrite write;
+    ramses::EBlendFactor bs, bd, bsa, bda;
+    ramses::EBlendOperation oc, oa;
+    ramses::EStencilFunc sf;
+    ramses::EStencilOperation fail, dfail, pass;
+    uint32_t ref = 0;
+    uint8_t mask = 0;
+    bool r = false, g = false, b = false, a = false;
+    if (!ok(app.getDrawMode(draw)) || !ok(app.getCullingMode(cull)) || !ok(app.getDepthFunction(depth)) ||
+        !ok(app.getDepthWriteMode(write)) || !ok(app.getBlendingFactors(bs, bd, bsa, bda)) ||
+        !ok(app.getBlendingOperations(oc, oa)) || !ok(app.getColorWriteMask(r, g, b, a)) ||
+        !ok(app.getStencilFunction(sf, ref, mask)) || !ok(app.getStencilOperation(fail, dfail, pass)))
+        return false;
+    PartLook l;
+    const int d = unmap<Draw>(draw, 5, [](Draw x) { return draw_mode(x); });
+    const int c = unmap<Cull>(cull, 3, [](Cull x) { return cull_mode(x); });
+    const int df = unmap<DepthFunc>(depth, 9, [](DepthFunc x) { return depth19(x); });
+    const int s = unmap<StencilFunc>(sf, 9, [](StencilFunc x) { return stencil_func(x); });
+    auto f = [](ramses::EBlendFactor x) { return unmap<BlendFactor>(x, 6, [](BlendFactor y) { return factor19(y); }); };
+    auto o = [](ramses::EStencilOperation x) { return unmap<StencilOp>(x, 8, [](StencilOp y) { return stencil_op(y); }); };
+    if (d < 0 || c < 0 || df < 0 || s < 0 || f(bs) < 0 || f(bd) < 0 || f(bsa) < 0 || f(bda) < 0 || o(fail) < 0 ||
+        o(dfail) < 0 || o(pass) < 0)
+        return false;
+    l.draw = (Draw)d;
+    l.cull = (Cull)c;
+    l.depth = df != (int)DepthFunc::Off;
+    l.depth_func = l.depth ? (DepthFunc)df : DepthFunc::LessEqual;
+    l.depth_write = write == ramses::EDepthWrite_Enabled;
+    l.has_custom = true;
+    l.custom.on = !(oc == ramses::EBlendOperation_Disabled && oa == ramses::EBlendOperation_Disabled);
+    if (l.custom.on) {
+        const int opc = unmap<BlendOp>(oc, 5, [](BlendOp x) { return op19(x); });
+        const int opa = unmap<BlendOp>(oa, 5, [](BlendOp x) { return op19(x); });
+        if (opc < 0 || opa < 0)
+            return false;
+        l.custom.src = (BlendFactor)f(bs);
+        l.custom.dst = (BlendFactor)f(bd);
+        l.custom.src_alpha = (BlendFactor)f(bsa);
+        l.custom.dst_alpha = (BlendFactor)f(bda);
+        l.custom.op = (BlendOp)opc;
+        l.custom.op_alpha = (BlendOp)opa;
+    }
+    l.color_mask = (uint8_t)((r ? kMaskR : 0) | (g ? kMaskG : 0) | (b ? kMaskB : 0) | (a ? kMaskA : 0));
+    l.stencil.func = (StencilFunc)s;
+    l.stencil.ref = (uint8_t)ref;
+    l.stencil.mask = mask;
+    l.stencil.fail = (StencilOp)o(fail);
+    l.stencil.depth_fail = (StencilOp)o(dfail);
+    l.stencil.pass = (StencilOp)o(pass);
+    *out = l;
+    return true;
 }
 
 /* name appears in src as a whole identifier. */
@@ -118,6 +192,56 @@ const struct {
     unsigned bit;
 } kAttributes[] = {{"a_position", kAttrPosition}, {"a_normal", kAttrNormal}, {"a_texcoord", kAttrTexcoord},
                    {"a_color", kAttrColor}};
+
+/* The sampler types name is declared with in src (sampler2D, samplerCube),
+ * comments skipped: RAMSES 19 reflects both kinds as one data type, so a
+ * sampler the library reports takes its kind from its declarations where
+ * they agree, and none (a type behind a define, other kinds in other #if
+ * branches) where they do not. */
+void declared_samplers(const std::string &src, const std::string &name, std::set<std::string> *kinds)
+{
+    std::string text;
+    for (size_t i = 0; i < src.size(); i++) {
+        if (src.compare(i, 2, "//") == 0) {
+            const size_t e = src.find('\n', i);
+            i = e == std::string::npos ? src.size() : e;
+            text += '\n';   /* the line ends with its comment: "#else// x" stays apart from the next */
+        } else if (src.compare(i, 2, "/*") == 0) {
+            const size_t e = src.find("*/", i + 2);
+            i = e == std::string::npos ? src.size() : e + 1;
+            text += ' ';
+        } else {
+            text += src[i];
+        }
+    }
+    std::vector<std::string> w;
+    std::string cur;
+    for (char c : text + " ") {
+        if (std::isalnum((unsigned char)c) || c == '_') {
+            cur += c;
+            continue;
+        }
+        if (!cur.empty())
+            w.push_back(cur);
+        cur.clear();
+        if (c == ';' || c == ',' || c == '[' || c == '#')
+            w.push_back(std::string(1, c));
+    }
+    for (size_t i = 0; i < w.size(); i++) {
+        if (w[i] != "uniform")
+            continue;
+        size_t t = i + 1;
+        while (t < w.size() && (w[t] == "lowp" || w[t] == "mediump" || w[t] == "highp"))
+            t++;
+        if (t >= w.size())
+            break;
+        bool listed = false;
+        for (size_t n = t + 1; n < w.size() && w[n] != ";" && w[n] != "#"; n++)
+            listed = listed || w[n] == name;
+        if (listed)
+            kinds->insert(w[t]);
+    }
+}
 
 unsigned effect_attributes(const ramses::Effect &fx)
 {
@@ -142,7 +266,8 @@ public:
     {
     }
 
-    /* The library's uniform types (learn()), for animate(); null: unknown. */
+    /* The library's uniform types (learn()), for animate() and link(); null:
+     * unknown. */
     void set_types(const Ramses19Types *t) { types_ = t; }
 
     ~Ramses19Graph() override
@@ -289,6 +414,48 @@ public:
         b.tex = tex;
         buffers_[next_] = b;
         return next_++;
+    }
+
+    /* A cube texture: a client resource, as an ETC2 texture is. */
+    int cube_texture(TexFormat f, uint32_t size, const Sampler &s, const uint8_t *data, size_t face) override
+    {
+        if (!size || face != tex_bytes(f, size, size) || sampling_mips(s.sampling))
+            return 0;
+        const ramses::CubeMipLevelData mip((uint32_t)face, data, data + face, data + 2 * face, data + 3 * face,
+                                           data + 4 * face, data + 5 * face);
+        const ramses::ETextureFormat format = f == TexFormat::ETC2RGB    ? ramses::ETextureFormat_ETC2RGB
+                     : f == TexFormat::ETC2RGBA ? ramses::ETextureFormat_ETC2RGBA
+                     : f == TexFormat::R8       ? ramses::ETextureFormat_R8
+                                                : ramses::ETextureFormat_RGBA8;
+        ramses::TextureCube *tex = client_.createTextureCube(size, format, 1, &mip, false);
+        ramses::TextureSampler *smp =
+            tex ? scene_->createTextureSampler(wrap19(s.u), wrap19(s.v), sampling19(s.sampling), *tex, s.anisotropy)
+                : nullptr;
+        if (!smp) {
+            log_error("ramses: %u-pixel %s cube texture refused by %s", size, tex_format_name(f),
+                      tex ? "createTextureSampler" : "createTextureCube");
+            if (tex)
+                client_.destroy(*tex);
+            return 0;
+        }
+        Buffer b{nullptr, smp, 0};
+        b.tex = tex;
+        b.cube = true;
+        buffers_[next_] = b;
+        return next_++;
+    }
+
+    bool read_cube(int buf, uint32_t *size, int *format, const char *file) override
+    {
+        auto it = buffers_.find(buf);
+        if (it == buffers_.end() || !it->second.cube)
+            return false;
+        const ramses::TextureCube *t = static_cast<const ramses::TextureCube *>(it->second.tex);
+        *size = t->getSize();
+        *format = (int)t->getTextureFormat();
+        ramses::ResourceFileDescription d(file);
+        d.add(t);
+        return ok(client_.saveResources(d, false));
     }
 
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
@@ -565,7 +732,8 @@ public:
         ramses::GeometryBinding *geo = scene_->createGeometryBinding(*fx->second);
         ramses::MeshNode *mesh = scene_->createMeshNode();
         if (!app || !geo || !mesh || !apply_look(*app, look) || !ok(mesh->setAppearance(*app)) ||
-            !ok(mesh->setGeometryBinding(*geo)) || !ok(mesh->setParent(*v->second.root))) {
+            !ok(mesh->setGeometryBinding(*geo)) || !ok(mesh->setParent(*v->second.root)) ||
+            (look.instances > 1 && !ok(mesh->setInstanceCount(look.instances)))) {
             if (mesh) scene_->destroy(*mesh);
             if (geo) scene_->destroy(*geo);
             if (app) scene_->destroy(*app);
@@ -912,6 +1080,119 @@ public:
         return true;
     }
 
+    bool read_look_raw(int part, std::vector<int> *out) override
+    {
+        auto it = parts_.find(part);
+        if (it == parts_.end() || !it->second.app)
+            return false;
+        const ramses::Appearance &app = *it->second.app;
+        ramses::EDrawMode draw;
+        ramses::ECullMode cull;
+        ramses::EDepthFunc depth;
+        ramses::EBlendFactor bs, bd, bsa, bda;
+        ramses::EBlendOperation oc, oa;
+        ramses::EStencilFunc sf;
+        ramses::EStencilOperation fail, dfail, pass;
+        uint32_t ref = 0;
+        uint8_t mask = 0;
+        if (!ok(app.getDrawMode(draw)) || !ok(app.getCullingMode(cull)) || !ok(app.getDepthFunction(depth)) ||
+            !ok(app.getBlendingFactors(bs, bd, bsa, bda)) || !ok(app.getBlendingOperations(oc, oa)) ||
+            !ok(app.getStencilFunction(sf, ref, mask)) || !ok(app.getStencilOperation(fail, dfail, pass)))
+            return false;
+        *out = {(int)draw, (int)cull, (int)depth, (int)bs, (int)bd, (int)bsa, (int)bda,
+                (int)oc,   (int)oa,   (int)sf,    (int)fail, (int)dfail, (int)pass};
+        return true;
+    }
+
+    bool read_look(int part, PartLook *out, bool fresh) override
+    {
+        auto it = parts_.find(part);
+        if (it == parts_.end() || !it->second.app)
+            return false;
+        if (!fresh)
+            return look_of(*it->second.app, out);
+        ramses::Appearance *app = scene_->createAppearance(*it->second.effect);
+        const bool good = app && look_of(*app, out);
+        if (app)
+            scene_->destroy(*app);
+        return good;
+    }
+
+    int value(uint32_t width) override
+    {
+        ramses::DataObject *d = width == 1   ? (ramses::DataObject *)scene_->createDataFloat()
+                                : width == 2 ? (ramses::DataObject *)scene_->createDataVector2f()
+                                : width == 3 ? (ramses::DataObject *)scene_->createDataVector3f()
+                                : width == 4 ? (ramses::DataObject *)scene_->createDataVector4f()
+                                             : nullptr;
+        if (!d)
+            return 0;
+        Value nv;
+        nv.data = d;
+        nv.width = width;
+        values_[next_] = nv;
+        return next_++;
+    }
+
+    bool set_value(int value, const float *v) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return false;
+        ramses::DataObject *d = it->second.data;
+        switch (it->second.width) {
+        case 1: return ok(static_cast<ramses::DataFloat *>(d)->setValue(v[0]));
+        case 2: return ok(static_cast<ramses::DataVector2f *>(d)->setValue(v[0], v[1]));
+        case 3: return ok(static_cast<ramses::DataVector3f *>(d)->setValue(v[0], v[1], v[2]));
+        default: return ok(static_cast<ramses::DataVector4f *>(d)->setValue(v[0], v[1], v[2], v[3]));
+        }
+    }
+
+    /* The library refuses a data object of another type than the uniform. */
+    bool link(int drawable, const char *name, int value) override
+    {
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(drawable, &app);
+        ramses::UniformInput in;
+        auto it = values_.find(value);
+        if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
+            return false;
+        /* the library refuses an array uniform (logging an error) */
+        if (value && in.getElementCount() != 1)
+            return false;
+        /* the uniform a float, vec2, vec3 or vec4 as the value: the library
+         * logs an error for another */
+        if (value && (!types_ || (uint32_t)in.getDataType() != types_->uniform[it->second.width - 1]))
+            return false;
+        if (app->isInputBound(in) && !ok(app->unbindInput(in)))
+            return false;
+        return !value || ok(app->bindInput(in, *it->second.data));
+    }
+
+    /* Its animations retired (retire()); its data object kept while an
+     * animation system that animated it lasts, as a retired animation there
+     * may still name it, and taken away with the last such: no system made
+     * again for it, so dropping one costs no other animation's keys. */
+    void drop_value(int value) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return;
+        for (auto a = anims_.begin(); a != anims_.end();) {
+            if (a->second.node != value) {
+                ++a;
+                continue;
+            }
+            retire(a->second);
+            a = anims_.erase(a);
+        }
+        if (it->second.systems.empty())
+            scene_->destroy(*it->second.data);
+        else
+            orphans_.push_back(it->second);
+        values_.erase(it);
+    }
+
     /* A canvas drawn once draws once more, with its next flush. */
     bool redraw(int canvas) override
     {
@@ -946,8 +1227,9 @@ private:
         ramses::Texture2DBuffer *buffer;   /* null for an immutable texture */
         ramses::TextureSampler *sampler;
         uint32_t bpp;
-        const ramses::Texture2D *tex = nullptr;
+        const ramses::Resource *tex = nullptr;   /* an immutable texture: Texture2D or TextureCube */
         uint32_t levels = 1;   /* mip levels */
+        bool cube = false;     /* tex a TextureCube */
     };
     struct Quad {
         ramses::MeshNode *mesh = nullptr;
@@ -1095,6 +1377,11 @@ private:
     bool resolve(int node, const Animation &a, ramses::Node **target, ramses::Appearance **app,
                  ramses::UniformInput *in)
     {
+        if (a.property == Animated::Value) {
+            *target = nullptr;
+            *app = nullptr;
+            return values_.count(node) && values_.at(node).width == a.width;
+        }
         auto q = quads_.find(node);
         auto p = parts_.find(node);
         auto v = views_.find(node);
@@ -1175,6 +1462,17 @@ private:
                 left = left || kv.second.moving;
             if (!left) {
                 scene_->destroy(*old_);
+                for (auto &kv : values_)
+                    kv.second.systems.erase(old_);
+                for (auto o = orphans_.begin(); o != orphans_.end();) {
+                    o->systems.erase(old_);
+                    if (!o->systems.empty()) {
+                        ++o;
+                        continue;
+                    }
+                    scene_->destroy(*o->data);
+                    o = orphans_.erase(o);
+                }
                 old_ = nullptr;
             }
         }
@@ -1224,6 +1522,7 @@ private:
         ramses::UniformInput in;
         if (!resolve(node, a, &target, &app, &in))
             return false;
+        auto dv = values_.find(node);
         if (!anim_)
             anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
         if (!anim_)
@@ -1242,7 +1541,10 @@ private:
                 vals[k] = -vals[k];
 
         an.spline = spline(a, vals);
-        if (an.spline && a.property == Animated::Uniform) {
+        if (an.spline && a.property == Animated::Value) {
+            an.prop = anim_->createAnimatedProperty(*dv->second.data);
+            dv->second.systems.insert(anim_);
+        } else if (an.spline && a.property == Animated::Uniform) {
             an.prop = anim_->createAnimatedProperty(in, *app);
         } else if (an.spline) {
             const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
@@ -1517,6 +1819,18 @@ private:
     ramses::AnimationSystemRealTime *anim_ = nullptr;
     const Ramses19Types *types_ = nullptr;
     ramses::AnimationSystemRealTime *old_ = nullptr;   /* being left: its animations move to anim_ */
+    /* Shared values: a data object each, of width floats; systems: the
+     * animation systems an animation of it was made in, which may name it
+     * while they last. */
+    struct Value {
+        ramses::DataObject *data = nullptr;
+        uint32_t width = 1;
+        std::set<ramses::AnimationSystemRealTime *> systems;
+    };
+    std::map<int, Value> values_;
+    /* Dropped values' data objects, kept while a system that animated them
+     * lasts (settle_animations() takes them away with it). */
+    std::vector<Value> orphans_;
     /* Keys of retired animations still in anim_. */
     size_t retired_keys_ = 0;
     static const size_t kRetiredKeys = 4096;
@@ -1559,7 +1873,8 @@ const char *const kProbeVs =
     "  float s = u_f1 + u_f2.x + u_f3.x + u_f4.x + float(u_i1 + u_i2.x + u_i3.x + u_i4.x) + u_m2[0][0] + u_m3[0][0];\n"
     "  gl_Position = u_m4 * vec4(a_p * s, 1.0);\n"
     "}\n";
-const char *const kProbeFs = "precision mediump float;\nvoid main() { gl_FragColor = vec4(1.0); }\n";
+const char *const kProbeFs = "precision mediump float;\nuniform sampler2D u_s2;\nuniform samplerCube u_sc;\n"
+                             "void main() { gl_FragColor = texture2D(u_s2, vec2(0.5)) + textureCube(u_sc, vec3(1.0)); }\n";
 const char *const kProbeUniforms[11] = {"u_f1", "u_f2", "u_f3", "u_f4", "u_i1", "u_i2",
                                         "u_i3", "u_i4", "u_m2", "u_m3", "u_m4"};
 /* Floats or ints in one element of each, in Ramses19Types::uniform's order. */
@@ -1582,6 +1897,10 @@ bool learn(ramses::RamsesClient &client, Ramses19Types *t, std::string *err)
         good = ok(fx->findUniformInput(kProbeUniforms[i], u));
         t->uniform[i] = good ? (uint32_t)u.getDataType() : 0;
     }
+    ramses::UniformInput s2, scube;
+    good = good && ok(fx->findUniformInput("u_s2", s2)) && ok(fx->findUniformInput("u_sc", scube));
+    t->sampler2d = good ? (uint32_t)s2.getDataType() : 0;
+    t->sampler_cube = good ? (uint32_t)scube.getDataType() : 0;
     const ramses::RamsesObject *nodes[4] = {}, *others[8] = {};
     if (good) {
         const ramses::RamsesObject *n[4] = {s->createGroupNode(), s->createMeshNode(), s->createPerspectiveCamera(),
@@ -1933,6 +2252,42 @@ int Ramses19Gpu::effect(const char *vs, const char *fs, std::string *err)
         *err = "effect did not compile";
         return 0;
     }
+    std::string why;
+    if (!typed_)
+        typed_ = learn(client_, &types_, &why);
+    if (typed_) {
+        std::vector<EffectInput> &in = inputs_[next_];
+        const uint32_t n = fx->getUniformInputCount();
+        for (uint32_t i = 0; i < n; i++) {
+            ramses::UniformInput u;
+            if (!ok(fx->getUniformInput(i, u)) || !u.getName())
+                continue;
+            EffectInput e;
+            e.name = u.getName();
+            e.elements = u.getElementCount();
+            const uint32_t type = (uint32_t)u.getDataType();
+            static const EffectInput::Kind floats[] = {EffectInput::Float, EffectInput::Vec2, EffectInput::Vec3,
+                                                       EffectInput::Vec4};
+            int f = 0;
+            while (f < 4 && types_.uniform[f] != type)
+                f++;
+            if (f < 4) {
+                e.kind = floats[f];
+            } else if (type != types_.sampler2d && type != types_.sampler_cube) {
+                e.kind = EffectInput::Other;
+            } else if (types_.sampler2d != types_.sampler_cube) {
+                e.kind = type == types_.sampler2d ? EffectInput::Sampler2D : EffectInput::SamplerCube;
+            } else {
+                std::set<std::string> kinds;
+                declared_samplers(std::string(vs) + "\n" + fs, e.name, &kinds);
+                e.kind = kinds.size() != 1          ? EffectInput::Sampler
+                         : *kinds.begin() == "sampler2D"   ? EffectInput::Sampler2D
+                         : *kinds.begin() == "samplerCube" ? EffectInput::SamplerCube
+                                                           : EffectInput::Sampler;
+            }
+            in.push_back(e);
+        }
+    }
     effects_[next_] = fx;
     return next_++;
 }
@@ -1944,6 +2299,16 @@ void Ramses19Gpu::drop_effect(int effect)
         return;
     client_.destroy(*it->second);
     effects_.erase(it);
+    inputs_.erase(effect);
+}
+
+bool Ramses19Gpu::inputs(int effect, std::vector<EffectInput> *out) const
+{
+    auto it = inputs_.find(effect);
+    if (it == inputs_.end())
+        return false;
+    *out = it->second;
+    return true;
 }
 
 unsigned Ramses19Gpu::attributes(int effect) const

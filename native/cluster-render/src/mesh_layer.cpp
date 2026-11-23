@@ -81,13 +81,23 @@ bool MeshLayer::add_part(uint32_t part, int effect, unsigned attributes, const P
     return true;
 }
 
+uint64_t MeshLayer::drawn_indices(uint32_t except) const
+{
+    uint64_t n = 0;
+    for (const auto &kv : parts_)
+        if (kv.first != except && kv.second.have)
+            n += (uint64_t)kv.second.data.index.size() * kv.second.look.instances;
+    return n;
+}
+
 size_t MeshLayer::part_bytes(uint32_t part) const
 {
     auto it = parts_.find(part);
     return it == parts_.end() ? 0 : it->second.data.bytes();
 }
 
-bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std::string *err)
+bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std::string *err,
+                             uint64_t target_room)
 {
     auto it = parts_.find(part);
     if (it == parts_.end()) {
@@ -97,6 +107,26 @@ bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std
     Part &p = it->second;
     if (p.pivot) {
         *err = "a pivot draws nothing: it has no geometry";
+        return false;
+    }
+    static const char *const kinds[] = {"whole triangles", "a triangle strip of 3 or more",
+                                        "whole lines", "a line loop of 2 or more", "points"};
+    const size_t indices = data.index.size();
+    if (indices < draw_min(p.look.draw) || indices % draw_step(p.look.draw)) {
+        *err = std::string("the part's indices are ") + kinds[(int)p.look.draw];
+        return false;
+    }
+    const uint64_t drawn = (uint64_t)indices * p.look.instances;
+    if (drawn > kMaxPartIndices) {
+        *err = "a part draws at most 196605 indices: its indices times its instances";
+        return false;
+    }
+    if (drawn_indices(part) + drawn > kMaxLayerIndices) {
+        *err = "a mesh layer's parts draw at most 393216 indices together";
+        return false;
+    }
+    if (drawn_indices(part) + drawn > target_room) {
+        *err = "a target's mesh layers draw at most 786432 indices together";
         return false;
     }
     static const struct { unsigned bit; const char *name; } attrs[] = {

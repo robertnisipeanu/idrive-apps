@@ -116,10 +116,17 @@ struct RenderState {
      * (-1: not sent). */
     std::string stencil_func, stencil_fail, stencil_depth_fail, stencil_pass;
     int stencil_ref = -1, stencil_mask = -1;
+    /* Parts, to a service whose hello has draw (Client::takes_draw()): draw
+     * triangles, triangle_strip, lines, line_loop or points (empty:
+     * triangles); instances 1-256 (0: not sent), gl_InstanceID in a GLSL ES
+     * 3.00 vertex shader. */
+    std::string draw;
+    unsigned instances = 0;
 };
 
-/* GLSL ES 1.00; the fragment shader gets varying vec2 v_uv (0,0 at the
- * top-left). vs empty: the service's quad vertex shader. */
+/* GLSL ES 1.00, or 3.00 (#version 300 es) with a vs of the same version;
+ * the fragment shader gets v_uv (0,0 at the top-left). vs empty: the
+ * service's quad vertex shader, GLSL ES 1.00. */
 struct EffectOptions {
     std::string fs, vs;
     unsigned time_fps = 0;   /* u_time (seconds) updated this often; 0: none */
@@ -176,8 +183,9 @@ struct MeshOptions {
     float crx = 0, cry = 0, crz = 0;   /* and rotation, degrees; it looks down -z */
 };
 
-/* A mesh part's shaders (GLSL ES 1.00; attributes a_position, a_normal,
- * a_texcoord, a_color) and how it is drawn. */
+/* A mesh part's shaders (GLSL ES 1.00, or 3.00 with #version 300 es and in
+ * for attribute; a_position, a_normal, a_texcoord, a_color) and how it is
+ * drawn. */
 struct PartOptions {
     std::string vs, fs;
     bool depth = true;              /* tested (less or equal) and written */
@@ -185,7 +193,8 @@ struct PartOptions {
     std::string blend = "alpha";    /* alpha, add or none */
 };
 
-/* A part's vertices and triangles: positions and normals xyz, texture
+/* A part's vertices and indices, drawn as its draw mode says (triangles by
+ * default; RenderState::draw): positions and normals xyz, texture
  * coordinates uv, colours rgba, one per vertex (each but positions may be
  * empty), up to 65535 vertices and 196605 indices. */
 struct Geometry {
@@ -285,6 +294,25 @@ public:
     uint32_t asset(const AssetOptions &ao);
     /* With more of its sampler (SamplerOptions). */
     uint32_t asset(const AssetOptions &ao, const SamplerOptions &so);
+    /* A cube map (PROTOCOL.md "Cube maps"), to a service whose hello has cube
+     * (takes_cube()): ao.w x ao.w faces (ao.h ignored), its pixels the six
+     * faces one after another (+x, -x, +y, -y, +z, -z), sent whole and
+     * once; no mipmapped sampling. 0 when out of range. */
+    uint32_t cube(const AssetOptions &ao, const SamplerOptions &so = SamplerOptions());
+    /* A shared value (PROTOCOL.md "Shared values") on target, to a service
+     * whose hello has values (takes_values()): type Float, Vec2, Vec3 or
+     * Vec4, v its first value (as many numbers). Uniforms of the client's
+     * effect layers and mesh parts there follow it (link()); set_value()
+     * sets it, animate() with property "value" animates it, for all of them
+     * at once. 0 when v is not as many finite numbers as the type takes. */
+    uint32_t value(const std::string &target, UniformType type, const std::vector<float> &v);
+    /* False, nothing sent or kept, when v is not as many finite numbers as
+     * the value takes. */
+    bool set_value(uint32_t value, const std::vector<float> &v);
+    /* The layer's uniform (part's, for a mesh layer) follows the value, of
+     * the uniform's type; value 0: it does not, and takes its own value
+     * again. False, nothing sent, when the layer or the value is not one. */
+    bool link(uint32_t ref, const std::string &uniform, uint32_t value, uint32_t part = 0);
     /* A scene file as the target's scene; 0 without a file or a hash for
      * each file. */
     uint32_t scene(const SceneOptions &so);
@@ -434,6 +462,14 @@ public:
     bool takes_curves() const { return curves_; }
     /* The service's hello takes pivots and parents (pivot(), part()). */
     bool takes_nodes() const { return nodes_; }
+    /* The service's hello takes a part's draw mode and instances (RenderState). */
+    bool takes_draw() const { return draw_; }
+    /* The service's hello takes a part's instances above 1 (RenderState). */
+    bool takes_instances() const { return instances_; }
+    /* The service's hello takes cube maps (cube()). */
+    bool takes_cube() const { return cube_; }
+    /* The service's hello takes shared values (value(), link()). */
+    bool takes_values() const { return values_; }
 
 private:
     struct Part {
@@ -449,6 +485,7 @@ private:
         SamplerOptions sampler;          /* an asset's */
         CanvasOptions co;                /* a canvas's */
         uint32_t canvas = 0;             /* the canvas a layer draws in */
+        bool cube = false;               /* an asset that is a cube map */
         VideoOptions vo;
         ImageOptions io;
         EffectOptions eo;
@@ -462,6 +499,8 @@ private:
         /* The last message of each, sent again after a reconnect. */
         std::map<std::pair<uint32_t, std::string>, std::string> uniforms;            /* (part, name) */
         std::map<std::pair<uint32_t, std::string>, std::pair<uint32_t, std::string>> binds;  /* -> asset */
+        std::map<std::pair<uint32_t, std::string>, std::pair<uint32_t, std::string>> links;  /* -> value */
+        std::string value;               /* a value's message, its last v */
         std::map<uint32_t, Part> parts;
         std::map<uint32_t, std::string> animations;
         uint32_t next_anim = 1;
@@ -553,6 +592,10 @@ private:
     bool canvas_ = false;           /* and canvases */
     bool curves_ = false;           /* and eased curves */
     bool nodes_ = false;            /* and pivots and parents */
+    bool draw_ = false;             /* and draw modes */
+    bool instances_ = false;        /* and instances above 1 */
+    bool cube_ = false;             /* and cube maps */
+    bool values_ = false;           /* and shared values */
     uint64_t parts_made_ = 0;
 };
 

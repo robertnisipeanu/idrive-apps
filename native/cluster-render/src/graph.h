@@ -253,6 +253,31 @@ inline bool operator==(const StencilState &a, const StencilState &b)
     return a.func == b.func && a.ref == b.ref && a.mask == b.mask && a.fail == b.fail &&
            a.depth_fail == b.depth_fail && a.pass == b.pass;
 }
+/* How a part's indices are drawn: the modes RAMSES 19 and RAMSES 27 share.
+ * Lines are a pixel wide (neither sets the GL line width). */
+enum class Draw { Triangles, TriangleStrip, Lines, LineLoop, Points };
+/* The fewest indices a mode draws, and the multiple its count is of. */
+inline uint32_t draw_min(Draw d) { return d == Draw::Points ? 1 : d == Draw::Lines || d == Draw::LineLoop ? 2 : 3; }
+inline uint32_t draw_step(Draw d) { return d == Draw::Triangles ? 3 : d == Draw::Lines ? 2 : 1; }
+/* Which of an enum's n values forward maps to lib, or -1: a backend's
+ * table read backwards (Graph::read_look). */
+template <class E, class L, class F> int unmap(L lib, int n, F forward)
+{
+    for (int i = 0; i < n; i++)
+        if (forward((E)i) == lib)
+            return i;
+    return -1;
+}
+
+/* Instances a part draws at most. */
+const uint32_t kMaxInstances = 256;
+/* What the GPU draws, in indices drawn (a part's indices times its
+ * instances): a part at most kMaxPartIndices (as many as one part's
+ * geometry holds, 65,535 triangles), a mesh layer's parts together
+ * kMaxLayerIndices, and every mesh layer on a target, of every client and
+ * canvas, kMaxTargetIndices (262,144 triangles a frame). */
+const uint64_t kMaxPartIndices = 196605, kMaxLayerIndices = 393216, kMaxTargetIndices = 786432;
+
 /* Colour channels written, as bits. */
 const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;
 /* How a part (or a quad, with style()) is drawn: depth tested with
@@ -269,6 +294,8 @@ struct PartLook {
     BlendState custom;
     uint8_t color_mask = kMaskRGBA;
     StencilState stencil;
+    Draw draw = Draw::Triangles;   /* a part's; a quad's is its two triangles */
+    uint32_t instances = 1;        /* a part's: gl_InstanceID 0 to instances - 1 */
 
     BlendState blending() const { return has_custom ? custom : blend_state(blend); }
     DepthFunc depth_test() const { return depth ? depth_func : DepthFunc::Off; }
@@ -277,7 +304,8 @@ struct PartLook {
 inline bool operator==(const PartLook &a, const PartLook &b)
 {
     return a.depth_test() == b.depth_test() && a.depth_writes() == b.depth_writes() && a.cull == b.cull &&
-           a.blending() == b.blending() && a.color_mask == b.color_mask && a.stencil == b.stencil;
+           a.blending() == b.blending() && a.color_mask == b.color_mask && a.stencil == b.stencil &&
+           a.draw == b.draw && a.instances == b.instances;
 }
 inline bool operator!=(const PartLook &a, const PartLook &b) { return !(a == b); }
 /* A quad's look unless styled: blended at source alpha, no depth, no
@@ -303,7 +331,8 @@ struct Geometry {
     const uint16_t *index = nullptr;
 };
 
-enum class Animated { Rotate, Translate, Scale, Uniform };
+/* Value: a shared value's (Graph::value), its node a value's handle. */
+enum class Animated { Rotate, Translate, Scale, Uniform, Value };
 /* Keys the renderer interpolates by itself: width floats a key, at times in
  * milliseconds from the start, ascending. */
 struct Animation {
@@ -615,6 +644,15 @@ public:
     {
         return 0;
     }
+    /* An immutable cube texture, size x size a face, data its six faces of
+     * face bytes each one after another (+x, -x, +y, -y, +z, -z), and its
+     * sampler; a buffer as immutable_texture()'s, sampled by a samplerCube.
+     * 0 where the backend has none. */
+    virtual int cube_texture(TexFormat, uint32_t, const Sampler &, const uint8_t *, size_t) { return 0; }
+    /* A cube texture's size and format as the library holds them, its data
+     * saved to file as the library writes resources (tests); false where
+     * the backend cannot. */
+    virtual bool read_cube(int, uint32_t *, int *, const char *) { return false; }
     /* A quad over r drawn by effect, hidden until show(). Blended over what
      * is below (source alpha), no depth test. */
     virtual int quad(int effect, const Rect &r) = 0;
@@ -724,6 +762,27 @@ public:
     virtual int canvas(const CanvasSpec &) { return 0; }
     virtual void drop_canvas(int) {}
     virtual bool redraw(int) { return false; }
+
+    /* A shared value (PROTOCOL.md "Shared values"): width floats (1-4),
+     * set (set_value()) and animated (animate() with Animated::Value) once
+     * for every quad and part uniform that follows it (link()). 0 where the
+     * backend has none. */
+    virtual int value(uint32_t) { return 0; }
+    virtual bool set_value(int, const float *) { return false; }
+    /* The drawable's (a quad's or part's) uniform follows the value, which
+     * must be of its type; value 0: it does not any more. */
+    virtual bool link(int, const char *, int) { return false; }
+    /* Its links undone first; its animations stopped. */
+    virtual void drop_value(int) {}
+    /* A part's render state as the library holds it, read back with its
+     * getters through the backend's own tables (instances aside); with
+     * fresh, a new appearance of the part's effect, as the library makes
+     * it. False where it cannot say (tests). */
+    virtual bool read_look(int, PartLook *, bool = false) { return false; }
+    /* The same as the library's own numbers: draw mode, cull mode, depth
+     * function, the four blend factors, the two blend operations, stencil
+     * function and its three operations (tests). */
+    virtual bool read_look_raw(int, std::vector<int> *) { return false; }
     /* A canvas not drawn once: drawn each frame while enabled (as it is
      * made), not drawn at all while not, keeping its last picture. */
     virtual bool enable_canvas(int, bool) { return false; }
@@ -774,6 +833,16 @@ public:
     }
 };
 
+/* A uniform of a compiled effect, as the library reflects it; Sampler: a
+ * sampler whose kind the backend cannot tell; elements: an array's (1 for
+ * a plain uniform). */
+struct EffectInput {
+    enum Kind { Other, Sampler2D, SamplerCube, Sampler, Float, Vec2, Vec3, Vec4 };
+    std::string name;
+    Kind kind = Other;
+    uint32_t elements = 1;
+};
+
 /* The participant: effects (shared by every scene) and the scenes. */
 class Gpu {
 public:
@@ -797,6 +866,15 @@ public:
     virtual void drop_effect(int effect) = 0;
     /* The vertex attributes the effect reads (kAttr* bits). */
     virtual unsigned attributes(int effect) const = 0;
+    /* The effect's uniforms as the library compiled it: declarations in
+     * lists, defines and the branches its preprocessor took, those it left
+     * out absent. False where the backend cannot say. */
+    virtual bool inputs(int effect, std::vector<EffectInput> *out) const
+    {
+        (void)effect;
+        (void)out;
+        return false;
+    }
     /* The target's scene, empty, flushed and published. */
     virtual std::unique_ptr<Graph> scene(const TargetSpec &t, std::string *err) = 0;
 };

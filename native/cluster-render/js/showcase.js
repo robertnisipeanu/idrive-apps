@@ -21,15 +21,28 @@
  *   motion  eased curves and part hierarchies (a service whose hello has
  *           curves and nodes): two needles swept the same way, linear and
  *           ease_in_out; an arm and a spinning tip that follow a pivot the
- *           renderer turns along a smooth curve.
+ *           renderer turns along a smooth curve;
+ *   geometry draw modes and instances (a service whose hello has draw):
+ *           16 cubes drawn as instances of one, a ring as a line loop and
+ *           a field of points, all turned by the renderer;
+ *   label   text from the text helper (cluster_render_text.js): a clock,
+ *           a speed and a status line in a proportional 5x7 font made here,
+ *           each changed by two uniforms (its glyph boxes and their count);
+ *   values  eight lamps whose glow follows one shared value the renderer
+ *           animates, all in step, and whose rims follow a second value
+ *           set every two seconds (a service whose hello has values);
+ *   cubemap a cube map of six coloured faces (a service whose hello has
+ *           cube) on a cube the renderer turns, and on one facing the
+ *           camera, which shows the +z face (blue).
  * Every animation runs in the renderer; the client sends only the text once
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
  *
- * On the unit (Node 8): copy this file and cluster_render_client.js into one
- * directory and run it as a user that may open the service's socket (group
- * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion]
+ * On the unit (Node 8): copy this file, cluster_render_client.js and
+ * cluster_render_text.js into one directory and run it as a user that may
+ * open the service's socket (group tm_oap_app, or root); Ctrl-C ends it and
+ * its layers go with it.
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|label|values|cubemap]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -38,7 +51,8 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'label',
+    'values', 'cubemap'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -146,6 +160,160 @@ void main() {
     float a = u_color.a * smoothstep(0.5, 0.0, length(v_uv - 0.5));
     gl_FragColor = vec4(u_color.rgb * a, a);
 }`;
+
+/* GLSL ES 3.00: each instance its own place in a 4x4 grid and colour. */
+const INSTANCED_VS = `#version 300 es
+in vec3 a_position;
+in vec3 a_normal;
+uniform mat4 u_mvp;
+uniform mat4 u_normal;
+out vec3 v_n;
+out vec3 v_c;
+void main() {
+    float i = float(gl_InstanceID);
+    vec3 at = vec3(mod(i, 4.0) * 2.6 - 3.9, floor(i / 4.0) * 2.6 - 3.9, 0.0);
+    v_n = (u_normal * vec4(a_normal, 0.0)).xyz;
+    v_c = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + i * 0.4);
+    gl_Position = u_mvp * vec4(a_position * 0.8 + at, 1.0);
+}`;
+
+const INSTANCED_FS = `#version 300 es
+precision mediump float;
+in vec3 v_n;
+in vec3 v_c;
+out vec4 o;
+void main() {
+    float d = max(dot(normalize(v_n), normalize(vec3(0.4, 0.7, 0.6))), 0.0);
+    o = vec4(v_c * (0.25 + 0.75 * d), 1.0);
+}`;
+
+/* Points and lines: a colour, each point 3 pixels. */
+const FLAT_VS = `#version 100
+attribute vec3 a_position;
+uniform mat4 u_mvp;
+void main() {
+    gl_PointSize = 3.0;
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}`;
+
+const FLAT_FS = `#version 100
+precision mediump float;
+uniform vec4 u_color;
+void main() {
+    gl_FragColor = u_color;
+}`;
+
+/* A 5x7 dot font: seven rows of five columns a glyph, '#' a dot. */
+const DOTS = {
+    '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+    '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+    '3': ['####.', '....#', '....#', '.###.', '....#', '....#', '####.'],
+    '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+    '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+    '6': ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+    '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+    '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+    '9': ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+    'A': ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+    'C': ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+    'D': ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+    'E': ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+    'G': ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+    'H': ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+    'I': ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    'K': ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+    'L': ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+    'M': ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
+    'N': ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
+    'O': ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    'P': ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    'R': ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+    'S': ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+    'T': ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+    'U': ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    'Y': ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+    ':': ['.', '#', '#', '.', '#', '#', '.'],
+    '.': ['.', '.', '.', '.', '.', '#', '#'],
+    '/': ['....#', '...#.', '...#.', '..#..', '.#...', '.#...', '#....'],
+    '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....']
+};
+
+/* The dot font as glyph bitmaps for Font.fromGlyphs: each dot a round spot
+ * s pixels across, a line 9 dots high (a dot above and below). */
+function dotFont(Font, s) {
+    const glyphs = Object.keys(DOTS).map((c) => {
+        const rows = DOTS[c], w = rows[0].length * s, h = 7 * s, px = Buffer.alloc(w * h);
+        rows.forEach((row, r) => Array.from(row).forEach((d, k) => {
+            if (d !== '#') return;
+            for (let y = 0; y < s; y++)
+                for (let x = 0; x < s; x++) {
+                    const dx = (x + 0.5) / s - 0.5, dy = (y + 0.5) / s - 0.5;
+                    const a = Math.max(0, Math.min(1, (0.46 - Math.sqrt(dx * dx + dy * dy)) * s));
+                    px[(r * s + y) * w + k * s + x] = Math.round(255 * a);
+                }
+        }));
+        return { char: c, w: w, h: h, top: s, advance: w + s, pixels: px };
+    });
+    glyphs.push({ char: ' ', w: 0, h: 0, top: 0, advance: 3 * s, pixels: Buffer.alloc(0) });
+    return Font.fromGlyphs(9 * s, glyphs);
+}
+
+/* The label page's lines, [x, y, h, w] as fractions of the target: each
+ * wide enough for its longest text in dotFont() on the panel. */
+const LABEL_LINES = { clock: [0.05, 0.12, 0.18, 0.31], speed: [0.37, 0.38, 0.3, 0.58],
+    status: [0.05, 0.78, 0.1, 0.9] };
+/* The status line's states: 14 glyphs at most, of the font's letters. */
+const LABEL_STATES = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];
+
+/* A lamp: its colour lit by u_glow, a rim of u_rim; premultiplied. */
+const LAMP_FS = `#version 100
+precision mediump float;
+uniform float u_glow;
+uniform vec3 u_color;
+uniform vec3 u_rim;
+varying vec2 v_uv;
+void main() {
+    float d = length(v_uv - 0.5) * 2.0;
+    float core = smoothstep(0.85, 0.0, d) * (0.15 + 0.85 * u_glow);
+    float ring = smoothstep(0.07, 0.0, abs(d - 0.9));
+    float a = max(core, ring);
+    gl_FragColor = vec4(u_color * core + u_rim * ring, a);
+}`;
+
+/* A cube sampling a cube map by its own direction from its centre. */
+const SKY_VS = `#version 100
+attribute vec3 a_position;
+uniform mat4 u_mvp;
+varying vec3 v_d;
+void main() {
+    v_d = a_position;
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}`;
+
+const SKY_FS = `#version 100
+precision mediump float;
+uniform samplerCube u_sky;
+varying vec3 v_d;
+void main() {
+    gl_FragColor = textureCube(u_sky, v_d);
+}`;
+
+/* Six 64x64 faces, +x, -x, +y, -y, +z, -z: red, cyan, green, magenta, blue,
+ * yellow, each with a white rim. */
+function skyFaces() {
+    const S = 64, colours = [[230, 40, 40], [40, 220, 220], [40, 200, 60], [210, 50, 210], [50, 90, 240], [240, 220, 40]];
+    const px = Buffer.alloc(6 * S * S * 4);
+    colours.forEach((c, f) => {
+        for (let y = 0; y < S; y++) {
+            for (let x = 0; x < S; x++) {
+                const rim = x < 3 || y < 3 || x >= S - 3 || y >= S - 3;
+                px.set(rim ? [255, 255, 255, 255] : [c[0], c[1], c[2], 255], ((f * S + y) * S + x) * 4);
+            }
+        }
+    });
+    return px;
+}
 
 /* Seven-segment glyphs, 16x32 each, in one 512x32 R8 atlas. */
 const GLYPHS = '0123456789AbCdEFHLPrUnot-: .hSyu';
@@ -452,6 +620,117 @@ function main() {
         cr.animate(rig, { part: 2, property: 'rotate', loop: true, keys: '0:0,0,0 1000:360,360,0' });
     }
 
+    if (on('geometry')) {
+        /* 16 cubes: one cube's geometry, drawn 16 times. */
+        const grid = name(cr.mesh({ target: target, x: Math.round(W * 0.02), y: Math.round(H * 0.05),
+            w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 22 }), 'instances');
+        /* made once the hello says whether the service draws instances: one
+         * cube where it does not */
+        cr.once('ready', () => {
+            if (!cr.instances) log('instances are off on this service: one cube');
+            cr.part(grid, 1, { vs: INSTANCED_VS, fs: INSTANCED_FS, depth: true, cull: 'back',
+                instances: cr.instances ? 16 : 1 });
+            cr.geometry(grid, 1, cube());
+            cr.animate(grid, { part: 1, property: 'rotate', keys: '0:0,0,0 8000:0,360,0', loop: true });
+        });
+        /* A ring as a line loop and a field of points, turned together. */
+        const sky = name(cr.mesh({ target: target, x: Math.round(W * 0.5), y: Math.round(H * 0.05),
+            w: Math.round(W * 0.45), h: Math.round(H * 0.9), fov: 30, cz: 9 }), 'lines and points');
+        const ring = { positions: [], indices: [] };
+        for (let k = 0; k < 96; k++) {
+            const a = k * Math.PI * 2 / 96;
+            ring.positions.push(Math.cos(a) * 2.2, Math.sin(a) * 2.2, 0);
+            ring.indices.push(k);
+        }
+        cr.part(sky, 1, { vs: FLAT_VS, fs: FLAT_FS, depth: false, cull: 'none', draw: 'line_loop' });
+        cr.geometry(sky, 1, ring);
+        cr.uniform(sky, 'u_color', [0.4, 0.8, 1, 1], { part: 1 });
+        const stars = { positions: [], indices: [] };
+        let seed = 7;
+        const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+        for (let k = 0; k < 600; k++) {
+            stars.positions.push(rnd() * 6 - 3, rnd() * 6 - 3, rnd() * 2 - 1);
+            stars.indices.push(k);
+        }
+        cr.part(sky, 2, { vs: FLAT_VS, fs: FLAT_FS, depth: false, cull: 'none', draw: 'points' });
+        cr.geometry(sky, 2, stars);
+        cr.uniform(sky, 'u_color', [1, 0.9, 0.6, 1], { part: 2 });
+        cr.animate(sky, { part: 1, property: 'rotate', keys: '0:60,0,0 6000:60,0,360', loop: true });
+        cr.animate(sky, { part: 2, property: 'rotate', keys: '0:0,0,0 12000:0,360,0', loop: true });
+    }
+
+    if (on('label')) {
+        /* Three Text layers from one atlas sent once; each change sends two
+         * uniforms, its glyph boxes and their count. */
+        const { Font, Text } = require('./cluster_render_text.js');
+        const font = dotFont(Font, 8);
+        const atlas = name(font.asset(cr, target), 'dot font atlas');
+        const line = (at, opts) => new Text(cr, font, atlas, Object.assign({ target: target, x: Math.round(W * at[0]),
+            y: Math.round(H * at[1]), w: Math.round(W * at[3]), h: Math.round(H * at[2]) }, opts));
+        const clock = line(LABEL_LINES.clock, { color: [1, 1, 1, 1], maxGlyphs: 8 });
+        const speed = line(LABEL_LINES.speed, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
+        const status = line(LABEL_LINES.status, { color: [1, 0.75, 0.2, 1], align: 'center' });
+        /* a target narrower than the panel may cut a line: said once */
+        let cut = false;
+        const show = (t, text, what) => {
+            const fits = t.set(text);
+            if (!fits && !cut) log(what + ' "' + text + '" is wider than its line on this target: shown cut');
+            cut = cut || !fits;
+        };
+        name(clock.ref, 'clock');
+        name(speed.ref, 'speed');
+        name(status.ref, 'status');
+        const states = LABEL_STATES;
+        let v = 0, k = 0;
+        const tick = () => {
+            const d = new Date();
+            show(clock, ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
+                ('0' + d.getSeconds()).slice(-2), 'the clock');
+            v = (v + 7) % 180;
+            show(speed, v + ' KM/H', 'the speed');
+            speed.color(v > 130 ? [1, 0.3, 0.25, 1] : [0.3, 0.85, 1, 1]);
+        };
+        tick();
+        show(status, states[0], 'the status');
+        setInterval(tick, 500);
+        setInterval(() => show(status, states[++k % states.length], 'the status'), 2000);
+    }
+
+    if (on('values')) {
+        /* One value the renderer animates, which every lamp's u_glow
+         * follows; another the app sets, every lamp's u_rim. */
+        const glow = name(cr.value({ target: target, v: 0 }), 'glow');
+        const rim = name(cr.value({ target: target, type: 'vec3', v: [1, 1, 1] }), 'rim');
+        const colours = [[1, 0.2, 0.2], [1, 0.55, 0.1], [1, 0.9, 0.1], [0.3, 1, 0.3], [0.1, 0.9, 0.9],
+            [0.2, 0.5, 1], [0.6, 0.3, 1], [1, 0.3, 0.8]];
+        const size = Math.round(Math.min(W / 10, H * 0.6));
+        colours.forEach((c, i) => {
+            const lamp = name(cr.effect({ target: target, x: Math.round(W * 0.05 + i * W * 0.113), y: Math.round((H - size) / 2),
+                w: size, h: size, fs: LAMP_FS, blend: 'premultiplied' }), 'lamp ' + i);
+            cr.uniform(lamp, 'u_color', c);
+            cr.link(lamp, 'u_glow', glow);
+            cr.link(lamp, 'u_rim', rim);
+        });
+        cr.animate(glow, { property: 'value', keys: '0:0 700:1 1400:0', loop: true, interp: 'smooth' });
+        const rims = [[1, 1, 1], [1, 0.8, 0.2], [0.3, 0.8, 1]];
+        let k = 0;
+        setInterval(() => cr.setValue(rim, rims[++k % rims.length]), 2000);
+    }
+
+    if (on('cubemap')) {
+        const sky = name(cr.asset({ target: target, w: 64, h: 64, cube: true, sampling: 'bilinear' }), 'cube map');
+        cr.pixels(sky, null, skyFaces());
+        [[0.05, true], [0.55, false]].forEach((c) => {
+            const m = name(cr.mesh({ target: target, x: Math.round(W * c[0]), y: Math.round(H * 0.05),
+                w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 7 }), c[1] ? 'turned' : 'facing');
+            cr.part(m, 1, { vs: SKY_VS, fs: SKY_FS, depth: true, cull: 'back' });
+            cr.geometry(m, 1, cube());
+            cr.bind(m, 'u_sky', sky, 1);
+            if (c[1])
+                cr.animate(m, { part: 1, property: 'rotate', keys: '0:20,0,0 8000:20,360,360', loop: true });
+        });
+    }
+
     if (on('alert')) {
         const pop = () => {
             const alert = name(cr.effect({ target: target, klass: 'alert', exclusive: true, x: Math.round(W * 0.25),
@@ -468,4 +747,6 @@ function main() {
     cr.connect();
 }
 
-main();
+/* Run, or required (the test): the label page's font and lines. */
+if (require.main === module) main();
+else module.exports = { dotFont, LABEL_LINES, LABEL_STATES };

@@ -66,7 +66,7 @@ const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'c
 const LOOK_KEYS = ['blend', 'blend_src', 'blend_dst', 'blend_src_alpha', 'blend_dst_alpha', 'blend_op',
     'blend_op_alpha', 'color_mask', 'stencil_func', 'stencil_ref', 'stencil_mask', 'stencil_fail',
     'stencil_depth_fail', 'stencil_pass'];
-const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull'];
+const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull', 'draw', 'instances'];
 const BLEND_KEYS = LOOK_KEYS.filter((k) => k.indexOf('blend_') === 0);
 
 /* An effect layer's kept look takes a set's look fields as the service
@@ -243,7 +243,8 @@ class ClusterRender extends EventEmitter {
     _replay(canvases) {
         const inCanvas = (ref) => ClusterRender._inCanvas(this.layers.get(ref));
         [true, false].forEach((assets) => this.layers.forEach((l, ref) => {
-            if (ClusterRender._inCanvas(l) !== canvases || (l.kind === 'asset' || l.kind === 'canvas') !== assets) return;
+            if (ClusterRender._inCanvas(l) !== canvases ||
+                (l.kind === 'asset' || l.kind === 'canvas' || l.kind === 'value') !== assets) return;
             this._send(this._layerMsg(ref, l));
                 if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
                 l.hosts.forEach((m) => this._send(m));
@@ -257,6 +258,9 @@ class ClusterRender extends EventEmitter {
         }));
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => {
             if ((ClusterRender._inCanvas(l) || inCanvas(l.binds[k].asset)) === canvases) this._send(l.binds[k].msg);
+        }));
+        this.layers.forEach((l) => Object.keys(l.links).forEach((k) => {
+            if (ClusterRender._inCanvas(l) === canvases) this._send(l.links[k].msg);
         }));
         this.layers.forEach((l) => { if (ClusterRender._inCanvas(l) === canvases) l.anims.forEach((m) => this._send(m)); });
     }
@@ -292,6 +296,10 @@ class ClusterRender extends EventEmitter {
             this.canvases = ev.canvas === 1;   /* takes canvases and layers drawn in them */
             this.curves = ev.curves === 1;   /* takes interp ease_in, ease_out, ease_in_out, smooth */
             this.nodes = ev.nodes === 1;   /* takes pivot parts and parents */
+            this.draw = ev.draw === 1;   /* takes a part's draw mode */
+            this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
+            this.cubeMaps = ev.cube === 1;   /* takes cube map assets */
+            this.values = ev.values === 1;   /* takes shared values (value(), link()) */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -388,6 +396,7 @@ class ClusterRender extends EventEmitter {
             if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
             return m;
         }
+        if (l.kind === 'value') return l.msg;
         if (l.kind === 'canvas') {
             const m = { op: 'canvas', ref: ref, target: o.target, w: o.w, h: o.h };
             if (o.depth) m.depth = 1;
@@ -400,6 +409,7 @@ class ClusterRender extends EventEmitter {
             const m = { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
                 sampling: o.sampling || 'nearest', wrap: o.wrap || 'clamp' };
             ['wrap_u', 'wrap_v', 'anisotropy'].forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
+            if (o.cube) m.cube = 1;
             return m;
         }
         const m = { op: 'layer', ref: ref, target: o.target, kind: l.kind };
@@ -441,7 +451,7 @@ class ClusterRender extends EventEmitter {
 
     _add(kind, opts) {
         const o = Object.assign({}, opts);
-        const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, anims: new Map(), nextAnim: 1,
+        const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1,
             dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map(), hosts: new Map() };
         if (kind === 'scene' && !(o.file && [].concat(o.sha256 || []).length === (o.res || []).length + 1)) return 0;
         if (kind === 'image') {
@@ -461,6 +471,13 @@ class ClusterRender extends EventEmitter {
             /* A compressed asset sampled with mipmaps is sent with every
              * level; the service makes an uncompressed one's. */
             l.bytes = assetBytes(o.w, o.h, l.bpp, block, l.compressed && MIPMAPPED.indexOf(o.sampling) >= 0);
+            /* A cube map: six square faces, +x, -x, +y, -y, +z, -z, sent
+             * whole and once, no mip levels. */
+            if (o.cube) {
+                if (o.w !== o.h || MIPMAPPED.indexOf(o.sampling) >= 0) return 0;
+                l.bytes *= 6;
+                l.wholeOnly = true;
+            }
             if (l.bytes > 1920 * 720 * 4) return 0;
             l.iw = o.w;
             l.ih = o.h;
@@ -494,7 +511,10 @@ class ClusterRender extends EventEmitter {
      * 'min_linear_mag_nearest', 'min_nearest_mag_linear'), wrap ('clamp',
      * 'repeat'; 'mirror'), wrap_u, wrap_v, anisotropy (1-16). Sampled with
      * mipmaps, a compressed asset's frame carries every level after its
-     * picture (PROTOCOL.md "Mipmaps"). */
+     * picture (PROTOCOL.md "Mipmaps"). To a service whose hello has cube:
+     * cube: true, a cube map, w equal to h, its frame the six faces one
+     * after another (+x, -x, +y, -y, +z, -z), sent whole and once, no mip
+     * levels (PROTOCOL.md "Cube maps"). */
     asset(opts) { return this._add('asset', opts); }
     /* A canvas (PROTOCOL.md "Canvases"), to a service whose hello has canvas:
      * opts target, w, h (up to 2048), depth (a depth-stencil buffer of its
@@ -645,6 +665,52 @@ class ClusterRender extends EventEmitter {
         this._send(m);
     }
 
+    /* A shared value (PROTOCOL.md "Shared values"), to a service whose hello
+     * has values (this.values): opts target, type ('float' default, 'vec2',
+     * 'vec3', 'vec4'), v (its first value, as many numbers). Uniforms of this
+     * app's effect layers and mesh parts there follow it (link());
+     * setValue() sets it and animate(ref, { property: 'value', keys })
+     * animates it, for all of them at once. Returns its ref, 0 when v does
+     * not fit the type. */
+    value(opts) {
+        const width = { float: 1, vec2: 2, vec3: 3, vec4: 4 }[opts.type || 'float'];
+        const v = [].concat(opts.v === undefined ? new Array(width || 0).fill(0) : opts.v);
+        if (!width || v.length !== width || !v.every((x) => typeof x === 'number' && isFinite(x))) return 0;
+        const ref = this.nextRef;
+        const l = { kind: 'value', opts: { target: opts.target, type: opts.type || 'float' }, width: width,
+            uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1, edits: new Map(),
+            hosts: new Map() };
+        l.msg = { op: 'value', ref: ref, target: opts.target, type: l.opts.type, v: v.join(' ') };
+        this.nextRef++;
+        this.layers.set(ref, l);
+        this._send(l.msg);
+        return ref;
+    }
+
+    setValue(ref, v) {
+        const l = this.layers.get(ref);
+        v = [].concat(v);
+        if (!l || l.kind !== 'value' || v.length !== l.width || !v.every((x) => typeof x === 'number' && isFinite(x)))
+            return false;
+        l.msg = Object.assign({}, l.msg, { v: v.join(' ') });
+        this._send(l.msg);
+        return true;
+    }
+
+    /* The effect layer's uniform (or mesh part's) follows the value, of the
+     * uniform's type; value 0: it does not, and takes its own value again. */
+    link(ref, uniform, value, part) {
+        const l = this.layers.get(ref), v = this.layers.get(value);
+        if (!l || (l.kind !== 'effect' && l.kind !== 'mesh') || !uniform || (value && (!v || v.kind !== 'value')))
+            return false;
+        const m = { op: 'link', ref: ref, name: uniform, value: value || 0 };
+        if (part) m.part = part;
+        if (value) l.links[(part || 0) + ':' + uniform] = { value: value, msg: m };
+        else delete l.links[(part || 0) + ':' + uniform];
+        this._send(m);
+        return true;
+    }
+
     /* The effect layer's (or mesh part's) sampler samples the asset. */
     bind(ref, sampler, asset, part) {
         const l = this.layers.get(ref), a = this.layers.get(asset);
@@ -664,7 +730,10 @@ class ClusterRender extends EventEmitter {
      * service whose hello has nodes: node: true, a pivot that draws nothing
      * (no shaders), and parent, the number of a part made before that this
      * one follows (its transform then relative to the parent's). Parts are
-     * made again after a reconnect in the order they were made. */
+     * made again after a reconnect in the order they were made. To a
+     * service whose hello has draw: draw ('triangles' default,
+     * 'triangle_strip', 'lines', 'line_loop', 'points') and instances
+     * (1-256; gl_InstanceID in a GLSL ES 3.00 vertex shader). */
     part(ref, part, opts) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'mesh' || !(part > 0) || l.parts.has(part)) return false;
@@ -683,15 +752,16 @@ class ClusterRender extends EventEmitter {
     }
 
     /* g: positions (xyz), normals (xyz), texcoords (uv), colors (rgba) per
-     * vertex, the last three optional, and indices (triangles). The service
-     * takes a part's new geometry at most once a second. */
+     * vertex, the last three optional, and indices, as many as the part's
+     * draw mode takes (whole triangles by default). The service takes a
+     * part's new geometry at most once a second. */
     geometry(ref, part, g) {
         const l = this.layers.get(ref);
         const p = l && l.parts.get(part);
         const v = g.positions.length / 3;
         const per = (a, n) => !a || !a.length || a.length === v * n;
         if (!p || !(v >= 1 && v <= 65535 && Number.isInteger(v)) || !per(g.normals, 3) || !per(g.texcoords, 2) ||
-            !per(g.colors, 4) || !(g.indices.length >= 3 && g.indices.length % 3 === 0 && g.indices.length <= 196605)) {
+            !per(g.colors, 4) || !(g.indices.length >= 1 && g.indices.length <= 196605)) {
             return false;
         }
         for (let i = 0; i < g.indices.length; i++) if (!(g.indices[i] < v)) return false;
@@ -756,6 +826,8 @@ class ClusterRender extends EventEmitter {
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => { sampled = sampled || l.binds[k].asset === ref; }));
         /* a canvas with layers in it stays too */
         this.layers.forEach((l) => { sampled = sampled || l.opts.canvas === ref; });
+        /* a value dropped: the service undoes its links */
+        this.layers.forEach((l) => Object.keys(l.links).forEach((k) => { if (l.links[k].value === ref) delete l.links[k]; }));
         if (!sampled) this.layers.delete(ref);
         this.pendingFrames.delete(ref);
         if (!held) this._send({ op: 'drop', ref: ref });
@@ -787,7 +859,8 @@ class ClusterRender extends EventEmitter {
         const l = this.layers.get(ref);
         if (!l || !l.image) return false;
         const iw = l.iw, ih = l.ih, bpp = l.bpp;
-        if (l.compressed && rects && rects.length) return false;
+        if ((l.compressed || l.wholeOnly) && rects && rects.length) return false;
+        if (l.wholeOnly && l.have) return false;   /* a cube map is sent once, as the service takes it */
         if (!rects || !rects.length) {
             if (px.length !== l.image.length) return false;
             px.copy(l.image);

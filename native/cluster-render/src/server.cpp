@@ -184,6 +184,17 @@ bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err,
     if (!num(j, "depth", 0, 1, &depth, err) || !choice(j, "depth_func", funcs, &func, err) ||
         !num(j, "depth_write", 0, 1, &write, err) || !choice(j, "cull", {"back", "front", "none"}, &cull, err))
         return false;
+    int draw = (int)look->draw;
+    double instances = look->instances;
+    if (!choice(j, "draw", {"triangles", "triangle_strip", "lines", "line_loop", "points"}, &draw, err) ||
+        !num(j, "instances", 1, kMaxInstances, &instances, err))
+        return false;
+    if (instances != (double)(uint32_t)instances) {
+        *err = "instances is a whole number from 1 to 256";
+        return false;
+    }
+    look->draw = (Draw)draw;
+    look->instances = (uint32_t)instances;
     look->depth = depth != 0;
     look->depth_func = (DepthFunc)(func + 1);
     look->depth_write = write != 0;
@@ -323,6 +334,46 @@ bool parse_keys(const std::string &text, Animation *a, std::string *err)
     if (a->t.empty())
         return false;
     err->clear();
+    return true;
+}
+
+/* An animate message's anim, property (of a value: none, or value),
+ * name, loop, interp and keys, its curve sampled; false with *err. */
+bool animation_fields(const cr::Json &j, bool of_value, Animation *a, double *anim, std::string *err)
+{
+    double loop = 0;
+    int property = 0, interp = 0;
+    if (!num(j, "anim", 1, 4294967295.0, anim, err) || !*anim) {
+        if (err->empty())
+            *err = "anim (the animation's number, 1 or more) missing";
+        return false;
+    }
+    if (!choice(j, "property", {"rotate", "translate", "scale", "uniform", "value"}, &property, err) ||
+        !num(j, "loop", 0, 1, &loop, err) ||
+        !choice(j, "interp", {"linear", "step", "ease_in", "ease_out", "ease_in_out", "smooth"}, &interp, err) ||
+        !parse_keys(str(j, "keys"), a, err))
+        return false;
+    if (of_value ? j.count("property") && property != 4 : !j.count("property") || property == 4) {
+        *err = of_value ? "a value's animation has no property, or value"
+                        : "property must be rotate, translate, scale or uniform";
+        return false;
+    }
+    static const Animated props[] = {Animated::Rotate, Animated::Translate, Animated::Scale, Animated::Uniform,
+                                     Animated::Value};
+    a->property = of_value ? Animated::Value : props[property];
+    a->uniform = str(j, "name");
+    a->loop = loop != 0;
+    a->step = interp == 1;
+    static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
+                                   Curve::Smooth};
+    if (!sample_curve(curves[interp], a)) {
+        *err = "the curve leaves the numbers a key holds: keys too far apart for " + str(j, "interp");
+        return false;
+    }
+    if (a->property == Animated::Uniform && (a->uniform.empty() || a->uniform.size() > 64)) {
+        *err = "a uniform's animation needs its name";
+        return false;
+    }
     return true;
 }
 
@@ -797,7 +848,11 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"host_layers", "1"},
                                  {"canvas", "1"},
                                  {"curves", "1"},
-                                 {"nodes", "1"}}));
+                                 {"nodes", "1"},
+                                 {"draw", "1"},
+                                 {"instances", comp_->instancing() ? "1" : "0"},
+                                 {"cube", "1"},
+                                 {"values", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();
@@ -820,6 +875,10 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
     }
     if (op == "canvas") {
         op_canvas(c, j);
+        return;
+    }
+    if (op == "value") {
+        op_value(c, j);
         return;
     }
     if (op == "scene") {
@@ -851,6 +910,20 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
         return;
     }
     Layer *l = it == c.refs.end() ? nullptr : comp_->layer(c.id, it->second);
+    auto va = c.assets.find(ref);
+    if ((op == "animate" || op == "stop") && va != c.assets.end() && comp_->value(c.id, va->second)) {
+        double anim_d = 0;
+        Animation a;
+        if (op == "stop") {
+            num(j, "anim", 0, 4294967295.0, &anim_d, &err);
+            if (!anim_d || !comp_->stop_value(c.id, va->second, (uint32_t)anim_d))
+                error(c, op, ref, "no such animation");
+        } else if (!animation_fields(j, true, &a, &anim_d, &err) ||
+                   !comp_->animate_value(c.id, va->second, (uint32_t)anim_d, a, &err)) {
+            error(c, op, ref, err);
+        }
+        return;
+    }
     if (op == "repeat") {
         const bool video = l && std::string(l->kind()) == "video";
         if (video)
@@ -875,7 +948,7 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
             return;
         }
     }
-    static const char *const ops[] = {"set", "uniform", "drop", "bind", "part", "transform", "animate", "stop"};
+    static const char *const ops[] = {"set", "uniform", "drop", "bind", "link", "part", "transform", "animate", "stop"};
     if (std::find(std::begin(ops), std::end(ops), op) == std::end(ops)) {
         error(c, op, ref, "unknown op");
         return;
@@ -952,6 +1025,55 @@ void Server::op_canvas(Client &c, const cr::Json &j)
              slots_->targets()[target].name.c_str(), cs.w, cs.h, cs.depth ? ", depth" : "", cs.once ? ", once" : "");
 }
 
+void Server::op_value(Client &c, const cr::Json &j)
+{
+    double ref_d = 0;
+    std::string err;
+    if (!num(j, "ref", 1, 4294967295.0, &ref_d, &err) || ref_d == 0) {
+        error(c, "value", 0, err.empty() ? "ref missing" : err);
+        return;
+    }
+    const uint32_t ref = (uint32_t)ref_d;
+    auto a = c.assets.find(ref);
+    const Compositor::ValueEntry *ve = a == c.assets.end() ? nullptr : comp_->value(c.id, a->second);
+    if (c.refs.count(ref) || (a != c.assets.end() && !ve)) {
+        error(c, "value", ref, "ref in use");
+        return;
+    }
+    int type = 0;
+    if (!choice(j, "type", {"float", "vec2", "vec3", "vec4"}, &type, &err)) {
+        error(c, "value", ref, err);
+        return;
+    }
+    const uint32_t width = ve ? ve->width : (uint32_t)type + 1;
+    if (ve && ((j.count("type") && (uint32_t)type + 1 != width) ||
+               (j.count("target") && slots_->index(str(j, "target")) != ve->target))) {
+        error(c, "value", ref, "a value's type and target are set when it is made");
+        return;
+    }
+    std::vector<float> v(width, 0.0f);
+    if ((j.count("v") || ve) && (!numbers(str(j, "v"), width, &v) || v.size() != width)) {
+        error(c, "value", ref, "v is " + std::to_string(width) + " finite number" + (width > 1 ? "s" : ""));
+        return;
+    }
+    if (ve) {
+        if (!comp_->set_value(c.id, a->second, v.data(), &err))
+            error(c, "value", ref, err);
+        return;
+    }
+    const int target = slots_->index(str(j, "target"));
+    if (target < 0 || !slots_->targets()[target].follows.empty()) {
+        error(c, "value", ref, "unknown target " + str(j, "target"));
+        return;
+    }
+    const uint32_t id = comp_->add_value(c.id, target, width, v.data(), &err);
+    if (!id) {
+        error(c, "value", ref, err);
+        return;
+    }
+    c.assets[ref] = id;
+}
+
 void Server::op_asset(Client &c, const cr::Json &j)
 {
     double ref_d = 0, w = 0, h = 0;
@@ -986,6 +1108,12 @@ void Server::op_asset(Client &c, const cr::Json &j)
     ap.h = (uint32_t)h;
     static const TexFormat kFormats[] = {TexFormat::RGBA8, TexFormat::R8, TexFormat::ETC2RGBA, TexFormat::ETC2RGB};
     ap.format = kFormats[format];
+    double cube = 0;
+    if (!num(j, "cube", 0, 1, &cube, &err)) {
+        error(c, "asset", ref, err);
+        return;
+    }
+    ap.cube = cube != 0;
     const uint32_t id = comp_->add_asset(c.id, target, ap, &err);
     if (!id) {
         error(c, "asset", ref, err);
@@ -1210,6 +1338,20 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             error(c, op, ref, err);
     } else if (op == "uniform") {
         op_uniform(c, ref, l, j);
+    } else if (op == "link") {
+        double value_d = 0;
+        const bool given = j.count("value") && num(j, "value", 0, 4294967295.0, &value_d, &err) &&
+                           value_d == (double)(uint32_t)value_d;
+        auto v = c.assets.find((uint32_t)value_d);
+        const std::string name = str(j, "name");
+        if (!given)
+            error(c, op, ref, "value is a value's ref, or 0 to unlink");
+        else if (name.empty() || name.size() > 64)
+            error(c, op, ref, "a link needs a uniform name");
+        else if (value_d && (v == c.assets.end() || !comp_->value(c.id, v->second)))
+            error(c, op, ref, "no such value");
+        else if (!comp_->link(c.id, l->id(), part, name, value_d ? v->second : 0, &err))
+            error(c, op, ref, err);
     } else if (op == "bind") {
         const std::string sampler = str(j, "sampler");
         double asset_d = 0;
@@ -1255,37 +1397,14 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         m->set_pose(part, pose);
         comp_->touch(l);
     } else if (op == "animate") {
-        double anim_d = 0, loop = 0;
-        int property = 0, interp = 0;
+        double anim_d = 0;
         Animation a;
-        if (!num(j, "anim", 1, 4294967295.0, &anim_d, &err) || !anim_d) {
-            error(c, op, ref, err.empty() ? "anim (the animation's number, 1 or more) missing" : err);
-            return;
-        }
-        if (!choice(j, "property", {"rotate", "translate", "scale", "uniform"}, &property, &err) ||
-            !num(j, "loop", 0, 1, &loop, &err) ||
-            !choice(j, "interp", {"linear", "step", "ease_in", "ease_out", "ease_in_out", "smooth"}, &interp, &err) ||
-            !parse_keys(str(j, "keys"), &a, &err)) {
+        if (!animation_fields(j, false, &a, &anim_d, &err)) {
             error(c, op, ref, err);
             return;
         }
-        if (!j.count("property")) {
-            error(c, op, ref, "property must be rotate, translate, scale or uniform");
-            return;
-        }
-        static const Animated props[] = {Animated::Rotate, Animated::Translate, Animated::Scale, Animated::Uniform};
-        a.property = props[property];
-        a.uniform = str(j, "name");
-        a.loop = loop != 0;
-        a.step = interp == 1;
-        static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
-                                       Curve::Smooth};
-        if (!sample_curve(curves[interp], &a)) {
-            error(c, op, ref, "the curve leaves the numbers a key holds: keys too far apart for " + str(j, "interp"));
-            return;
-        }
-        if (a.property == Animated::Uniform && (a.uniform.empty() || a.uniform.size() > 64)) {
-            error(c, op, ref, "a uniform's animation needs its name");
+        if (a.property == Animated::Uniform && comp_->linked(c.id, l->id(), part, a.uniform)) {
+            error(c, op, ref, "the uniform follows a value: animate the value, or unlink it first");
             return;
         }
         a.owner = c.id;
@@ -1659,9 +1778,10 @@ std::string Server::status_text(int64_t now_ms) const
         for (const auto &kv : c.assets)
             for (const Asset *a : comp_->assets())
                 if (a->id() == kv.second) {
-                    const std::string levels = a->params().levels() > 1
-                                                   ? " (" + std::to_string(a->params().levels()) + " mip levels)"
-                                                   : "";
+                    const std::string levels = a->params().cube              ? " (cube map)"
+                                               : a->params().levels() > 1 ? " (" + std::to_string(a->params().levels()) +
+                                                                                " mip levels)"
+                                                                          : "";
                     std::snprintf(line, sizeof line, "asset %u %s %ux%u%s of %s on %s: %s\n", a->id(),
                                   tex_format_name(a->params().format), a->params().w, a->params().h, levels.c_str(),
                                   c.app.c_str(), slots_->targets()[a->target()].name.c_str(), a->stats().c_str());

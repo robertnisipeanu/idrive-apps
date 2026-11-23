@@ -83,8 +83,9 @@ bool parse_frame(const char *body, size_t n, FrameHeader *out);
 std::string mesh_message(uint32_t ref, uint32_t part, uint32_t vertices, const float *position, const float *normal,
                          const float *texcoord, const float *color, uint32_t indices, const uint16_t *index);
 /* False with *err when the body is malformed: counts out of bounds, sizes
- * that do not add up, a value that is not finite, an index past the
- * vertices, or indices that are not whole triangles. */
+ * that do not add up, a value that is not finite, or an index past the
+ * vertices. Whether the index count fits the part's draw mode is the
+ * part's to say. */
 bool parse_mesh(const char *body, size_t n, MeshHeader *out, std::string *err);
 
 /* Flat JSON: an object of string, number, true/false/null values. The

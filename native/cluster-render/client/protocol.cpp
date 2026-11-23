@@ -227,8 +227,10 @@ bool parse_mesh(const char *body, size_t n, MeshHeader *out, std::string *err)
         *err = "a mesh has 1 to 65535 vertices";
         return false;
     }
-    if (m.indices < 3 || m.indices > kMaxMeshIndices || m.indices % 3) {
-        *err = "a mesh's indices are whole triangles, at most 196605";
+    /* Whole triangles, lines or points: the part's draw mode decides
+     * (MeshLayer::set_geometry). */
+    if (m.indices < 1 || m.indices > kMaxMeshIndices) {
+        *err = "a mesh has 1 to 196605 indices";
         return false;
     }
     const size_t floats = (size_t)m.vertices * mesh_floats(m.mask);

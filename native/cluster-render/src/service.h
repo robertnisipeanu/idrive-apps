@@ -39,6 +39,7 @@ struct ServiceConfig {
     int slow_flush_ms = 150;
     int fps = 30;                /* the loop's tick while a target is up */
     int fade_ms = 250;           /* a target's layers fade in when it is shown, and out before it is released */
+    bool instancing = false;     /* mesh parts drawn more than once (instances) */
     std::string socket_path = "/dev/shm/cluster-render/render.sock";
     unsigned socket_mode = 0660;
     std::string socket_group;

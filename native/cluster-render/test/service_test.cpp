@@ -60,6 +60,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 
 #include <cstdio>
@@ -73,6 +74,7 @@
 #include "../src/log.h"
 #include "../src/service.h"
 #include "cluster_render/client.h"
+#include "cluster_render/text.h"
 #include "fake_graph.h"
 #include "fake_port.h"
 
@@ -2888,6 +2890,71 @@ static void motion_over_socket()
          at = later.find("a pivot (node 1) has no shaders", at + 1))
         n++;
     ok("motion: a pivot sent with shaders refused, nothing made", n == 2 && rm && !rm->has_part(3) && !rm->has_part(4));
+
+    /* Draw modes and instances over the socket. */
+    ok("draw: the hello says the service takes draw modes", c.takes_draw());
+    cr::RenderState lines;
+    lines.draw = "lines";
+    lines.instances = 4;
+    cr::Geometry seg;
+    seg.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
+    seg.indices = {0, 1, 2, 3};
+    ok("draw: instances off as shipped, the hello says so", !c.takes_instances() && c.part(box, 7, po, lines) &&
+                                                                 (r.pump(100), true) &&
+                                                                 std::any_of(e.errors.begin(), e.errors.end(),
+                                                                             [](const std::string &x) {
+                                                                                 return x.find("instances are off") !=
+                                                                                        std::string::npos;
+                                                                             }));
+    r.svc->compositor().set_instancing(true);
+    ok("draw: a part of 4 instances of lines", c.part(box, 3, po, lines) && c.geometry(box, 3, seg));
+    r.pump(300);
+    FakeGraph *g = r.gpu.graph("panel");
+    bool drawn = false;
+    if (g)
+        for (const auto &kv : g->shown.parts)
+            drawn = drawn || (kv.second.look.draw == Draw::Lines && kv.second.look.instances == 4 &&
+                              kv.second.geometry && kv.second.indices == 4);
+    ok("draw: drawn as asked", drawn);
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":4,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"draw\":\"quads\"}");
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":5,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"instances\":300}");
+    r.pump(50);
+    const std::string ev2 = raw.events();
+    ok("draw: an unknown draw mode refused", ev2.find("draw must be triangles, triangle_strip") != std::string::npos);
+    ok("draw: past 256 instances refused", ev2.find("instances must be a number from 1 to 256") != std::string::npos);
+
+    /* A cube map over the socket. */
+    ok("cube: the hello says the service takes cube maps", c.takes_cube());
+    cr::AssetOptions ca;
+    ca.target = "panel";
+    ca.w = 8;
+    const uint32_t sky = c.cube(ca);
+    std::vector<uint8_t> faces(6 * 8 * 8 * 4, 90);
+    ok("cube: made, its six faces taken; a rect, and the faces again, refused here",
+       sky && c.pixels(sky, {}, faces.data(), faces.size()) &&
+           !c.pixels(sky, {cr::FrameRect{0, 0, 1, 1}}, faces.data(), 4) &&
+           !c.pixels(sky, {}, faces.data(), faces.size()));
+    cr::LayerOptions env;
+    env.target = "panel";
+    env.klass = "overlay";
+    env.w = env.h = 16;
+    const uint32_t mirror = c.effect(env, cr::EffectOptions{"#version 100\nprecision mediump float;\n"
+                                                            "uniform samplerCube u_sky;\nvarying vec2 v_uv;\n"
+                                                            "void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv,1.0));}",
+                                                            "", 0});
+    c.bind(mirror, "u_sky", sky);
+    r.pump(300);
+    FakeGraph *gc = r.gpu.graph("panel");
+    bool made = false;
+    if (gc)
+        for (const auto &kv : gc->shown.buffers)
+            made = made || (kv.second.cube && kv.second.w == 8 && kv.second.px == faces);
+    ok("cube: made in the panel's scene with its six faces", made);
+    raw.send("{\"op\":\"asset\",\"ref\":9,\"target\":\"panel\",\"w\":8,\"h\":4,\"cube\":1}");
+    r.pump(50);
+    ok("cube: a face that is not square refused", raw.events().find("a cube map's faces are square") != std::string::npos);
 }
 
 /* A reconnect under a small upload budget: the client sends every animation
@@ -2930,6 +2997,272 @@ static void animations_after_a_reconnect()
     r.start();
     r.pump(6000);
     ok("animations: after a reconnect every one made again, none refused", made() == kLayers && e.errors.empty());
+}
+
+/* Shared values over the socket (PROTOCOL.md "Shared values"), with the C++
+ * client: a float two effect layers' u_level follow, set and animated once
+ * for both, all made again after a service restart; refusals with nothing
+ * made. */
+static void values_over_socket()
+{
+    Rig r;
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("values: the hello says the service takes shared values", c.takes_values());
+    const uint32_t v = c.value("panel", cr::UniformType::Float, {0.5f});
+    const char *fs = "#version 100\nprecision mediump float;\nuniform float u_level;\nvarying vec2 v_uv;\n"
+                     "void main(){gl_FragColor=vec4(u_level);}";
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.w = lo.h = 32;
+    const uint32_t a = c.effect(lo, cr::EffectOptions{fs, "", 0});
+    lo.x = 100;
+    const uint32_t b = c.effect(lo, cr::EffectOptions{fs, "", 0});
+    ok("values: made, two layers' uniforms linked", v && c.link(a, "u_level", v) && c.link(b, "u_level", v) &&
+                                                       !c.link(a, "u_level", a));
+    cr::AnimationOptions pulse;
+    pulse.property = "value";
+    pulse.keys = "0:0 500:1 1000:0";
+    pulse.loop = true;
+    r.pump(300);
+    auto check = [&](const char *when, float want) {
+        FakeGraph *g = r.gpu.graph("panel");
+        int handle = 0, links = 0;
+        if (g)
+            for (const auto &kv : g->shown.values)
+                handle = kv.first;
+        for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+            links += kv.second.links.count("u_level") && kv.second.links.at("u_level") == handle;
+        ok((std::string("values: ") + when + ": one value, both layers' u_level following it").c_str(),
+           handle && g->shown.values.at(handle).v[0] == want && links == 2);
+        return g;
+    };
+    check("made", 0.5f);
+    ok("values: set", c.set_value(v, {0.9f}));
+    /* refused by the client, so neither sent nor kept for the restart below */
+    ok("values: a set not finite refused, as a value made so",
+       !c.set_value(v, {std::nanf("")}) && !c.set_value(v, {0.1f, 0.2f}) &&
+           !c.value("panel", cr::UniformType::Float, {INFINITY}));
+    const uint32_t anim = c.animate(v, pulse);
+    r.pump(200);
+    FakeGraph *g = check("set", 0.9f);
+    ok("values: one animation of it", anim && g && g->shown.animations.size() == 1 &&
+                                          g->shown.animations.begin()->second.a.property == Animated::Value);
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    g = check("after a service restart", 0.9f);
+    ok("values: its animation made again", g && g->shown.animations.size() == 1 && e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"value\",\"ref\":1,\"target\":\"panel\",\"type\":\"vec3\",\"v\":\"1 2\"}");
+    raw.send("{\"op\":\"value\",\"ref\":2,\"target\":\"panel\",\"type\":\"float\",\"v\":\"0.5\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":3,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"uniform float "
+             "u_level; void main(){gl_FragColor=vec4(u_level);}\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":9}");
+    raw.send("{\"op\":\"animate\",\"ref\":2,\"anim\":1,\"property\":\"rotate\",\"keys\":\"0:0 9:1\"}");
+    raw.send("{\"op\":\"value\",\"ref\":2,\"type\":\"vec4\",\"v\":\"1 1 1 1\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":2}");
+    /* malformed: refused, the link kept */
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":\"x\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":2.5}");
+    raw.send("{\"op\":\"animate\",\"ref\":3,\"anim\":1,\"property\":\"uniform\",\"name\":\"u_level\",\"keys\":\"0:0 9:1\"}");
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("values: v not of the type's width refused", refused("value", 1, "v is 3 finite numbers"));
+    ok("values: a link to no value refused", refused("link", 3, "no such value"));
+    size_t malformed = 0;
+    for (size_t at = ev.find("value is a value's ref, or 0 to unlink"); at != std::string::npos;
+         at = ev.find("value is a value's ref, or 0 to unlink", at + 1))
+        malformed++;
+    ok("values: a link's value not a ref refused, all three", malformed == 3);
+    ok("values: a value animated as a node refused", refused("animate", 2, "a value's animation has no property"));
+    ok("values: its type set when made", refused("value", 2, "a value's type and target are set when it is made"));
+    ok("values: a linked uniform's own animation refused", refused("animate", 3, "the uniform follows a value"));
+}
+
+/* The text helper (include/cluster_render/text.h, PROTOCOL.md "Text"): a
+ * font's one-row atlas from a grid, glyph bitmaps or a BMFont; a line laid
+ * out with advances, kerning and UTF-8; a Text over the socket: its atlas an
+ * r8 asset, its string two uniforms (its glyph boxes and their count),
+ * aligned, changed by those two alone. */
+static void text_helper()
+{
+    /* Two 8x16 cells: "1" all 255, "2" all 128. */
+    std::vector<uint8_t> grid(16 * 16, 0);
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++)
+            grid[y * 16 + x] = x < 8 ? 255 : 128;
+    const cr::Font font = cr::Font::from_grid(grid.data(), 16, 16, 2, 1, "12");
+    ok("text: a grid font's atlas: one row, a column of 0 around each glyph",
+       font.ok() && font.width() == 19 && font.line_height() == 16 && font.pixels()[0] == 0 &&
+           font.pixels()[1] == 255 && font.pixels()[9] == 0 && font.pixels()[10] == 128 &&
+           font.pixels()[18] == 0);
+    float width = 0;
+    std::vector<cr::GlyphBox> b = font.layout("12", 32, 0, &width);
+    ok("text: a line laid out at twice the font's height",
+       b.size() == 2 && b[0].x0 == 0 && b[0].x1 == 16 && b[0].u0 == 1 && b[0].u1 == 9 && b[1].x0 == 16 &&
+           b[1].u0 == 10 && width == 32);
+    b = font.layout("1\xC3\xA9" "2", 16, 0, &width);
+    ok("text: a character the font lacks (UTF-8 e-acute) takes nothing without a space",
+       b.size() == 2 && b[1].x0 == 8 && width == 16);
+    std::vector<cr::GlyphBitmap> gs(2);
+    gs[0].code = 'A';
+    gs[0].w = 4;
+    gs[0].h = 2;
+    gs[0].top = 3;
+    gs[0].advance = 5;
+    gs[0].pixels.assign(8, 200);
+    gs[1].code = ' ';
+    gs[1].advance = 3;
+    const cr::Font kerned = cr::Font::from_glyphs(8, gs, {{{'A', 'A'}, -2}});
+    b = kerned.layout("A A\xE2\x82\xAC" "AA", 8, 0, &width);
+    ok("text: glyph bitmaps placed below the line's top; kerning; a missing euro takes a space's advance",
+       kerned.ok() && kerned.pixels()[3 * kerned.width() + 1] == 200 && kerned.pixels()[2 * kerned.width() + 1] == 0 &&
+           b.size() == 4 && b[1].x0 == 8 && b[2].x0 == 16 && b[3].x0 == 19 && width == 24);
+    const std::string fnt = "info face=\"t\" size=8\ncommon lineHeight=8 base=6\npage id=0 file=\"t.png\"\n"
+                            "char id=65 x=0 y=0 width=4 height=6 xoffset=1 yoffset=2 xadvance=6 page=0\n"
+                            "char id=66 x=4 y=0 width=4 height=6 xoffset=0 yoffset=2 xadvance=5 page=0\n"
+                            "kerning first=65 second=66 amount=-1\n";
+    std::vector<uint8_t> page(8 * 6 * 4, 0);
+    for (size_t i = 3; i < page.size(); i += 4)
+        page[i] = 90;   /* alpha */
+    const cr::Font bm = cr::Font::from_bmfont(fnt, page.data(), 8, 6, 4);
+    b = bm.layout("AB", 8, 0, &width);
+    ok("text: a BMFont, its alpha, offsets, advances and kerning",
+       bm.ok() && bm.line_height() == 8 && bm.pixels()[2 * bm.width() + 1] == 90 && b.size() == 2 && b[0].x0 == 1 &&
+           b[1].x0 == 5 && width == 10);
+    float spaced = 0;
+    const std::vector<cr::GlyphBox> sb = font.layout("12", 16, 2, &spaced);
+    ok("text: spacing between characters only, none after the last",
+       sb.size() == 2 && sb[1].x0 == 10 && spaced == 18);
+    std::vector<cr::GlyphBitmap> plain(1);
+    plain[0].code = 'x';
+    plain[0].w = 4;
+    plain[0].h = 8;
+    plain[0].pixels.assign(32, 9);
+    float plain_w = 0;
+    cr::Font::from_glyphs(8, plain).layout("xx", 8, 0, &plain_w);
+    ok("text: a glyph bitmap's advance its width when not given", plain_w == 8);
+    const std::string one_char = "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5";
+    auto bmfont = [&](const std::string &common, const std::string &chr) {
+        return cr::Font::from_bmfont("common lineHeight=8 " + common + "\n" + chr + "\n", page.data(), 8, 6, 4).ok();
+    };
+    ok("text: a BMFont of one page, its glyphs in every channel, taken",
+       bmfont("pages=1 packed=0", one_char + " page=0 chnl=15"));
+    ok("text: a BMFont of several pages, packed in channels, a glyph on another page or in one channel refused",
+       !bmfont("pages=2", one_char) && !bmfont("packed=1", one_char) && !bmfont("", one_char + " page=1") &&
+           !bmfont("", one_char + " chnl=4"));
+    ok("text: a BMFont glyph outside the page, of a negative xadvance, width or height, refused",
+       !bmfont("", "char id=65 x=6 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
+           !bmfont("", "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=-3") &&
+           !bmfont("", "char id=65 x=0 y=0 width=-4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
+           !bmfont("", "char id=65 x=0 y=0 width=4 height=-6 xoffset=0 yoffset=0 xadvance=5"));
+    std::vector<cr::GlyphBitmap> back(1);
+    back[0].code = 'x';
+    back[0].w = 4;
+    back[0].h = 8;
+    back[0].advance = -5;
+    back[0].pixels.assign(32, 9);
+    float back_w = 0;
+    cr::Font::from_glyphs(8, back).layout("xx", 8, 0, &back_w);
+    ok("text: a glyph bitmap's negative advance its width, as in Node", back_w == 8);
+    std::vector<cr::GlyphBitmap> wide(300);
+    for (size_t i = 0; i < wide.size(); i++) {
+        wide[i].code = (uint32_t)i;
+        wide[i].w = wide[i].h = 8;
+        wide[i].pixels.assign(64, 1);
+    }
+    ok("text: an atlas past 2048 pixels refused", !cr::Font::from_glyphs(8, wide).ok());
+
+    Rig r;
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    const uint32_t atlas = font.asset(c, "panel");
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.x = 100;
+    lo.y = 100;
+    lo.w = 200;
+    lo.h = 32;
+    cr::TextOptions to;
+    to.align = "right";
+    to.max_glyphs = 4;
+    /* the Text holds the font: it goes on once the app's own is gone */
+    std::shared_ptr<const cr::Font> held = std::make_shared<const cr::Font>(font);
+    cr::Text label(c, held, atlas, lo, to);
+    held.reset();
+    const bool fits = label.set("12");
+    r.pump(300);
+    FakeGraph *g = r.gpu.graph("panel");
+    const FakeQuad *q = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.quads)   /* the graph's own map: q points into it */
+            if (kv.second.uniforms.count("u_glyphs"))
+                q = &kv.second;
+    bool r8 = false;
+    for (const auto &kv : g ? g->shown.buffers : std::map<int, FakeBuffer>())
+        r8 = r8 || (kv.second.f == TexFormat::R8 && kv.second.w == 19 && kv.second.h == 16);
+    ok("text: the atlas an r8 asset, the string one array of 4 glyph boxes, aligned right",
+       fits && label.ref() && r8 && q && q->uniforms.at("u_glyphs").size() == 16 && q->uniforms.at("u_count")[0] == 2 &&
+           std::fabs(q->uniforms.at("u_glyphs")[0] - 168.0f / 200) < 1e-6f &&
+           std::fabs(q->uniforms.at("u_glyphs")[5] - 1.0f) < 1e-6f &&
+           std::fabs(q->uniforms.at("u_glyphs")[2] - 1.0f / 19) < 1e-6f && e.layer[label.ref()] == "shown");
+    ok("text: more glyphs than the layer holds: false, the first ones shown",
+       !label.set("12121") && (r.pump(100), q && q->uniforms.at("u_count")[0] == 4) && e.errors.empty());
+
+    /* The most glyphs: 14 by default, more refused (n + 2 vectors within
+     * GLSL ES 1.00's 16); a rect with no width or height refused. */
+    auto shared = std::make_shared<const cr::Font>(font);
+    lo.y = 200;
+    cr::Text full(c, shared, atlas, lo);
+    r.pump(100);
+    const FakeQuad *fq = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.quads)   /* the graph's own map: fq points into it */
+            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 14 * 4)
+                fq = &kv.second;
+    cr::TextOptions many;
+    many.max_glyphs = 15;
+    cr::LayerOptions flat = lo;
+    flat.h = 0;
+    ok("text: 14 glyphs by default, 15 refused, a rect of no height refused, nothing sent for them",
+       full.ref() && fq && !cr::Text(c, shared, atlas, lo, many).ref() && !cr::Text(c, shared, atlas, flat).ref());
+    /* spaced right-aligned text as wide as the rect fits, its last glyph
+     * at the rect's right edge */
+    cr::TextOptions sp;
+    sp.align = "right";
+    sp.spacing = 2;
+    sp.max_glyphs = 2;
+    cr::LayerOptions narrow = lo;
+    narrow.y = 300;
+    narrow.w = 18;
+    narrow.h = 16;
+    cr::Text tight(c, shared, atlas, narrow, sp);
+    const bool tight_fits = tight.set("12");
+    r.pump(300);
+    const FakeQuad *tq = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.quads)   /* the graph's own map: tq points into it */
+            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 2 * 4)
+                tq = &kv.second;
+    ok("text: spaced text as wide as its rect fits, its last glyph at the right edge",
+       tight_fits && tq && std::fabs(tq->uniforms.at("u_glyphs")[5] - 1.0f) < 1e-6f &&
+           std::fabs(tq->uniforms.at("u_glyphs")[0]) < 1e-6f);
 }
 
 int main()
@@ -3450,6 +3783,8 @@ int main()
     canvases_to_an_older_service();
     motion_over_socket();
     animations_after_a_reconnect();
+    values_over_socket();
+    text_helper();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

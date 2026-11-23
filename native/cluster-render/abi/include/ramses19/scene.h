@@ -222,10 +222,13 @@ namespace ramses
         status_t setCullingMode(ECullMode mode);
         status_t getCullingMode(ECullMode& mode) const;
         status_t setDrawMode(EDrawMode mode);
+        status_t getDrawMode(EDrawMode& mode) const;
         status_t setColorWriteMask(bool writeRed, bool writeGreen, bool writeBlue, bool writeAlpha);
         status_t getColorWriteMask(bool& writeRed, bool& writeGreen, bool& writeBlue, bool& writeAlpha) const;
         status_t setStencilFunction(EStencilFunc func, uint32_t ref, uint8_t mask);
+        status_t getStencilFunction(EStencilFunc& func, uint32_t& ref, uint8_t& mask) const;
         status_t setStencilOperation(EStencilOperation sfail, EStencilOperation dpfail, EStencilOperation dppass);
+        status_t getStencilOperation(EStencilOperation& sfail, EStencilOperation& dpfail, EStencilOperation& dppass) const;
 
         const Effect& getEffect() const;
 
@@ -325,6 +328,9 @@ namespace ramses
                                                ETextureFormat textureFormat, const char* name = nullptr);
         TextureSampler* createTextureSampler(ETextureAddressMode wrapUMode, ETextureAddressMode wrapVMode,
                                              ETextureSamplingMethod samplingMethod, const RenderBuffer& renderBuffer,
+                                             uint32_t anisotropyLevel = 1, const char* name = nullptr);
+        TextureSampler* createTextureSampler(ETextureAddressMode wrapUMode, ETextureAddressMode wrapVMode,
+                                             ETextureSamplingMethod samplingMethod, const TextureCube& texture,
                                              uint32_t anisotropyLevel = 1, const char* name = nullptr);
         // sampleCount 0: not multisampled.
         RenderBuffer* createRenderBuffer(uint32_t width, uint32_t height, ERenderBufferType bufferType,
