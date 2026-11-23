@@ -443,7 +443,7 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
     int fx = 0;
     unsigned attrs = 0;
     if (look.instances > 1 && !instancing_) {
-        *err = "instances are off on this cluster (cluster-render.conf instancing)";
+        *err = "instances are off on this cluster (cluster-render.conf)";
         return false;
     }
     if (!vs.empty() || !fs.empty()) {   /* else a pivot */

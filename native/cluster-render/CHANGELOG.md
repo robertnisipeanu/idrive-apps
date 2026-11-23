@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Mesh parts can draw instances on iDrive 7 as shipped: the cluster draws
+GLSL ES 3.00 and instanced draws. `instancing = 0` in `cluster-render.conf`
+turns them off. On iDrive 8 they stay off unless `id8_instancing = 1`.
+
 ## 0.8.5
 
 A text helper for both client libraries: an app sends a font once (from

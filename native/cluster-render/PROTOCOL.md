@@ -319,10 +319,11 @@ many times in one draw, `gl_InstanceID` telling them apart in a GLSL ES
 `attribute` and `varying`). Both are set when the part is made.
 
 Instances above 1 are taken only by a service whose hello has `instances`
-1, which its `cluster-render.conf` turns on (`instancing = 1`, off as
-shipped); otherwise the part is refused (`instances are off on this
-cluster`). Whether the cluster's GPU and driver draw GLSL ES 3.00 and
-instanced draws is not known yet: if they could not, the cluster's
+1; otherwise the part is refused (`instances are off on this cluster`).
+On iDrive 7 they are on as shipped: the cluster's renderer draws GLSL ES
+3.00 and instanced draws. `instancing = 0` in `cluster-render.conf` turns
+them off. On iDrive 8 they are off as shipped (`id8_instancing = 0`):
+whether its cluster draws them is not known, and if it could not, its
 renderer would hold up the whole target's scene, every app's content on
 it, until it gave up on the effect.
 
