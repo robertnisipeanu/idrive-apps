@@ -290,6 +290,8 @@ class ClusterRender extends EventEmitter {
             this.samplers = ev.samplers === 1;   /* takes mipmapped sampling, mirror, wrap_u/v, anisotropy */
             this.hostLayers = ev.host_layers === 1;   /* takes a host from layers (host('panel', ...)) */
             this.canvases = ev.canvas === 1;   /* takes canvases and layers drawn in them */
+            this.curves = ev.curves === 1;   /* takes interp ease_in, ease_out, ease_in_out, smooth */
+            this.nodes = ev.nodes === 1;   /* takes pivot parts and parents */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -658,11 +660,18 @@ class ClusterRender extends EventEmitter {
      * service whose hello has render_state, the rest of its render state
      * (PROTOCOL.md "Render state"): blend 'premultiplied', 'max', 'min',
      * 'subtract', blend_src, blend_dst, blend_src_alpha, blend_dst_alpha,
-     * blend_op, blend_op_alpha, color_mask, depth_func, depth_write. */
+     * blend_op, blend_op_alpha, color_mask, depth_func, depth_write. To a
+     * service whose hello has nodes: node: true, a pivot that draws nothing
+     * (no shaders), and parent, the number of a part made before that this
+     * one follows (its transform then relative to the parent's). Parts are
+     * made again after a reconnect in the order they were made. */
     part(ref, part, opts) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'mesh' || !(part > 0) || l.parts.has(part)) return false;
-        const m = { op: 'part', ref: ref, part: part, vs: opts.vs, fs: opts.fs };
+        if (opts.parent !== undefined && !l.parts.has(opts.parent)) return false;
+        const m = opts.node ? { op: 'part', ref: ref, part: part, node: 1 }
+            : { op: 'part', ref: ref, part: part, vs: opts.vs, fs: opts.fs };
+        if (opts.parent !== undefined) m.parent = opts.parent;
         if (opts.depth !== undefined) m.depth = flag(opts.depth);
         if (opts.depth_write !== undefined) m.depth_write = flag(opts.depth_write);
         LOOK_KEYS.concat(PART_LOOK_KEYS).forEach((k) => {
@@ -710,7 +719,8 @@ class ClusterRender extends EventEmitter {
 
     /* opts: part, property ('rotate', 'translate', 'scale', 'uniform'),
      * name (the uniform's), keys ("t:v[,v,v] ..." or [[t, v...], ...], t in
-     * ms), loop, interp ('linear', 'step'), anim (a number this returned:
+     * ms), loop, interp ('linear', 'step'; to a service whose hello has curves:
+     * 'ease_in', 'ease_out', 'ease_in_out', 'smooth'), anim (a number this returned:
      * that animation replaced). Returns the animation's number, 0 when
      * refused here. */
     animate(ref, opts) {

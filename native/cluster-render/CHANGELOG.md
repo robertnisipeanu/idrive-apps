@@ -15,6 +15,10 @@ repeats, also one that comes while the frame before is still being sent;
 it used to drop it.
 
 ## 0.8.3
+Animations can be eased (`ease_in`, `ease_out`, `ease_in_out`) or follow a
+smooth curve through their keys, played by the cluster with nothing sent
+per frame. A mesh part can follow another part or a pivot that draws
+nothing, so one animation moves everything attached to it.
 
 Canvases: an app's effect and mesh layers can draw into an off-screen
 picture of its own, which its layers on screen then show like an asset.

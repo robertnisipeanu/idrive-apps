@@ -331,6 +331,13 @@ public:
     /* With the rest of its render state; look.blend, when set, in place of
      * po.blend. */
     bool part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look);
+    /* To a service whose hello has nodes (takes_nodes()): the part follows
+     * parent, a part made before it (0: the view): its transform then
+     * relative to the parent's. */
+    bool part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look, uint32_t parent);
+    /* A pivot: a part that draws nothing, posed, animated and followed as a
+     * part (parent as above). */
+    bool pivot(uint32_t ref, uint32_t part, uint32_t parent = 0);
     /* The part's geometry; the service takes a new one at most once a
      * second. False when it is out of range. */
     bool geometry(uint32_t ref, uint32_t part, const Geometry &g);
@@ -341,6 +348,10 @@ public:
     /* Replaces the layer's animation anim (one animate() returned) with a;
      * returns anim, or 0 when the layer has no such animation. */
     uint32_t animate(uint32_t ref, const AnimationOptions &a, uint32_t anim);
+    /* With an eased curve, in place of a.step, to a service whose hello has
+     * curves (takes_curves()): ease_in, ease_out, ease_in_out or smooth
+     * (linear, step as AnimationOptions). anim 0: a new animation. */
+    uint32_t animate(uint32_t ref, const AnimationOptions &a, uint32_t anim, const std::string &interp);
     void stop(uint32_t ref, uint32_t anim);
     /* A layer or an asset; an asset a layer samples stays (the service
      * refuses it). */
@@ -419,12 +430,17 @@ public:
     bool takes_host_layers() const { return host_layers_; }
     /* The service's hello takes canvases (CanvasOptions). */
     bool takes_canvas() const { return canvas_; }
+    /* The service's hello takes eased curves (animate()'s interp). */
+    bool takes_curves() const { return curves_; }
+    /* The service's hello takes pivots and parents (pivot(), part()). */
+    bool takes_nodes() const { return nodes_; }
 
 private:
     struct Part {
         std::string json;        /* its part message */
         std::string geometry;    /* its M message; empty: none yet */
         std::string transform;   /* its transform message; empty: none */
+        uint64_t made = 0;       /* the order parts were made in */
     };
     struct Layer {
         std::string kind;                /* video, image, effect, mesh, asset or scene */
@@ -530,6 +546,9 @@ private:
     /* Hosts from this client's layers: by hosted target, (into, message). */
     std::map<std::string, std::pair<std::string, std::string>> layer_hosts_;
     bool canvas_ = false;           /* and canvases */
+    bool curves_ = false;           /* and eased curves */
+    bool nodes_ = false;            /* and pivots and parents */
+    uint64_t parts_made_ = 0;
 };
 
 }  // namespace cr

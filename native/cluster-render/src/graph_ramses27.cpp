@@ -632,10 +632,38 @@ public:
         return next_++;
     }
 
+    int node(int view) override
+    {
+        auto v = views_.find(view);
+        if (v == views_.end())
+            return 0;
+        ramses::Node *n = scene_->createNode();
+        if (!n || !ok(n->setParent(*v->second.root))) {
+            if (n)
+                scene_->destroy(*n);
+            return 0;
+        }
+        Part p;
+        p.view = view;
+        p.pivot = n;
+        parts_[next_] = p;
+        return next_++;
+    }
+
+    bool parent(int part, int parent) override
+    {
+        auto c = parts_.find(part);
+        auto p = parts_.find(parent);
+        if (c == parts_.end() || p == parts_.end() || part == parent || c->second.view != p->second.view)
+            return false;
+        ramses::Node &n = node_of(c->second);
+        return ok(n.removeParent()) && ok(n.setParent(node_of(p->second)));
+    }
+
     bool geometry(int part, const Geometry &g) override
     {
         auto it = parts_.find(part);
-        if (it == parts_.end())
+        if (it == parts_.end() || !it->second.mesh)
             return false;
         Part &p = it->second;
         const unsigned reads = effect_attributes(*p.effect);
@@ -695,7 +723,7 @@ public:
         auto it = parts_.find(part);
         if (it == parts_.end())
             return false;
-        ramses::MeshNode &m = *it->second.mesh;
+        ramses::Node &m = node_of(it->second);
         return ok(m.setTranslation(p.t[0], p.t[1], p.t[2])) && ok(m.setRotation(-p.r[0], -p.r[1], -p.r[2])) &&
                ok(m.setScaling(p.s[0], p.s[1], p.s[2]));
     }
@@ -707,6 +735,15 @@ public:
             return;
         stop_on(part);
         Part &p = it->second;
+        if (p.pivot) {
+            /* what follows it follows the view again */
+            for (auto &kv : parts_)
+                if (&kv.second != &p && node_of(kv.second).getParent() == p.pivot)
+                    node_of(kv.second).setParent(*views_[p.view].root);
+            scene_->destroy(*p.pivot);
+            parts_.erase(it);
+            return;
+        }
         auto v = views_.find(p.view);
         if (p.grouped && v != views_.end())
             v->second.group->removeMeshNode(*p.mesh);
@@ -733,7 +770,7 @@ public:
         auto p = parts_.find(node);
         auto v = views_.find(node);
         ramses::Node *target = q != quads_.end()   ? q->second.turned
-                               : p != parts_.end() ? (ramses::Node *)p->second.mesh
+                               : p != parts_.end() ? &node_of(p->second)
                                : v != views_.end() ? (ramses::Node *)v->second.cam
                                                    : nullptr;
         if (!target)
@@ -1093,7 +1130,9 @@ private:
         ramses::Effect *effect = nullptr;
         bool depth = false, grouped = false;
         std::vector<ramses::ArrayResource *> res;
+        ramses::Node *pivot = nullptr;   /* a node(): draws nothing */
     };
+    ramses::Node &node_of(Part &p) { return p.mesh ? *(ramses::Node *)p.mesh : *p.pivot; }
     struct Anim {
         int node = 0;
         ramses::AnimationSequence *seq = nullptr;

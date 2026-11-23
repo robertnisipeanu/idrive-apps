@@ -412,6 +412,13 @@ public:
     virtual bool geometry(int part, const Geometry &g) = 0;
     virtual bool pose(int part, const Pose &p) = 0;
     virtual void drop_part(int part) = 0;
+    /* A node of the view that draws nothing: a pivot parts follow
+     * (parent()), posed, animated and dropped as a part. 0 where the backend
+     * has none. */
+    virtual int node(int) { return 0; }
+    /* The part (or node) follows parent's pose: its own is then relative to
+     * parent's. Both of one view. */
+    virtual bool parent(int, int) { return false; }
 
     /* Plays a by the renderer, nothing sent per frame, on:
      * - a quad: Rotate 1 value (degrees clockwise about its pivot), Translate

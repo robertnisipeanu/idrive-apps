@@ -53,6 +53,11 @@ public:
      * (kAttr* bits). False with *err when it exists, past kMaxParts, or
      * refused by the renderer. */
     bool add_part(uint32_t part, int effect, unsigned attributes, const PartLook &look, std::string *err);
+    /* A pivot: a part that draws nothing, which parts follow (parent).
+     * False with *err as add_part(). */
+    bool add_pivot(uint32_t part, std::string *err);
+    /* part follows parent (made before it); false with *err otherwise. */
+    bool set_parent(uint32_t part, uint32_t parent, std::string *err);
     bool has_part(uint32_t part) const { return parts_.count(part) != 0; }
     /* Bytes the part's geometry holds. */
     size_t part_bytes(uint32_t part) const;
@@ -97,6 +102,8 @@ private:
         bool upload = false;        /* the scene does not have it yet */
         int64_t geometry_ms = -1;   /* when it last came */
         int handle = 0;
+        bool pivot = false;         /* draws nothing (add_pivot()) */
+        uint32_t parent = 0;        /* the part it follows; 0: the view */
     };
 
     bool create(uint32_t number, Part &p);

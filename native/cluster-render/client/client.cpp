@@ -100,12 +100,17 @@ void Client::replay(bool canvases)
                 queue(edits_json(kv.first, l));
             for (const auto &h : l.hosts)
                 queue(h.second);
-            for (const auto &p : l.parts) {
-                queue(p.second.json);
-                if (!p.second.geometry.empty())
-                    queue_message(p.second.geometry);
-                if (!p.second.transform.empty())
-                    queue(p.second.transform);
+            /* in the order they were made: a parent before what follows it */
+            std::vector<const Part *> parts;
+            for (const auto &p : l.parts)
+                parts.push_back(&p.second);
+            std::sort(parts.begin(), parts.end(), [](const Part *a, const Part *b) { return a->made < b->made; });
+            for (const Part *p : parts) {
+                queue(p->json);
+                if (!p->geometry.empty())
+                    queue_message(p->geometry);
+                if (!p->transform.empty())
+                    queue(p->transform);
             }
             for (const auto &u : l.uniforms)
                 queue(u.second);
@@ -141,7 +146,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -227,6 +232,8 @@ void Client::read_events()
             samplers_ = j["samplers"] == "1";
             host_layers_ = j["host_layers"] == "1";
             canvas_ = j["canvas"] == "1";
+            curves_ = j["curves"] == "1";
+            nodes_ = j["nodes"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -925,10 +932,35 @@ bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po)
 
 bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look)
 {
+    return this->part(ref, part, po, look, 0);
+}
+
+bool Client::pivot(uint32_t ref, uint32_t part, uint32_t parent)
+{
     auto it = layers_.find(ref);
-    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part))
+    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part) ||
+        (parent && !it->second.parts.count(parent)))
         return false;
     Part &p = it->second.parts[part];
+    p.made = ++parts_made_;
+    std::vector<std::pair<std::string, std::string>> kv = {
+        {"op", json_quote("part")}, {"ref", num(ref)}, {"part", num(part)}, {"node", "1"}};
+    if (parent)
+        kv.push_back({"parent", num(parent)});
+    p.json = json_object(kv);
+    queue(p.json);
+    send_now();
+    return true;
+}
+
+bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look, uint32_t parent)
+{
+    auto it = layers_.find(ref);
+    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part) ||
+        (parent && !it->second.parts.count(parent)))
+        return false;
+    Part &p = it->second.parts[part];
+    p.made = ++parts_made_;
     std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("part")},
                                                            {"ref", num(ref)},
                                                            {"part", num(part)},
@@ -939,6 +971,8 @@ bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const Rend
     if (look.blend.empty())
         kv.push_back({"blend", json_quote(po.blend)});
     look_fields(&kv, look);
+    if (parent)
+        kv.push_back({"parent", num(parent)});
     p.json = json_object(kv);
     queue_for(ref, p.json);
     send_now();
@@ -997,6 +1031,11 @@ uint32_t Client::animate(uint32_t ref, const AnimationOptions &a)
 
 uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again)
 {
+    return animate(ref, a, again, a.step ? "step" : "linear");
+}
+
+uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again, const std::string &interp)
+{
     auto it = layers_.find(ref);
     if (it == layers_.end() || a.property.empty() || a.keys.empty() ||
         (again && !it->second.animations.count(again)))
@@ -1006,7 +1045,7 @@ uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again
         {"op", json_quote("animate")},       {"ref", num(ref)},
         {"anim", num(anim)},                 {"property", json_quote(a.property)},
         {"keys", json_quote(a.keys)},        {"loop", flag(a.loop)},
-        {"interp", json_quote(a.step ? "step" : "linear")}};
+        {"interp", json_quote(interp.empty() ? (a.step ? "step" : "linear") : interp)}};
     if (a.part)
         kv.push_back({"part", num(a.part)});
     if (!a.name.empty())

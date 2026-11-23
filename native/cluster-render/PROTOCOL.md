@@ -44,7 +44,7 @@ lacks.
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
-| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)) |
+| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
 | `stop` | `ref`, `anim` |
@@ -258,7 +258,7 @@ client set. A layer plays at most 16.
 | `name` | the uniform's name (`property` `uniform`) |
 | `keys` | `t:v[,v,v,v] t:v ...`: `t` in ms from the start, ascending; every key the same number of values; at most 256 keys |
 | `loop` | 1: from the first key again after the last; 0 (default): holds the last |
-| `interp` | `linear` (default) or `step` |
+| `interp` | `linear` (default) or `step`; to a service whose hello has `curves` 1, `ease_in`, `ease_out`, `ease_in_out` (each segment between two keys eased by a cubic: starting slow, ending slow, or both) or `smooth` (a Catmull-Rom curve through every key, without corners where segments meet) |
 
 Values a key takes:
 
@@ -269,6 +269,24 @@ Values a key takes:
 | a mesh layer's camera | 3 | 3 | — | — |
 
 Animations are kept, and start again when a scene is published again.
+
+An eased curve is played by the renderer as linear keys the service
+samples from it: each segment in up to 16 steps, at least a millisecond
+apart, at most 1,024 keys in all. It plays the same on RAMSES 19 and RAMSES
+27 (which has no curved splines), and costs no more to send than its
+keys.
+
+### Part hierarchies
+
+Send these only to a service whose hello has `nodes` 1. A part sent with
+`parent` (another part of the layer, made before it) follows it: its
+transform and animations are relative to its parent's, so turning a parent
+turns everything that follows it. A part sent with `node` 1 and no shaders
+is a pivot: it draws nothing and takes no geometry (`a pivot draws
+nothing`), and is transformed, animated and followed as a part. A part
+never follows itself or a part that follows it. The parts of a layer are
+made again in each new scene, each with its parent; the client libraries
+send parts again after a reconnect in the order they were made.
 
 ### Animating preloaded assets
 
@@ -726,7 +744,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

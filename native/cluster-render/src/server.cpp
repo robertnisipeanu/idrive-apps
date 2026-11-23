@@ -2,6 +2,8 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 #include "server.h"
 
+#include "curves.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -793,7 +795,9 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"render_state", "1"},
                                  {"samplers", "1"},
                                  {"host_layers", "1"},
-                                 {"canvas", "1"}}));
+                                 {"canvas", "1"},
+                                 {"curves", "1"},
+                                 {"nodes", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();
@@ -1223,10 +1227,20 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             err = "parts are for mesh layers";
         else if (part == 0)
             err = "parts are numbered from 1";
-        else if (str(j, "vs").empty() || str(j, "fs").empty())
+        else if (j.count("node") && str(j, "node") == "1") {
+            if (static_cast<MeshLayer *>(l)->add_pivot(part, &err))
+                comp_->touch(l);
+        } else if (str(j, "vs").empty() || str(j, "fs").empty())
             err = "a part needs vs and fs";
         else if (look_fields(j, false, &look, &err, stencil_ok(l->params)))
             comp_->add_part(c.id, l->id(), part, str(j, "vs"), str(j, "fs"), look, &err);
+        if (err.empty() && j.count("parent")) {
+            double parent = 0;
+            /* the part stays made, following the view, when its parent is refused */
+            if (num(j, "parent", 1, 4294967295.0, &parent, &err))
+                static_cast<MeshLayer *>(l)->set_parent(part, (uint32_t)parent, &err);
+            comp_->touch(l);
+        }
         if (!err.empty())
             error(c, op, ref, err);
     } else if (op == "transform") {
@@ -1251,7 +1265,8 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             return;
         }
         if (!choice(j, "property", {"rotate", "translate", "scale", "uniform"}, &property, &err) ||
-            !num(j, "loop", 0, 1, &loop, &err) || !choice(j, "interp", {"linear", "step"}, &interp, &err) ||
+            !num(j, "loop", 0, 1, &loop, &err) ||
+            !choice(j, "interp", {"linear", "step", "ease_in", "ease_out", "ease_in_out", "smooth"}, &interp, &err) ||
             !parse_keys(str(j, "keys"), &a, &err)) {
             error(c, op, ref, err);
             return;
@@ -1265,6 +1280,9 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         a.uniform = str(j, "name");
         a.loop = loop != 0;
         a.step = interp == 1;
+        static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
+                                       Curve::Smooth};
+        sample_curve(curves[interp], &a);
         if (a.property == Animated::Uniform && (a.uniform.empty() || a.uniform.size() > 64)) {
             error(c, op, ref, "a uniform's animation needs its name");
             return;

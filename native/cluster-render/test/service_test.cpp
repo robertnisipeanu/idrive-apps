@@ -48,7 +48,8 @@
  * client's layers, with no scene (hosting_from_layers, hosting_from_layers_more, holding_into). A layer's
  * preload, end to end (preload). A layer's others_fps holding another
  * client's video and releasing it (others_fps). Render state and samplers
- * (render_state_and_samplers). Canvases (canvases_over_socket). */
+ * (render_state_and_samplers). Canvases (canvases_over_socket). Eased curves
+ * and part hierarchies (motion_over_socket). */
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -2783,6 +2784,92 @@ static void canvases_to_an_older_service()
            old.sent("\"op\":\"bind\",\"ref\":" + std::to_string(shown)));
 }
 
+/* Eased curves and part hierarchies over the socket with the C++ client:
+ * the hello says the service takes them; a pivot numbered after the parts
+ * following it, turned by an eased animation; all made again after a
+ * service restart in the order they were made; an unknown interp, a
+ * missing parent and a pivot's geometry refused. */
+static void motion_over_socket()
+{
+    Rig r;
+    cr::Client c("gauge", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("motion: the hello says the service takes curves and pivots", c.takes_curves() && c.takes_nodes());
+    cr::LayerOptions ml;
+    ml.target = "panel";
+    ml.w = 400;
+    ml.h = 300;
+    cr::MeshOptions mo;
+    mo.cz = 6;
+    const uint32_t box = c.mesh(ml, mo);
+    cr::PartOptions po;
+    po.vs = "#version 100\nattribute vec3 a_position;\nuniform mat4 u_mvp;\n"
+            "void main(){gl_Position=u_mvp*vec4(a_position,1.0);}";
+    po.fs = "#version 100\nprecision mediump float;\nvoid main(){gl_FragColor=vec4(1.0);}";
+    ok("motion: a pivot numbered 5, part 1 following it, part 2 following part 1",
+       c.pivot(box, 5) && c.part(box, 1, po, cr::RenderState(), 5) && c.part(box, 2, po, cr::RenderState(), 1) &&
+           c.geometry(box, 1, cube()) && c.geometry(box, 2, cube()));
+    ok("motion: a parent not made yet refused here", !c.part(box, 3, po, cr::RenderState(), 4));
+    cr::AnimationOptions spin;
+    spin.part = 5;
+    spin.property = "rotate";
+    spin.keys = "0:0,0,0 1000:0,90,0 2000:0,180,0";
+    spin.loop = true;
+    ok("motion: the pivot turned by a smooth curve", c.animate(box, spin, 0, "smooth") != 0);
+    r.pump(400);
+    auto check = [&](const char *when) {
+        FakeGraph *g = r.gpu.graph("panel");
+        int pivot = 0, p1 = 0, p2 = 0;
+        if (g)
+            for (const auto &kv : g->shown.parts)
+                if (kv.second.pivot)
+                    pivot = kv.first;
+        if (g)
+            for (const auto &kv : g->shown.parts)
+                if (!kv.second.pivot && kv.second.parent == pivot)
+                    p1 = kv.first;
+        if (g)
+            for (const auto &kv : g->shown.parts)
+                if (p1 && kv.second.parent == p1)
+                    p2 = kv.first;
+        size_t keys = 0;
+        if (g)
+            for (const auto &kv : g->shown.animations)
+                if (kv.second.node == pivot)
+                    keys = kv.second.a.t.size();
+        ok((std::string("motion: ") + when + ": the pivot, the parts following it, its animation sampled").c_str(),
+           pivot && p1 && p2 && keys == 2 * 16 + 1);
+    };
+    check("made");
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    check("after a service restart");
+    ok("motion: no error so far", e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"layer\",\"ref\":1,\"target\":\"panel\",\"kind\":\"mesh\"}");
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":1,\"node\":1}");
+    raw.send("{\"op\":\"animate\",\"ref\":1,\"part\":1,\"anim\":1,\"property\":\"rotate\",\"keys\":\"0:0,0,0 9:1,1,1\","
+             "\"interp\":\"bounce\"}");
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":2,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"parent\":7}");
+    raw.send_message(mesh_body(1, 1, 3, 3, 0, std::string(36, '\0') + std::string("\0\0\1\0\2\0", 6)));
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("motion: an unknown interp refused", refused("animate", 1, "interp must be linear, step, ease_in"));
+    ok("motion: a parent that is not there refused", refused("part", 1, "a part's parent is another part"));
+    ok("motion: a pivot's geometry refused", ev.find("a pivot draws nothing") != std::string::npos);
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -3299,6 +3386,7 @@ int main()
     render_state_and_samplers();
     canvases_over_socket();
     canvases_to_an_older_service();
+    motion_over_socket();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

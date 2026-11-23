@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "../src/compositor.h"
+#include "../src/curves.h"
 #include "fake_port.h"
 #include "log.h"
 #ifdef CRS_RAMSES27
@@ -526,6 +527,25 @@ static void backend(Gpu &gpu)
 #ifndef CRS_RAMSES27
     ok("and the scene described whole again", described("check"));
 #endif
+    /* Part hierarchies: a pivot, a part following it, posed and animated
+     * by a smooth curve sampled into linear keys (curves.h). */
+    const int pivot = g->node(v1);
+    const int follower = g->part(v1, lit_fx, PartLook());
+    Animation smooth = keyed(Animated::Rotate, 3, {0, 1000, 2000}, {0, 0, 0, 0, 90, 0, 0, 180, 0}, true);
+    sample_curve(Curve::Smooth, &smooth);
+    Pose tilt;
+    tilt.r[0] = 20;
+    ok("hierarchy: a pivot, a part following it, posed and animated by a smooth curve",
+       pivot && follower && g->geometry(follower, cube.geometry()) && g->parent(follower, pivot) &&
+           g->pose(pivot, tilt) && smooth.t.size() == 33 && g->animate(pivot, smooth) && g->flush(8));
+    ok("hierarchy: a pivot has no geometry", !g->geometry(pivot, cube.geometry()));
+    g->drop_part(pivot);
+    ok("hierarchy: the pivot dropped, what followed it follows the view", g->flush(9));
+    g->drop_part(follower);
+#ifndef CRS_RAMSES27
+    ok("hierarchy: the scene described whole", described("check"));
+#endif
+
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
      * part in it, a quad on screen sampling it; one drawn once, redrawn;

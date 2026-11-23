@@ -59,6 +59,7 @@
 #include "../kit/block_pack.h"
 #include "../kit/yuv_atlas.h"
 #include "../src/compositor.h"
+#include "../src/curves.h"
 #include "fake_graph.h"
 
 using namespace crs;
@@ -2787,6 +2788,129 @@ static void canvases_as_layers()
     ok("memory: another client's canvases have the rest", m.comp->add_canvas(2, m.panel, tiny, &err) != 0);
 }
 
+/* Eased curves (curves.h): sampled into linear keys that start and end at
+ * the client's, ease as asked, and stay within the sampled keys' limit;
+ * smooth passes through every key. */
+static void curves()
+{
+    Animation a;
+    a.width = 1;
+    a.t = {0, 1000};
+    a.v = {0, 100};
+    Animation in = a;
+    sample_curve(Curve::EaseInOut, &in);
+    auto at = [](const Animation &x, uint32_t t) {
+        for (size_t k = 0; k < x.t.size(); k++)
+            if (x.t[k] == t)
+                return x.v[k];
+        return -1.0f;
+    };
+    ok("curves: ease_in_out from the first key to the last, 16 steps",
+       in.t.size() == 17 && in.t.front() == 0 && in.t.back() == 1000 && in.v.front() == 0 && in.v.back() == 100);
+    ok("curves: slow at the ends, half way in the middle",
+       at(in, 500) == 50 && at(in, 62) < 1.0f && at(in, 937) > 99.0f && !in.step);
+    Animation ein = a;
+    sample_curve(Curve::EaseIn, &ein);
+    Animation eout = a;
+    sample_curve(Curve::EaseOut, &eout);
+    ok("curves: ease_in starts slow, ease_out ends slow", at(ein, 500) == 12.5f && at(eout, 500) == 87.5f);
+    Animation sm;
+    sm.width = 3;
+    sm.t = {0, 100, 300, 600};
+    sm.v = {0, 0, 0, 10, 20, 30, 0, 40, 0, 5, 5, 5};
+    Animation smooth = sm;
+    sample_curve(Curve::Smooth, &smooth);
+    bool through = true;
+    for (size_t k = 0; k < sm.t.size(); k++)
+        for (size_t i = 0; i < 3; i++) {
+            size_t at_k = 0;
+            for (size_t j = 0; j < smooth.t.size(); j++)
+                if (smooth.t[j] == sm.t[k])
+                    at_k = j;
+            through = through && smooth.v[at_k * 3 + i] == sm.v[k * 3 + i];
+        }
+    ok("curves: smooth passes through every key, each of its values", through && smooth.width == 3);
+    Animation many;
+    many.width = 4;
+    for (uint32_t k = 0; k < 256; k++) {
+        many.t.push_back(k * 10);
+        for (int i = 0; i < 4; i++)
+            many.v.push_back((float)k);
+    }
+    sample_curve(Curve::Smooth, &many);
+    ok("curves: 256 keys stay within the sampled keys' limit", many.t.size() <= kMaxSampledKeys &&
+                                                                  many.t.size() == 255 * 4 + 1);
+    Animation close;
+    close.width = 1;
+    close.t = {0, 3};
+    close.v = {0, 1};
+    sample_curve(Curve::EaseIn, &close);
+    bool ascending = true;
+    for (size_t k = 1; k < close.t.size(); k++)
+        ascending = ascending && close.t[k] > close.t[k - 1];
+    ok("curves: keys 3 ms apart: steps a millisecond apart at the least", ascending && close.t.size() == 4);
+    Animation st = a;
+    sample_curve(Curve::Step, &st);
+    ok("curves: linear and step as sent", st.t.size() == 2);
+}
+
+/* Part hierarchies: a pivot that draws nothing, parts following it and each
+ * other, refusals for a missing or looping parent, all made again in a new
+ * scene with every parent, whatever the parts' numbers. */
+static void hierarchies()
+{
+    Rig r;
+    std::string err;
+    MeshParams mp;
+    const uint32_t id = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 0, 640, 480)), mp, r.now, &err);
+    MeshLayer *m = static_cast<MeshLayer *>(r.comp->layer(1, id));
+    ok("hierarchy: a pivot", m->add_pivot(9, &err));
+    ok("hierarchy: a part following it",
+       r.comp->add_part(1, id, 1, kLitVs, kPartFs, PartLook(), &err) && m->set_parent(1, 9, &err));
+    ok("hierarchy: a part following that part",
+       r.comp->add_part(1, id, 2, kLitVs, kPartFs, PartLook(), &err) && m->set_parent(2, 1, &err));
+    ok("hierarchy: a part does not follow itself", !m->set_parent(2, 2, &err));
+    ok("hierarchy: nor one that follows it", !m->set_parent(9, 2, &err) && err == "a part cannot follow itself");
+    ok("hierarchy: nor a part that is not there", !m->set_parent(1, 7, &err));
+    ok("hierarchy: a pivot is not drawn: geometry refused", !r.comp->geometry(1, id, 9, fan(4, true), r.now, &err));
+    r.comp->geometry(1, id, 1, fan(4, true), r.now, &err);
+    r.comp->geometry(1, id, 2, fan(4, true), r.now, &err);
+    Pose turn;
+    turn.r[1] = 45;
+    m->set_pose(9, turn);
+    r.run(300);
+    FakeGraph *g = r.g("panel");
+    auto check = [&](const char *when) {
+        int pivot = 0, p1 = 0, p2 = 0;
+        if (g)
+            for (const auto &kv : g->shown.parts) {
+                if (kv.second.pivot)
+                    pivot = kv.first;
+            }
+        if (g)
+            for (const auto &kv : g->shown.parts) {
+                if (!kv.second.pivot && kv.second.parent == pivot)
+                    p1 = kv.first;
+            }
+        if (g)
+            for (const auto &kv : g->shown.parts)
+                if (!kv.second.pivot && p1 && kv.second.parent == p1)
+                    p2 = kv.first;
+        ok((std::string("hierarchy: ") + when + ": the pivot turned, part 1 following it, part 2 part 1").c_str(),
+           pivot && p1 && p2 && g->shown.parts[pivot].pose.r[1] == 45 && !g->shown.parts[pivot].geometry &&
+               g->shown.parts[p1].geometry);
+    };
+    check("made");
+    r.comp->unpublish(r.slots.targets()[r.panel]);
+    std::string perr;
+    r.comp->publish(r.slots.targets()[r.panel], &perr);
+    r.run(300);
+    g = r.g("panel");
+    check("in a new scene");
+    std::string why;
+    ok("hierarchy: the layer drawn", r.comp->state(id, &why) != LayerState::Error);
+}
+
 int main()
 {
     image_first_upload();
@@ -2829,6 +2953,8 @@ int main()
     mipmapped_assets();
     canvases();
     canvases_as_layers();
+    curves();
+    hierarchies();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

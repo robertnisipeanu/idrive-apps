@@ -269,8 +269,12 @@ Beside the layers:
 - **Turns:** video, image and effect quads rotate and scale about a pivot
   (a needle).
 - **Animations:** keys the renderer plays by itself on a quad's rotation,
-  offset and scale, a part's pose, a mesh camera, or a uniform; nothing is
-  sent per frame.
+  offset and scale, a part's pose, a mesh camera, or a uniform, linear,
+  stepped or eased (`ease_in`, `ease_out`, `ease_in_out`, `smooth`); nothing
+  is sent per frame.
+- **Part hierarchies:** a mesh part can follow another part or a pivot that
+  draws nothing, so one animation turns a whole assembly (PROTOCOL.md "Part
+  hierarchies").
 - **Scene files** (PROTOCOL.md "Scene files"): on a target with
   `<target>_scene_files` 1, a RAMSES scene file and its resource files,
   authored beforehand, loaded as the target's whole scene and changed live

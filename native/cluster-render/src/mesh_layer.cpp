@@ -39,7 +39,7 @@ MeshLayer::MeshLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pa
 
 bool MeshLayer::create(uint32_t number, Part &p)
 {
-    p.handle = g_->part(view_, p.effect, p.look);
+    p.handle = p.pivot ? g_->node(view_) : g_->part(view_, p.effect, p.look);
     if (!p.handle || !g_->pose(p.handle, p.pose)) {
         log_error("layer %u: part %u refused", id_, number);
         return false;
@@ -73,6 +73,50 @@ bool MeshLayer::add_part(uint32_t part, int effect, unsigned attributes, const P
     return true;
 }
 
+bool MeshLayer::add_pivot(uint32_t part, std::string *err)
+{
+    if (parts_.count(part)) {
+        *err = "part " + std::to_string(part) + " exists";
+        return false;
+    }
+    if (parts_.size() >= kMaxParts) {
+        *err = "at most " + std::to_string(kMaxParts) + " parts a mesh layer";
+        return false;
+    }
+    Part &p = parts_[part];
+    p.pivot = true;
+    if (g_ && !create(part, p)) {
+        if (p.handle)
+            g_->drop_part(p.handle);
+        parts_.erase(part);
+        *err = "the renderer refused the pivot";
+        return false;
+    }
+    return true;
+}
+
+bool MeshLayer::set_parent(uint32_t part, uint32_t parent, std::string *err)
+{
+    auto c = parts_.find(part);
+    auto p = parts_.find(parent);
+    if (c == parts_.end() || p == parts_.end() || part == parent) {
+        *err = "a part's parent is another part of the layer";
+        return false;
+    }
+    /* made before it: no loop */
+    for (uint32_t up = parent; up; up = parts_[up].parent)
+        if (up == part) {
+            *err = "a part cannot follow itself";
+            return false;
+        }
+    if (g_ && c->second.handle && p->second.handle && !g_->parent(c->second.handle, p->second.handle)) {
+        *err = "the renderer refused the parent";
+        return false;
+    }
+    c->second.parent = parent;
+    return true;
+}
+
 size_t MeshLayer::part_bytes(uint32_t part) const
 {
     auto it = parts_.find(part);
@@ -87,6 +131,10 @@ bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std
         return false;
     }
     Part &p = it->second;
+    if (p.pivot) {
+        *err = "a pivot draws nothing: it has no geometry";
+        return false;
+    }
     static const struct { unsigned bit; const char *name; } attrs[] = {
         {kAttrNormal, "a_normal"}, {kAttrTexcoord, "a_texcoord"}, {kAttrColor, "a_color"}};
     for (const auto &a : attrs)
@@ -139,7 +187,8 @@ std::vector<int> MeshLayer::effects() const
 {
     std::vector<int> out;
     for (const auto &kv : parts_)
-        out.push_back(kv.second.effect);
+        if (!kv.second.pivot)
+            out.push_back(kv.second.effect);
     return out;
 }
 
@@ -158,6 +207,10 @@ bool MeshLayer::attach(Graph *g, int64_t, std::string *err)
     bool good = view_ && g->show(view_, false) && g->order(view_, order_);
     for (auto it = parts_.begin(); good && it != parts_.end(); ++it)
         good = create(it->first, it->second);
+    /* each part after them all: a parent may have a higher number */
+    for (auto it = parts_.begin(); good && it != parts_.end(); ++it)
+        if (it->second.parent)
+            good = g->parent(it->second.handle, parts_[it->second.parent].handle);
     if (!good) {
         *err = "mesh view or part refused";
         detach(true);

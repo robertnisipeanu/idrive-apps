@@ -29,7 +29,7 @@
  * one sent with its chain, and a factor the service lacks refused; a
  * canvas drawn in with stencil state and sampled on screen; to a service
  * without canvases (a rollback) nothing of a canvas sent, all of it to one
- * that takes them;
+ * that takes them; a pivot, a part following it and an eased animation;
  * close() and connect() in one tick making one connection. */
 'use strict';
 
@@ -424,6 +424,19 @@ async function main() {
     ok('canvas: dropping it with a layer in it refused, kept here',
         await until(() => eo.refused.some((r) => r.indexOf('drop: canvas in use') === 0), 1000) && ovl.layers.has(cv));
     [inCv, onScreen, cv].forEach((r) => ovl.drop(r));
+
+    /* Pivots, parents and eased curves. */
+    ok('motion: the hello says the service takes curves and pivots', ovl.curves === true && ovl.nodes === true);
+    const rig = ovl.mesh({ target: 'panel', x: 500, y: 0, w: 200, h: 200, cz: 5 });
+    const plainVs = 'attribute vec3 a_position;uniform mat4 u_mvp;void main(){gl_Position=u_mvp*vec4(a_position,1.0);}';
+    ok('motion: a pivot and a part following it',
+        ovl.part(rig, 3, { node: true }) && ovl.part(rig, 1, { vs: plainVs, fs: 'void main(){gl_FragColor=vec4(1.0);}', parent: 3 }));
+    ok('motion: a parent not made refused here', !ovl.part(rig, 2, { vs: plainVs, fs: 'void main(){}', parent: 9 }));
+    ovl.geometry(rig, 1, { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] });
+    ovl.animate(rig, { part: 3, property: 'rotate', keys: '0:0,0,0 1000:0,90,0', interp: 'ease_in_out', loop: true });
+    ok('motion: shown, nothing refused', await until(() => eo.layer[rig] === 'shown', 3000) &&
+        eo.refused.length === refusedBefore + 2);
+    ovl.drop(rig);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
 

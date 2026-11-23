@@ -17,7 +17,11 @@
  *   canvas  off-screen canvases (a service whose hello has canvas): plasma
  *           drawn only inside a ring written to a canvas's stencil, shown
  *           on screen; a lit cube drawn once in a canvas drawn once, shown
- *           twice, one of them turned by the renderer.
+ *           twice, one of them turned by the renderer;
+ *   motion  eased curves and part hierarchies (a service whose hello has
+ *           curves and nodes): two needles swept the same way, linear and
+ *           ease_in_out; an arm and a spinning tip that follow a pivot the
+ *           renderer turns along a smooth curve.
  * Every animation runs in the renderer; the client sends only the text once
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
@@ -25,7 +29,7 @@
  * On the unit (Node 8): copy this file and cluster_render_client.js into one
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas]
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -34,7 +38,7 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -414,6 +418,38 @@ function main() {
         cr.bind(a, 'u_canvas', still);
         cr.bind(b, 'u_canvas', still);
         cr.animate(b, { property: 'rotate', keys: '0:0 6000:360', loop: true });
+    }
+
+    if (on('motion')) {
+        /* Two needles, one sweep: linear on the left, eased on the right. */
+        const R = Math.round(H * 0.3), cy = Math.round(H * 0.55);
+        const nw = 2 * Math.max(4, Math.round(R * 0.05)), nl = Math.round(R * 0.9);
+        ['linear', 'ease_in_out'].forEach((interp, k) => {
+            const cx = Math.round(W * (0.12 + 0.24 * k));
+            const ring = name(cr.image({ target: target, x: cx - R, y: cy - R, w: 2 * R, h: 2 * R }), 'dial ' + interp);
+            cr.pixels(ring, null, dial(R));
+            const hand = name(cr.image({ target: target, z: 1, x: cx - nw / 2, y: cy - (nl - nw / 2), w: nw, h: nl,
+                px: nw / 2, py: nl - nw / 2, sampling: 'bilinear' }), 'needle ' + interp);
+            cr.pixels(hand, null, needle(nw, nl));
+            cr.animate(hand, { property: 'rotate', keys: '0:-120 2000:120 4000:-120', loop: true, interp: interp });
+        });
+        /* An arm and its tip following a pivot turned along a smooth curve. */
+        const rig = name(cr.mesh({ target: target, x: Math.round(W * 0.55), y: Math.round(H * 0.05),
+            w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 24 }), 'arm');
+        cr.part(rig, 10, { node: true });
+        cr.part(rig, 1, { vs: LIT_VS, fs: LIT_FS, depth: true, cull: 'back', parent: 10 });
+        cr.geometry(rig, 1, cube());
+        cr.transform(rig, 1, { tx: 2.2, sx: 2.2, sy: 0.25, sz: 0.25 });
+        cr.uniform(rig, 'u_color', [0.9, 0.9, 0.95, 1], { part: 1 });
+        cr.part(rig, 11, { node: true, parent: 10 });
+        cr.transform(rig, 11, { tx: 4.6 });
+        cr.part(rig, 2, { vs: LIT_VS, fs: LIT_FS, depth: true, cull: 'back', parent: 11 });
+        cr.geometry(rig, 2, cube());
+        cr.transform(rig, 2, { sx: 0.7, sy: 0.7, sz: 0.7 });
+        cr.uniform(rig, 'u_color', [1, 0.45, 0, 1], { part: 2 });
+        cr.animate(rig, { part: 10, property: 'rotate', interp: 'smooth', loop: true,
+            keys: '0:0,0,0 1500:0,0,70 2500:0,0,40 4000:0,0,160 6000:0,0,360' });
+        cr.animate(rig, { part: 2, property: 'rotate', loop: true, keys: '0:0,0,0 1000:360,360,0' });
     }
 
     if (on('alert')) {

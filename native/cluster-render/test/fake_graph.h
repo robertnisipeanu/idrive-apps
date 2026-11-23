@@ -81,6 +81,8 @@ struct FakePart {
     uint32_t vertices = 0, indices = 0;
     unsigned attributes = 0;
     int geometries = 0;   /* geometry() calls */
+    bool pivot = false;   /* a node(): draws nothing */
+    int parent = 0;       /* the part or node it follows; 0: the view */
     std::map<std::string, int> textures;
     std::map<std::string, std::vector<float>> uniforms;
     std::map<std::string, UniformType> types;
@@ -362,6 +364,25 @@ public:
     }
     void stop(int anim) override { pending.animations.erase(anim); }
 
+    int node(int view) override
+    {
+        if (!pending.views.count(view))
+            return 0;
+        FakePart p;
+        p.view = view;
+        p.pivot = true;
+        pending.parts[next] = p;
+        return next++;
+    }
+    bool parent(int part, int parent) override
+    {
+        auto c = pending.parts.find(part);
+        auto p = pending.parts.find(parent);
+        if (c == pending.parts.end() || p == pending.parts.end() || part == parent || c->second.view != p->second.view)
+            return false;
+        c->second.parent = parent;
+        return true;
+    }
     int canvas(const CanvasSpec &c) override
     {
         if (refuse_canvases || !c.w || !c.h || sampling_mips(c.sampler.sampling))
