@@ -254,9 +254,10 @@ made, the old one playing until then), `stop` ends it and its property goes
 back to what the client set. A layer plays at most 16. An animation's keys
 go to the renderer with the scene (about 8 bytes a key with one value) out
 of a share of the upload cap of their own: an eighth of it, split evenly
-between the targets, the rest pacing the layers' writes, so animations and
-writes never wait on each other, nor one target's animations on
-another's. A target's flush makes waiting animations while its share has
+between the targets, the rest pacing the layers' writes while an animation
+waits for its keys (with none waiting, the writes have the whole cap), so
+animations and writes never wait on each other, nor one target's
+animations on another's. A target's flush makes waiting animations while its share has
 bytes left, the connections with animations waiting taking turns, and those
 left start at its next flushes; a flush goes past the share by less than
 one animation (at most 20,480 bytes, 1,024 keys of four values), which its

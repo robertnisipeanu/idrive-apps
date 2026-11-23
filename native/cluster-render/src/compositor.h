@@ -258,13 +258,15 @@ public:
                   const PartLook &look, uint32_t parent, std::string *err);
     /* Animation keys go to the renderer as scene data, out of a share of
      * the upload cap of their own: 1/kKeyShare of it, the rest pacing the
-     * writes (pacer()). The keys' share is split evenly into a bucket per
-     * target, refilled every tick whatever the order targets flush in and
-     * holding at most kKeyHeldMs of its rate; a target's flush makes its
-     * due animations while its bucket is above 0 (Graph::key_allowance()),
-     * so the bucket goes below 0 by less than one animation: at most
-     * kMaxKeyBytes. Keys never touch the writes' pacer, nor writes a
-     * bucket: neither starves the other, nor one target's keys another's. */
+     * writes (pacer()) while an animation waits for its keys on any target;
+     * with none waiting the writes have the whole cap. The keys' share is
+     * split evenly into a bucket per target, refilled every tick whatever
+     * the order targets flush in and holding at most kKeyHeldMs of its
+     * rate; a target's flush makes its due animations while its bucket is
+     * above 0 (Graph::key_allowance()), so the bucket goes below 0 by less
+     * than one animation: at most kMaxKeyBytes. Keys never touch the
+     * writes' pacer, nor writes a bucket: neither starves the other, nor
+     * one target's keys another's. */
     static const uint64_t kKeyShare = 8;
     static const int64_t kKeyHeldMs = 100;
     /* One animation's keys at most: 1,024 keys of a time and four values. */
@@ -796,6 +798,10 @@ private:
     std::map<uint32_t, AssetEntry> assets_;
     std::map<uint32_t, CanvasEntry> canvases_;
     int64_t keys_refilled_ms_ = -1;   /* the key buckets' last refill */
+    bool keys_waiting_ = false;       /* an animation waits for its keys: the writes at writes_rate() */
+    /* The writes' pacer at the whole cap, or less the keys' share while an
+     * animation waits for its keys. */
+    void pace_writes();
     /* Every target's key bucket brought up to now_ms. */
     void refill_keys(int64_t now_ms);
     /* A layer's entry, in the stack or a canvas (*in, null for the stack);

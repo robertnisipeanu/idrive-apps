@@ -89,7 +89,7 @@ int64_t steady_us()
 
 Compositor::Compositor(Gpu *gpu, SlotManager *slots, const GovernorConfig &budget, int upload_burst_ms,
                        const CompositorLimits &limits)
-    : gpu_(gpu), slots_(slots), limits_(limits), governor_(budget), pacer_(writes_rate(budget.max_bps), upload_burst_ms),
+    : gpu_(gpu), slots_(slots), limits_(limits), governor_(budget), pacer_(budget.max_bps, upload_burst_ms),
       clock_us_(steady_us)
 {
     share_.share_of(&pacer_);
@@ -1762,13 +1762,25 @@ void Compositor::render(int64_t now_ms)
             break;
         }
     if (governor_.tick(now_ms))
-        pacer_.set_rate(writes_rate(governor_.cap()));
+        pace_writes();
+}
+
+void Compositor::pace_writes()
+{
+    pacer_.set_rate(keys_waiting_ ? writes_rate(governor_.cap()) : governor_.cap());
 }
 
 void Compositor::refill_keys(int64_t now_ms)
 {
     if (targets_.empty())
         return;
+    bool waiting = false;
+    for (const Target &t : targets_)
+        waiting = waiting || (t.graph && t.graph->animations_due());
+    if (waiting != keys_waiting_) {
+        keys_waiting_ = waiting;
+        pace_writes();
+    }
     const int64_t rate = int64_t(governor_.cap() / kKeyShare / targets_.size()), held = rate * kKeyHeldMs / 1000;
     const int64_t gap = keys_refilled_ms_ < 0 ? kKeyHeldMs : std::min<int64_t>(now_ms - keys_refilled_ms_, 1000);
     keys_refilled_ms_ = now_ms;

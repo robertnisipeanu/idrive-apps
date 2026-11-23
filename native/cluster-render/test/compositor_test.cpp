@@ -267,8 +267,7 @@ static ShareRun share_run(bool hud, bool still, bool hud_shown = true, bool map 
 
 static void share_hud()
 {
-    /* the writes' rate: the 5500 KB/s cap less the keys' share */
-    const uint64_t rate = Compositor::writes_rate(5500 * 1024), secs = 20;
+    const uint64_t rate = 5500 * 1024, secs = 20;
     char name[220];
     const ShareRun alone = share_run(false, false), hidden = share_run(true, false, false), with = share_run(true, false);
     std::snprintf(name, sizeof name, "HUD share, HUD off (no layer, or one that wants nothing): the map writes the same %zu "
@@ -1025,7 +1024,7 @@ static int64_t until_written(Rig &r, FakeGraph *g, int64_t limit = 3000)
 
 static void warm_scene_charged()
 {
-    const uint64_t rate = 2000 * 1024;   /* writes at 1,792,000 B/s, the cap less the keys' share: a 250 ms burst of 448,000 B */
+    const uint64_t rate = 2000 * 1024;   /* a 250 ms burst: 512,000 B */
     Rig r(rate);
     std::string err;
     VideoParams vp;
@@ -1041,8 +1040,8 @@ static void warm_scene_charged()
     a[0] += 40;
     vl->offer(a.data(), r.now);
     const int64_t fresh = until_written(r, g);
-    /* (783,360 - 448,000) B of debt at 1,792,000 B/s: 187 ms. */
-    ok("its debt is the frame's alone: the next write within 195 ms", fresh >= 180 && fresh <= 195);
+    /* (783,360 - 512,000) B of debt at 2,048,000 B/s: 133 ms. */
+    ok("its debt is the frame's alone: the next write within 140 ms", fresh >= 120 && fresh <= 140);
     r.run(2000);
     r.slots.on_lost(0x010004f0, "fetch removed", r.now);
     a[W * 300] += 40;
@@ -1054,13 +1053,13 @@ static void warm_scene_charged()
     ok("a warm scene asked for again: its newest frame flushed at once, nothing charged until the display takes it",
        g->flushed_bytes > b1);
     /* Taken with nearly a full burst: the resend of atlas and banks
-     * (1,305,600 B) leaves about 860,000 B of debt, about 480 ms. */
+     * (1,305,600 B) leaves about 800,000 B of debt, about 390 ms. */
     r.slots.on_shown(0x010004f0, r.now);
     a[W * 100] += 40;
     vl->offer(a.data(), r.now);
     const int64_t warm = until_written(r, g);
-    ok("taken: its resend charged, the next write after 470-490 ms",
-       atlas + banks == 1305600 && warm >= 470 && warm <= 490);
+    ok("taken: its resend charged, the next write after 380-400 ms",
+       atlas + banks == 1305600 && warm >= 380 && warm <= 400);
 }
 
 static void stack_and_lifecycle()
@@ -1288,10 +1287,9 @@ static void many_layers_within_budget()
                   "flush (%llu KB; worst %llu.%llu%% of that)",
                   (unsigned long long)(flush / 1024), (unsigned long long)(worst / 10), (unsigned long long)(worst % 10));
     ok(name, within);
-    const uint64_t writes_share = Compositor::writes_rate(budget);
-    std::snprintf(name, sizeof name, "  10 s within 10 s of the writes' share of the 5500 KB/s ceiling and the burst "
-                  "(%llu KB), and at least 90%% of it", (unsigned long long)(total / 1024));
-    ok(name, total <= writes_share * 10 + burst && total >= writes_share * 10 * 9 / 10);
+    std::snprintf(name, sizeof name, "  10 s within 10 s of the 5500 KB/s ceiling and the burst (%llu KB), and at least "
+                  "90%% of it", (unsigned long long)(total / 1024));
+    ok(name, total <= budget * 10 + burst && total >= budget * 10 * 9 / 10);
     uint64_t least = ~0ull, writes = 0;
     for (const ImageLayer *l : imgs) {
         least = std::min(least, l->write_stats().frames);

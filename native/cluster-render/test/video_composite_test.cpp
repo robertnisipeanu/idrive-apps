@@ -304,29 +304,26 @@ static std::vector<const FakeQuad *> atlas_quads(FakeGraph *g)
 /* ---- the single video ---------------------------------------------------- */
 
 /* Recorded with video_trace.h from the build before composites (main at
- * 05e38ec), and again when the writes came to be paced at the cap less the
- * animation keys' share (Compositor::writes_rate()), the governor stepping
- * that cap down on the runs' failed flushes as before: hash, calls, write
- * bytes, flushes, failed flushes, failed writes.
+ * 05e38ec): hash, calls, write bytes, flushes, failed flushes, failed writes.
  * The image case includes first-upload visibility gating: two extra show
  * transitions, with identical writes, flushes and injected failure counts.
  * compositor_test separately verifies no uninitialized pixels become visible. */
 static const uint64_t kMainTrace[2][6] = {
-    {0x1e79566903ed70b0ull, 1098, 29131776, 218, 6, 0},
-    {0x9831c78068c151c2ull, 1199, 29953024, 247, 6, 8},
+    {0xe0b20733c2a49aeeull, 1208, 31669248, 227, 5, 0},
+    {0x47d22f12de74c5f8ull, 1317, 33012736, 256, 5, 8},
 };
 /* A camera joining a shown map, and sets (video_trace.h join_trace). */
 static const uint64_t kMainJoinTrace[2][6] = {
     {0x18f19b095ea37fc8ull, 3380, 21038592, 468, 0, 0},
     {0xdf96bf1d74f5b41bull, 3390, 21038592, 541, 0, 0},
 };
-/* Two videos (video_trace.h two_video_trace), recorded the same way, and
- * again with the writes' share. On the map the camera is opaque over the
- * map, which leaves the 15 tiles wholly under it unwritten
- * (occlusion_test.cpp): that run is recorded from this build. */
+/* Two videos (video_trace.h two_video_trace), recorded the same way. On the
+ * map the camera is opaque over the map, which leaves the 15 tiles wholly
+ * under it unwritten (occlusion_test.cpp): that run is recorded from this
+ * build. */
 static const uint64_t kMainTwoTrace[2][6] = {
-    {0xc8b74bcb540ce0feull, 3080, 37441024, 374, 5, 24},
-    {0x093897353a1d2eb6ull, 3040, 38240256, 496, 5, 0},
+    {0x2b96bfc56be05ffaull, 3287, 40503808, 396, 4, 21},
+    {0x8f0173ab738d414dull, 3146, 40896000, 507, 5, 0},
 };
 
 static void single_video()
@@ -349,7 +346,7 @@ static void single_video()
         if (which)
             std::snprintf(name, sizeof name,
                           "two videos (a map and a camera on the panel): each draws itself, every renderer call, "
-                          "pixel and flush as recorded (%llu calls, %llu KB, %llu flushes)",
+                          "pixel and flush as before composites (%llu calls, %llu KB, %llu flushes)",
                           (unsigned long long)t.calls, (unsigned long long)(t.write_bytes / 1024),
                           (unsigned long long)t.flushes);
         else
