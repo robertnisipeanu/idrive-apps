@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+A text helper for both client libraries: an app sends a font once (from
+glyph bitmaps, a monospace grid or a BMFont) and draws strings from it in
+effect layers, laid out with the font's advances and kerning, each change
+of string under 700 bytes.
+
+Shared values: an app's float or vector that uniforms of several of its
+layers and mesh parts follow, set or animated once for all of them, so a
+glow, a colour or a level drawn in many places stays in step.
+
+Cube maps: an asset of six square faces that effect layers and mesh parts
+sample by direction, for reflections and environment lighting, sent once.
+
 A mesh part can draw lines, a line loop, points or a triangle strip as well
 as triangles, and draw its geometry up to 256 times at once (instances),
 for gauge ticks, star fields or rows of identical shapes sent once. What

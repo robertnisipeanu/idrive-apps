@@ -29,7 +29,8 @@
  * one sent with its chain, and a factor the service lacks refused; a
  * canvas drawn in with stencil state and sampled on screen; to a service
  * without canvases (a rollback) nothing of a canvas sent, all of it to one
- * that takes them; a pivot, a part following it and an eased animation;
+ * that takes them; a shared value a layer's uniform follows, set and
+ * animated; a pivot, a part following it and an eased animation;
  * close() and connect() in one tick making one connection. */
 'use strict';
 
@@ -40,6 +41,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { ClusterRender } = require('../cluster_render_client.js');
+const { Font, Text } = require('../cluster_render_text.js');
 
 const bin = process.argv[2];
 const sock = '/tmp/crs-js-test-' + process.pid + '.sock';
@@ -453,8 +455,129 @@ async function main() {
     ok('draw: points from a GLSL ES 3.00 shader, one vertex: shown',
         await until(() => eo.layer[pts] === 'shown', 3000));
     ovl.drop(pts);
+
+    /* A cube map. */
+    ok('cube: the hello says the service takes cube maps', ovl.cubeMaps === true);
+    const sky = ovl.asset({ target: 'panel', w: 8, h: 8, cube: true, sampling: 'bilinear' });
+    ok('cube: its six faces taken here, not a rect', sky > 0 && ovl.pixels(sky, null, Buffer.alloc(6 * 8 * 8 * 4, 80)) &&
+        !ovl.pixels(sky, [{ x: 0, y: 0, w: 1, h: 1 }], Buffer.alloc(4)));
+    ok('cube: a second whole send refused here, the first kept for a reconnect',
+        !ovl.pixels(sky, null, Buffer.alloc(6 * 8 * 8 * 4, 99)) && ovl.layers.get(sky).image[0] === 80);
+    const env = ovl.effect({ target: 'panel', x: 0, y: 0, w: 32, h: 32,
+        fs: 'precision mediump float;uniform samplerCube u_sky;varying vec2 v_uv;' +
+            'void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv*2.0-1.0,1.0));}' });
+    ovl.bind(env, 'u_sky', sky);
+    status = '';
+    ovl.status();
+    ok('cube: shown, the status names it', await until(() => eo.layer[env] === 'shown', 3000) &&
+        await until(() => status.indexOf('8x8 (cube map)') >= 0, 1000) &&
+        !eo.refused.slice(refusedBefore).some((r) => /^(asset|bind)/.test(r)));
+    ovl.drop(env);
+    ovl.drop(sky);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
+
+    /* Shared values (PROTOCOL.md "Shared values"). */
+    ok('values: the hello says the service takes them', ovl.values === true);
+    const lvl = ovl.value({ target: 'panel', v: 0.5 });
+    const fxA = ovl.effect({ target: 'panel', klass: 'overlay', x: 0, y: 0, w: 16, h: 16,
+        fs: 'precision mediump float;uniform float u_level;void main(){gl_FragColor=vec4(u_level);}' });
+    ok('values: a uniform linked, a layer refused as a value, a vec3 refused as a float',
+        lvl > 0 && ovl.link(fxA, 'u_level', lvl) && !ovl.link(fxA, 'u_level', fxA) &&
+        ovl.value({ target: 'panel', type: 'vec3', v: 1 }) === 0);
+    const refusedValues = eo.refused.length;
+    ok('values: set and animated', ovl.setValue(lvl, 0.75) &&
+        ovl.animate(lvl, { property: 'value', keys: '0:0 500:1', loop: true, interp: 'smooth' }) > 0);
+    const valueRefusals = () => eo.refused.slice(refusedValues).filter((r) => /^(value|link|animate)/.test(r));
+    ok('values: the linked layer shown, no value, link or animation refused',
+        await until(() => eo.layer[fxA] === 'shown', 3000) && (await sleep(200), valueRefusals().length === 0));
+    ovl.drop(lvl);
+    ok('values: dropped, the link forgotten here', Object.keys(ovl.layers.get(fxA).links).length === 0);
+    ovl.drop(fxA);
+
+    {   /* The text helper (cluster_render_text.js), in a block: its names its own. */
+    const grid = Buffer.alloc(16 * 16);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) grid[y * 16 + x] = x < 8 ? 255 : 128;
+    const font = Font.fromGrid({ pixels: grid, w: 16, h: 16, cols: 2, rows: 1, chars: '12' });
+    let l = font.layout('12', 32);
+    ok('text: a grid font laid out at twice its height', font.w === 19 && font.lineHeight === 16 &&
+        font.pixels[1] === 255 && font.pixels[10] === 128 && l.boxes.length === 2 && l.boxes[1].x0 === 16 &&
+        l.boxes[1].u0 === 10 && l.width === 32);
+    const kerned = Font.fromGlyphs(8, [{ char: 'A', w: 4, h: 2, top: 3, advance: 5, pixels: Buffer.alloc(8, 200) },
+        { char: ' ', w: 0, h: 0, advance: 3, pixels: Buffer.alloc(0) }], new Map([['65,65', -2]]));
+    l = kerned.layout('A A\u20acAA', 8);
+    ok('text: glyph bitmaps, kerning, a missing character a space', kerned.pixels[3 * kerned.w + 1] === 200 &&
+        l.boxes.length === 4 && l.boxes[2].x0 === 16 && l.boxes[3].x0 === 19 && l.width === 24);
+    const bm = Font.fromBMFont('common lineHeight=8 base=6\nchar id=65 x=0 y=0 width=4 height=6 xoffset=1 yoffset=2 ' +
+        'xadvance=6\nchar id=66 x=4 y=0 width=4 height=6 xoffset=0 yoffset=2 xadvance=5\nkerning first=65 second=66 ' +
+        'amount=-1\n', { pixels: Buffer.alloc(8 * 6 * 4, 90), w: 8, h: 6, bpp: 4 });
+    l = bm.layout('AB', 8);
+    ok('text: a BMFont', bm.lineHeight === 8 && l.boxes[0].x0 === 1 && l.boxes[1].x0 === 5 && l.width === 10);
+    l = font.layout('12', 16, 2);
+    ok('text: spacing between characters only, none after the last', l.boxes[1].x0 === 10 && l.width === 18);
+    const page = { pixels: Buffer.alloc(8 * 6), w: 8, h: 6 };
+    const glyph = 'char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5';
+    const throws = (fnt) => { try { Font.fromBMFont(fnt, page); return false; } catch (e) { return true; } };
+    ok('text: a BMFont of one page, its glyphs in every channel, taken',
+        !throws('common lineHeight=8 pages=1 packed=0\n' + glyph + ' page=0 chnl=15\n'));
+    ok('text: a BMFont of several pages, packed, a glyph on another page, in one channel or outside the page refused',
+        throws('common lineHeight=8 pages=2\n' + glyph + '\n') && throws('common lineHeight=8 packed=1\n' + glyph + '\n') &&
+        throws('common lineHeight=8\n' + glyph + ' page=1\n') && throws('common lineHeight=8\n' + glyph + ' chnl=4\n') &&
+        throws('common lineHeight=8\nchar id=65 x=6 y=0 width=4 height=6 xadvance=5\n'));
+    ok('text: a BMFont of a negative xadvance refused; a glyph bitmap\'s negative advance its width, as in C++',
+        throws('common lineHeight=8\nchar id=65 x=0 y=0 width=4 height=6 xadvance=-3\n') &&
+        Font.fromGlyphs(8, [{ char: 'x', w: 4, h: 8, advance: -5, pixels: Buffer.alloc(32, 9) }]).layout('xx', 8).width === 8);
+    const fontRef = font.asset(ovl, 'panel');
+    const label = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 40, w: 200, h: 32,
+        align: 'center', maxGlyphs: 4 });
+    const textRefused = eo.refused.length;
+    ok('text: set, centred, and more glyphs than it holds: false',
+        label.ref > 0 && label.set('12') && !label.set('12121') && label.set('21'));
+    ok('text: shown, nothing refused', await until(() => eo.layer[label.ref] === 'shown', 3000) &&
+        (await sleep(200), eo.refused.slice(textRefused).filter((r) => /^(uniform|bind|layer|asset)/.test(r)).length === 0));
+    const layersBefore = ovl.layers.size;
+    ok('text: a rect with no width or height, or more than 14 glyphs, refused: nothing sent',
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, h: 32 }).ref === 0 &&
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, w: 200 }).ref === 0 &&
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, w: 200, h: 32, maxGlyphs: 15 }).ref === 0 &&
+        ovl.layers.size === layersBefore);
+    const full = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 100, w: 300, h: 32 });
+    const fits = full.set('12121212121212');
+    const fl = ovl.layers.get(full.ref);
+    const glyphsMsg = fl.uniforms['0:u_glyphs'], countMsg = fl.uniforms['0:u_count'];
+    const bytes = (m) => Buffer.byteLength(JSON.stringify(m)) + 5;
+    const digits = (n) => n.replace('.', '').replace(/^0+/, '').length;
+    ok('text: 14 glyphs by default, a full line two uniform messages under 700 bytes, numbers to 6 digits',
+        fits && /u_glyphs\[14\]/.test(fl.opts.fs) && glyphsMsg.v.split(' ').length === 56 &&
+        glyphsMsg.v.split(' ').every((n) => digits(n) <= 6) && bytes(glyphsMsg) + bytes(countMsg) < 700);
+    full.drop();
+    label.drop();
+    ovl.drop(fontRef);
+    }
+
+    {   /* The showcase's label page: each line's texts within its line on the
+         * panel, set() taking them whole. */
+    const { dotFont, LABEL_LINES, LABEL_STATES } = require('../showcase.js');
+    const dots = dotFont(Font, 8);
+    const speeds = [];
+    for (let v = 0; v < 180; v += 7) speeds.push(v + ' KM/H');
+    const texts = { clock: ['00:00:00', '23:59:59', '08:08:08'], speed: speeds, status: LABEL_STATES };
+    const over = [];
+    Object.keys(texts).forEach((k) => {
+        const at = LABEL_LINES[k], w = Math.round(1920 * at[3]), h = Math.round(720 * at[2]);
+        texts[k].forEach((t) => { if (dots.layout(t, h).width > w) over.push(k + ' "' + t + '"'); });
+    });
+    ok('showcase: each label line wide enough for its texts on the panel', over.length === 0, over.join(', '));
+    }
+
+    {   /* The showcase's header names every file it needs on the unit. */
+    const show = fs.readFileSync(path.join(__dirname, '..', 'showcase.js'), 'utf8');
+    const needs = [];
+    show.replace(/require\('\.\/([^']+)'\)/g, (m, f) => { needs.push(f); return m; });
+    const copy = /On the unit \(Node 8\): copy ([^]*?) into one/.exec(show);
+    ok('showcase: its header names each file it requires', needs.length >= 2 && copy !== null &&
+        needs.every((f) => copy[1].indexOf(f) >= 0));
+    }
 
     /* Rolled back to a service without canvases: none of a canvas sent to
      * it (it would draw a layer drawn in one on screen), made before its

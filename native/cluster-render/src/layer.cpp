@@ -68,12 +68,22 @@ void Uniforms::dirty(const std::string &name)
         it->second.dirty = true;
 }
 
+void Uniforms::link(const std::string &name, bool on)
+{
+    if (on) {
+        linked_.insert(name);
+        return;
+    }
+    linked_.erase(name);
+    dirty(name);
+}
+
 bool Uniforms::stage(Graph *g, int drawable)
 {
     bool any = false;
     for (auto &kv : values_) {
         Value &u = kv.second;
-        if (!u.dirty)
+        if (!u.dirty || linked_.count(kv.first))
             continue;
         const bool went = u.n ? g->uniform(drawable, kv.first.c_str(), u.v.data(), u.n)
                               : g->uniform_array(drawable, kv.first.c_str(), u.type, u.v.data(), u.elements);
@@ -181,6 +191,14 @@ bool Layer::stop(uint32_t anim)
     }
     played_.erase(it);
     return true;
+}
+
+bool Layer::animating(uint32_t part, const std::string &name) const
+{
+    for (const auto &kv : played_)
+        if (kv.second.part == part && kv.second.a.property == Animated::Uniform && kv.second.a.uniform == name)
+            return true;
+    return false;
 }
 
 bool Layer::animations_started() const

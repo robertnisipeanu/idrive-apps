@@ -10,6 +10,7 @@
 #define CRS_FAKE_GRAPH_H
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -31,6 +32,7 @@ struct FakeBuffer {
     uint32_t levels = 1;
     std::vector<std::vector<uint8_t>> mips;   /* levels 1 and up */
     uint64_t level_writes = 0;                /* write_level() calls past level 0 */
+    bool cube = false;                        /* a cube_texture(): px its six faces */
 };
 
 inline FakeBuffer fake_buffer(TexFormat f, uint32_t w, uint32_t h, std::vector<uint8_t> px, const Sampler &s)
@@ -55,6 +57,7 @@ struct FakeQuad {
     std::map<std::string, UniformType> types;   /* uniforms set as arrays */
     PartLook look = quad_look();
     std::map<std::string, int> sets;   /* uniform() calls by name */
+    std::map<std::string, int> links;   /* uniform -> value (link()) */
     int styles = 0;   /* style() calls */
     int canvas = 0;   /* the canvas it is drawn in; 0: the target */
 };
@@ -85,6 +88,7 @@ struct FakePart {
     int poses = 0;        /* pose() calls */
     bool pivot = false;   /* a node(): draws nothing */
     int parent = 0;       /* the part or node it follows; 0: the view */
+    std::map<std::string, int> links;   /* uniform -> value (link()) */
     std::map<std::string, int> textures;
     std::map<std::string, std::vector<float>> uniforms;
     std::map<std::string, UniformType> types;
@@ -93,6 +97,12 @@ struct FakePart {
 /* Kept as the backends keep theirs (AnimTable), with no objects. */
 struct FakeAnimation : AnimState {};
 
+struct FakeValue {
+    uint32_t width = 1;
+    std::vector<float> v;
+    int sets = 0;   /* set_value() calls */
+};
+
 struct FakeState {
     std::map<int, FakeBuffer> buffers;
     std::map<int, FakeQuad> quads;
@@ -100,6 +110,7 @@ struct FakeState {
     std::map<int, FakePart> parts;
     std::map<int, FakeAnimation> animations;
     std::map<int, FakeCanvas> canvases;
+    std::map<int, FakeValue> values;
 };
 
 class FakeGraph : public Graph {
@@ -164,6 +175,15 @@ public:
             data += tex_level_bytes(f, w, h, l - 1);
             b.mips.push_back(std::vector<uint8_t>(data, data + tex_level_bytes(f, w, h, l)));
         }
+        pending.buffers[next] = b;
+        return next++;
+    }
+    int cube_texture(TexFormat f, uint32_t size, const Sampler &s, const uint8_t *data, size_t face) override
+    {
+        if (refuse_textures || !size || face != tex_bytes(f, size, size) || sampling_mips(s.sampling))
+            return 0;
+        FakeBuffer b = fake_buffer(f, size, size, std::vector<uint8_t>(data, data + face * 6), s);
+        b.cube = true;
         pending.buffers[next] = b;
         return next++;
     }
@@ -354,10 +374,53 @@ public:
         stop_on(part);
         pending.parts.erase(part);
     }
+    int value(uint32_t width) override
+    {
+        if (width < 1 || width > 4)
+            return 0;
+        pending.values[next].width = width;
+        pending.values[next].v.assign(width, 0.0f);
+        return next++;
+    }
+    bool set_value(int value, const float *v) override
+    {
+        auto it = pending.values.find(value);
+        if (it == pending.values.end())
+            return false;
+        it->second.v.assign(v, v + it->second.width);
+        it->second.sets++;
+        return true;
+    }
+    /* A uniform named unknown_uniform is not in the shader. */
+    bool link(int drawable, const char *name, int value) override
+    {
+        if ((value && !pending.values.count(value)) || unknown_uniform == name)
+            return false;
+        std::map<std::string, int> *links = pending.parts.count(drawable)  ? &pending.parts[drawable].links
+                                            : pending.quads.count(drawable) ? &pending.quads[drawable].links
+                                                                            : nullptr;
+        if (!links)
+            return false;
+        if (value)
+            (*links)[name] = value;
+        else
+            links->erase(name);
+        return true;
+    }
+    void drop_value(int value) override
+    {
+        stop_on(value);
+        pending.values.erase(value);
+    }
+
     int animate(int node, const Animation &a) override
     {
-        if (!has(node) && !pending.parts.count(node) && !pending.views.count(node))
+        if (a.property == Animated::Value) {
+            if (!pending.values.count(node) || a.width != pending.values[node].width)
+                return 0;
+        } else if (!has(node) && !pending.parts.count(node) && !pending.views.count(node)) {
             return 0;
+        }
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
         table().add(next, node, a);
@@ -642,6 +705,7 @@ public:
     std::map<std::string, FakeGraph *> live;   /* published scenes by target name */
     int scenes = 0;
     bool refuse_textures = false;         /* each new scene's immutable_texture() refused */
+    std::string unknown_sampler;          /* each new scene's texture() refuses it */
     bool refuse_layers = false;           /* no layers over a file scene, as a backend without them */
     bool fail_loads = false;              /* every scene file fails to load */
     int64_t *clock_us = nullptr;
@@ -667,13 +731,77 @@ public:
                 a |= n.bit;
         effects[next_effect] = fs;
         attrs[next_effect] = a;
+        sources[next_effect] = std::string(vs) + "\n" + fs;
         return next_effect++;
     }
     void drop_effect(int e) override
     {
         effects.erase(e);
         attrs.erase(e);
+        sources.erase(e);
     }
+    /* The fake's reading of the uniforms its shaders declare: comments,
+     * precision and comma lists taken, no preprocessor; none with
+     * no_inputs, as a backend that cannot say. */
+    bool inputs(int e, std::vector<EffectInput> *out) const override
+    {
+        auto it = sources.find(e);
+        if (no_inputs || it == sources.end())
+            return false;
+        std::string src;
+        const std::string &s = it->second;
+        for (size_t i = 0; i < s.size(); i++) {
+            if (s.compare(i, 2, "//") == 0)
+                i = s.find('\n', i) == std::string::npos ? s.size() : s.find('\n', i);
+            else if (s.compare(i, 2, "/*") == 0)
+                i = s.find("*/", i) == std::string::npos ? s.size() : s.find("*/", i) + 1;
+            else
+                src += s[i];
+        }
+        std::vector<std::string> w;
+        std::string cur;
+        for (char c : src + " ") {
+            if (std::isalnum((unsigned char)c) || c == '_') {
+                cur += c;
+                continue;
+            }
+            if (!cur.empty())
+                w.push_back(cur);
+            cur.clear();
+            if (c == ';' || c == ',' || c == '[' || c == ']')
+                w.push_back(std::string(1, c));
+        }
+        out->clear();
+        for (size_t i = 0; i < w.size(); i++) {
+            if (w[i] != "uniform")
+                continue;
+            size_t t = i + 1;
+            while (t < w.size() && (w[t] == "lowp" || w[t] == "mediump" || w[t] == "highp"))
+                t++;
+            if (t >= w.size())
+                break;
+            const EffectInput::Kind k = w[t] == "sampler2D"     ? EffectInput::Sampler2D
+                                        : w[t] == "samplerCube" ? EffectInput::SamplerCube
+                                        : w[t] == "float"       ? EffectInput::Float
+                                        : w[t] == "vec2"        ? EffectInput::Vec2
+                                        : w[t] == "vec3"        ? EffectInput::Vec3
+                                        : w[t] == "vec4"        ? EffectInput::Vec4
+                                                                : EffectInput::Other;
+            for (size_t n = t + 1; n < w.size() && w[n] != ";"; n++) {
+                if (w[n] == "[" && n + 1 < w.size() && std::isdigit((unsigned char)w[n + 1][0]) && !out->empty())
+                    out->back().elements = (uint32_t)std::atoi(w[n + 1].c_str());
+                if (w[n] == "," || w[n] == "[" || w[n] == "]" || std::isdigit((unsigned char)w[n][0]))
+                    continue;
+                EffectInput in;
+                in.name = w[n];
+                in.kind = k;
+                out->push_back(in);
+            }
+        }
+        return true;
+    }
+    std::map<int, std::string> sources;   /* handle -> its shaders */
+    bool no_inputs = false;
     unsigned attributes(int e) const override
     {
         auto it = attrs.find(e);
@@ -688,6 +816,7 @@ public:
         g->flush_cost_us = &flush_cost_us;
         g->effect_attributes = &attrs;
         g->refuse_textures = refuse_textures;
+        g->unknown_sampler = unknown_sampler;
         live[t.name] = g;
         scenes++;
         return std::unique_ptr<Graph>(g);

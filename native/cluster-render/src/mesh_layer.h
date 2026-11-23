@@ -77,6 +77,12 @@ public:
     bool set_uniform(uint32_t part, const std::string &name, UniformType t, const float *v, uint32_t elements);
     /* The effects its parts are drawn by. */
     std::vector<int> effects() const;
+    /* The part's effect; 0 for a pivot or no such part. */
+    int part_effect(uint32_t part) const
+    {
+        auto it = parts_.find(part);
+        return it == parts_.end() ? 0 : it->second.effect;
+    }
 
     bool ready(int64_t now_ms) const override;
     bool attach(Graph *g, int64_t now_ms, std::string *err) override;
@@ -88,6 +94,11 @@ public:
     size_t staged_bytes() const override { return staged_; }
     std::string stats() const override;
     int drawable(uint32_t part) const override;
+    Uniforms *uniforms_of(uint32_t part) override
+    {
+        auto it = parts_.find(part);
+        return it == parts_.end() ? nullptr : &it->second.uniforms;
+    }
     std::string refusal() const override { return refusal_; }
 
 protected:

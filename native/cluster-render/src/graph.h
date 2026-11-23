@@ -331,7 +331,8 @@ struct Geometry {
     const uint16_t *index = nullptr;
 };
 
-enum class Animated { Rotate, Translate, Scale, Uniform };
+/* Value: a shared value's (Graph::value), its node a value's handle. */
+enum class Animated { Rotate, Translate, Scale, Uniform, Value };
 /* Keys the renderer interpolates by itself: width floats a key, at times in
  * milliseconds from the start, ascending. */
 struct Animation {
@@ -643,6 +644,15 @@ public:
     {
         return 0;
     }
+    /* An immutable cube texture, size x size a face, data its six faces of
+     * face bytes each one after another (+x, -x, +y, -y, +z, -z), and its
+     * sampler; a buffer as immutable_texture()'s, sampled by a samplerCube.
+     * 0 where the backend has none. */
+    virtual int cube_texture(TexFormat, uint32_t, const Sampler &, const uint8_t *, size_t) { return 0; }
+    /* A cube texture's size and format as the library holds them, its data
+     * saved to file as the library writes resources (tests); false where
+     * the backend cannot. */
+    virtual bool read_cube(int, uint32_t *, int *, const char *) { return false; }
     /* A quad over r drawn by effect, hidden until show(). Blended over what
      * is below (source alpha), no depth test. */
     virtual int quad(int effect, const Rect &r) = 0;
@@ -752,6 +762,18 @@ public:
     virtual int canvas(const CanvasSpec &) { return 0; }
     virtual void drop_canvas(int) {}
     virtual bool redraw(int) { return false; }
+
+    /* A shared value (PROTOCOL.md "Shared values"): width floats (1-4),
+     * set (set_value()) and animated (animate() with Animated::Value) once
+     * for every quad and part uniform that follows it (link()). 0 where the
+     * backend has none. */
+    virtual int value(uint32_t) { return 0; }
+    virtual bool set_value(int, const float *) { return false; }
+    /* The drawable's (a quad's or part's) uniform follows the value, which
+     * must be of its type; value 0: it does not any more. */
+    virtual bool link(int, const char *, int) { return false; }
+    /* Its links undone first; its animations stopped. */
+    virtual void drop_value(int) {}
     /* A part's render state as the library holds it, read back with its
      * getters through the backend's own tables (instances aside); with
      * fresh, a new appearance of the part's effect, as the library makes
@@ -811,6 +833,16 @@ public:
     }
 };
 
+/* A uniform of a compiled effect, as the library reflects it; Sampler: a
+ * sampler whose kind the backend cannot tell; elements: an array's (1 for
+ * a plain uniform). */
+struct EffectInput {
+    enum Kind { Other, Sampler2D, SamplerCube, Sampler, Float, Vec2, Vec3, Vec4 };
+    std::string name;
+    Kind kind = Other;
+    uint32_t elements = 1;
+};
+
 /* The participant: effects (shared by every scene) and the scenes. */
 class Gpu {
 public:
@@ -834,6 +866,15 @@ public:
     virtual void drop_effect(int effect) = 0;
     /* The vertex attributes the effect reads (kAttr* bits). */
     virtual unsigned attributes(int effect) const = 0;
+    /* The effect's uniforms as the library compiled it: declarations in
+     * lists, defines and the branches its preprocessor took, those it left
+     * out absent. False where the backend cannot say. */
+    virtual bool inputs(int effect, std::vector<EffectInput> *out) const
+    {
+        (void)effect;
+        (void)out;
+        return false;
+    }
     /* The target's scene, empty, flushed and published. */
     virtual std::unique_ptr<Graph> scene(const TargetSpec &t, std::string *err) = 0;
 };
