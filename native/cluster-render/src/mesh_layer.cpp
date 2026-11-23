@@ -298,9 +298,12 @@ void MeshLayer::restore(uint32_t part, const Animation &a)
     auto it = parts_.find(part);
     if (it == parts_.end())
         return;
-    if (a.property == Animated::Uniform)
+    if (a.property == Animated::Uniform) {
+        /* written now: a replacement made at a flush restores in that flush */
         it->second.uniforms.dirty(a.uniform);
-    else if (it->second.handle)
+        if (it->second.handle)
+            it->second.uniforms.stage(g_, it->second.handle);
+    } else if (it->second.handle)
         g_->pose(it->second.handle, it->second.pose);
 }
 

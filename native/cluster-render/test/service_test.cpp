@@ -2881,11 +2881,11 @@ static void motion_over_socket()
 }
 
 /* A reconnect under a small upload budget: the client sends every animation
- * again at once, past what the budget allows in a second; each is made in
- * the next flushes the budget allows, none refused, all as before. */
+ * again at once, past what the target's key share allows in a second; each
+ * is made in the next flushes it allows, none refused, all as before. */
 static void animations_after_a_reconnect()
 {
-    Rig r(16 * 1024);
+    Rig r(320 * 1024);   /* keys: an eighth of the cap, about 20 KB/s a target */
     cr::Client c("needles", r.path);
     Events e;
     e.wire(c);
@@ -2914,11 +2914,11 @@ static void animations_after_a_reconnect()
             n += kv.second.made && kv.second.a.t.size() == 256;
         return n;
     };
-    r.pump(4000);
-    ok("animations: sixteen of 2 KB each made within a 16 KB/s budget", made() == kLayers);
+    r.pump(6000);
+    ok("animations: sixteen of 2 KB each made within the target's key share", made() == kLayers);
     r.svc.reset();
     r.start();
-    r.pump(4000);
+    r.pump(6000);
     ok("animations: after a reconnect every one made again, none refused", made() == kLayers && e.errors.empty());
 }
 

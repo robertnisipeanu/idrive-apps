@@ -256,13 +256,23 @@ public:
      * with *err, nothing made. */
     bool add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs, const std::string &fs,
                   const PartLook &look, uint32_t parent, std::string *err);
-    /* Animation keys go to the renderer as scene data, made at a target's
-     * flushes within its upload budget (Graph::key_allowance()): what the
-     * pacer allows, or while the pacer is in debt, the keys' own share, an
-     * eighth of the cap (kKeyShare), at most a frame's worth (kKeyFrameMs)
-     * held, so writes cannot starve animations nor animations writes. */
+    /* Animation keys go to the renderer as scene data, out of a share of
+     * the upload cap of their own: 1/kKeyShare of it, the rest pacing the
+     * writes (pacer()). The keys' share is split evenly into a bucket per
+     * target, refilled every tick whatever the order targets flush in and
+     * holding at most kKeyHeldMs of its rate; a target's flush makes its
+     * due animations while its bucket is above 0 (Graph::key_allowance()),
+     * so the bucket goes below 0 by less than one animation: at most
+     * kMaxKeyBytes. Keys never touch the writes' pacer, nor writes a
+     * bucket: neither starves the other, nor one target's keys another's. */
     static const uint64_t kKeyShare = 8;
-    static const int64_t kKeyFrameMs = 33;
+    static const int64_t kKeyHeldMs = 100;
+    /* One animation's keys at most: 1,024 keys of a time and four values. */
+    static const int64_t kMaxKeyBytes = 1024 * (4 + 4 * 4);
+    /* Target ti's key bucket (for tests). */
+    int64_t key_bucket(int ti) const { return targets_[ti].key_tokens; }
+    /* The writes' rate: the cap less the keys' share. */
+    static uint64_t writes_rate(uint64_t cap) { return cap - cap / kKeyShare; }
     /* A part's geometry, within the service's memory; false with *err. */
     bool geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                   std::string *err);
@@ -535,6 +545,7 @@ private:
     };
     struct Target {
         bool flushing = false;   /* slots_->flushing() at the last render() */
+        int64_t key_tokens = 0;  /* its key bucket's bytes (refill_keys()) */
         std::unique_ptr<Graph> graph;
         /* Or the scene of a scene content's file: which content's, its
          * serial, and its files' bytes. */
@@ -784,15 +795,9 @@ private:
     std::vector<int> render_order_, render_later_;   /* kept to save allocating them each tick */
     std::map<uint32_t, AssetEntry> assets_;
     std::map<uint32_t, CanvasEntry> canvases_;
-    /* The keys' share of a pacer (kKeyShare): bytes they may make while
-     * it is in debt. */
-    struct KeyShare {
-        int64_t tokens = 0;
-        int64_t last_ms = -1;
-    };
-    KeyShare key_share_, key_share_hud_;   /* pacer_'s, share_'s */
-    /* The key bytes target ti's next flush may make. */
-    uint64_t key_allowance(int ti, int64_t now_ms);
+    int64_t keys_refilled_ms_ = -1;   /* the key buckets' last refill */
+    /* Every target's key bucket brought up to now_ms. */
+    void refill_keys(int64_t now_ms);
     /* A layer's entry, in the stack or a canvas (*in, null for the stack);
      * null when none. */
     Entry *find(uint32_t id, CanvasEntry **in = nullptr);

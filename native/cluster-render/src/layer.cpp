@@ -128,18 +128,22 @@ bool Layer::play(uint32_t anim, uint32_t part, const Animation &a, std::string *
     auto now = played_.find(anim);
     if (g_ && !defer_starts_ && now != played_.end() && now->second.handle && !now->second.pending) {
         const int node = animated(part);
-        const int handle = node ? g_->replace(now->second.handle, node, a) : 0;
+        /* moved to another part, property or uniform: the old one goes back
+         * to what the client set once the replacement is made, the old
+         * animation driving it until then */
+        const uint32_t was_part = now->second.part;
+        const Animation was = now->second.a;
+        std::function<void()> back;
+        if (was_part != part || was.property != a.property || was.uniform != a.uniform)
+            back = [this, was_part, was]() { restore(was_part, was); };
+        const int handle = node ? g_->replace(now->second.handle, node, a, back) : 0;
         if (!handle) {
             if (node)
-                restore(now->second.part, now->second.a);
+                restore(was_part, was);
             played_.erase(now);
             *err = "the renderer refused the animation";
             return false;
         }
-        /* moved to another part, property or uniform: the old one goes back
-         * to what the client set */
-        if (now->second.part != part || now->second.a.property != a.property || now->second.a.uniform != a.uniform)
-            restore(now->second.part, now->second.a);
         now->second.part = part;
         now->second.a = a;
         now->second.handle = handle;
@@ -636,10 +640,14 @@ void EffectLayer::place()
 
 void EffectLayer::restore(uint32_t, const Animation &a)
 {
-    if (a.property == Animated::Uniform)
-        uniforms_.dirty(a.uniform);
-    else
+    if (a.property != Animated::Uniform) {
         place();
+        return;
+    }
+    /* written now: a replacement made at a flush restores in that flush */
+    uniforms_.dirty(a.uniform);
+    if (g_ && quad_)
+        uniforms_.stage(g_, quad_);
 }
 
 Stage EffectLayer::stage(int64_t now_ms)

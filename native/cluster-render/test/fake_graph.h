@@ -92,9 +92,15 @@ struct FakePart {
 
 struct FakeAnimation {
     int node = 0;
-    Animation a;
-    bool made = false;   /* made at a flush, within the key allowance */
+    Animation a;           /* what plays, once made */
+    bool made = false;     /* made at a flush, within the key allowance */
     uint64_t due_seq = 0;
+    /* A replacement waiting for its flush, a playing meanwhile, as the
+     * backends keep it; restore: run once a stops. */
+    bool replacing = false;
+    int next_node = 0;
+    Animation next;
+    std::function<void()> restore;
 };
 
 struct FakeState {
@@ -364,65 +370,85 @@ public:
             return 0;
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
-        pending.animations[next] = FakeAnimation{node, a, false, ++due_seq};
+        FakeAnimation fa;
+        fa.node = node;
+        fa.a = a;
+        fa.due_seq = keys_.next_seq();
+        pending.animations[next] = fa;
         return next++;
     }
-    void stop(int anim) override { pending.animations.erase(anim); }
-    /* In place, as RAMSES 19's. */
-    int replace(int anim, int node, const Animation &a) override
+    void stop(int anim) override
+    {
+        auto it = pending.animations.find(anim);
+        if (it == pending.animations.end())
+            return;
+        if (it->second.restore)
+            it->second.restore();
+        pending.animations.erase(it);
+    }
+    /* In place, the old one playing until the replacement is made, as the
+     * backends do. */
+    int replace(int anim, int node, const Animation &a, std::function<void()> restore) override
     {
         if (!pending.animations.count(anim))
             return animate(node, a);
         replaces++;
         FakeAnimation &fa = pending.animations[anim];
-        fa = FakeAnimation{node, a, false, fa.made ? ++due_seq : fa.due_seq};
+        if (!fa.made) {
+            fa.node = node;
+            fa.a = a;
+            return anim;
+        }
+        if (!fa.replacing)
+            fa.due_seq = keys_.next_seq();
+        fa.replacing = true;
+        fa.next_node = node;
+        fa.next = a;
+        if (restore) {
+            std::function<void()> before = fa.restore;
+            fa.restore = before ? [before, restore]() { before(); restore(); } : restore;
+        }
         return anim;
     }
     uint64_t take_animation_bytes() override
     {
-        const uint64_t b = animation_bytes;
-        animation_bytes = 0;
+        const uint64_t b = Graph::take_animation_bytes();
         animation_taken += b;
         return b;
     }
-    void key_allowance(uint64_t bytes) override { allowance = bytes; }
     bool animations_due() const override
     {
         for (const auto &kv : pending.animations)
-            if (!kv.second.made)
+            if (!kv.second.made || kv.second.replacing)
                 return true;
         return false;
     }
-    /* As the backends: due animations made, owners in turn, until the bytes
-     * made reach the allowance. */
+    /* Through the backends' gate (Graph::keys_). */
     void make_animations()
     {
-        std::vector<std::pair<uint64_t, int>> due;
+        std::vector<KeyGate::Due> due;
         for (const auto &kv : pending.animations)
-            if (!kv.second.made)
-                due.emplace_back(kv.second.due_seq, kv.first);
-        std::sort(due.begin(), due.end());
-        for (auto &d : due)
-            d.first = pending.animations[d.second].a.owner;
-        uint64_t made = 0;
-        for (const auto &d : key_turns(due, key_turn)) {
-            if (made >= allowance)
-                break;
-            FakeAnimation &fa = pending.animations[d.second];
+            if (!kv.second.made || kv.second.replacing)
+                due.push_back(KeyGate::Due{kv.second.due_seq,
+                                           kv.second.replacing ? kv.second.next.owner : kv.second.a.owner, kv.first});
+        keys_.run(due, [this](int handle) {
+            FakeAnimation &fa = pending.animations[handle];
+            if (fa.replacing) {
+                if (fa.restore)
+                    fa.restore();
+                fa.node = fa.next_node;
+                fa.a = fa.next;
+                fa.replacing = false;
+                fa.restore = nullptr;
+            }
             fa.made = true;
-            made += key_bytes(fa.a);
-            made_by[d.first] += key_bytes(fa.a);
-            key_turn = d.first;
-        }
-        animation_bytes += made;
+            made_by[fa.a.owner] += key_bytes(fa.a);
+            return key_bytes(fa.a);
+        });
     }
-    uint64_t allowance = UINT64_MAX;  /* key_allowance() */
-    uint64_t key_turn = 0;
-    uint64_t due_seq = 0;
     std::map<uint64_t, uint64_t> made_by;   /* key bytes made, by owner */
     int replaces = 0;                 /* replace() calls on a playing animation */
-    uint64_t animation_bytes = 0;     /* keys made since take_animation_bytes() */
-    uint64_t animation_taken = 0;     /* and taken by it, in all */
+    uint64_t animation_taken = 0;     /* key bytes taken by take_animation_bytes(), in all */
 
     int node(int view) override
     {
@@ -558,10 +584,26 @@ public:
     }
 
 private:
+    /* As the backends: one moving away from node keeps its replacement,
+     * one moving to it goes whole, its old target restored. */
     void stop_on(int node)
     {
-        for (auto it = pending.animations.begin(); it != pending.animations.end();)
-            it = it->second.node == node ? pending.animations.erase(it) : std::next(it);
+        for (auto it = pending.animations.begin(); it != pending.animations.end();) {
+            FakeAnimation &fa = it->second;
+            if (fa.replacing && fa.node == node && fa.next_node != node) {
+                fa.node = fa.next_node;
+                fa.a = fa.next;
+                fa.made = fa.replacing = false;
+                fa.restore = nullptr;
+                ++it;
+            } else if (fa.node == node || (fa.replacing && fa.next_node == node)) {
+                if (fa.restore && fa.node != node)
+                    fa.restore();
+                it = pending.animations.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 };
 

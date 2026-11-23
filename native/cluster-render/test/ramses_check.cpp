@@ -644,13 +644,18 @@ static void backend(Gpu &gpu)
         const bool read_kept = g->read_animation(played[5], &kept_before);
         bool within = true;
         int moves = 0;
+        uint64_t needle_at = 0;
+        g->read_animation(needle, &needle_at);
         for (int k = 0; k < 120 && made; k++) {
             needle = g->replace(needle, dials[0], dial);
             made = needle && g->flush(14);
             const uint64_t b = g->take_animation_bytes();
             uint64_t at = 0;
             within = within && b >= one && b < 2 * one;   /* the allowance passed by one animation at most */
-            moves += !g->read_animation(needle, &at);
+            /* the needle not made again (its start kept): a dial moved */
+            g->read_animation(needle, &at);
+            moves += at == needle_at;
+            needle_at = at;
         }
         while (g->animations_due() && made) {
             made = g->flush(15);
@@ -666,6 +671,43 @@ static void backend(Gpu &gpu)
     }
 #endif
     g->key_allowance(UINT64_MAX);
+    /* A replacement waiting for the allowance: the old animation plays on
+     * (RAMSES 19 reports its start), nothing restored; its old quad dropped
+     * meanwhile, the replacement still made on the new one; stopped while
+     * waiting, its old target restored once. */
+    {
+        Rect wr;
+        wr.w = wr.h = 32;
+        const int qa = g->quad(glyph_fx, wr), qb = g->quad(glyph_fx, wr), qc = g->quad(glyph_fx, wr);
+        int restored = 0;
+        const int wa = g->animate(qa, keyed(Animated::Rotate, 1, {0, 1000}, {0, 90}));
+        const bool first = wa && g->flush(16);
+        g->take_animation_bytes();
+        uint64_t s0 = 0, s1 = 0;
+        const bool r0 = g->read_animation(wa, &s0);
+        g->key_allowance(0);
+        const Animation moved = keyed(Animated::Rotate, 1, {0, 2000}, {0, 180});
+        const int wb = g->replace(wa, qb, moved, [&restored]() { restored++; });
+        const bool waiting = wb == wa && g->flush(16) && g->animations_due() && g->take_animation_bytes() == 0;
+        const bool playing = !r0 || (g->read_animation(wa, &s1) && s1 == s0);
+        ok("animations: a replacement waiting for the allowance, the old one playing on, nothing restored yet",
+           first && waiting && playing && restored == 0);
+        g->drop_quad(qa);
+        const bool kept = g->flush(16) && g->animations_due() && restored == 0;
+        g->key_allowance(UINT64_MAX);
+        const bool made = g->flush(16) && !g->animations_due() && g->take_animation_bytes() == key_bytes(moved);
+        ok("animations: its old quad dropped while it waits, the replacement made on the new one",
+           kept && made && restored == 0);
+        g->key_allowance(0);
+        g->replace(wb, qc, keyed(Animated::Rotate, 1, {0, 3000}, {0, 270}), [&restored]() { restored++; });
+        g->stop(wb);
+        g->key_allowance(UINT64_MAX);
+        ok("animations: stopped while a replacement waits, the old target restored once, nothing made",
+           restored == 1 && g->flush(16) && !g->animations_due() && g->take_animation_bytes() == 0);
+        g->drop_quad(qb);
+        g->drop_quad(qc);
+        g->flush(16);
+    }
     for (size_t i = 0; i < dials.size(); i++) {
         g->stop(i ? played[i] : needle);
         g->drop_quad(dials[i]);
@@ -807,6 +849,35 @@ int main()
 #endif
     std::string err;
     ok("the unit quad", gpu.init(&err));
+#ifndef CRS_RAMSES27
+    /* The uniform types unknown (learn() failed): a uniform's animation
+     * refused before anything is made, a rotation taken. */
+    {
+        gpu.untyped(true);
+        TargetSpec u;
+        u.name = "untyped";
+        u.scene_id = 0x010004fa;
+        u.width = u.height = 64;
+        std::unique_ptr<Graph> ug = gpu.scene(u, &err);
+        const int ufx = gpu.effect(kQuadVertexShader,
+                                   "#version 100\nprecision mediump float;\nuniform float u_level;\n"
+                                   "void main(){gl_FragColor=vec4(u_level);}",
+                                   &err);
+        Rect ur;
+        ur.w = ur.h = 32;
+        const int uq = ug && ufx ? ug->quad(ufx, ur) : 0;
+        const int errs = cld::log_errors;
+        ok("animations: the uniform types unknown, a uniform's animation refused up front, a rotation taken",
+           uq && !ug->animate(uq, keyed(Animated::Uniform, 1, {0, 1000}, {0, 1}, false, "u_level")) &&
+               ug->animate(uq, keyed(Animated::Rotate, 1, {0, 1000}, {0, 90})) && ug->flush(1) && cld::log_errors == errs);
+        if (ug)
+            ug->drop_quad(uq);
+        ug.reset();
+        if (ufx)
+            gpu.drop_effect(ufx);
+        gpu.untyped(false);
+    }
+#endif
 
     FakePort port;
     SlotManager slots(&port, nullptr);

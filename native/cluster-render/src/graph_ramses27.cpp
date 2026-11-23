@@ -767,14 +767,15 @@ public:
         an.node = node;
         an.a = a;
         an.due = true;
-        an.due_seq = ++due_seq_;
+        an.due_seq = keys_.next_seq();
         anims_[next_] = an;
         return next_++;
     }
 
     /* In place: the one playing goes on until the flush that makes this
-     * one, which only the newest of several replacements is. */
-    int replace(int anim, int node, const Animation &a) override
+     * one, which only the newest of several replacements is (Anim::
+     * replacing); restore runs when the old one stops. */
+    int replace(int anim, int node, const Animation &a, std::function<void()> restore) override
     {
         auto it = anims_.find(anim);
         if (it == anims_.end())
@@ -783,11 +784,22 @@ public:
             stop(anim);
             return 0;
         }
-        it->second.node = node;
-        it->second.a = a;
-        if (!it->second.due)
-            it->second.due_seq = ++due_seq_;   /* one still due keeps its place */
-        it->second.due = true;
+        Anim &an = it->second;
+        if (!an.seq) {
+            an.node = node;   /* not playing yet: this one in its place */
+            an.a = a;
+        } else {
+            an.replacing = true;
+            an.next_node = node;
+            an.next = a;
+            if (restore) {
+                std::function<void()> before = an.restore;
+                an.restore = before ? [before, restore]() { before(); restore(); } : restore;
+            }
+        }
+        if (!an.due)
+            an.due_seq = keys_.next_seq();   /* one still due keeps its place */
+        an.due = true;
         return anim;
     }
 
@@ -799,16 +811,11 @@ public:
         if (it->second.seq)
             it->second.seq->stop();
         destroy_objects(it->second);
+        if (it->second.restore)
+            it->second.restore();
         anims_.erase(it);
     }
 
-    uint64_t take_animation_bytes() override
-    {
-        const uint64_t b = anim_bytes_;
-        anim_bytes_ = 0;
-        return b;
-    }
-    void key_allowance(uint64_t bytes) override { allowance_ = bytes; }
     bool animations_due() const override
     {
         for (const auto &kv : anims_)
@@ -1129,6 +1136,13 @@ private:
         Animation a;
         bool due = false;   /* new or replaced: made at a flush */
         uint64_t due_seq = 0;   /* when it fell due: the longest due first, in its owner's turns */
+        /* A replacement waiting for its flush, this one playing meanwhile:
+         * its node and animation, and what gives the old target its own
+         * value back once this one stops. */
+        bool replacing = false;
+        int next_node = 0;
+        Animation next;
+        std::function<void()> restore;
         ramses::AnimationSequence *seq = nullptr;
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
@@ -1390,7 +1404,6 @@ private:
             destroy_objects(an);
             return false;
         }
-        anim_bytes_ += key_bytes(a);
         return true;
     }
 
@@ -1399,40 +1412,61 @@ private:
      * same flush, so it plays on from where the old one left it. */
     void settle_animations()
     {
-        std::vector<std::pair<uint64_t, int>> due;
+        std::vector<KeyGate::Due> due;
         for (const auto &kv : anims_)
             if (kv.second.due)
-                due.emplace_back(kv.second.due_seq, kv.first);
-        std::sort(due.begin(), due.end());
-        for (auto &d : due)
-            d.first = anims_[d.second].a.owner;
-        uint64_t made = 0;
-        for (const auto &d : key_turns(due, turn_)) {
-            if (made >= allowance_)
-                break;
-            auto it = anims_.find(d.second);
-            if (it->second.seq)
-                it->second.seq->stop();
-            destroy_objects(it->second);
-            const uint64_t before = anim_bytes_;
-            const bool built = build(it->second);
-            made += anim_bytes_ - before;
-            turn_ = d.first;
-            if (built) {
-                it->second.due = false;
-                continue;
+                due.push_back(KeyGate::Due{kv.second.due_seq, kv.second.replacing ? kv.second.next.owner
+                                                                                  : kv.second.a.owner,
+                                           kv.first});
+        keys_.run(due, [this](int handle) {
+            auto it = anims_.find(handle);
+            Anim &an = it->second;
+            if (an.seq)
+                an.seq->stop();
+            destroy_objects(an);
+            if (an.restore)
+                an.restore();
+            an.restore = nullptr;
+            if (an.replacing) {
+                an.node = an.next_node;
+                an.a = an.next;
+                an.replacing = false;
             }
-            log_error("ramses: animation %d refused", it->first);
+            const bool built = build(an);
+            const uint64_t bytes = built ? key_bytes(an.a) : 0;
+            if (built) {
+                an.due = false;
+                return bytes;
+            }
+            log_error("ramses: animation %d refused", handle);
             anims_.erase(it);
-        }
+            return bytes;
+        });
     }
 
+    /* A node going: the animations playing on it stopped; one moving from
+     * it to another node by a replacement loses its playing objects and
+     * waits for the replacement; one moving to it goes whole, its old
+     * target given back its own value. */
     void stop_on(int node)
     {
         std::vector<int> going;
-        for (const auto &kv : anims_)
-            if (kv.second.node == node)
+        for (auto &kv : anims_) {
+            Anim &an = kv.second;
+            if (an.replacing && an.node == node && an.next_node != node) {
+                if (an.seq)
+                    an.seq->stop();
+                destroy_objects(an);
+                an.node = an.next_node;
+                an.a = an.next;
+                an.replacing = false;
+                an.restore = nullptr;
+            } else if (an.node == node || (an.replacing && an.next_node == node)) {
                 going.push_back(kv.first);
+                if (an.node == node)
+                    an.restore = nullptr;
+            }
+        }
         for (int a : going)
             stop(a);
     }
@@ -1533,10 +1567,6 @@ private:
     ramses::Scene *scene_ = nullptr;
     ramses::ArrayResource *pos_ = nullptr, *idx_ = nullptr;   /* the unit quad */
     ramses::AnimationSystemRealTime *anim_ = nullptr;
-    uint64_t anim_bytes_ = 0;   /* animation keys made since take_animation_bytes() */
-    uint64_t allowance_ = UINT64_MAX;   /* key bytes a flush may make (key_allowance()) */
-    uint64_t turn_ = 0;                 /* the owner whose animation the last flush made last */
-    uint64_t due_seq_ = 0;
     /* The target's own surface, and the canvases', by handle. */
     Surface main_;
     std::map<int, Surface> canvases_;

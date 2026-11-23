@@ -12,7 +12,9 @@
  *
  * A frame may go whenever the allowance is positive; its bytes are then
  * charged, so the average stays at the rate, the allowance going negative by
- * at most one frame. Unused allowance is kept up to burst_ms of the rate, which
+ * at most one frame. Only writes are paced here: animation keys have a share
+ * of the cap of their own, outside this pacer (cluster-render's compositor
+ * paces writes at the cap less that share). Unused allowance is kept up to burst_ms of the rate, which
  * bounds the bytes sent back to back after a quiet spell, and debt is kept for
  * as long as the pacer lives, across sessions. A frame held
  * back is not lost: the next upload is diffed against what the buffer

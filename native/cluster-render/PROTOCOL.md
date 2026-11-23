@@ -250,16 +250,21 @@ The renderer plays an animation by itself; nothing is sent per frame. `anim`
 is the client's number for it (1 or more), unique within the layer: sending
 it again replaces it where it is (a needle sent to a new value moves on from
 there; several replacements before the next flush, only the newest is
-made), `stop` ends it and its property goes back to what the client set. A
-layer plays at most 16. An animation's keys go to the renderer with the
-scene and count in the upload budget (about 8 bytes a key with one value):
-each flush of a target makes animations only within what the budget allows
-then, the clients with animations waiting taking turns, and those left
-start at the next flushes the budget allows. While layers' writes hold the
-budget, animations still go within an eighth of it, so neither waits on the
-other for long. Nothing is refused for the budget: an animation sent again
-after a reconnect, or one a new scene makes again, waits its turn the same
-way. Replacing, stopping or dropping one sends only its own keys.
+made, the old one playing until then), `stop` ends it and its property goes
+back to what the client set. A layer plays at most 16. An animation's keys
+go to the renderer with the scene (about 8 bytes a key with one value) out
+of a share of the upload cap of their own: an eighth of it, split evenly
+between the targets, the rest pacing the layers' writes, so animations and
+writes never wait on each other, nor one target's animations on
+another's. A target's flush makes waiting animations while its share has
+bytes left, the connections with animations waiting taking turns, and those
+left start at its next flushes; a flush goes past the share by less than
+one animation (at most 20,480 bytes, 1,024 keys of four values), which its
+next refills repay. Nothing is refused for the budget: an animation sent
+again after a reconnect, or one a new scene makes again, waits its turn the
+same way. Replacing, stopping or dropping one sends only its own keys; a
+replacement that plays elsewhere gives the old part or uniform back its own
+value once it is made.
 
 | Field | |
 |---|---|

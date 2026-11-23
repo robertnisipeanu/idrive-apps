@@ -12,9 +12,10 @@
  * resources; the passes' render order follows the draw order (plan_passes).
  * Buffers are Texture2DBuffers with one sampler each. Animations are one
  * real-time animation system per scene, made at the first one, played by the
- * renderer; an animation that stops takes the system with it, and the others
- * are made again in a new one. A scene file is the client library's own
- * scene and resources, as the file has them. */
+ * renderer; an animation that stops or is replaced is retired, left in the
+ * system, and once the retired keys outnumber the live ones the animations
+ * move to a new system a few a flush, within the key allowance. A scene file
+ * is the client library's own scene and resources, as the file has them. */
 #ifndef CRS_GRAPH_RAMSES19_H
 #define CRS_GRAPH_RAMSES19_H
 
@@ -55,6 +56,8 @@ public:
                                     std::string *err) override;
     /* What the first load learned (for tests). */
     const Ramses19Types &types() const { return types_; }
+    /* For tests: scenes made from now on as if learn() had failed. */
+    void untyped(bool u) { untyped_ = u; }
 
 private:
     ramses::RamsesClient &client_;
@@ -64,6 +67,7 @@ private:
     int next_ = 1;
     Ramses19Types types_;
     bool typed_ = false;
+    bool untyped_ = false;
 };
 
 }  // namespace crs

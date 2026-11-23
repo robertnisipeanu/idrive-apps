@@ -89,7 +89,7 @@ int64_t steady_us()
 
 Compositor::Compositor(Gpu *gpu, SlotManager *slots, const GovernorConfig &budget, int upload_burst_ms,
                        const CompositorLimits &limits)
-    : gpu_(gpu), slots_(slots), limits_(limits), governor_(budget), pacer_(budget.max_bps, upload_burst_ms),
+    : gpu_(gpu), slots_(slots), limits_(limits), governor_(budget), pacer_(writes_rate(budget.max_bps), upload_burst_ms),
       clock_us_(steady_us)
 {
     share_.share_of(&pacer_);
@@ -1748,6 +1748,7 @@ void Compositor::render(int64_t now_ms)
     std::stable_sort(render_order_.begin(), render_order_.end(),
                      [&since](int a, int b) { return since(a) < since(b); });
     render_order_.insert(render_order_.end(), render_later_.begin(), render_later_.end());
+    refill_keys(now_ms);
     for (int ti : render_order_) {
         if (targets_[ti].file && !targets_[ti].graph)
             render_file(ti, targets_[ti], now_ms);
@@ -1761,22 +1762,20 @@ void Compositor::render(int64_t now_ms)
             break;
         }
     if (governor_.tick(now_ms))
-        pacer_.set_rate(governor_.cap());
+        pacer_.set_rate(writes_rate(governor_.cap()));
 }
 
-uint64_t Compositor::key_allowance(int ti, int64_t now_ms)
+void Compositor::refill_keys(int64_t now_ms)
 {
-    crk::UploadPacer &p = pacer_for(ti);
-    if (!p.limited())
-        return UINT64_MAX;
-    p.ready(now_ms);
-    KeyShare &k = slots_->targets()[ti].share ? key_share_hud_ : key_share_;
-    const int64_t rate = int64_t(governor_.cap() / kKeyShare), held = rate * kKeyFrameMs / 1000;
-    if (k.last_ms >= 0 && now_ms > k.last_ms)
-        k.tokens = std::min(held, k.tokens + rate * std::min<int64_t>(now_ms - k.last_ms, 1000) / 1000);
-    k.last_ms = now_ms;
-    const int64_t a = p.allowance();
-    return uint64_t(std::max<int64_t>(0, a > 0 ? a : k.tokens));
+    if (targets_.empty())
+        return;
+    const int64_t rate = int64_t(governor_.cap() / kKeyShare / targets_.size()), held = rate * kKeyHeldMs / 1000;
+    const int64_t gap = keys_refilled_ms_ < 0 ? kKeyHeldMs : std::min<int64_t>(now_ms - keys_refilled_ms_, 1000);
+    keys_refilled_ms_ = now_ms;
+    if (gap <= 0)
+        return;
+    for (Target &t : targets_)
+        t.key_tokens = std::min(held, t.key_tokens + rate * gap / 1000);
 }
 
 void Compositor::render_target(int ti, Target &t, int64_t now_ms)
@@ -1937,27 +1936,20 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 {
     const TargetSpec &spec = slots_->targets()[ti];
     const int64_t t0 = clock_us_();
-    /* A graph over a file flushes the file's scene, edits and all. */
     /* Animation keys go to the renderer as scene data, made in this flush
-     * within the budget: what the pacer allows, the flush passing it by one
-     * animation at most, or in its debt the keys' share (key_allowance()),
-     * paid as made; those left wait for the next flushes. */
-    const uint64_t keys = t.graph ? key_allowance(ti, now_ms) : 0;
+     * while the target's key bucket is above 0 and paid from it as made
+     * (refill_keys(), compositor.h); those left wait for the next flushes. */
+    const bool keyed = governor_.cap() != 0;
     if (t.graph)
-        t.graph->key_allowance(keys);
+        t.graph->key_allowance(!keyed ? UINT64_MAX : uint64_t(std::max<int64_t>(0, t.key_tokens)));
+    /* A graph over a file flushes the file's scene, edits and all. */
     const bool ok = t.graph ? t.graph->flush(++t.tag) : t.file->flush(++t.tag);
     if (t.graph) {
-        crk::UploadPacer &p = pacer_for(ti);
         const uint64_t made = t.graph->take_animation_bytes();
-        if (made && p.limited()) {
-            if (p.allowance() <= 0) {
-                KeyShare &k = spec.share ? key_share_hud_ : key_share_;
-                k.tokens -= int64_t(made);
-            }
-            p.spend(made);
-            if (!spec.share)
-                load(made, now_ms);
-        }
+        if (made && keyed)
+            t.key_tokens -= int64_t(made);
+        if (made && !spec.share)
+            load(made, now_ms);
     }
     const int64_t took = clock_us_() - t0;
     if (!ok)

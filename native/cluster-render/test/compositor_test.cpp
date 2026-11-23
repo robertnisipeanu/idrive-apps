@@ -267,7 +267,8 @@ static ShareRun share_run(bool hud, bool still, bool hud_shown = true, bool map 
 
 static void share_hud()
 {
-    const uint64_t rate = 5500 * 1024, secs = 20;
+    /* the writes' rate: the 5500 KB/s cap less the keys' share */
+    const uint64_t rate = Compositor::writes_rate(5500 * 1024), secs = 20;
     char name[220];
     const ShareRun alone = share_run(false, false), hidden = share_run(true, false, false), with = share_run(true, false);
     std::snprintf(name, sizeof name, "HUD share, HUD off (no layer, or one that wants nothing): the map writes the same %zu "
@@ -1024,7 +1025,7 @@ static int64_t until_written(Rig &r, FakeGraph *g, int64_t limit = 3000)
 
 static void warm_scene_charged()
 {
-    const uint64_t rate = 2000 * 1024;   /* a 250 ms burst: 512,000 B */
+    const uint64_t rate = 2000 * 1024;   /* writes at 1,792,000 B/s, the cap less the keys' share: a 250 ms burst of 448,000 B */
     Rig r(rate);
     std::string err;
     VideoParams vp;
@@ -1040,8 +1041,8 @@ static void warm_scene_charged()
     a[0] += 40;
     vl->offer(a.data(), r.now);
     const int64_t fresh = until_written(r, g);
-    /* (783,360 - 512,000) B of debt at 2,048,000 B/s: 133 ms. */
-    ok("its debt is the frame's alone: the next write within 140 ms", fresh >= 120 && fresh <= 140);
+    /* (783,360 - 448,000) B of debt at 1,792,000 B/s: 187 ms. */
+    ok("its debt is the frame's alone: the next write within 195 ms", fresh >= 180 && fresh <= 195);
     r.run(2000);
     r.slots.on_lost(0x010004f0, "fetch removed", r.now);
     a[W * 300] += 40;
@@ -1053,13 +1054,13 @@ static void warm_scene_charged()
     ok("a warm scene asked for again: its newest frame flushed at once, nothing charged until the display takes it",
        g->flushed_bytes > b1);
     /* Taken with nearly a full burst: the resend of atlas and banks
-     * (1,305,600 B) leaves about 800,000 B of debt, about 390 ms. */
+     * (1,305,600 B) leaves about 860,000 B of debt, about 480 ms. */
     r.slots.on_shown(0x010004f0, r.now);
     a[W * 100] += 40;
     vl->offer(a.data(), r.now);
     const int64_t warm = until_written(r, g);
-    ok("taken: its resend charged, the next write after 380-400 ms",
-       atlas + banks == 1305600 && warm >= 380 && warm <= 400);
+    ok("taken: its resend charged, the next write after 470-490 ms",
+       atlas + banks == 1305600 && warm >= 470 && warm <= 490);
 }
 
 static void stack_and_lifecycle()
@@ -1287,9 +1288,10 @@ static void many_layers_within_budget()
                   "flush (%llu KB; worst %llu.%llu%% of that)",
                   (unsigned long long)(flush / 1024), (unsigned long long)(worst / 10), (unsigned long long)(worst % 10));
     ok(name, within);
-    std::snprintf(name, sizeof name, "  10 s within 10 s of the 5500 KB/s ceiling and the burst (%llu KB), and at least "
-                  "90%% of it", (unsigned long long)(total / 1024));
-    ok(name, total <= budget * 10 + burst && total >= budget * 10 * 9 / 10);
+    const uint64_t writes_share = Compositor::writes_rate(budget);
+    std::snprintf(name, sizeof name, "  10 s within 10 s of the writes' share of the 5500 KB/s ceiling and the burst "
+                  "(%llu KB), and at least 90%% of it", (unsigned long long)(total / 1024));
+    ok(name, total <= writes_share * 10 + burst && total >= writes_share * 10 * 9 / 10);
     uint64_t least = ~0ull, writes = 0;
     for (const ImageLayer *l : imgs) {
         least = std::min(least, l->write_stats().frames);
@@ -3019,9 +3021,12 @@ static void hierarchies()
        !sample_curve(Curve::Smooth, &over) && over.t == kept.t && over.v == kept.v);
 }
 
-/* Animation keys on the upload budget: a flush makes them within what the
- * budget allows, paid as made; many clients' made in turn, another
- * client's writes going on, the debt bounded and repaid. */
+/* Animation keys out of their own share of the upload cap, a bucket per
+ * target: never charged to the writes' pacer; animations on the map leave
+ * the panel's writes going, the map's and the panel's animations both
+ * progress, a bucket goes below 0 by less than one animation with large
+ * ones on every target, many clients take turns; a replacement waits with
+ * the old animation playing, its old target restored once it is made. */
 static void animation_keys_within_budget()
 {
     std::string err;
@@ -3032,80 +3037,159 @@ static void animation_keys_within_budget()
         big.t.push_back(k * 4);
         big.v.push_back((float)(k % 2));
     }
-    const uint64_t bytes = big.t.size() * 8;
+    const int64_t big_bytes = (int64_t)key_bytes(big);
+    auto effect_on = [&](Rig &r, uint64_t owner, int target, int x) {
+        return r.comp->layer(owner, r.comp->add_effect(owner, target, params(Klass::Overlay, R(x, 0, 32, 32)), "",
+                                                       kSample, 0, r.now, &err));
+    };
+    auto show_all = [](Rig &r) {
+        r.run(200);
+        r.slots.on_shown(0x010004f0, r.now);
+        r.slots.on_shown(0x01000400, r.now);
+        r.run(200);
+    };
 
-    Rig slow(1024);
-    const uint32_t fx = slow.comp->add_effect(1, slow.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
-                                              slow.now, &err);
-    Layer *l = slow.comp->layer(1, fx);
-    slow.run(200);
-    slow.slots.on_shown(0x01000400, slow.now);
-    slow.run(500);
+    /* Paid from the target's bucket; the writes' pacer untouched. */
+    Rig slow(64 * 1024);
+    Layer *l = effect_on(slow, 1, slow.panel, 0);
+    show_all(slow);
     l->animate(1, 0, big, &err);
     slow.comp->touch(l);
     slow.run(30);
-    ok("keys: a flush's animation keys paid from the upload budget",
-       slow.comp->pacer().allowance() < 0 && slow.comp->pacer().allowance() > -(int64_t)bytes);
+    ok("keys: paid from the target's bucket, below 0 by less than one animation, the writes' pacer untouched",
+       slow.comp->key_bucket(slow.panel) < 0 && slow.comp->key_bucket(slow.panel) > -big_bytes &&
+           slow.comp->pacer().allowance() > 0);
 
-    /* Ten clients replacing an animation every tick on the panel, an
-     * image written every tick by another: the keys are made within the
-     * budget, the clients in turn, the image's writes go on, and the pacer
-     * goes no further into debt than one write, the keys' share held and
-     * one animation. */
+    /* Animations on the map, an image written on the panel. */
     Rig r(100 * 1024);
     const uint32_t img = r.comp->add_image(20, r.panel, params(Klass::Overlay, R(200, 0, 32, 32)), 32, 32, 30,
                                            Sampling::Nearest, r.now, &err);
     ImageLayer *il = static_cast<ImageLayer *>(r.comp->layer(20, img));
-    Animation mid = big;
-    mid.t.resize(200);
-    mid.v.resize(200);
-    const int64_t mid_bytes = (int64_t)key_bytes(mid);
-    std::vector<Layer *> movers;
-    for (uint64_t c = 1; c <= 10; c++)
-        movers.push_back(r.comp->layer(c, r.comp->add_effect(c, r.panel, params(Klass::Overlay, R(40 * (int)c, 100, 32, 32)),
-                                                             "", kSample, 0, r.now, &err)));
+    std::vector<Layer *> on_map, on_panel;
+    for (uint64_t c = 1; c <= 10; c++) {
+        on_map.push_back(effect_on(r, c, r.map, 40 * (int)c));
+        on_panel.push_back(effect_on(r, c + 10, r.panel, 40 * (int)c));
+    }
     std::vector<uint8_t> px(32 * 32 * 4);
     il->update({}, px.data(), px.size(), &err);
-    r.run(200);
-    r.slots.on_shown(0x01000400, r.now);
-    r.run(200);
-    FakeGraph *g = r.g("panel");
+    show_all(r);
+    FakeGraph *gm = r.g("map");
     const uint64_t frames = il->write_stats().frames;
-    int64_t lowest = INT64_MAX;
+    Animation wide;
+    wide.property = Animated::Uniform;
+    wide.uniform = "u_tint";
+    wide.width = 4;
+    for (uint32_t k = 0; k < 1024; k++) {
+        wide.t.push_back(k * 4);
+        for (int c = 0; c < 4; c++)
+            wide.v.push_back((float)(k % 2));
+    }
+    int64_t lowest_bucket = INT64_MAX, lowest_pacer = INT64_MAX;
+    const uint64_t map_before = gm ? gm->animation_taken : 0;
     for (int tick = 0; tick < 300; tick++) {
         std::fill(px.begin(), px.end(), (uint8_t)tick);
         il->update({}, px.data(), px.size(), &err);
-        for (size_t c = 0; c < movers.size(); c++) {
-            mid.owner = c + 1;
-            mid.v[0] = (float)tick;
-            movers[c]->animate(1, 0, mid, &err);
-            r.comp->touch(movers[c]);
+        for (size_t c = 0; c < on_map.size(); c++) {
+            Animation a = c % 2 ? wide : big;
+            a.owner = c + 1;
+            a.v[0] = (float)tick;
+            on_map[c]->animate(1, 0, a, &err);
+            r.comp->touch(on_map[c]);
         }
         r.step(10);
-        lowest = std::min(lowest, r.comp->pacer().allowance());
+        for (int ti : {r.map, r.panel, r.hud})
+            lowest_bucket = std::min(lowest_bucket, r.comp->key_bucket(ti));
+        lowest_pacer = std::min(lowest_pacer, r.comp->pacer().allowance());
     }
-    const int64_t held = (int64_t)(r.comp->governor().cap() / Compositor::kKeyShare) * Compositor::kKeyFrameMs / 1000;
-    uint64_t least = UINT64_MAX, most = 0;
-    for (uint64_t c = 1; c <= 10; c++) {
-        const uint64_t b = g ? g->made_by[c] : 0;
-        least = std::min(least, b);
-        most = std::max(most, b);
-    }
-    ok("keys: ten clients' animations made in turn (each at least half the most any made)",
-       g && least > 0 && most <= 2 * least);
-    ok("keys: another client's writes go on (over 40 of 3 s's 4 KB frames at 100 KB/s)",
+    ok("keys: animations on the map leave the panel's writes going (over 40 of 3 s's 4 KB frames at 100 KB/s)",
        il->write_stats().frames - frames > 40);
-    ok("keys: the pacer no further in debt than one write, the keys' share held and one animation",
-       lowest >= -(int64_t)(32 * 32 * 4 + held + mid_bytes));
-    r.run(1000);
-    bool all = g != nullptr;
-    for (const auto &kv : g ? g->shown.animations : std::map<int, FakeAnimation>())
-        all = all && kv.second.made && kv.second.a.v[0] == 299.0f;
-    const uint64_t before = il->write_stats().frames;
-    il->update({}, px.data(), px.size(), &err);
-    r.run(50);
-    ok("keys: the replacements stopped, every client's newest made, the debt repaid: a write goes at once",
-       all && g->shown.animations.size() == 10 && il->write_stats().frames == before + 1);
+    ok("keys: the map's animations made meanwhile", gm && gm->animation_taken > map_before);
+    ok("keys: a bucket below 0 by less than one animation of the most keys (20,480 bytes), the writes' pacer by "
+       "one write",
+       lowest_bucket > -Compositor::kMaxKeyBytes && lowest_pacer >= -(int64_t)(32 * 32 * 4));
+
+    /* Animations on the map and on the panel at once (1 MB/s: about 43
+     * KB/s of keys a target): both progress, the panel's clients taking
+     * turns, and once they stop every client's newest is made. */
+    Rig q(1000 * 1024);
+    std::vector<Layer *> q_map, q_panel;
+    for (uint64_t c = 1; c <= 10; c++) {
+        q_map.push_back(effect_on(q, c, q.map, 40 * (int)c));
+        q_panel.push_back(effect_on(q, c + 10, q.panel, 40 * (int)c));
+    }
+    show_all(q);
+    FakeGraph *qm = q.g("map"), *qp = q.g("panel");
+    const uint64_t m0 = qm ? qm->animation_taken : 0, p0 = qp ? qp->animation_taken : 0;
+    for (int tick = 0; tick < 300; tick++) {
+        for (size_t c = 0; c < q_map.size(); c++) {
+            Animation a = big;
+            a.owner = c + 1;
+            a.v[0] = (float)tick;
+            q_map[c]->animate(1, 0, a, &err);
+            q.comp->touch(q_map[c]);
+            a.owner = c + 11;
+            q_panel[c]->animate(1, 0, a, &err);
+            q.comp->touch(q_panel[c]);
+        }
+        q.step(10);
+    }
+    const uint64_t made_map = (qm ? qm->animation_taken : 0) - m0, made_panel = (qp ? qp->animation_taken : 0) - p0;
+    uint64_t least = UINT64_MAX, most = 0;
+    for (uint64_t c = 11; c <= 20; c++) {
+        least = std::min(least, qp ? qp->made_by[c] : 0);
+        most = std::max(most, qp ? qp->made_by[c] : 0);
+    }
+    ok("keys: the map's and the panel's animations both progress, each within half of the other",
+       made_map > 0 && made_panel > 0 && made_map <= 2 * made_panel && made_panel <= 2 * made_map);
+    ok("keys: the panel's ten clients made in turn (each at least half the most any made)", least > 0 && most <= 2 * least);
+    q.run(3000);
+    bool all = qp != nullptr;
+    for (const auto &kv : qp ? qp->shown.animations : std::map<int, FakeAnimation>())
+        all = all && kv.second.made && !kv.second.replacing && kv.second.a.v[0] == 299.0f;
+    ok("keys: the replacements stopped, every client's newest made", all);
+
+    /* A replacement waits with the old animation playing; moved to another
+     * uniform, the old one's own value is written when it is made. */
+    Rig w(4 * 1024);
+    EffectLayer *el = static_cast<EffectLayer *>(effect_on(w, 1, w.panel, 0));
+    const float level = 0.25f;
+    el->set_uniform("u_level", &level, 1);
+    show_all(w);
+    Animation first = big;
+    first.t.resize(16);
+    first.v.resize(16);
+    el->animate(1, 0, first, &err);
+    w.comp->touch(el);
+    w.run(1000);
+    FakeGraph *gw = w.g("panel");
+    int h = 0, sets = -1;
+    if (gw)
+        for (const auto &kv : gw->shown.animations)
+            h = kv.first;
+    for (const auto &kv : gw ? gw->shown.quads : std::map<int, FakeQuad>())
+        if (kv.second.sets.count("u_level"))
+            sets = kv.second.sets.at("u_level");
+    Animation moved = big;   /* 8 KB, past what the 512 B/s bucket holds */
+    moved.uniform = "u_fade";
+    el->animate(1, 0, moved, &err);
+    w.comp->touch(el);
+    w.run(50);
+    int waiting_sets = -1;
+    for (const auto &kv : gw ? gw->shown.quads : std::map<int, FakeQuad>())
+        if (kv.second.sets.count("u_level"))
+            waiting_sets = kv.second.sets.at("u_level");
+    const bool waiting = h && gw->shown.animations.count(h) && gw->shown.animations[h].replacing &&
+                         gw->shown.animations[h].a.uniform == "u_level";
+    ok("keys: a replacement waiting for the bucket, the old animation playing, its uniform not set back yet",
+       waiting && sets >= 1 && waiting_sets == sets);
+    for (int k = 0; k < 400 && gw->shown.animations[h].replacing; k++)
+        w.step(50);
+    int made_sets = -1;
+    for (const auto &kv : gw ? gw->shown.quads : std::map<int, FakeQuad>())
+        if (kv.second.sets.count("u_level"))
+            made_sets = kv.second.sets.at("u_level");
+    ok("keys: made in its turn, the old uniform's own value written then",
+       !gw->shown.animations[h].replacing && gw->shown.animations[h].a.uniform == "u_fade" && made_sets > sets);
 }
 
 int main()

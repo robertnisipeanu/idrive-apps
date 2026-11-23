@@ -62,7 +62,10 @@ public:
     void drop_part(int part) override { g_->drop_part(part); }
     int animate(int node, const Animation &a) override { return g_->animate(node, a); }
     void stop(int anim) override { g_->stop(anim); }
-    int replace(int anim, int node, const Animation &a) override { return g_->replace(anim, node, a); }
+    int replace(int anim, int node, const Animation &a, std::function<void()> restore) override
+    {
+        return g_->replace(anim, node, a, restore);
+    }
     /* The target's flush carries the canvas's changes. */
     bool flush(uint64_t) override { return true; }
 

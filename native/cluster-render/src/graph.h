@@ -18,7 +18,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <algorithm>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -312,34 +314,61 @@ struct Animation {
     bool step = false;     /* each key's value held until the next */
     std::vector<uint32_t> t;
     std::vector<float> v;
-    uint64_t owner = 0;    /* the client's: whose turn it takes (key_turns()) */
+    uint64_t owner = 0;    /* its connection's: whose turn it takes (KeyGate) */
 };
 
 /* The bytes an animation's keys take to the renderer: a time and the
  * values, a key. */
 inline uint64_t key_bytes(const Animation &a) { return a.t.size() * (4 + 4 * uint64_t(a.width)); }
 
-/* The order a flush makes due animations in: owners in turn, each round
- * every owner with one due giving the one due longest, from the owner after
- * last (whose turn the flush last made), so one owner's many animations
- * never hold back another's, nor a replacement sent every flush its own
- * others. due: (owner, handle), in the order they fell due. */
-inline std::vector<std::pair<uint64_t, int>> key_turns(const std::vector<std::pair<uint64_t, int>> &due, uint64_t last)
-{
-    std::map<uint64_t, std::deque<int>> by;
-    for (const auto &d : due)
-        by[d.first].push_back(d.second);
-    std::vector<std::pair<uint64_t, int>> out;
-    auto it = by.upper_bound(last);
-    while (!by.empty()) {
-        if (it == by.end())
-            it = by.begin();
-        out.emplace_back(it->first, it->second.front());
-        it->second.pop_front();
-        it = it->second.empty() ? by.erase(it) : std::next(it);
+/* The animation keys a graph makes (every graph's, Graph::keys_): due
+ * animations made at a flush, the owners (connections) taking turns, each
+ * owner's due longest first, one after another until the bytes made reach
+ * the allowance; the flush passes it by less than one animation, and what
+ * is left waits for the next flushes. So one owner's many animations never
+ * hold back another's, nor a replacement sent every flush its own others. */
+class KeyGate {
+public:
+    struct Due {
+        uint64_t seq = 0;   /* when it fell due (next_seq()) */
+        uint64_t owner = 0;
+        int handle = 0;
+    };
+    void allow(uint64_t bytes) { allowance_ = bytes; }
+    uint64_t take()
+    {
+        const uint64_t b = made_;
+        made_ = 0;
+        return b;
     }
-    return out;
-}
+    uint64_t next_seq() { return ++seq_; }
+    /* make(handle): the bytes it sent (0: nothing). */
+    template <typename Make> void run(std::vector<Due> due, Make make)
+    {
+        std::sort(due.begin(), due.end(), [](const Due &a, const Due &b) { return a.seq < b.seq; });
+        std::map<uint64_t, std::deque<int>> by;
+        for (const Due &d : due)
+            by[d.owner].push_back(d.handle);
+        uint64_t made = 0;
+        auto it = by.upper_bound(last_);
+        while (!by.empty() && made < allowance_) {
+            if (it == by.end())
+                it = by.begin();
+            const uint64_t b = make(it->second.front());
+            made += b;
+            made_ += b;
+            last_ = it->first;
+            it->second.pop_front();
+            it = it->second.empty() ? by.erase(it) : std::next(it);
+        }
+    }
+
+private:
+    uint64_t allowance_ = UINT64_MAX;   /* until allow() */
+    uint64_t made_ = 0;                 /* since take() */
+    uint64_t seq_ = 0;
+    uint64_t last_ = 0;                 /* the owner whose turn came last */
+};
 
 /* An off-screen canvas (Graph::canvas): w x h RGBA8 the scene's own passes
  * draw into before the target's, with a depth-stencil buffer when depth,
@@ -468,27 +497,34 @@ public:
 
     /* Animation anim (animate()'s) replaced by a on node: its handle, the
      * same or a new one; 0 when refused, anim then stopped. A graph may make
-     * it at its next flush, keeping only the newest of several replacements
-     * before it. */
-    virtual int replace(int anim, int node, const Animation &a)
+     * it at a flush, keeping only the newest of several replacements, the
+     * old one playing until then. restore: called once the old one stops
+     * (made, or stopped while waiting), to give its target back its own
+     * value where the new one plays elsewhere. */
+    virtual int replace(int anim, int node, const Animation &a, std::function<void()> restore = nullptr)
     {
         stop(anim);
+        if (restore)
+            restore();
         return animate(node, a);
     }
     /* Bytes of animation keys made since the last call, which the next
      * flush sends to the renderer. */
-    virtual uint64_t take_animation_bytes() { return 0; }
+    virtual uint64_t take_animation_bytes() { return keys_.take(); }
     /* The bytes of animation keys the next flushes may make (set before
      * each; unlimited until set): due animations (animate(), replace(),
-     * those a graph makes again) are made owners in turn (key_turns()), one
-     * after another until what is made reaches it, so a flush passes it by
-     * one animation at most; the rest wait for a later flush, while
-     * animations_due(). */
-    virtual void key_allowance(uint64_t) {}
+     * those a graph makes again) are made through keys_; the rest wait
+     * for a later flush, while animations_due(). */
+    virtual void key_allowance(uint64_t bytes) { keys_.allow(bytes); }
     virtual bool animations_due() const { return false; }
     /* When the animation started, in the renderer's clock; false where the
      * backend cannot say, or it is not made yet (tests). */
     virtual bool read_animation(int, uint64_t *) { return false; }
+
+protected:
+    KeyGate keys_;
+
+public:
 
     /* A canvas: its handle is a buffer handle too (texture(), not
      * drop_buffer()). 0 where the backend has none. Quads and views drawn
