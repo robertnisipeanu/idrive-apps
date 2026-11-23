@@ -3,9 +3,9 @@
 /* Text for cluster-render layers (PROTOCOL.md "Text"), with no service
  * change: a Font is a one-row R8 atlas of its glyphs, each a whole line
  * high, sent once as an asset; a Text is an effect layer drawing a string
- * from it, laid out here (advances, kerning, alignment) and sent as one
- * uniform array of glyph boxes. Changing the string sends that array alone,
- * a few hundred bytes; the atlas is never sent again.
+ * from it, laid out here (advances, kerning, alignment) and sent as a
+ * uniform array of glyph boxes and their count. Changing the string sends
+ * those two uniforms alone, under 700 bytes; the atlas is never sent again.
  *
  *   const { Font, Text } = require('./cluster_render_text.js');
  *   const font = Font.fromGrid({ pixels, w: 160, h: 64, cols: 10, rows: 2, chars: '0123456789ABCDEFGHIJ' });
@@ -20,7 +20,9 @@
 /* The fragment shader of a Text of at most n glyphs: GLSL ES 1.00, a loop
  * of constant bound over a uniform array (constant-index expressions), each
  * glyph box (x0, x1 in the layer's width, u0, u1 in the atlas's) tested,
- * the last one covering the pixel drawn. Premultiplied out. */
+ * the brightest sample of those covering the pixel drawn (boxes overlap
+ * where kerning or a bearing pulls glyphs together). Premultiplied out;
+ * n + 2 uniform vectors. */
 function textFragmentShader(n) {
     return '#version 100\n' +
         'precision mediump float;\n' +
@@ -36,7 +38,7 @@ function textFragmentShader(n) {
         '        vec4 g = u_glyphs[i];\n' +
         '        if (v_uv.x >= g.x && v_uv.x < g.y) {\n' +
         '            float t = (v_uv.x - g.x) / (g.y - g.x);\n' +
-        '            a = texture2D(u_atlas, vec2(mix(g.z, g.w, t), v_uv.y)).r;\n' +
+        '            a = max(a, texture2D(u_atlas, vec2(mix(g.z, g.w, t), v_uv.y)).r);\n' +
         '        }\n' +
         '    }\n' +
         '    gl_FragColor = vec4(u_color.rgb * u_color.a, u_color.a) * a;\n' +
@@ -44,6 +46,9 @@ function textFragmentShader(n) {
 }
 
 const MAX_ATLAS = 2048;
+/* The most glyphs a Text holds: its shader's 16 uniform vectors, the least
+ * GLSL ES 1.00 gives a fragment shader. */
+const MAX_GLYPHS = 14;
 
 class Font {
     /* glyphs: [{ code, w, advance, left, pixels }]: each glyph's bitmap w x
@@ -100,19 +105,27 @@ class Font {
         }));
     }
 
-    /* An AngelCode BMFont (its text .fnt, one page) and the page's pixels
-     * (page.w x page.h, R8, or RGBA with bpp 4: its alpha). */
+    /* An AngelCode BMFont (its text .fnt) and its page's pixels (page.w x
+     * page.h, R8, or RGBA with bpp 4: its alpha). Throws for a font of
+     * several pages, of glyphs packed in channels, or of a glyph outside the
+     * page. */
     static fromBMFont(fnt, page) {
         const bpp = page.bpp || 1;
         const field = (line, k) => { const m = new RegExp('\\b' + k + '=(-?\\d+)').exec(line); return m ? Number(m[1]) : 0; };
         let lineHeight = 0;
         const glyphs = [], kerning = new Map();
         fnt.split(/\r?\n/).forEach((line) => {
-            if (/^common\b/.test(line)) lineHeight = field(line, 'lineHeight');
-            else if (/^char\b/.test(line)) {
+            if (/^common\b/.test(line)) {
+                lineHeight = field(line, 'lineHeight');
+                if (field(line, 'pages') > 1 || field(line, 'packed')) throw new Error('a BMFont of one page, unpacked');
+            } else if (/^char\b/.test(line)) {
                 const g = { code: field(line, 'id'), x: field(line, 'x'), y: field(line, 'y'), w: field(line, 'width'),
                     h: field(line, 'height'), left: field(line, 'xoffset'), top: field(line, 'yoffset'),
                     advance: field(line, 'xadvance') };
+                const chnl = field(line, 'chnl');
+                if (field(line, 'page') || (chnl && chnl !== 15)) throw new Error('a BMFont of one page, unpacked');
+                if (g.x < 0 || g.y < 0 || g.w < 0 || g.h < 0 || g.x + g.w > page.w || g.y + g.h > page.h)
+                    throw new Error('glyph ' + g.code + ' outside the page');
                 const px = Buffer.alloc(g.w * g.h);
                 for (let y = 0; y < g.h; y++)
                     for (let x = 0; x < g.w; x++)
@@ -133,18 +146,20 @@ class Font {
         return ref;
     }
 
-    /* text laid out a line h pixels high: { boxes: [{ x0, x1, u0, u1 }] in
-     * pixels of the line and the atlas, width }. A character the font
-     * lacks takes a space's advance, or nothing. */
+    /* text laid out a line h pixels high, spacing pixels between
+     * characters: { boxes: [{ x0, x1, u0, u1 }] in pixels of the line and
+     * the atlas, width: from the first character's start to the last one's
+     * advance }. A character the font lacks takes a space's advance, or
+     * nothing. */
     layout(text, h, spacing) {
         const s = h / this.lineHeight, boxes = [];
         let x = 0, prev = -1;
         Array.from(text).forEach((c) => {
             const code = c.codePointAt(0), g = this.glyphs.get(code);
-            if (prev >= 0) x += (this.kerning.get(prev + ',' + code) || 0) * s;
+            if (prev >= 0) x += (this.kerning.get(prev + ',' + code) || 0) * s + (spacing || 0);
             if (g) {
                 if (g.w) boxes.push({ x0: x + g.left * s, x1: x + (g.left + g.w) * s, u0: g.x, u1: g.x + g.w });
-                x += g.advance * s + (spacing || 0);
+                x += g.advance * s;
             } else {
                 const space = this.glyphs.get(32);
                 x += space ? space.advance * s : 0;
@@ -160,13 +175,17 @@ class Text {
      * atlas) over its rect, a line as high as the rect: opts the layer's
      * (target, x, y, w, h, klass, z, canvas, ...), color [r, g, b, a] (0-1,
      * white by default), align 'left' (default), 'center' or 'right',
-     * spacing (pixels between glyphs), maxGlyphs (16 by default, the
-     * uniforms its shader holds: 1 to 64). */
+     * spacing (pixels between characters), maxGlyphs (the glyphs its shader
+     * holds: 1 to MAX_GLYPHS, the default). ref 0, nothing sent, when w or
+     * h is not a number above 0 or maxGlyphs is out of range. */
     constructor(cr, font, atlas, opts) {
         this.cr = cr;
         this.font = font;
-        this.opts = Object.assign({ align: 'left', spacing: 0, maxGlyphs: 16, color: [1, 1, 1, 1] }, opts);
-        this.max = Math.max(1, Math.min(64, this.opts.maxGlyphs | 0));
+        this.opts = Object.assign({ align: 'left', spacing: 0, maxGlyphs: MAX_GLYPHS, color: [1, 1, 1, 1] }, opts);
+        this.max = this.opts.maxGlyphs;
+        this.ref = 0;
+        if (!(this.opts.w > 0 && this.opts.h > 0 && isFinite(this.opts.w) && isFinite(this.opts.h)) ||
+            !(Number.isInteger(this.max) && this.max >= 1 && this.max <= MAX_GLYPHS)) return;
         const lo = Object.assign({}, opts);
         ['color', 'align', 'spacing', 'maxGlyphs'].forEach((k) => delete lo[k]);
         this.ref = cr.effect(Object.assign(lo, { fs: textFragmentShader(this.max), blend: 'premultiplied' }));
@@ -176,23 +195,25 @@ class Text {
         this.set('');
     }
 
-    /* The string shown; false when it has more glyphs than the layer holds
-     * or is wider than its rect (it is shown cut). */
+    /* The string shown, sent as two uniforms (u_glyphs, u_count), the
+     * boxes to 6 significant digits as the C++ client sends them; false
+     * when it has more glyphs than the layer holds or is wider than its
+     * rect (it is shown cut). */
     set(text) {
         if (!this.ref) return false;
         const w = this.opts.w, l = this.font.layout(String(text), this.opts.h, this.opts.spacing);
         const shift = this.opts.align === 'right' ? w - l.width : this.opts.align === 'center' ? (w - l.width) / 2 : 0;
         const v = new Array(this.max * 4).fill(0);
         const boxes = l.boxes.slice(0, this.max);
+        const six = (x) => Number(x.toPrecision(6));
         boxes.forEach((b, i) => {
-            v[i * 4] = (b.x0 + shift) / w;
-            v[i * 4 + 1] = (b.x1 + shift) / w;
-            v[i * 4 + 2] = b.u0 / this.font.w;
-            v[i * 4 + 3] = b.u1 / this.font.w;
+            v[i * 4] = six((b.x0 + shift) / w);
+            v[i * 4 + 1] = six((b.x1 + shift) / w);
+            v[i * 4 + 2] = six(b.u0 / this.font.w);
+            v[i * 4 + 3] = six(b.u1 / this.font.w);
         });
         this.cr.uniform(this.ref, 'u_glyphs', v, { type: 'vec4' });
         this.cr.uniform(this.ref, 'u_count', [boxes.length]);
-        this.text = String(text);
         return l.boxes.length <= this.max && l.width <= w;
     }
 
@@ -206,4 +227,4 @@ class Text {
     }
 }
 
-module.exports = { Font, Text, textFragmentShader };
+module.exports = { Font, Text, textFragmentShader, MAX_GLYPHS };

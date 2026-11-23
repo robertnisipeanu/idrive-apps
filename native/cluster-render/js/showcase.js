@@ -38,9 +38,10 @@
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
  *
- * On the unit (Node 8): copy this file and cluster_render_client.js into one
- * directory and run it as a user that may open the service's socket (group
- * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
+ * On the unit (Node 8): copy this file, cluster_render_client.js and
+ * cluster_render_text.js into one directory and run it as a user that may
+ * open the service's socket (group tm_oap_app, or root); Ctrl-C ends it and
+ * its layers go with it.
  *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|label|values|cubemap]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
@@ -661,11 +662,11 @@ function main() {
             y: Math.round(H * y), w: Math.round(W * w), h: Math.round(H * h) }, opts));
         const clock = line(0.05, 0.12, 0.18, 0.3, { color: [1, 1, 1, 1], maxGlyphs: 8 });
         const speed = line(0.4, 0.38, 0.3, 0.55, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
-        const status = line(0.05, 0.78, 0.1, 0.9, { color: [1, 0.75, 0.2, 1], align: 'center', maxGlyphs: 32 });
+        const status = line(0.05, 0.78, 0.1, 0.9, { color: [1, 0.75, 0.2, 1], align: 'center' });
         name(clock.ref, 'clock');
         name(speed.ref, 'speed');
         name(status.ref, 'status');
-        const states = ['READY', 'DRIVE MODE: COMFORT', 'RANGE 412 KM', 'SPORT'];
+        const states = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];   /* 14 glyphs at most, the font's letters */
         let v = 0, k = 0;
         const tick = () => {
             const d = new Date();

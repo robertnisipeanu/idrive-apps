@@ -60,7 +60,7 @@ std::string text_fragment_shader(unsigned n)
            "        vec4 g = u_glyphs[i];\n"
            "        if (v_uv.x >= g.x && v_uv.x < g.y) {\n"
            "            float t = (v_uv.x - g.x) / (g.y - g.x);\n"
-           "            a = texture2D(u_atlas, vec2(mix(g.z, g.w, t), v_uv.y)).r;\n"
+           "            a = max(a, texture2D(u_atlas, vec2(mix(g.z, g.w, t), v_uv.y)).r);\n"
            "        }\n"
            "    }\n"
            "    gl_FragColor = vec4(u_color.rgb * u_color.a, u_color.a) * a;\n"
@@ -95,7 +95,7 @@ Font Font::from_glyphs(unsigned line_height, const std::vector<GlyphBitmap> &gly
         Glyph &gl = f.glyphs_[g.code];
         gl.x = x;
         gl.w = g.w;
-        gl.advance = g.advance;
+        gl.advance = g.advance < 0 ? (int)g.w : g.advance;
         gl.left = g.left;
         x += g.w + 1;
     }
@@ -140,8 +140,13 @@ Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned pag
             line.pop_back();
         if (line.compare(0, 7, "common ") == 0) {
             line_height = (unsigned)std::max(0, field(line, "lineHeight"));
+            if (field(line, "pages") > 1 || field(line, "packed"))
+                return Font();
         } else if (line.compare(0, 5, "char ") == 0) {
             GlyphBitmap g;
+            const int chnl = field(line, "chnl");
+            if (field(line, "page") || (chnl && chnl != 15))
+                return Font();
             const int gx = field(line, "x"), gy = field(line, "y");
             g.code = (uint32_t)field(line, "id");
             g.w = (unsigned)std::max(0, field(line, "width"));
@@ -193,6 +198,7 @@ std::vector<GlyphBox> Font::layout(const std::string &text, float h, float spaci
             auto k = kerning_.find(std::make_pair(prev, cp));
             if (k != kerning_.end())
                 x += (float)k->second * s;
+            x += spacing;
         }
         auto g = glyphs_.find(cp);
         if (g != glyphs_.end()) {
@@ -204,7 +210,7 @@ std::vector<GlyphBox> Font::layout(const std::string &text, float h, float spaci
                 b.u1 = (float)(g->second.x + g->second.w);
                 boxes.push_back(b);
             }
-            x += (float)g->second.advance * s + spacing;
+            x += (float)g->second.advance * s;
         } else {
             auto space = glyphs_.find(32);
             if (space != glyphs_.end())
@@ -218,12 +224,15 @@ std::vector<GlyphBox> Font::layout(const std::string &text, float h, float spaci
     return boxes;
 }
 
-Text::Text(Client &c, const Font &font, uint32_t atlas, const LayerOptions &lo, const TextOptions &to)
-    : c_(c), font_(font), lo_(lo), to_(to), max_(std::max(1u, std::min(64u, to.max_glyphs)))
+Text::Text(Client &c, std::shared_ptr<const Font> font, uint32_t atlas, const LayerOptions &lo,
+           const TextOptions &to)
+    : c_(c), font_(std::move(font)), lo_(lo), to_(to)
 {
+    if (!font_ || !font_->ok() || !lo_.w || !lo_.h || !to_.max_glyphs || to_.max_glyphs > kMaxTextGlyphs)
+        return;
     RenderState look;
     look.blend = "premultiplied";
-    ref_ = c_.effect(lo_, EffectOptions{text_fragment_shader(max_), "", 0}, false, look);
+    ref_ = c_.effect(lo_, EffectOptions{text_fragment_shader(to_.max_glyphs), "", 0}, false, look);
     if (!ref_)
         return;
     c_.bind(ref_, "u_atlas", atlas);
@@ -233,14 +242,15 @@ Text::Text(Client &c, const Font &font, uint32_t atlas, const LayerOptions &lo, 
 
 bool Text::set(const std::string &text)
 {
-    if (!ref_ || !lo_.w)
+    if (!ref_)
         return false;
+    const unsigned max = to_.max_glyphs;
     float width = 0;
-    const std::vector<GlyphBox> boxes = font_.layout(text, (float)lo_.h, to_.spacing, &width);
-    const float w = (float)lo_.w, aw = (float)font_.width();
+    const std::vector<GlyphBox> boxes = font_->layout(text, (float)lo_.h, to_.spacing, &width);
+    const float w = (float)lo_.w, aw = (float)font_->width();
     const float shift = to_.align == "right" ? w - width : to_.align == "center" ? (w - width) / 2 : 0;
-    std::vector<float> v(max_ * 4, 0.0f);
-    const size_t n = std::min<size_t>(boxes.size(), max_);
+    std::vector<float> v(max * 4, 0.0f);
+    const size_t n = std::min<size_t>(boxes.size(), max);
     for (size_t i = 0; i < n; i++) {
         v[i * 4] = (boxes[i].x0 + shift) / w;
         v[i * 4 + 1] = (boxes[i].x1 + shift) / w;
@@ -249,12 +259,11 @@ bool Text::set(const std::string &text)
     }
     c_.uniform(ref_, "u_glyphs", UniformType::Vec4, v);
     c_.uniform(ref_, "u_count", std::vector<float>{(float)n});
-    return boxes.size() <= max_ && width <= w;
+    return boxes.size() <= max && width <= w;
 }
 
 void Text::color(const float rgba[4])
 {
-    std::copy(rgba, rgba + 4, to_.color);
     if (ref_)
         c_.uniform(ref_, "u_color", std::vector<float>(rgba, rgba + 4));
 }

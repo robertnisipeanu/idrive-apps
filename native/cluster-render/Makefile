@@ -74,7 +74,7 @@ CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/ceiling_test $
 	$(H)/occlusion_test \
 	$(H)/service_test \
 	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
-	$(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test $(H)/settings_test
+	$(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test $(H)/settings_test $(H)/text_gl_check
 
 all: test
 
@@ -82,8 +82,8 @@ all: test
 # target (--output-sync keeps a test's lines together); occlusion_test, the
 # longest, in parts (its --part I/N), one per entry of OCC_PART_IDS.
 OCC_PART_IDS = 0 1 2 3 4 5 6 7
-CPP_RUNS = $(patsubst $(H)/%_test,run-%,$(filter-out $(H)/occlusion_test,$(CPP_TESTS))) \
-	$(addprefix run-occlusion.,$(OCC_PART_IDS))
+CPP_RUNS = $(patsubst $(H)/%_test,run-%,$(filter-out $(H)/occlusion_test $(H)/text_gl_check,$(CPP_TESTS))) \
+	$(addprefix run-occlusion.,$(OCC_PART_IDS)) run-text_gl_check
 RUN_JOBS ?= $(JOBS)
 
 test:
@@ -104,6 +104,9 @@ run-head_unit: $(H)/head_unit_test
 
 run-refused: $(H)/refused_test
 	$(H)/refused_test $(H)/cluster-render
+
+run-text_gl_check: $(H)/text_gl_check
+	$(H)/text_gl_check
 
 test-js: $(H)/host_service
 	$(NODE) js/test/client_test.js $(H)/host_service
@@ -206,6 +209,10 @@ $(H)/scene_test: $(O)/test/scene_test.o $(CORE_OBJ)
 
 $(H)/settings_test: $(O)/test/settings_test.o $(O)/src/settings.o $(O)/src/config.o $(O)/src/holds.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+# The text shader drawn on the host, EGL loaded at run time (skipped without it).
+$(H)/text_gl_check: $(O)/test/text_gl_check.o $(O)/client/text.o $(O)/client/client.o $(O)/client/protocol.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -ldl
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o $(O)/client/text.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread

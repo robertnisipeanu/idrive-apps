@@ -4,13 +4,14 @@
  * change, as js/cluster_render_text.js: a Font is a one-row R8 atlas of its
  * glyphs, each a whole line high, sent once as an asset; a Text is an
  * effect layer drawing a string from it, laid out here (advances, kerning,
- * alignment) and sent as one uniform array of glyph boxes, so changing the
- * string sends that array alone. */
+ * alignment) and sent as a uniform array of glyph boxes and their count, so
+ * changing the string sends those two uniforms alone. */
 #ifndef CLUSTER_RENDER_TEXT_H
 #define CLUSTER_RENDER_TEXT_H
 
 #include <stdint.h>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,8 +19,13 @@
 
 namespace cr {
 
-/* The fragment shader of a Text of at most n glyphs (GLSL ES 1.00). */
+/* The fragment shader of a Text of at most n glyphs (GLSL ES 1.00): n + 2
+ * uniform vectors. */
 std::string text_fragment_shader(unsigned n);
+
+/* The most glyphs a Text holds: its shader's 16 uniform vectors, the
+ * least GLSL ES 1.00 gives a fragment shader. */
+const unsigned kMaxTextGlyphs = 14;
 
 /* A glyph given to Font::from_glyphs(): a w x h R8 bitmap, its first row
  * top pixels below the line's top, its left bearing and advance. */
@@ -27,7 +33,7 @@ struct GlyphBitmap {
     uint32_t code = 0;   /* a Unicode code point */
     unsigned w = 0, h = 0;
     int top = 0, left = 0;
-    int advance = 0;
+    int advance = -1;   /* -1: its width */
     std::vector<uint8_t> pixels;
 };
 
@@ -49,7 +55,8 @@ public:
     static Font from_grid(const uint8_t *pixels, unsigned w, unsigned h, unsigned cols, unsigned rows,
                           const std::string &chars, unsigned bpp = 1, unsigned advance = 0);
     /* An AngelCode BMFont: its text .fnt and its one page's pixels (R8, or
-     * RGBA with bpp 4: its alpha). */
+     * RGBA with bpp 4: its alpha). Empty for a font of several pages, of
+     * glyphs packed in channels, or of a glyph outside the page. */
     static Font from_bmfont(const std::string &fnt, const uint8_t *page, unsigned page_w, unsigned page_h,
                             unsigned bpp = 1);
 
@@ -60,8 +67,10 @@ public:
     /* The atlas as an r8 asset on target, sampled bilinear; its ref, 0 when
      * refused here. */
     uint32_t asset(Client &c, const std::string &target) const;
-    /* text (UTF-8) laid out a line h pixels high; *width its advance. A
-     * character the font lacks takes a space's advance, or nothing. */
+    /* text (UTF-8) laid out a line h pixels high, spacing pixels between
+     * characters; *width its advance, from the first character's start to
+     * the last one's advance. A character the font lacks takes a space's
+     * advance, or nothing. */
     std::vector<GlyphBox> layout(const std::string &text, float h, float spacing, float *width) const;
 
 private:
@@ -78,28 +87,31 @@ private:
 struct TextOptions {
     float color[4] = {1, 1, 1, 1};   /* straight alpha, 0-1 */
     std::string align = "left";      /* left, center or right */
-    float spacing = 0;               /* pixels between glyphs */
-    unsigned max_glyphs = 16;        /* the uniforms its shader holds: 1-64 */
+    float spacing = 0;               /* pixels between characters */
+    unsigned max_glyphs = kMaxTextGlyphs;   /* the glyphs its shader holds: 1 to kMaxTextGlyphs */
 };
 
 class Text {
 public:
     /* An effect layer of lo's rect drawing strings from font, whose atlas is
-     * the asset atlas, a line as high as the rect. ref() 0 when refused. */
-    Text(Client &c, const Font &font, uint32_t atlas, const LayerOptions &lo, const TextOptions &to = TextOptions());
+     * the asset atlas, a line as high as the rect. ref() 0, nothing sent,
+     * when the font is empty, the rect has no width or height, or
+     * to.max_glyphs is not 1 to kMaxTextGlyphs. */
+    Text(Client &c, std::shared_ptr<const Font> font, uint32_t atlas, const LayerOptions &lo,
+         const TextOptions &to = TextOptions());
     uint32_t ref() const { return ref_; }
-    /* The string shown (UTF-8); false when it has more glyphs than the layer
-     * holds or is wider than its rect (it is shown cut). */
+    /* The string shown (UTF-8), sent as two uniforms (u_glyphs, u_count);
+     * false when it has more glyphs than the layer holds or is wider than
+     * its rect (it is shown cut). */
     bool set(const std::string &text);
     void color(const float rgba[4]);
     void drop();
 
 private:
     Client &c_;
-    const Font &font_;
+    std::shared_ptr<const Font> font_;
     LayerOptions lo_;
     TextOptions to_;
-    unsigned max_ = 16;
     uint32_t ref_ = 0;
 };
 

@@ -43,7 +43,7 @@ takes them, a whole scene file a root install put in place ("Layers").
 - **Text:** `js/cluster_render_text.js` (installed beside the client) and
   `include/cluster_render/text.h` (in `libcluster_render_client.a`) make a
   font's atlas once and draw strings from it in effect layers, a change of
-  string a few hundred bytes (PROTOCOL.md "Text").
+  string two uniforms, under 700 bytes (PROTOCOL.md "Text").
 - Any other language speaks [PROTOCOL.md](PROTOCOL.md) over the socket.
 
 A client needs only the socket's group, `tm_oap_app`, which every OAP app

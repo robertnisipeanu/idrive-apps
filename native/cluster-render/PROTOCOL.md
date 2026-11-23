@@ -366,19 +366,22 @@ change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
   asset sampled `bilinear`, sent once. The helper makes it from glyph
   bitmaps (any rasteriser the app has, at build time or on the unit), a
   monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
-  pixels, R8 or the alpha of RGBA).
+  pixels, R8 or the alpha of RGBA; one page, glyphs not packed in
+  channels).
 - **A string** is an effect layer, its rect one line high, whose fragment
   shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
   u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in
-  the atlas (0-1), the last one covering a pixel drawn, `u_count` glyphs
-  used, in `u_color` (premultiplied out, `blend` `premultiplied`). The app
-  lays the string out (advances, kerning, UTF-8, alignment) and sends the
-  array: one `uniform` message of a few hundred bytes a change, whatever
-  the font's size; the atlas is never sent again. A glyph the font lacks
-  takes a space's advance.
-- **Cost:** each pixel of the rect tests at most `n` glyphs (16 by
-  default, 1-64), and the shader holds `n` + 2 uniform vectors; GLSL ES
-  1.00 guarantees 16 to a fragment shader, a GPU usually far more.
+  the atlas (0-1), `u_count` glyphs used, a pixel two boxes cover (kerning
+  or a bearing pulls glyphs together) drawn with the brighter sample, in
+  `u_color` (premultiplied out, `blend` `premultiplied`). The app lays the
+  string out (advances, kerning, `spacing` between characters, UTF-8,
+  alignment) and sends two `uniform` messages a change, `u_glyphs` and
+  `u_count`: under 700 bytes for a full line of 14 glyphs, numbers to 6
+  significant digits, whatever the font's size; the atlas is never sent
+  again. A glyph the font lacks takes a space's advance.
+- **Cost:** each pixel of the rect tests at most `n` glyphs, and the
+  shader holds `n` + 2 uniform vectors. GLSL ES 1.00 guarantees a fragment
+  shader 16, so `n` is 1 to 14 (14 by default); the helpers refuse more.
 
 ```js
 const { Font, Text } = require('./cluster_render_text.js');

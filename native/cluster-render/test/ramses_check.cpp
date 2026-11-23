@@ -1163,10 +1163,10 @@ static void backend(Gpu &gpu)
 #endif
     gpu.drop_effect(lvl_fx);
 
-    /* The text helper's shader (cluster_render/text.h), at 16 and 64
-     * glyphs: a loop over a uniform array, compiled and drawn. */
+    /* The text helper's shader (cluster_render/text.h), at 1 glyph and the
+     * most: a loop over a uniform array, compiled and drawn. */
     bool texts = true;
-    for (unsigned n : {16u, 64u}) {
+    for (unsigned n : {1u, cr::kMaxTextGlyphs}) {
         const int tfx = gpu.effect(kQuadVertexShader, cr::text_fragment_shader(n).c_str(), &err);
         Rect tr;
         tr.w = 200;
@@ -1183,7 +1183,7 @@ static void backend(Gpu &gpu)
         if (tfx)
             gpu.drop_effect(tfx);
     }
-    ok("text: its shader at 16 and 64 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
+    ok("text: its shader at 1 and 14 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a

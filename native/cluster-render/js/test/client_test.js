@@ -513,6 +513,17 @@ async function main() {
         'amount=-1\n', { pixels: Buffer.alloc(8 * 6 * 4, 90), w: 8, h: 6, bpp: 4 });
     l = bm.layout('AB', 8);
     ok('text: a BMFont', bm.lineHeight === 8 && l.boxes[0].x0 === 1 && l.boxes[1].x0 === 5 && l.width === 10);
+    l = font.layout('12', 16, 2);
+    ok('text: spacing between characters only, none after the last', l.boxes[1].x0 === 10 && l.width === 18);
+    const page = { pixels: Buffer.alloc(8 * 6), w: 8, h: 6 };
+    const glyph = 'char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5';
+    const throws = (fnt) => { try { Font.fromBMFont(fnt, page); return false; } catch (e) { return true; } };
+    ok('text: a BMFont of one page, its glyphs in every channel, taken',
+        !throws('common lineHeight=8 pages=1 packed=0\n' + glyph + ' page=0 chnl=15\n'));
+    ok('text: a BMFont of several pages, packed, a glyph on another page, in one channel or outside the page refused',
+        throws('common lineHeight=8 pages=2\n' + glyph + '\n') && throws('common lineHeight=8 packed=1\n' + glyph + '\n') &&
+        throws('common lineHeight=8\n' + glyph + ' page=1\n') && throws('common lineHeight=8\n' + glyph + ' chnl=4\n') &&
+        throws('common lineHeight=8\nchar id=65 x=6 y=0 width=4 height=6 xadvance=5\n'));
     const fontRef = font.asset(ovl, 'panel');
     const label = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 40, w: 200, h: 32,
         align: 'center', maxGlyphs: 4 });
@@ -521,8 +532,33 @@ async function main() {
         label.ref > 0 && label.set('12') && !label.set('12121') && label.set('21'));
     ok('text: shown, nothing refused', await until(() => eo.layer[label.ref] === 'shown', 3000) &&
         (await sleep(200), eo.refused.slice(textRefused).filter((r) => /^(uniform|bind|layer|asset)/.test(r)).length === 0));
+    const layersBefore = ovl.layers.size;
+    ok('text: a rect with no width or height, or more than 14 glyphs, refused: nothing sent',
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, h: 32 }).ref === 0 &&
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, w: 200 }).ref === 0 &&
+        new Text(ovl, font, fontRef, { target: 'panel', x: 0, y: 0, w: 200, h: 32, maxGlyphs: 15 }).ref === 0 &&
+        ovl.layers.size === layersBefore);
+    const full = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 100, w: 300, h: 32 });
+    const fits = full.set('12121212121212');
+    const fl = ovl.layers.get(full.ref);
+    const glyphsMsg = fl.uniforms['0:u_glyphs'], countMsg = fl.uniforms['0:u_count'];
+    const bytes = (m) => Buffer.byteLength(JSON.stringify(m)) + 5;
+    const digits = (n) => n.replace('.', '').replace(/^0+/, '').length;
+    ok('text: 14 glyphs by default, a full line two uniform messages under 700 bytes, numbers to 6 digits',
+        fits && /u_glyphs\[14\]/.test(fl.opts.fs) && glyphsMsg.v.split(' ').length === 56 &&
+        glyphsMsg.v.split(' ').every((n) => digits(n) <= 6) && bytes(glyphsMsg) + bytes(countMsg) < 700);
+    full.drop();
     label.drop();
     ovl.drop(fontRef);
+    }
+
+    {   /* The showcase's header names every file it needs on the unit. */
+    const show = fs.readFileSync(path.join(__dirname, '..', 'showcase.js'), 'utf8');
+    const needs = [];
+    show.replace(/require\('\.\/([^']+)'\)/g, (m, f) => { needs.push(f); return m; });
+    const copy = /On the unit \(Node 8\): copy ([^]*?) into one/.exec(show);
+    ok('showcase: its header names each file it requires', needs.length >= 2 && copy !== null &&
+        needs.every((f) => copy[1].indexOf(f) >= 0));
     }
 
     /* Rolled back to a service without canvases: none of a canvas sent to

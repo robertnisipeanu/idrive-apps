@@ -3141,6 +3141,27 @@ static void text_helper()
     ok("text: a BMFont, its alpha, offsets, advances and kerning",
        bm.ok() && bm.line_height() == 8 && bm.pixels()[2 * bm.width() + 1] == 90 && b.size() == 2 && b[0].x0 == 1 &&
            b[1].x0 == 5 && width == 10);
+    float spaced = 0;
+    const std::vector<cr::GlyphBox> sb = font.layout("12", 16, 2, &spaced);
+    ok("text: spacing between characters only, none after the last",
+       sb.size() == 2 && sb[1].x0 == 10 && spaced == 18);
+    std::vector<cr::GlyphBitmap> plain(1);
+    plain[0].code = 'x';
+    plain[0].w = 4;
+    plain[0].h = 8;
+    plain[0].pixels.assign(32, 9);
+    float plain_w = 0;
+    cr::Font::from_glyphs(8, plain).layout("xx", 8, 0, &plain_w);
+    ok("text: a glyph bitmap's advance its width when not given", plain_w == 8);
+    const std::string one_char = "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5";
+    auto bmfont = [&](const std::string &common, const std::string &chr) {
+        return cr::Font::from_bmfont("common lineHeight=8 " + common + "\n" + chr + "\n", page.data(), 8, 6, 4).ok();
+    };
+    ok("text: a BMFont of one page, its glyphs in every channel, taken",
+       bmfont("pages=1 packed=0", one_char + " page=0 chnl=15"));
+    ok("text: a BMFont of several pages, packed in channels, a glyph on another page or in one channel refused",
+       !bmfont("pages=2", one_char) && !bmfont("packed=1", one_char) && !bmfont("", one_char + " page=1") &&
+           !bmfont("", one_char + " chnl=4"));
     std::vector<cr::GlyphBitmap> wide(300);
     for (size_t i = 0; i < wide.size(); i++) {
         wide[i].code = (uint32_t)i;
@@ -3166,7 +3187,10 @@ static void text_helper()
     cr::TextOptions to;
     to.align = "right";
     to.max_glyphs = 4;
-    cr::Text label(c, font, atlas, lo, to);
+    /* the Text holds the font: it goes on once the app's own is gone */
+    std::shared_ptr<const cr::Font> held = std::make_shared<const cr::Font>(font);
+    cr::Text label(c, held, atlas, lo, to);
+    held.reset();
     const bool fits = label.set("12");
     r.pump(300);
     FakeGraph *g = r.gpu.graph("panel");
@@ -3185,6 +3209,45 @@ static void text_helper()
            std::fabs(q->uniforms.at("u_glyphs")[2] - 1.0f / 19) < 1e-6f && e.layer[label.ref()] == "shown");
     ok("text: more glyphs than the layer holds: false, the first ones shown",
        !label.set("12121") && (r.pump(100), q && q->uniforms.at("u_count")[0] == 4) && e.errors.empty());
+
+    /* The most glyphs: 14 by default, more refused (n + 2 vectors within
+     * GLSL ES 1.00's 16); a rect with no width or height refused. */
+    auto shared = std::make_shared<const cr::Font>(font);
+    lo.y = 200;
+    cr::Text full(c, shared, atlas, lo);
+    r.pump(100);
+    const FakeQuad *fq = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.quads)   /* the graph's own map: fq points into it */
+            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 14 * 4)
+                fq = &kv.second;
+    cr::TextOptions many;
+    many.max_glyphs = 15;
+    cr::LayerOptions flat = lo;
+    flat.h = 0;
+    ok("text: 14 glyphs by default, 15 refused, a rect of no height refused, nothing sent for them",
+       full.ref() && fq && !cr::Text(c, shared, atlas, lo, many).ref() && !cr::Text(c, shared, atlas, flat).ref());
+    /* spaced right-aligned text as wide as the rect fits, its last glyph
+     * at the rect's right edge */
+    cr::TextOptions sp;
+    sp.align = "right";
+    sp.spacing = 2;
+    sp.max_glyphs = 2;
+    cr::LayerOptions narrow = lo;
+    narrow.y = 300;
+    narrow.w = 18;
+    narrow.h = 16;
+    cr::Text tight(c, shared, atlas, narrow, sp);
+    const bool tight_fits = tight.set("12");
+    r.pump(300);
+    const FakeQuad *tq = nullptr;
+    if (g)
+        for (const auto &kv : g->shown.quads)   /* the graph's own map: tq points into it */
+            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 2 * 4)
+                tq = &kv.second;
+    ok("text: spaced text as wide as its rect fits, its last glyph at the right edge",
+       tight_fits && tq && std::fabs(tq->uniforms.at("u_glyphs")[5] - 1.0f) < 1e-6f &&
+           std::fabs(tq->uniforms.at("u_glyphs")[0]) < 1e-6f);
 }
 
 int main()
