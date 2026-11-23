@@ -42,9 +42,15 @@ struct AssetParams {
     TexFormat format = TexFormat::RGBA8;
     uint32_t w = 0, h = 0;
     Sampler sampler;
+    /* A cube map (PROTOCOL.md "Cube maps"): w x w faces, six of them. */
+    bool cube = false;
     /* Its mip levels: 1, or every level (graph.h mip_levels) when sampled
-     * with mipmaps. */
-    uint32_t levels() const { return sampling_mips(sampler.sampling) ? mip_levels(format, w, h) : 1; }
+     * with mipmaps; a cube map has none. */
+    uint32_t levels() const { return !cube && sampling_mips(sampler.sampling) ? mip_levels(format, w, h) : 1; }
+    /* Its pixels, mip levels and faces included. */
+    size_t bytes() const { return tex_chain_bytes(format, w, h, levels()) * (cube ? 6 : 1); }
+    /* Sent whole and once, made at its first stage in a scene. */
+    bool immutable() const { return cube || tex_compressed(format); }
 };
 
 class Asset {
@@ -61,14 +67,16 @@ public:
     const AssetParams &params() const { return p_; }
     uint32_t bpp() const { return p_.format == TexFormat::R8 ? 1 : 4; }
     bool compressed() const { return tex_compressed(p_.format); }
+    /* Sent whole and once: compressed, or a cube map. */
+    bool immutable() const { return p_.immutable(); }
     /* Its pixels, mip levels included. */
-    size_t bytes() const { return tex_chain_bytes(p_.format, p_.w, p_.h, p_.levels()); }
+    size_t bytes() const { return p_.bytes(); }
     /* What it holds of the service's pixel memory: its pixels and mip
      * levels, and a rectangle scratch as large unless compressed. */
     uint64_t memory() const { return memory(p_); }
     static uint64_t memory(const AssetParams &p)
     {
-        return (uint64_t)tex_chain_bytes(p.format, p.w, p.h, p.levels()) * (tex_compressed(p.format) ? 1 : 2);
+        return (uint64_t)p.bytes() * (p.immutable() ? 1 : 2);
     }
     /* Why the renderer refused its texture; empty when it did not. */
     const std::string &refused() const { return refused_; }

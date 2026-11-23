@@ -329,6 +329,9 @@ namespace ramses
         TextureSampler* createTextureSampler(ETextureAddressMode wrapUMode, ETextureAddressMode wrapVMode,
                                              ETextureSamplingMethod samplingMethod, const RenderBuffer& renderBuffer,
                                              uint32_t anisotropyLevel = 1, const char* name = nullptr);
+        TextureSampler* createTextureSampler(ETextureAddressMode wrapUMode, ETextureAddressMode wrapVMode,
+                                             ETextureSamplingMethod samplingMethod, const TextureCube& texture,
+                                             uint32_t anisotropyLevel = 1, const char* name = nullptr);
         // sampleCount 0: not multisampled.
         RenderBuffer* createRenderBuffer(uint32_t width, uint32_t height, ERenderBufferType bufferType,
                                          ERenderBufferFormat bufferFormat, ERenderBufferAccessMode accessMode,

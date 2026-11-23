@@ -294,6 +294,7 @@ class ClusterRender extends EventEmitter {
             this.nodes = ev.nodes === 1;   /* takes pivot parts and parents */
             this.draw = ev.draw === 1;   /* takes a part's draw mode */
             this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
+            this.cubeMaps = ev.cube === 1;   /* takes cube map assets */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -402,6 +403,7 @@ class ClusterRender extends EventEmitter {
             const m = { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
                 sampling: o.sampling || 'nearest', wrap: o.wrap || 'clamp' };
             ['wrap_u', 'wrap_v', 'anisotropy'].forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
+            if (o.cube) m.cube = 1;
             return m;
         }
         const m = { op: 'layer', ref: ref, target: o.target, kind: l.kind };
@@ -463,6 +465,13 @@ class ClusterRender extends EventEmitter {
             /* A compressed asset sampled with mipmaps is sent with every
              * level; the service makes an uncompressed one's. */
             l.bytes = assetBytes(o.w, o.h, l.bpp, block, l.compressed && MIPMAPPED.indexOf(o.sampling) >= 0);
+            /* A cube map: six square faces, +x, -x, +y, -y, +z, -z, sent
+             * whole and once, no mip levels. */
+            if (o.cube) {
+                if (o.w !== o.h || MIPMAPPED.indexOf(o.sampling) >= 0) return 0;
+                l.bytes *= 6;
+                l.wholeOnly = true;
+            }
             if (l.bytes > 1920 * 720 * 4) return 0;
             l.iw = o.w;
             l.ih = o.h;
@@ -496,7 +505,10 @@ class ClusterRender extends EventEmitter {
      * 'min_linear_mag_nearest', 'min_nearest_mag_linear'), wrap ('clamp',
      * 'repeat'; 'mirror'), wrap_u, wrap_v, anisotropy (1-16). Sampled with
      * mipmaps, a compressed asset's frame carries every level after its
-     * picture (PROTOCOL.md "Mipmaps"). */
+     * picture (PROTOCOL.md "Mipmaps"). To a service whose hello has cube:
+     * cube: true, a cube map, w equal to h, its frame the six faces one
+     * after another (+x, -x, +y, -y, +z, -z), sent whole and once, no mip
+     * levels (PROTOCOL.md "Cube maps"). */
     asset(opts) { return this._add('asset', opts); }
     /* A canvas (PROTOCOL.md "Canvases"), to a service whose hello has canvas:
      * opts target, w, h (up to 2048), depth (a depth-stencil buffer of its
@@ -793,7 +805,7 @@ class ClusterRender extends EventEmitter {
         const l = this.layers.get(ref);
         if (!l || !l.image) return false;
         const iw = l.iw, ih = l.ih, bpp = l.bpp;
-        if (l.compressed && rects && rects.length) return false;
+        if ((l.compressed || l.wholeOnly) && rects && rects.length) return false;
         if (!rects || !rects.length) {
             if (px.length !== l.image.length) return false;
             px.copy(l.image);

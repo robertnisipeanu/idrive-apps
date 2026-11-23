@@ -294,6 +294,11 @@ public:
     uint32_t asset(const AssetOptions &ao);
     /* With more of its sampler (SamplerOptions). */
     uint32_t asset(const AssetOptions &ao, const SamplerOptions &so);
+    /* A cube map (PROTOCOL.md "Cube maps"), to a service whose hello has cube
+     * (takes_cube()): ao.w x ao.w faces (ao.h ignored), its pixels the six
+     * faces one after another (+x, -x, +y, -y, +z, -z), sent whole and
+     * once; no mipmapped sampling. 0 when out of range. */
+    uint32_t cube(const AssetOptions &ao, const SamplerOptions &so = SamplerOptions());
     /* A scene file as the target's scene; 0 without a file or a hash for
      * each file. */
     uint32_t scene(const SceneOptions &so);
@@ -447,6 +452,8 @@ public:
     bool takes_draw() const { return draw_; }
     /* The service's hello takes a part's instances above 1 (RenderState). */
     bool takes_instances() const { return instances_; }
+    /* The service's hello takes cube maps (cube()). */
+    bool takes_cube() const { return cube_; }
 
 private:
     struct Part {
@@ -462,6 +469,7 @@ private:
         SamplerOptions sampler;          /* an asset's */
         CanvasOptions co;                /* a canvas's */
         uint32_t canvas = 0;             /* the canvas a layer draws in */
+        bool cube = false;               /* an asset that is a cube map */
         VideoOptions vo;
         ImageOptions io;
         EffectOptions eo;
@@ -568,6 +576,7 @@ private:
     bool nodes_ = false;            /* and pivots and parents */
     bool draw_ = false;             /* and draw modes */
     bool instances_ = false;        /* and instances above 1 */
+    bool cube_ = false;             /* and cube maps */
     uint64_t parts_made_ = 0;
 };
 

@@ -36,6 +36,7 @@
 #include "ramses-client-api/SplineStepVector4f.h"
 #include "ramses-client-api/Texture2D.h"
 #include "ramses-client-api/Texture2DBuffer.h"
+#include "ramses-client-api/TextureCube.h"
 #include "ramses-client-api/TextureSampler.h"
 #include "ramses-client-api/UniformInput.h"
 
@@ -413,6 +414,35 @@ public:
         return next_++;
     }
 
+    /* A cube texture: a scene resource, as an ETC2 texture is. */
+    int cube_texture(TexFormat f, uint32_t size, const Sampler &s, const uint8_t *data, size_t face) override
+    {
+        if (!size || face != tex_bytes(f, size, size) || sampling_mips(s.sampling))
+            return 0;
+        ramses::ETextureSamplingMethod min, mag;
+        sampling27(s.sampling, &min, &mag);
+        const ramses::CubeMipLevelData mip((uint32_t)face, data, data + face, data + 2 * face, data + 3 * face,
+                                           data + 4 * face, data + 5 * face);
+        const ramses::ETextureFormat format = f == TexFormat::ETC2RGB    ? ramses::ETextureFormat::ETC2RGB
+                     : f == TexFormat::ETC2RGBA ? ramses::ETextureFormat::ETC2RGBA
+                     : f == TexFormat::R8       ? ramses::ETextureFormat::R8
+                                                : ramses::ETextureFormat::RGBA8;
+        ramses::TextureCube *tex = scene_->createTextureCube(format, size, 1, &mip);
+        ramses::TextureSampler *smp =
+            tex ? scene_->createTextureSampler(wrap27(s.u), wrap27(s.v), min, mag, *tex, s.anisotropy) : nullptr;
+        if (!smp) {
+            log_error("ramses: %u-pixel %s cube texture refused by %s", size, tex_format_name(f),
+                      tex ? "createTextureSampler" : "createTextureCube");
+            if (tex)
+                scene_->destroy(*tex);
+            return 0;
+        }
+        Buffer b{nullptr, smp};
+        b.cube = tex;
+        buffers_[next_] = b;
+        return next_++;
+    }
+
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
     {
         return write_level(buf, 0, x, y, w, h, px);
@@ -617,6 +647,8 @@ public:
             scene_->destroy(*b->second.buffer);
         if (b->second.tex)
             scene_->destroy(*b->second.tex);
+        if (b->second.cube)
+            scene_->destroy(*b->second.cube);
         buffers_.erase(b);
     }
 
@@ -1078,6 +1110,7 @@ private:
         ramses::Texture2DBuffer *buffer;   /* null for an immutable texture */
         ramses::TextureSampler *sampler;
         ramses::Texture2D *tex = nullptr;
+        ramses::TextureCube *cube = nullptr;
         uint32_t levels = 1;   /* mip levels */
     };
     struct Quad {

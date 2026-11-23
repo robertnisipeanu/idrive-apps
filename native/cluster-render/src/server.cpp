@@ -810,7 +810,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"curves", "1"},
                                  {"nodes", "1"},
                                  {"draw", "1"},
-                                 {"instances", comp_->instancing() ? "1" : "0"}}));
+                                 {"instances", comp_->instancing() ? "1" : "0"},
+                                 {"cube", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();
@@ -999,6 +1000,12 @@ void Server::op_asset(Client &c, const cr::Json &j)
     ap.h = (uint32_t)h;
     static const TexFormat kFormats[] = {TexFormat::RGBA8, TexFormat::R8, TexFormat::ETC2RGBA, TexFormat::ETC2RGB};
     ap.format = kFormats[format];
+    double cube = 0;
+    if (!num(j, "cube", 0, 1, &cube, &err)) {
+        error(c, "asset", ref, err);
+        return;
+    }
+    ap.cube = cube != 0;
     const uint32_t id = comp_->add_asset(c.id, target, ap, &err);
     if (!id) {
         error(c, "asset", ref, err);
@@ -1672,9 +1679,10 @@ std::string Server::status_text(int64_t now_ms) const
         for (const auto &kv : c.assets)
             for (const Asset *a : comp_->assets())
                 if (a->id() == kv.second) {
-                    const std::string levels = a->params().levels() > 1
-                                                   ? " (" + std::to_string(a->params().levels()) + " mip levels)"
-                                                   : "";
+                    const std::string levels = a->params().cube              ? " (cube map)"
+                                               : a->params().levels() > 1 ? " (" + std::to_string(a->params().levels()) +
+                                                                                " mip levels)"
+                                                                          : "";
                     std::snprintf(line, sizeof line, "asset %u %s %ux%u%s of %s on %s: %s\n", a->id(),
                                   tex_format_name(a->params().format), a->params().w, a->params().h, levels.c_str(),
                                   c.app.c_str(), slots_->targets()[a->target()].name.c_str(), a->stats().c_str());

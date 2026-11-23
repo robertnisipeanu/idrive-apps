@@ -24,7 +24,10 @@
  *           renderer turns along a smooth curve;
  *   geometry draw modes and instances (a service whose hello has draw):
  *           16 cubes drawn as instances of one, a ring as a line loop and
- *           a field of points, all turned by the renderer.
+ *           a field of points, all turned by the renderer;
+ *   cubemap a cube map of six coloured faces (a service whose hello has
+ *           cube) on a cube the renderer turns, and on one facing the
+ *           camera, which shows the +z face (blue).
  * Every animation runs in the renderer; the client sends only the text once
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
@@ -32,7 +35,7 @@
  * On the unit (Node 8): copy this file and cluster_render_client.js into one
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry]
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|cubemap]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -41,7 +44,7 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'cubemap'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -191,6 +194,40 @@ uniform vec4 u_color;
 void main() {
     gl_FragColor = u_color;
 }`;
+
+/* A cube sampling a cube map by its own direction from its centre. */
+const SKY_VS = `#version 100
+attribute vec3 a_position;
+uniform mat4 u_mvp;
+varying vec3 v_d;
+void main() {
+    v_d = a_position;
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}`;
+
+const SKY_FS = `#version 100
+precision mediump float;
+uniform samplerCube u_sky;
+varying vec3 v_d;
+void main() {
+    gl_FragColor = textureCube(u_sky, v_d);
+}`;
+
+/* Six 64x64 faces, +x, -x, +y, -y, +z, -z: red, cyan, green, magenta, blue,
+ * yellow, each with a white rim. */
+function skyFaces() {
+    const S = 64, colours = [[230, 40, 40], [40, 220, 220], [40, 200, 60], [210, 50, 210], [50, 90, 240], [240, 220, 40]];
+    const px = Buffer.alloc(6 * S * S * 4);
+    colours.forEach((c, f) => {
+        for (let y = 0; y < S; y++) {
+            for (let x = 0; x < S; x++) {
+                const rim = x < 3 || y < 3 || x >= S - 3 || y >= S - 3;
+                px.set(rim ? [255, 255, 255, 255] : [c[0], c[1], c[2], 255], ((f * S + y) * S + x) * 4);
+            }
+        }
+    });
+    return px;
+}
 
 /* Seven-segment glyphs, 16x32 each, in one 512x32 R8 atlas. */
 const GLYPHS = '0123456789AbCdEFHLPrUnot-: .hSyu';
@@ -534,6 +571,20 @@ function main() {
         cr.uniform(sky, 'u_color', [1, 0.9, 0.6, 1], { part: 2 });
         cr.animate(sky, { part: 1, property: 'rotate', keys: '0:60,0,0 6000:60,0,360', loop: true });
         cr.animate(sky, { part: 2, property: 'rotate', keys: '0:0,0,0 12000:0,360,0', loop: true });
+    }
+
+    if (on('cubemap')) {
+        const sky = name(cr.asset({ target: target, w: 64, h: 64, cube: true, sampling: 'bilinear' }), 'cube map');
+        cr.pixels(sky, null, skyFaces());
+        [[0.05, true], [0.55, false]].forEach((c) => {
+            const m = name(cr.mesh({ target: target, x: Math.round(W * c[0]), y: Math.round(H * 0.05),
+                w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 7 }), c[1] ? 'turned' : 'facing');
+            cr.part(m, 1, { vs: SKY_VS, fs: SKY_FS, depth: true, cull: 'back' });
+            cr.geometry(m, 1, cube());
+            cr.bind(m, 'u_sky', sky, 1);
+            if (c[1])
+                cr.animate(m, { part: 1, property: 'rotate', keys: '0:20,0,0 8000:20,360,360', loop: true });
+        });
     }
 
     if (on('alert')) {

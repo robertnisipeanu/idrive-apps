@@ -30,6 +30,14 @@ namespace ramses
     class UInt16Array : public Resource { public: RAMSES19_LIBRARY_OWNED(UInt16Array); };
     class UInt32Array : public Resource { public: RAMSES19_LIBRARY_OWNED(UInt32Array); };
 
+    class TextureCube : public Resource
+    {
+    public:
+        uint32_t getSize() const;
+        ETextureFormat getTextureFormat() const;
+        RAMSES19_LIBRARY_OWNED(TextureCube);
+    };
+
     class Texture2D : public Resource
     {
     public:
@@ -158,6 +166,10 @@ namespace ramses
         Texture2D* createTexture2D(uint32_t width, uint32_t height, ETextureFormat format, uint32_t mipMapCount,
                                    const MipLevelData mipLevelData[], bool generateMipChain = false,
                                    resourceCacheFlag_t cacheFlag = ResourceCacheFlag_DoNotCache, const char* name = nullptr);
+        TextureCube* createTextureCube(uint32_t size, ETextureFormat format, uint32_t mipMapCount,
+                                       const CubeMipLevelData mipLevelData[], bool generateMipChain = false,
+                                       resourceCacheFlag_t cacheFlag = ResourceCacheFlag_DoNotCache,
+                                       const char* name = nullptr);
 
         const char* getStatusMessage(status_t status) const;
         RAMSES19_VALUE_STORAGE(RamsesClient);

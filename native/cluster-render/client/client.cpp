@@ -146,7 +146,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -236,6 +236,7 @@ void Client::read_events()
             nodes_ = j["nodes"] == "1";
             draw_ = j["draw"] == "1";
             instances_ = j["instances"] == "1";
+            cube_ = j["cube"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -517,6 +518,8 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
             kv.push_back({"wrap_v", json_quote(l.sampler.wrap_v)});
         if (l.sampler.anisotropy)
             kv.push_back({"anisotropy", num(l.sampler.anisotropy)});
+        if (l.cube)
+            kv.push_back({"cube", "1"});
         return json_object(kv);
     }
     if (l.kind == "canvas") {
@@ -709,6 +712,24 @@ uint32_t Client::asset(const AssetOptions &ao, const SamplerOptions &so)
     l.h = ao.h;
     l.bpp = ao.r8 ? 1 : 4;
     if (!l.w || !l.h || l.w > 2048 || l.h > 2048 || (size_t)l.w * l.h * l.bpp + 64 > kMaxMessage)
+        return 0;
+    l.image.assign((size_t)l.w * l.h * l.bpp, 0);
+    return add(l);
+}
+
+uint32_t Client::cube(const AssetOptions &ao, const SamplerOptions &so)
+{
+    Layer l;
+    l.kind = "asset";
+    l.ao = ao;
+    l.ao.h = ao.w;
+    l.sampler = so;
+    l.cube = true;
+    /* the six faces as one image of six rows of faces */
+    l.w = ao.w;
+    l.h = ao.w * 6;
+    l.bpp = ao.r8 ? 1 : 4;
+    if (!l.w || l.w > 2048 || (size_t)l.w * l.h * l.bpp + 64 > kMaxMessage)
         return 0;
     l.image.assign((size_t)l.w * l.h * l.bpp, 0);
     return add(l);

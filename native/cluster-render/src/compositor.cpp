@@ -237,7 +237,7 @@ void Compositor::apply_binds(Entry &e)
         const int d = e.layer->drawable(kv.first.first);
         auto a = assets_.find(kv.second);
         const int buf = bound_buffer(kv.second);
-        if (!buf && a != assets_.end() && a->second.asset->compressed())
+        if (!buf && a != assets_.end() && a->second.asset->immutable())
             continue;   /* bound once its texture is made */
         if (!d || !buf || !t.graph->texture(d, kv.first.second.c_str(), buf))
             log_warn("layer %u: %s not bound to asset %u", e.layer->id(), kv.first.second.c_str(), kv.second);

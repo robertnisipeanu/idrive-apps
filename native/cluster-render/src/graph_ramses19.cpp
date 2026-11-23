@@ -364,6 +364,34 @@ public:
         return next_++;
     }
 
+    /* A cube texture: a client resource, as an ETC2 texture is. */
+    int cube_texture(TexFormat f, uint32_t size, const Sampler &s, const uint8_t *data, size_t face) override
+    {
+        if (!size || face != tex_bytes(f, size, size) || sampling_mips(s.sampling))
+            return 0;
+        const ramses::CubeMipLevelData mip((uint32_t)face, data, data + face, data + 2 * face, data + 3 * face,
+                                           data + 4 * face, data + 5 * face);
+        const ramses::ETextureFormat format = f == TexFormat::ETC2RGB    ? ramses::ETextureFormat_ETC2RGB
+                     : f == TexFormat::ETC2RGBA ? ramses::ETextureFormat_ETC2RGBA
+                     : f == TexFormat::R8       ? ramses::ETextureFormat_R8
+                                                : ramses::ETextureFormat_RGBA8;
+        ramses::TextureCube *tex = client_.createTextureCube(size, format, 1, &mip, false);
+        ramses::TextureSampler *smp =
+            tex ? scene_->createTextureSampler(wrap19(s.u), wrap19(s.v), sampling19(s.sampling), *tex, s.anisotropy)
+                : nullptr;
+        if (!smp) {
+            log_error("ramses: %u-pixel %s cube texture refused by %s", size, tex_format_name(f),
+                      tex ? "createTextureSampler" : "createTextureCube");
+            if (tex)
+                client_.destroy(*tex);
+            return 0;
+        }
+        Buffer b{nullptr, smp, 0};
+        b.tex = tex;
+        buffers_[next_] = b;
+        return next_++;
+    }
+
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
     {
         return write_level(buf, 0, x, y, w, h, px);
@@ -1058,7 +1086,7 @@ private:
         ramses::Texture2DBuffer *buffer;   /* null for an immutable texture */
         ramses::TextureSampler *sampler;
         uint32_t bpp;
-        const ramses::Texture2D *tex = nullptr;
+        const ramses::Resource *tex = nullptr;   /* an immutable texture: Texture2D or TextureCube */
         uint32_t levels = 1;   /* mip levels */
     };
     struct Quad {

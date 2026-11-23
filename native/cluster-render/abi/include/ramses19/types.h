@@ -39,6 +39,25 @@ namespace ramses
     typedef StronglyTypedValue<uint32_t, resourceCacheFlagTag> resourceCacheFlag_t;
     static const resourceCacheFlag_t ResourceCacheFlag_DoNotCache(0u);
 
+    // One mip level of a cube texture: each face's bytes (all six the same
+    // size), then the faces +X, -X, +Y, -Y, +Z, -Z. Upstream's layout;
+    // make test-ramses makes one, the renderer draws each face.
+    struct CubeMipLevelData
+    {
+        CubeMipLevelData(uint32_t size, const uint8_t* px, const uint8_t* nx, const uint8_t* py, const uint8_t* ny,
+                         const uint8_t* pz, const uint8_t* nz)
+            : m_faceDataSize(size), m_dataPX(px), m_dataNX(nx), m_dataPY(py), m_dataNY(ny), m_dataPZ(pz), m_dataNZ(nz)
+        {
+        }
+        uint32_t m_faceDataSize;
+        const uint8_t* m_dataPX;
+        const uint8_t* m_dataNX;
+        const uint8_t* m_dataPY;
+        const uint8_t* m_dataNY;
+        const uint8_t* m_dataPZ;
+        const uint8_t* m_dataNZ;
+    };
+
     struct MipLevelData
     {
         MipLevelData(uint32_t size, const uint8_t* data) : m_size(size), m_data(data) {}

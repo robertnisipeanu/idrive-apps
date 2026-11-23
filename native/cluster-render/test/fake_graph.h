@@ -31,6 +31,7 @@ struct FakeBuffer {
     uint32_t levels = 1;
     std::vector<std::vector<uint8_t>> mips;   /* levels 1 and up */
     uint64_t level_writes = 0;                /* write_level() calls past level 0 */
+    bool cube = false;                        /* a cube_texture(): px its six faces */
 };
 
 inline FakeBuffer fake_buffer(TexFormat f, uint32_t w, uint32_t h, std::vector<uint8_t> px, const Sampler &s)
@@ -164,6 +165,15 @@ public:
             data += tex_level_bytes(f, w, h, l - 1);
             b.mips.push_back(std::vector<uint8_t>(data, data + tex_level_bytes(f, w, h, l)));
         }
+        pending.buffers[next] = b;
+        return next++;
+    }
+    int cube_texture(TexFormat f, uint32_t size, const Sampler &s, const uint8_t *data, size_t face) override
+    {
+        if (refuse_textures || !size || face != tex_bytes(f, size, size) || sampling_mips(s.sampling))
+            return 0;
+        FakeBuffer b = fake_buffer(f, size, size, std::vector<uint8_t>(data, data + face * 6), s);
+        b.cube = true;
         pending.buffers[next] = b;
         return next++;
     }

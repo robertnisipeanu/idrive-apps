@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.3
+Cube maps: an asset of six square faces that effect layers and mesh parts
+sample by direction, for reflections and environment lighting, sent once.
+
 A mesh part can draw lines, a line loop, points or a triangle strip as well
 as triangles, and draw its geometry up to 256 times at once (instances),
 for gauge ticks, star fields or rows of identical shapes sent once. What

@@ -949,6 +949,28 @@ static void backend(Gpu &gpu)
     gpu.drop_effect(es3_quad);
     for (int p : drawn)
         g->drop_part(p);
+
+    /* Cube maps: RGBA8 and ETC2RGBA, sampled by a samplerCube. */
+    const int sky_fx = gpu.effect(kQuadVertexShader,
+                                  "#version 100\nprecision mediump float;\nuniform samplerCube u_sky;\nvarying vec2 v_uv;\n"
+                                  "void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv*2.0-1.0,1.0));}",
+                                  &err);
+    std::vector<uint8_t> faces(6 * 32 * 32 * 4, 0x77);
+    Sampler bilin;
+    bilin.sampling = Sampling::Bilinear;
+    const int cube_rgba = g->cube_texture(TexFormat::RGBA8, 32, bilin, faces.data(), 32 * 32 * 4);
+    const int cube_etc2 = g->cube_texture(TexFormat::ETC2RGBA, 32, bilin, faces.data(), tex_bytes(TexFormat::ETC2RGBA, 32, 32));
+    const int sky_q = sky_fx ? g->quad(sky_fx, r) : 0;
+    ok("cube: RGBA8 and ETC2RGBA cube textures, sampled by a samplerCube",
+       sky_fx && cube_rgba && cube_etc2 && sky_q && g->texture(sky_q, "u_sky", cube_rgba) && g->show(sky_q, true) &&
+           g->flush(8) && g->texture(sky_q, "u_sky", cube_etc2) && g->flush(9));
+    ok("cube: faces of the wrong size refused", !g->cube_texture(TexFormat::RGBA8, 32, bilin, faces.data(), 100));
+    g->drop_quad(sky_q);
+    g->drop_buffer(cube_rgba);
+    g->drop_buffer(cube_etc2);
+#ifndef CRS_RAMSES27
+    ok("cube: the scene described whole", described("check"));
+#endif
 #ifndef CRS_RAMSES27
     ok("draw: the scene described whole", described("check"));
 #endif

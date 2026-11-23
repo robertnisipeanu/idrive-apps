@@ -2922,6 +2922,25 @@ static void motion_over_socket()
     const std::string ev2 = raw.events();
     ok("draw: an unknown draw mode refused", ev2.find("draw must be triangles, triangle_strip") != std::string::npos);
     ok("draw: past 256 instances refused", ev2.find("instances must be a number from 1 to 256") != std::string::npos);
+
+    /* A cube map over the socket. */
+    ok("cube: the hello says the service takes cube maps", c.takes_cube());
+    cr::AssetOptions ca;
+    ca.target = "panel";
+    ca.w = 8;
+    const uint32_t sky = c.cube(ca);
+    std::vector<uint8_t> faces(6 * 8 * 8 * 4, 90);
+    ok("cube: made, its six faces taken", sky && c.pixels(sky, {}, faces.data(), faces.size()));
+    r.pump(200);
+    FakeGraph *gc = r.gpu.graph("panel");
+    bool made = false;
+    if (gc)
+        for (const auto &kv : gc->shown.buffers)
+            made = made || (kv.second.cube && kv.second.w == 8 && kv.second.px == faces);
+    ok("cube: in the panel's scene", made || r.svc->server().status_text(r.now).find("8x8 (cube map)") != std::string::npos);
+    raw.send("{\"op\":\"asset\",\"ref\":9,\"target\":\"panel\",\"w\":8,\"h\":4,\"cube\":1}");
+    r.pump(50);
+    ok("cube: a face that is not square refused", raw.events().find("a cube map's faces are square") != std::string::npos);
 }
 
 /* A reconnect under a small upload budget: the client sends every animation

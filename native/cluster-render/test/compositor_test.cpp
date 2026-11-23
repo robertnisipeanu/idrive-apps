@@ -3526,6 +3526,79 @@ static void draw_modes()
     ok("bound: another target's are its own", r.comp->geometry(2, id4, 1, tris(10000), r.now, &err));
 }
 
+/* Cube maps: six square faces in one frame, sent whole and once, made as a
+ * cube texture an effect samples; refused when not square, mipmapped or too
+ * large for one message. */
+static void cube_maps()
+{
+    Rig r;
+    std::string err;
+    AssetParams cp;
+    cp.w = cp.h = 16;
+    cp.cube = true;
+    cp.sampler.sampling = Sampling::Bilinear;
+    ok("cube: six faces counted once", Asset::memory(cp) == 6u * 16 * 16 * 4 && cp.levels() == 1);
+    AssetParams bad = cp;
+    bad.h = 8;
+    ok("cube: faces are square", Asset::size_error(bad) != nullptr);
+    bad = cp;
+    bad.sampler.sampling = Sampling::Trilinear;
+    ok("cube: no mip levels", Asset::size_error(bad) != nullptr);
+    bad = cp;
+    bad.w = bad.h = 1024;
+    ok("cube: six faces fit one message", Asset::size_error(bad) != nullptr);
+    const uint32_t c = r.comp->add_asset(1, r.panel, cp, &err);
+    std::vector<uint8_t> faces(6 * 16 * 16 * 4);
+    for (size_t i = 0; i < faces.size(); i++)
+        faces[i] = (uint8_t)(i / (16 * 16 * 4) * 40);
+    ok("cube: a rect refused", !r.comp->asset(1, c)->update({crk::PixelRect{0, 0, 4, 4}}, faces.data(), 64, &err) &&
+                                   err == "a cube map is sent whole, with no rects");
+    ok("cube: the six faces taken", r.comp->asset(1, c)->update({}, faces.data(), faces.size(), &err));
+    ok("cube: sent once", !r.comp->asset(1, c)->update({}, faces.data(), faces.size(), &err) &&
+                              err == "a cube map is sent once");
+    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+                                           r.now, &err);
+    ok("cube: an effect samples it", r.comp->bind(1, fx, 0, "u_atlas", c, &err));
+    r.run(300);
+    FakeGraph *g = r.g("panel");
+    int cube = 0;
+    for (const auto &kv : g ? g->shown.buffers : std::map<int, FakeBuffer>())
+        if (kv.second.cube)
+            cube = kv.first;
+    bool bound = false;
+    if (g)
+        for (const auto &kv : g->shown.quads)
+            bound = bound || (kv.second.textures.count("u_atlas") && kv.second.textures.at("u_atlas") == cube);
+    ok("cube: made as a cube texture with its six faces, bound", cube && g->shown.buffers[cube].px == faces && bound);
+
+    /* Sampled by a layer in a canvas: bound once its texture is made. */
+    Rig cr;
+    const uint32_t cc = cr.comp->add_asset(1, cr.panel, cp, &err);
+    CanvasSpec cs;
+    cs.w = cs.h = 32;
+    const uint32_t cv = cr.comp->add_canvas(1, cr.panel, cs, &err);
+    LayerParams in = params(Klass::Content, R(0, 0, 32, 32));
+    in.canvas = cv;
+    const uint32_t sky = cr.comp->add_effect(1, cr.panel, in, "", kSample, 0, cr.now, &err);
+    cr.comp->bind(1, sky, 0, "u_atlas", cc, &err);
+    const uint32_t shown = cr.comp->add_effect(1, cr.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
+                                               cr.now, &err);
+    cr.comp->bind(1, shown, 0, "u_atlas", cv, &err);
+    cr.run(200);
+    cr.comp->asset(1, cc)->update({}, faces.data(), faces.size(), &err);
+    cr.run(300);
+    FakeGraph *cg = cr.g("panel");
+    int cube_in = 0;
+    bool bound_in = false;
+    for (const auto &kv : cg ? cg->shown.buffers : std::map<int, FakeBuffer>())
+        if (kv.second.cube)
+            cube_in = kv.first;
+    for (const auto &kv : cg ? cg->shown.quads : std::map<int, FakeQuad>())
+        bound_in = bound_in || (kv.second.canvas && kv.second.textures.count("u_atlas") &&
+                                kv.second.textures.at("u_atlas") == cube_in && kv.second.visible);
+    ok("cube: a layer in a canvas bound to it once made, and drawn", cube_in && bound_in);
+}
+
 int main()
 {
     image_first_upload();
@@ -3576,6 +3649,7 @@ int main()
     keys_waiting_where_parked();
     pacer_settled_at_its_old_rate();
     draw_modes();
+    cube_maps();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

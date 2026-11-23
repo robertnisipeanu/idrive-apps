@@ -643,6 +643,11 @@ public:
     {
         return 0;
     }
+    /* An immutable cube texture, size x size a face, data its six faces of
+     * face bytes each one after another (+x, -x, +y, -y, +z, -z), and its
+     * sampler; a buffer as immutable_texture()'s, sampled by a samplerCube.
+     * 0 where the backend has none. */
+    virtual int cube_texture(TexFormat, uint32_t, const Sampler &, const uint8_t *, size_t) { return 0; }
     /* A quad over r drawn by effect, hidden until show(). Blended over what
      * is below (source alpha), no depth test. */
     virtual int quad(int effect, const Rect &r) = 0;

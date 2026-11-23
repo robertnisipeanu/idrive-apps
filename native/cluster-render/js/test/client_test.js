@@ -453,6 +453,22 @@ async function main() {
     ok('draw: points from a GLSL ES 3.00 shader, one vertex: shown',
         await until(() => eo.layer[pts] === 'shown', 3000));
     ovl.drop(pts);
+
+    /* A cube map. */
+    ok('cube: the hello says the service takes cube maps', ovl.cubeMaps === true);
+    const sky = ovl.asset({ target: 'panel', w: 8, h: 8, cube: true, sampling: 'bilinear' });
+    ok('cube: its six faces taken here, not a rect', sky > 0 && ovl.pixels(sky, null, Buffer.alloc(6 * 8 * 8 * 4, 80)) &&
+        !ovl.pixels(sky, [{ x: 0, y: 0, w: 1, h: 1 }], Buffer.alloc(4)));
+    const env = ovl.effect({ target: 'panel', x: 0, y: 0, w: 32, h: 32,
+        fs: 'precision mediump float;uniform samplerCube u_sky;varying vec2 v_uv;' +
+            'void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv*2.0-1.0,1.0));}' });
+    ovl.bind(env, 'u_sky', sky);
+    status = '';
+    ovl.status();
+    ok('cube: shown, the status names it', await until(() => eo.layer[env] === 'shown', 3000) &&
+        await until(() => status.indexOf('8x8 (cube map)') >= 0, 1000) && eo.refused.length === refusedBefore + 2);
+    ovl.drop(env);
+    ovl.drop(sky);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
 
