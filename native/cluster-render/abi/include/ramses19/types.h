@@ -123,7 +123,7 @@ namespace ramses
     // Render buffers (VERIFIED, ABI.md "Evidence per item": the checks of
     // SceneImpl::createRenderBuffer at 0x111e57, the tables 0x69edb8 and
     // 0x69ed80 RenderBufferImpl maps them by and 0x69ed00 getBufferFormat
-    // maps back by; make test-ramses reads them back). Unlike RAMSES 27
+    // maps back by). Unlike RAMSES 27
     // there is no RGBA4: the colour formats start at R8.
     enum ERenderBufferType
     {

@@ -572,8 +572,10 @@ static void backend(Gpu &gpu)
                                           g->show(screen, true) && g->flush(8));
     ok("canvases: one drawn once, drawn again", g->redraw(once) && g->flush(9));
     CanvasReadback rb, ro;
-    ok("canvases: read back: RGBA8 colour buffers drawn in and sampled (read-write), a Depth24_Stencil8 "
-       "depth-stencil one only drawn in (write-only); the copy writes alpha, unblended",
+    /* A round trip through the library's own tables, not evidence of the
+     * enums (ABI.md has that): the canvas as made, the copy unblended. */
+    ok("canvases: read back as made: colour buffers drawn in and sampled, a depth-stencil one only drawn in; the "
+       "copy writes alpha, unblended",
        g->read_canvas(canvas, &rb) && rb.color_format == (int)ramses::ERenderBufferFormat_RGBA8 &&
            rb.color_type == (int)ramses::ERenderBufferType_Color &&
            rb.color_access == (int)ramses::ERenderBufferAccessMode_ReadWrite &&

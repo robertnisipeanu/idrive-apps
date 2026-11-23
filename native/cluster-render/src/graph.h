@@ -242,10 +242,12 @@ struct StencilState {
     uint8_t ref = 0, mask = 0xff;
     StencilOp fail = StencilOp::Keep, depth_fail = StencilOp::Keep, pass = StencilOp::Keep;
 };
+/* Every field, also while off: fields set while the stencil is off are kept
+ * for when stencil_func turns it on. */
 inline bool operator==(const StencilState &a, const StencilState &b)
 {
-    return a.func == b.func && (a.func == StencilFunc::Off || (a.ref == b.ref && a.mask == b.mask && a.fail == b.fail &&
-                                                                a.depth_fail == b.depth_fail && a.pass == b.pass));
+    return a.func == b.func && a.ref == b.ref && a.mask == b.mask && a.fail == b.fail &&
+           a.depth_fail == b.depth_fail && a.pass == b.pass;
 }
 /* Colour channels written, as bits. */
 const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;

@@ -2635,6 +2635,13 @@ static void canvases_over_socket()
     r.pump(50);
     ok("stencil: stencil_func off turns it off", stencil().func == crs::StencilFunc::Off &&
                                                   raw.events().find("\"ref\":10,\"reason\"") == std::string::npos);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_ref\":7,\"stencil_pass\":\"replace\"}");
+    r.pump(50);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_func\":\"always\"}");
+    r.pump(50);
+    ok("stencil: fields set while it is off kept, then used when it is turned on",
+       stencil().func == crs::StencilFunc::Always && stencil().ref == 7 &&
+           stencil().pass == crs::StencilOp::Replace);
 }
 
 /* What a fake service listening at path read from one client connection:

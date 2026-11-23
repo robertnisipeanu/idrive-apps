@@ -411,8 +411,9 @@ it never reads a picture not drawn yet.
   write is sent. Its pixels twice (what its passes draw, and the copy
   layers sample: the picture turned so that its first row is its top, as
   an asset's), and once more with `depth`, count in the
-  service's pixel memory; a client's canvases together at most half of it
-  (8,192 KB of the usual 16 MB), so they leave other clients room. A canvas
+  service's pixel memory. A client's canvases together take at most half
+  of it (8,192 KB of the usual 16 MB): its canvases alone cannot fill it,
+  though its canvases, assets and layers together still can. A canvas
   the display draws every frame costs its GPU while something shown samples
   it: a still picture takes `once`.
 - **Limits:** a client has at most 4 canvases and all clients together 8
