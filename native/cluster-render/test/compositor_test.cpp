@@ -3860,7 +3860,7 @@ static void shared_values()
 }
 
 /* A value's animation through its target's key bucket (#258): paid from it,
- * below 0 by less than one animation, the writes' pacer untouched, and
+ * below 0 by less than one animation, the writes' pacer charged nothing, and
  * taking its turn with another client's layer animation. */
 static void value_keys()
 {
@@ -3881,11 +3881,16 @@ static void value_keys()
         big.v.push_back((float)(k % 2));
     }
     r.comp->animate_value(1, v, 1, big, &err);
-    r.run(30);
+    for (int k = 0; k < 20 && r.comp->key_bucket(r.panel) >= 0; k++)
+        r.step(10);
     FakeGraph *g = r.g("panel");
-    ok("value keys: paid from the target's bucket, below 0 by less than one animation, the writes' pacer untouched",
+    /* with no writes, the pacer sits full at the cap less the keys' share
+     * (a 250 ms burst), to the byte, in the tick that makes the animation */
+    ok("value keys: paid from the target's bucket, below 0 by less than one animation, the writes' pacer charged "
+       "nothing",
        g && g->made_by[1] == key_bytes(big) && r.comp->key_bucket(r.panel) < 0 &&
-           r.comp->key_bucket(r.panel) > -(int64_t)key_bytes(big) && r.comp->pacer().allowance() > 0);
+           r.comp->key_bucket(r.panel) > -(int64_t)key_bytes(big) &&
+           r.comp->pacer().allowance() == int64_t(Compositor::writes_rate(64 * 1024) * 250 / 1000));
     Animation layer_keys = big;
     layer_keys.property = Animated::Uniform;
     layer_keys.uniform = "u_level";

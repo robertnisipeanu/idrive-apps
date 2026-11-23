@@ -834,8 +834,8 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
     }
     auto compiled = inputs_.find(fx);
     if (value && compiled == inputs_.end()) {
-        /* nothing to check it against: it would fail at the display, the
-         * uniform's own value already held back */
+        /* nothing to check it against: refused here, before anything is
+         * held back, so the uniform keeps its own value */
         *err = "the display cannot describe this shader's uniforms: no link to it";
         return false;
     }
