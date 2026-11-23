@@ -813,7 +813,11 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
 
 var NEW_PATCHD_UNIT = fs.readFileSync(path.join(NEW, '..', 'systemd', 'waze-on-cluster-patchd.service'), 'utf8');
 var NEW_COMPONENT = JSON.parse(fs.readFileSync(path.join(NEW, '..', 'component.json'), 'utf8'));
-function relFile(v, f) { try { return git(['show', 'waze-on-cluster@' + v + ':native/waze-on-cluster/' + f]); } catch (e) { return null; } }
+/* A file of release v, or null when the release has none. */
+function relFile(v, f) {
+    var r = cp.spawnSync('git', ['show', 'waze-on-cluster@' + v + ':native/waze-on-cluster/' + f], { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 26 });
+    return r.status === 0 ? r.stdout : null;
+}
 function unitLine(text, key) { var m = new RegExp('^' + key + '=(.*)$', 'm').exec(text || ''); return m ? m[1] : null; }
 
 /* Each release's files as a downgrade lays them, and what the process model
@@ -843,6 +847,7 @@ ALL.forEach(function (v) {
     (byBlob[dc] = byBlob[dc] || []).push(v);
     if (!kinds[dc]) kinds[dc] = { v: v, unit: pu };
 });
+ok('the releases\' capture scripts are at hand: the two dlt_capture.js the releases ship', Object.keys(byBlob).length >= 2, Object.keys(byBlob).length);
 ok('this version runs the capture in patchd, with no capture unit and its recmgr name kept',
     /^ExecStart=\/usr\/bin\/node \/var\/opt\/waze-on-cluster\/current\/patchd\.js --dlt-capture$/m.test(NEW_PATCHD_UNIT) &&
     !NEW_COMPONENT.units.some(function (u) { return u.name === 'waze-on-cluster-capture.service'; }) &&
