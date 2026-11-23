@@ -495,19 +495,22 @@ however many follow it.
   part's, with `part`) follow `value`, sent again with another value to
   follow that one, with `value` 0 to follow none; a `value` that is not a
   ref is refused (`value is a value's ref, or 0 to unlink`). The uniform is
-  checked against the shader's declarations when the link is sent, whether
-  or not the target is in a scene: declared (`the shader has no uniform
-  ...`), plain, not an array (`... is an array: a value is linked to a
-  plain uniform`), and of the value's type (`the shader's u_glow is a vec3,
-  the value a float`); a pivot has none (`a pivot has no uniforms`). A
+  checked when the link is sent, whether or not the target is in a scene,
+  against the effect's uniforms as the display's library compiled it (one
+  of a list, a struct's member as `u_lamp.k`, the `#if` branch taken): there
+  (`the shader has no uniform ...`), plain, not an array (`... is an array:
+  a value is linked to a plain uniform`), and of the value's type (`the
+  shader's u_glow is a vec3, the value a float`); a pivot has none (`a
+  pivot has no uniforms`). A
   followed uniform's own `uniform` messages are kept, not drawn, and drawn
   again when it is unlinked. A uniform an animation of the layer plays is
   not linked (`an animation plays the uniform: stop it first`), nor is a
   linked uniform animated on its own (`the uniform follows a value`). A
   layer has at most 32 links. A canvas drawn once (`once`) draws again
   when a value one of its layers follows is set, animated or stopped.
-- **Animation keys** count against the client's share of the upload
-  budget, as a layer's do ([Animations](#animations)).
+- **Animation keys** are made within the target's upload budget, the
+  clients taking turns, as a layer's are ([Animations](#animations)).
+  Dropping a value that was animated makes no other animation again.
 - **Animations:** `animate` with the value's ref, `anim`, `keys` of the
   value's width, `loop` and `interp` as a layer's, `property` `value` or
   none. A `float`, `vec3` or `vec4` is animated; a `vec2` is only set

@@ -844,7 +844,11 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
             return false;
         }
         if (d->second.kind != kKinds[v->second.width - 1]) {
-            *err = "the shader's " + name + " is no " + kTypes[v->second.width - 1] + ", the value's type";
+            int w = 0;
+            while (w < 4 && kKinds[w] != d->second.kind)
+                w++;
+            *err = "the shader's " + name + (w < 4 ? std::string(" is a ") + kTypes[w] : std::string(" is no float or vector")) +
+                   ", the value a " + kTypes[v->second.width - 1];
             return false;
         }
     }

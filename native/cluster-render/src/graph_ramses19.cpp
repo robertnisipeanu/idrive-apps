@@ -1127,7 +1127,10 @@ public:
                                              : nullptr;
         if (!d)
             return 0;
-        values_[next_] = Value{d, width};
+        Value nv;
+        nv.data = d;
+        nv.width = width;
+        values_[next_] = nv;
         return next_++;
     }
 

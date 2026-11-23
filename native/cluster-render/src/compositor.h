@@ -329,7 +329,7 @@ public:
      * takes its own value again. False with *err. */
     bool link(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name, uint32_t value,
               std::string *err);
-    /* The layer's part's uniform name follows a value. */
+    /* Whether it follows one. */
     bool linked(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name) const;
     /* The asset if it exists and belongs to owner. */
     Asset *asset(uint64_t owner, uint32_t id);

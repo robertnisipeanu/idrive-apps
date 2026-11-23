@@ -1319,9 +1319,9 @@ static const char *const kLitVs = "#version 100\nattribute vec3 a_position;\natt
 static const char *const kLevelFs = "#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\n"
                                     "uniform float u_level;\nuniform mediump float u_fade;\n"
                                     "uniform float u_bars[4]; // uniform float u_gone;\n"
-                                    "uniform vec4 u_tint;\nvarying vec2 v_uv;\n"
+                                    "uniform vec4 u_tint;\nuniform vec3 u_near, u_far;\nvarying vec2 v_uv;\n"
                                     "void main() { gl_FragColor = texture2D(u_atlas, v_uv) * u_level * u_fade *"
-                                    " u_bars[0] * u_tint; }";
+                                    " u_bars[0] * u_tint * vec4(u_near + u_far, 1.0); }";
 static const char *const kFlatVs = "#version 100\nattribute vec3 a_position;\nuniform mat4 u_mvp;\n"
                                    "void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }";
 static const char *const kPartFs = "#version 100\nprecision mediump float;\nuniform vec4 u_color;\n"
@@ -3788,6 +3788,10 @@ static void shared_values()
         ok("values: a pivot refused", !q.comp->link(1, qm, 9, "u_level", lv, &err) && !q.comp->linked(1, qm, 9, "u_level"));
         ok("values: before a scene, a uniform declared with its precision and of the type linked",
            q.comp->link(1, e, 0, "u_fade", lv, &err) && q.comp->link(1, e, 0, "u_tint", tint, &err));
+        const float three[3] = {1, 2, 3};
+        const uint32_t trio = q.comp->add_value(1, q.panel, 3, three, &err);
+        ok("values: before a scene, the second of a list of vec3s linked",
+           trio && q.comp->link(1, e, 0, "u_far", trio, &err) && q.comp->linked(1, e, 0, "u_far"));
     }
     ok("values: a uniform an animation plays refused", !r.comp->link(1, a, 0, "u_fade", level, &err) &&
                                                            err == "an animation plays the uniform: stop it first");
