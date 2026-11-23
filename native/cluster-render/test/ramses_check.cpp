@@ -957,9 +957,11 @@ static void backend(Gpu &gpu)
         const char *fs = "#version 100\nprecision mediump float;\n#define CUBE samplerCube\n"
                          "uniform sampler2D u_a, u_b;\nuniform CUBE u_c;\n"
                          "#if 0\nuniform samplerCube u_d;\n#else\nuniform sampler2D u_d;\n#endif\n"
-                         "uniform/**/samplerCube u_e;\nuniform vec4 u_tint;\nvarying vec2 v_uv;\n"
+                         "uniform/**/samplerCube u_e;\nuniform vec4 u_tint;\n"
+                         "#if 0\nuniform samplerCube u_k;\n#else// the branch taken\nuniform sampler2D u_k;\n#endif\n"
+                         "varying vec2 v_uv;\n"
                          "void main(){gl_FragColor=(texture2D(u_a,v_uv)+texture2D(u_b,v_uv)+textureCube(u_c,vec3(v_uv,1.0))"
-                         "+texture2D(u_d,v_uv)+textureCube(u_e,vec3(1.0)))*u_tint;}";
+                         "+texture2D(u_d,v_uv)+textureCube(u_e,vec3(1.0))+texture2D(u_k,v_uv))*u_tint;}";
         const int fx = gpu.effect(kQuadVertexShader, fs, &err);
         std::vector<EffectInput> in;
         std::map<std::string, EffectInput::Kind> kind;
@@ -975,11 +977,13 @@ static void backend(Gpu &gpu)
          * branches */
         const EffectInput::Kind defined = EffectInput::Sampler, branched = EffectInput::Sampler;
 #endif
-        ok("samplers: as compiled: each of a list, a defined type, the branch taken, a comment between",
+        ok("samplers: as compiled: each of a list, a defined type, the branch taken (after an #else// comment too), a "
+           "comment between",
            known && kind.count("u_a") && kind["u_a"] == EffectInput::Sampler2D && kind.count("u_b") &&
                kind["u_b"] == EffectInput::Sampler2D && kind.count("u_c") && kind["u_c"] == defined &&
                kind.count("u_d") && kind["u_d"] == branched && kind.count("u_e") &&
-               kind["u_e"] == EffectInput::SamplerCube && kind.count("u_tint") && kind["u_tint"] == EffectInput::Other);
+               kind["u_e"] == EffectInput::SamplerCube && kind.count("u_tint") && kind["u_tint"] == EffectInput::Other &&
+               kind.count("u_k") && kind["u_k"] == branched);
         if (fx)
             gpu.drop_effect(fx);
     }

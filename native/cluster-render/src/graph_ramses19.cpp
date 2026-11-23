@@ -3,11 +3,11 @@
 #include "graph_ramses19.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
-#include <cctype>
 #include <set>
 
 #include "log.h"
@@ -205,6 +205,7 @@ void declared_samplers(const std::string &src, const std::string &name, std::set
         if (src.compare(i, 2, "//") == 0) {
             const size_t e = src.find('\n', i);
             i = e == std::string::npos ? src.size() : e;
+            text += '\n';   /* the line ends with its comment: "#else// x" stays apart from the next */
         } else if (src.compare(i, 2, "/*") == 0) {
             const size_t e = src.find("*/", i + 2);
             i = e == std::string::npos ? src.size() : e + 1;
