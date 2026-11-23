@@ -57,7 +57,7 @@ public:
     /* An AngelCode BMFont: its text .fnt and its one page's pixels (R8, or
      * RGBA with bpp 4: its alpha). Empty for a font of several pages, of
      * glyphs packed in channels, of a glyph outside the page or of a
-     * negative xadvance. */
+     * negative xadvance, width or height. */
     static Font from_bmfont(const std::string &fnt, const uint8_t *page, unsigned page_w, unsigned page_h,
                             unsigned bpp = 1);
 

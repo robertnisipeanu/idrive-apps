@@ -3094,8 +3094,8 @@ static void values_over_socket()
 /* The text helper (include/cluster_render/text.h, PROTOCOL.md "Text"): a
  * font's one-row atlas from a grid, glyph bitmaps or a BMFont; a line laid
  * out with advances, kerning and UTF-8; a Text over the socket: its atlas an
- * r8 asset, its string one uniform array of glyph boxes, aligned, changed
- * by that array alone. */
+ * r8 asset, its string two uniforms (its glyph boxes and their count),
+ * aligned, changed by those two alone. */
 static void text_helper()
 {
     /* Two 8x16 cells: "1" all 255, "2" all 128. */
@@ -3163,9 +3163,11 @@ static void text_helper()
     ok("text: a BMFont of several pages, packed in channels, a glyph on another page or in one channel refused",
        !bmfont("pages=2", one_char) && !bmfont("packed=1", one_char) && !bmfont("", one_char + " page=1") &&
            !bmfont("", one_char + " chnl=4"));
-    ok("text: a BMFont glyph outside the page, or of a negative xadvance, refused",
+    ok("text: a BMFont glyph outside the page, of a negative xadvance, width or height, refused",
        !bmfont("", "char id=65 x=6 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
-           !bmfont("", "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=-3"));
+           !bmfont("", "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=-3") &&
+           !bmfont("", "char id=65 x=0 y=0 width=-4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
+           !bmfont("", "char id=65 x=0 y=0 width=4 height=-6 xoffset=0 yoffset=0 xadvance=5"));
     std::vector<cr::GlyphBitmap> back(1);
     back[0].code = 'x';
     back[0].w = 4;

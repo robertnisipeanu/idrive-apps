@@ -149,8 +149,10 @@ Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned pag
                 return Font();
             const int gx = field(line, "x"), gy = field(line, "y");
             g.code = (uint32_t)field(line, "id");
-            g.w = (unsigned)std::max(0, field(line, "width"));
-            g.h = (unsigned)std::max(0, field(line, "height"));
+            if (field(line, "width") < 0 || field(line, "height") < 0)
+                return Font();   /* malformed, as Node refuses it */
+            g.w = (unsigned)field(line, "width");
+            g.h = (unsigned)field(line, "height");
             g.left = field(line, "xoffset");
             g.top = field(line, "yoffset");
             g.advance = field(line, "xadvance");
