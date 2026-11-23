@@ -394,7 +394,9 @@ function main() {
             stencil_func: 'always', stencil_ref: 1, stencil_pass: 'replace' }), 'ring mask');
         name(cr.effect({ target: target, canvas: ring, z: 1, w: cw, h: ch, fs: PLASMA_FS, time: true,
             stencil_func: 'equal', stencil_ref: 1 }), 'ring plasma');
-        const shown = name(cr.effect({ target: target, x: x0, y: y0, w: cw, h: ch, fs: SAMPLE_FS }), 'ring');
+        /* a canvas's pixels are premultiplied: sampled as such */
+        const shown = name(cr.effect({ target: target, x: x0, y: y0, w: cw, h: ch, fs: SAMPLE_FS,
+            blend: 'premultiplied' }), 'ring');
         cr.bind(shown, 'u_canvas', ring);
         /* A cube drawn once, in a canvas drawn once, shown twice. */
         const cs = 256, cx = Math.round(W * 0.45);
@@ -405,8 +407,10 @@ function main() {
         cr.geometry(box, 1, cube());
         cr.uniform(box, 'u_color', [0.2, 0.7, 1, 1], { part: 1 });
         cr.transform(box, 1, { rx: 25, ry: 35 });
-        const a = name(cr.effect({ target: target, x: cx, y: y0, w: cs, h: cs, fs: SAMPLE_FS }), 'cube copy');
-        const b = name(cr.effect({ target: target, x: cx + cs + 40, y: y0, w: cs, h: cs, fs: SAMPLE_FS }), 'cube turned');
+        const a = name(cr.effect({ target: target, x: cx, y: y0, w: cs, h: cs, fs: SAMPLE_FS,
+            blend: 'premultiplied' }), 'cube copy');
+        const b = name(cr.effect({ target: target, x: cx + cs + 40, y: y0, w: cs, h: cs, fs: SAMPLE_FS,
+            blend: 'premultiplied' }), 'cube turned');
         cr.bind(a, 'u_canvas', still);
         cr.bind(b, 'u_canvas', still);
         cr.animate(b, { property: 'rotate', keys: '0:0 6000:360', loop: true });

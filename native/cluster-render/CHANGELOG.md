@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Canvases: an app's effect and mesh layers can draw into an off-screen
+picture of its own, which its layers on screen then show like an asset.
+A canvas can have its own depth and stencil buffer, for masks and depth
+tests that never touch the display's, and can be drawn once and kept until
+something it shows or samples changes. A canvas drawn every frame is
+skipped while nothing shown samples it. The client libraries send canvases
+only to a service that takes them.
+
 ## 0.8.2
 
 An app that draws the cluster with layers only, such as a cluster theme,
@@ -12,11 +20,6 @@ back to its own place when the app hides its layers, ends the host
 drawn highest over the picture wins, and an app showing a scene file that
 hosts the picture wins over them; the `hosting` event tells each app why it
 waits.
-Canvases: an app's effect and mesh layers can draw into an off-screen
-picture of its own, which its layers on screen then show like an asset.
-A canvas can have its own depth and stencil buffer, for masks and depth
-tests that never touch the display's, and can be drawn once and kept until
-something in it changes.
 
 ## 0.8.1
 

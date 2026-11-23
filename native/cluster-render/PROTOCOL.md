@@ -325,7 +325,7 @@ video, image or mesh layer's `set` they are ignored.
 | `color_mask` | `rgba` | the channels written: some of `r`, `g`, `b`, `a`, each once, or `none` |
 | `depth_func` | `less_equal` | parts: `less`, `less_equal`, `equal`, `not_equal`, `greater`, `greater_equal`, `always`, `never`; with `depth` 1 |
 | `depth_write` | 1 | parts: 0 tests depth without writing it; with `depth` 1 |
-| `stencil_func` | off | only in a [canvas](#canvases) with `depth` 1, and to a service whose hello has `canvas` 1: `never`, `always`, `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal` (the fragment's `stencil_ref` against the stencil, both under `stencil_mask`) |
+| `stencil_func` | `off` | only in a [canvas](#canvases) with `depth` 1, and to a service whose hello has `canvas` 1: `off`, `never`, `always`, `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal` (the fragment's `stencil_ref` against the stencil, both under `stencil_mask`). The other stencil fields never turn the stencil on; a `set` without `stencil_func` keeps it |
 | `stencil_ref`, `stencil_mask` | 0, 255 | 0-255 |
 | `stencil_fail`, `stencil_depth_fail`, `stencil_pass` | `keep` | what the stencil becomes when the test fails, when it passes but depth fails, and when both pass: `keep`, `zero`, `replace` (by `stencil_ref`), `increment`, `increment_wrap`, `decrement`, `decrement_wrap`, `invert` |
 
@@ -376,29 +376,45 @@ Send these only to a service whose hello has `canvas` 1. A canvas is a
 client's off-screen picture on a target: `w` x `h` RGBA, drawn in by the
 client's effect and mesh layers made with its `canvas`, and sampled by
 layers on the target (its own or the client's others, not those drawn in
-it) through `bind`, as an asset.
+it) through `bind`, as an asset. A layer drawn in a canvas samples only
+canvases made before its own (else `a layer in a canvas samples only
+canvases made before its own`): those are drawn first in each frame, so
+it never reads a picture not drawn yet.
 
 | Field | Default | |
 |---|---|---|
 | `w`, `h` | — | 1-2048 |
 | `depth` | 0 | 1: a depth-stencil buffer of its own, for parts' depth tests and the [stencil](#render-state) fields |
 | `clear` | `0 0 0 0` | the RGBA (0-1) it is cleared to at the start of each frame it is drawn |
-| `once` | 0 | 1: drawn once, and again only with the flush that changes something in it (a layer in it written, moved, shown or hidden; an asset on its target written); its layers' animations and `time` do not move it in between |
+| `once` | 0 | 1: drawn once, and again only with the flush that changes something in it (a layer in it written, moved, shown or hidden; an asset or a canvas a layer in it samples written or drawn), and when its target is shown again after being parked or locked; its layers' animations and `time` do not move it in between |
 | `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` | `nearest`, `clamp`, 1 | as an asset's, without mipmaps |
 
 - **Drawn** by the display's renderer, in passes of the canvas's own,
   before the target's own passes and after those of the canvases made
   before it; its first pass clears it. The canvas's layers are ordered among
-  themselves by `class`, `z` and age, are drawn while visible and ready,
+  themselves by `class`, `z` and age, are drawn as a layer on screen is
+  (visible and ready, nothing they sample refused, and once what they
+  sample is written: `waiting`, `an asset it samples is not written yet`),
   and are never in the target's stack: they make no target wanted, are not
   faded, suspended or held, and show (`layer` event `shown`) once drawn in
   it. A layer on screen sampling the canvas wants the target as any layer.
+  A canvas without `once` is drawn each frame only while a layer drawn on
+  screen samples it, directly or through layers drawn in other canvases;
+  the rest of the time the display skips it, keeping its last picture.
+- **Premultiplied:** a layer drawn in a canvas at the default `alpha`
+  blend over its clear leaves colour already multiplied by alpha, as a
+  canvas cleared transparent holds. Sample a canvas with `blend`
+  `premultiplied` (or `none` where it is opaque): at `alpha` its colours
+  are multiplied by alpha twice, darkening its soft and bilinear-sampled
+  edges.
 - **Costs** nothing of the upload budget to draw: only what its layers
   write is sent. Its pixels twice (what its passes draw, and the copy
   layers sample: the picture turned so that its first row is its top, as
   an asset's), and once more with `depth`, count in the
-  service's pixel memory. A canvas the display draws every frame costs its
-  GPU: a still picture takes `once`.
+  service's pixel memory; a client's canvases together at most half of it
+  (8,192 KB of the usual 16 MB), so they leave other clients room. A canvas
+  the display draws every frame costs its GPU while something shown samples
+  it: a still picture takes `once`.
 - **Limits:** a client has at most 4 canvases and all clients together 8
   (past either: `too many canvases`), and a target's canvases together at
   most 2048x2048 pixels.
@@ -406,7 +422,10 @@ it) through `bind`, as an asset.
   use`); a client gone takes its layers first, then its canvases.
 - **Made again** in each new scene of its target, with its layers, as
   assets are. The client libraries make canvases with the assets after a
-  reconnect, before the layers.
+  reconnect, before the layers, and hold a canvas, the layers drawn in it
+  and binds of it until the service's hello has `canvas` 1: an older
+  service, which knows no `canvas` field, would draw such a layer on the
+  target itself.
 
 ### Scene files
 
@@ -424,7 +443,7 @@ changed live by edits ([below](#scene-edits)).
 | `sha256` | the SHA-256 of `file`, then of each file of `res` in its order: hex, separated by spaces |
 | `contend` | as a layer's |
 | `layers` | 0 (default): the target's layers wait while the file is there; 1: they are drawn over it ([below](#layers-over-a-scene-file)) |
-| `layers_order` | with `layers` 1: the render order the layers' passes start at; left out: one past the file's highest |
+| `layers_order` | with `layers` 1: the render order the layers' passes start at, -999737856 or above (the [canvases'](#canvases) passes go below); left out: one past the file's highest |
 
 The service runs as `hmi_5000` and any client may name a file, and a
 malformed file can take the RAMSES client down with the service, so it takes

@@ -70,6 +70,7 @@ struct FakeView {
 struct FakeCanvas {
     CanvasSpec spec;
     int redraws = 0;   /* redraw() calls */
+    bool enabled = true;   /* enable_canvas() */
 };
 
 struct FakePart {
@@ -383,6 +384,14 @@ public:
         if (it == pending.canvases.end())
             return false;
         it->second.redraws++;
+        return true;
+    }
+    bool enable_canvas(int c, bool on) override
+    {
+        auto it = pending.canvases.find(c);
+        if (it == pending.canvases.end() || it->second.spec.once)
+            return false;
+        it->second.enabled = on;
         return true;
     }
     int quad_in(int c, int effect, const Rect &r) override

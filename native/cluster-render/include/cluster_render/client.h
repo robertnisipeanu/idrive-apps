@@ -150,8 +150,11 @@ struct SamplerOptions {
 
 /* A canvas (PROTOCOL.md "Canvases"): an off-screen picture on target that
  * effect and mesh layers draw in (effect_in(), mesh_in()) and layers sample
- * as an asset (bind()); to a service whose hello has canvas
- * (Client::takes_canvas()). */
+ * as an asset (bind()), with blend "premultiplied" (RenderState); a layer in
+ * a canvas samples only canvases made before its own. Sent, with the layers
+ * drawn in it and binds of it, only to a service whose hello has canvas
+ * (Client::takes_canvas()): held until then, and never sent to an older
+ * service, which would draw such a layer on screen. */
 struct CanvasOptions {
     std::string target;
     unsigned w = 0, h = 0;   /* up to 2048 */
@@ -468,6 +471,15 @@ private:
     void turn_fields(std::vector<std::pair<std::string, std::string>> *kv, const LayerOptions &lo) const;
     void mesh_fields(std::vector<std::pair<std::string, std::string>> *kv, const MeshOptions &mo) const;
     std::string layer_json(uint32_t ref, const Layer &l) const;
+    /* A canvas, or a layer drawn in one. */
+    static bool in_canvas(const Layer &l);
+    /* Held here, not sent: one in_canvas() until a hello with canvas. */
+    bool held(uint32_t ref) const;
+    /* json, about ref, queued unless ref is held. */
+    void queue_for(uint32_t ref, const std::string &json);
+    /* Every layer, part, bind and animation made so far: those of canvases
+     * or the rest. */
+    void replay(bool canvases);
     std::string host_json(const std::pair<std::string, std::string> &by, const Host &h) const;
     /* A scene's kept edit lines as one edit message, oldest first. */
     std::string edits_json(uint32_t ref, const Layer &l) const;

@@ -214,6 +214,7 @@ namespace ramses
         status_t setBlendingFactors(EBlendFactor srcColor, EBlendFactor destColor, EBlendFactor srcAlpha, EBlendFactor destAlpha);
         status_t getBlendingFactors(EBlendFactor& srcColor, EBlendFactor& destColor, EBlendFactor& srcAlpha, EBlendFactor& destAlpha) const;
         status_t setBlendingOperations(EBlendOperation operationColor, EBlendOperation operationAlpha);
+        status_t getBlendingOperations(EBlendOperation& operationColor, EBlendOperation& operationAlpha) const;
         status_t setDepthFunction(EDepthFunc func);
         status_t getDepthFunction(EDepthFunc& depthFunc) const;
         status_t setDepthWrite(bool enable);
@@ -222,6 +223,7 @@ namespace ramses
         status_t getCullingMode(ECullMode& mode) const;
         status_t setDrawMode(EDrawMode mode);
         status_t setColorWriteMask(bool writeRed, bool writeGreen, bool writeBlue, bool writeAlpha);
+        status_t getColorWriteMask(bool& writeRed, bool& writeGreen, bool& writeBlue, bool& writeAlpha) const;
         status_t setStencilFunction(EStencilFunc func, uint32_t ref, uint8_t mask);
         status_t setStencilOperation(EStencilOperation sfail, EStencilOperation dpfail, EStencilOperation dppass);
 

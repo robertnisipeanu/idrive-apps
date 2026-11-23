@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <set>
 
 #include "block_pack.h"
 #include "log.h"
@@ -461,9 +462,11 @@ uint32_t Compositor::add_canvas(uint64_t owner, int target, const CanvasSpec &sp
         return 0;
     }
     uint32_t mine = 0;
-    uint64_t pixels = (uint64_t)spec.w * spec.h;
+    uint64_t pixels = (uint64_t)spec.w * spec.h, own = Canvas::memory(spec);
     for (const auto &kv : canvases_) {
         mine += kv.second.owner == owner;
+        if (kv.second.owner == owner)
+            own += kv.second.canvas->memory();
         if (kv.second.canvas->target() == target)
             pixels += kv.second.canvas->pixels();
     }
@@ -475,8 +478,13 @@ uint32_t Compositor::add_canvas(uint64_t owner, int target, const CanvasSpec &sp
         *err = "the target's canvases together are at most 2048x2048 pixels";
         return 0;
     }
-    std::unique_ptr<Canvas> c(new Canvas(0, target, spec));
-    if (memory() + c->memory() > limits_.pixel_bytes) {
+    /* A share of it, so one client's canvases leave the rest room. */
+    if (own > limits_.pixel_bytes / 2) {
+        *err = "a client's canvases together are at most half the service's pixel memory (" +
+               std::to_string(limits_.pixel_bytes / 2 / 1024) + " KB)";
+        return 0;
+    }
+    if (memory() + Canvas::memory(spec) > limits_.pixel_bytes) {
         *err = "the service's pixel memory is full";
         return 0;
     }
@@ -587,7 +595,11 @@ void Compositor::arrange_canvases(int ti)
         });
         for (size_t pos = 0; pos < order.size(); pos++) {
             Entry &e = *order[pos];
-            const bool drawn = e.layer->params.visible && e.layer->ready(now_ms_) && assets_have(e);
+            /* As a layer on screen: visible and ready, nothing it samples
+             * refused, and drawn once all of that is in its buffers. */
+            const Layer &l = *e.layer;
+            const bool drawn = l.params.visible && e.error.empty() && l.refusal().empty() && !asset_refused(e) &&
+                               l.ready(now_ms_) && assets_have(e) && assets_clean(e);
             const int32_t at = (int32_t)pos * 4;
             if (drawn == e.drawn && at == e.order)
                 continue;
@@ -597,6 +609,62 @@ void Compositor::arrange_canvases(int ti)
             c.canvas->touch();
             t.dirty = true;
         }
+    }
+}
+
+bool Compositor::sampled(uint32_t id) const
+{
+    auto in = [id](const std::map<uint32_t, Entry> &m) {
+        for (const auto &kv : m)
+            for (const auto &b : kv.second.binds)
+                if (b.second == id)
+                    return true;
+        return false;
+    };
+    if (in(layers_))
+        return true;
+    for (const auto &ck : canvases_)
+        if (in(ck.second.layers))
+            return true;
+    return false;
+}
+
+void Compositor::rebind(uint32_t id)
+{
+    auto in = [this, id](std::map<uint32_t, Entry> &m) {
+        for (auto &kv : m)
+            for (const auto &b : kv.second.binds)
+                if (b.second == id) {
+                    apply_binds(kv.second);
+                    break;
+                }
+    };
+    in(layers_);
+    for (auto &ck : canvases_)
+        in(ck.second.layers);
+}
+
+void Compositor::enable_canvases(int ti, Target &t)
+{
+    /* Sampled by a drawn layer on screen, or by a drawn layer in a canvas
+     * that is; a layer in a canvas samples only canvases made before its
+     * own (bind()), so the newest first. */
+    std::set<uint32_t> wanted;
+    for (const auto &kv : layers_)
+        if (kv.second.drawn && kv.second.layer->target() == ti)
+            for (const auto &b : kv.second.binds)
+                wanted.insert(b.second);
+    for (auto ck = canvases_.rbegin(); ck != canvases_.rend(); ++ck) {
+        if (ck->second.canvas->target() != ti)
+            continue;
+        const bool on = wanted.count(ck->first) != 0;
+        if (on)
+            for (const auto &kv : ck->second.layers)
+                if (kv.second.drawn)
+                    for (const auto &b : kv.second.binds)
+                        wanted.insert(b.second);
+        if (ck->second.canvas->enable(on))
+            t.dirty = true;
     }
 }
 
@@ -662,15 +730,7 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
 {
     auto cv = canvases_.find(id);
     if (cv != canvases_.end() && cv->second.owner == owner) {
-        bool sampled = !cv->second.layers.empty();
-        for (const auto &kv : layers_)
-            for (const auto &b : kv.second.binds)
-                sampled = sampled || b.second == id;
-        for (const auto &ck : canvases_)
-            for (const auto &kv : ck.second.layers)
-                for (const auto &b : kv.second.binds)
-                    sampled = sampled || b.second == id;
-        if (sampled) {
+        if (!cv->second.layers.empty() || sampled(id)) {
             *err = cv->second.layers.empty() ? "canvas in use" : "canvas in use: its layers go first";
             return false;
         }
@@ -686,15 +746,7 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
         *err = "no such asset";
         return false;
     }
-    bool sampled = false;
-    for (const auto &kv : layers_)
-        for (const auto &b : kv.second.binds)
-            sampled = sampled || b.second == id;
-    for (const auto &ck : canvases_)
-        for (const auto &kv : ck.second.layers)
-            for (const auto &b : kv.second.binds)
-                sampled = sampled || b.second == id;
-    if (sampled) {
+    if (sampled(id)) {
         *err = "asset in use";
         return false;
     }
@@ -723,6 +775,12 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
     }
     if (in && cv != canvases_.end() && in == &cv->second) {
         *err = "a canvas's layers do not sample the canvas itself";
+        return false;
+    }
+    /* Its passes go before the sampling canvas's, so what it samples is
+     * drawn in the same frame (Graph::canvas). */
+    if (in && cv != canvases_.end() && cv->first > in->canvas->id()) {
+        *err = "a layer in a canvas samples only canvases made before its own";
         return false;
     }
     Entry &e = *en;
@@ -1638,7 +1696,16 @@ void Compositor::render(int64_t now_ms)
     render_later_.clear();
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
-        if ((!t.graph && !t.file) || !slots_->flushing((int)ti))
+        /* Flushing again (shown after a park or a lock's re-map): a canvas
+         * drawn once is drawn again, as the display may have dropped its
+         * buffers while the scene was not mapped. */
+        const bool flushing = slots_->flushing((int)ti);
+        if (flushing && !t.flushing)
+            for (auto &ck : canvases_)
+                if (ck.second.canvas->target() == (int)ti)
+                    ck.second.canvas->touch();
+        t.flushing = flushing;
+        if ((!t.graph && !t.file) || !flushing)
             continue;
         t.uncover = false;
         if (t.file && !t.graph) {
@@ -1719,36 +1786,36 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
             continue;
         const int had = a.buffer();
         const Stage s = a.stage(now_ms);
-        if (a.buffer() != had)   /* a compressed asset's texture, made now */
-            for (auto &lk : layers_)
-                for (const auto &b : lk.second.binds)
-                    if (b.second == a.id()) {
-                        apply_binds(lk.second);
-                        break;
-                    }
+        if (a.buffer() != had)   /* an immutable asset's texture, made now */
+            rebind(a.id());
         if (s == Stage::Idle)
             continue;
         staged_assets.push_back(&a);
         wrote = wrote || s == Stage::Wrote;
         failed = failed || s == Stage::Failed;
     }
-    /* Canvases and their layers, before the layers that sample them; a
-     * canvas drawn once draws again when anything on its target that it
-     * may sample was written. */
+    /* Canvases and their layers, before the layers that sample them. A
+     * canvas drawn once draws again when one of its layers changed, or
+     * samples an asset written now or a canvas drawn now; a canvas samples
+     * only canvases made before it (bind()), which come first. */
     std::vector<Canvas *> staged_canvases;
     if (!hold) {
         arrange_canvases(ti);
-        const bool assets_wrote = !staged_assets.empty();
+        enable_canvases(ti, t);
+        std::set<uint32_t> changed;
+        for (const Asset *a : staged_assets)
+            changed.insert(a->id());
         for (auto &ck : canvases_) {
             Canvas &cv = *ck.second.canvas;
             if (cv.target() != ti || !cv.attached())
                 continue;
-            if (assets_wrote)
-                cv.touch();
             for (auto &kv : ck.second.layers) {
                 Layer *l = kv.second.layer.get();
                 if (!l->attached())
                     continue;
+                for (const auto &b : kv.second.binds)
+                    if (changed.count(b.second))
+                        cv.touch();
                 const Stage s = l->stage(now_ms);
                 if (s == Stage::Idle)
                     continue;
@@ -1757,6 +1824,8 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
                 wrote = wrote || s == Stage::Wrote;
                 failed = failed || s == Stage::Failed;
             }
+            if (cv.due())
+                changed.insert(ck.first);
         }
         for (auto &ck : canvases_) {
             Canvas &cv = *ck.second.canvas;
@@ -2451,6 +2520,10 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
             return LayerState::Stalled;
         if (e.drawn)
             return LayerState::Shown;
+        if (in->canvas->attached() && !assets_clean(e)) {
+            *reason = "an asset it samples is not written yet";
+            return LayerState::Waiting;
+        }
         const TargetStatus &ts = slots_->status(l.target());
         *reason = std::string("target ") + target_state_name(ts.state) + (ts.reason.empty() ? "" : ": " + ts.reason);
         return LayerState::Waiting;
@@ -2590,14 +2663,15 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->attach(t.graph.get());
-    /* Canvases before the layers that sample them, and their own layers. */
-    for (auto &ck : canvases_) {
-        if (ck.second.canvas->target() != ti)
-            continue;
-        ck.second.canvas->attach(t.graph.get());
-        for (auto &kv : ck.second.layers)
-            attach_in(kv.second, ck.second);
-    }
+    /* Canvases before the layers that sample them; their own layers once
+     * every canvas is made, so a bind of one made later is applied too. */
+    for (auto &ck : canvases_)
+        if (ck.second.canvas->target() == ti)
+            ck.second.canvas->attach(t.graph.get());
+    for (auto &ck : canvases_)
+        if (ck.second.canvas->target() == ti)
+            for (auto &kv : ck.second.layers)
+                attach_in(kv.second, ck.second);
     arrange_canvases(ti);
     for (auto &kv : layers_) {
         Entry &e = kv.second;

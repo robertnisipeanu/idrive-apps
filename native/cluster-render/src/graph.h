@@ -323,6 +323,25 @@ struct CanvasSpec {
     bool once = false;
 };
 
+/* Canvases' render orders (Graph::canvas): a block of kCanvasSpan each,
+ * from kCanvasBase up, kCanvasSlots blocks, below every render order of a
+ * target's own passes (a scene file's layers_order is at least
+ * kLowestLayersOrder). */
+const int32_t kCanvasBase = -1000000000, kCanvasSpan = 4096, kCanvasSlots = 64;
+const int32_t kLowestLayersOrder = kCanvasBase + kCanvasSlots * kCanvasSpan;
+
+/* A canvas as the library holds it (Graph::read_canvas, for tests): its
+ * buffers' formats, types and access modes as the library's enums give
+ * them (-1: no such buffer), whether its copy pass writes alpha unblended,
+ * and the render order of its first pass and its copy pass. */
+struct CanvasReadback {
+    int color_format = -1, color_type = -1, color_access = -1;
+    int shown_format = -1, shown_type = -1, shown_access = -1;
+    int depth_format = -1, depth_type = -1, depth_access = -1;
+    bool copy_writes_alpha = false, copy_blends = true, enabled = false;
+    int32_t first_order = 0, copy_order = 0;
+};
+
 /* One target's scene. */
 class Graph {
 public:
@@ -418,6 +437,11 @@ public:
     virtual int canvas(const CanvasSpec &) { return 0; }
     virtual void drop_canvas(int) {}
     virtual bool redraw(int) { return false; }
+    /* A canvas not drawn once: drawn each frame while enabled (as it is
+     * made), not drawn at all while not, keeping its last picture. */
+    virtual bool enable_canvas(int, bool) { return false; }
+    /* What the library holds for the canvas; false where it cannot say. */
+    virtual bool read_canvas(int, CanvasReadback *) const { return false; }
     virtual int quad_in(int canvas, int effect, const Rect &r) { return canvas ? 0 : quad(effect, r); }
     virtual int view_in(int canvas, const Rect &r, const Projection &p, const Pose &camera)
     {

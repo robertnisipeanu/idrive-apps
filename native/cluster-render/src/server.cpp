@@ -89,7 +89,8 @@ bool choice(const cr::Json &j, const char *key, const std::vector<std::string> &
  * does not know). A blend field over a preset makes the preset custom. */
 bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err, bool stencil = false)
 {
-    static const std::vector<std::string> sfuncs = {"never", "always", "equal", "not_equal",
+    /* in StencilFunc's order */
+    static const std::vector<std::string> sfuncs = {"off",  "never",      "always",  "equal",        "not_equal",
                                                     "less", "less_equal", "greater", "greater_equal"};
     static const std::vector<std::string> sops = {"keep", "zero", "replace", "increment",
                                                   "increment_wrap", "decrement", "decrement_wrap", "invert"};
@@ -103,8 +104,10 @@ bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err,
         return false;
     }
     if (any) {
+        /* What is not sent is kept: stencil_func its current one (off
+         * until one is sent). */
         StencilState &st = look->stencil;
-        int func = st.func == StencilFunc::Off ? 1 : (int)st.func - 1;
+        int func = (int)st.func;
         int fail = (int)st.fail, dfail = (int)st.depth_fail, pass = (int)st.pass;
         double ref = st.ref, mask = st.mask;
         if (!choice(j, "stencil_func", sfuncs, &func, err) || !num(j, "stencil_ref", 0, 255, &ref, err) ||
@@ -115,7 +118,7 @@ bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err,
             *err = "stencil_ref and stencil_mask are whole numbers from 0 to 255";
             return false;
         }
-        st.func = (StencilFunc)(func + 1);
+        st.func = (StencilFunc)func;
         st.ref = (uint8_t)ref;
         st.mask = (uint8_t)mask;
         st.fail = (StencilOp)fail;
@@ -739,7 +742,9 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
         id = comp_->add_effect(c.id, target, lp, str(j, "vs"), str(j, "fs"), (uint32_t)v, now_ms, &err);
         if (id && clock)
             static_cast<EffectLayer *>(comp_->layer(c.id, id))->cluster_time();
-        if (id && look != quad_look())
+        /* also while it is the default: stencil fields sent with the
+         * stencil off are kept for when stencil_func turns it on */
+        if (id)
             static_cast<EffectLayer *>(comp_->layer(c.id, id))->set_look(look);
     } else if (kind == "mesh") {
         MeshParams mp;
@@ -1021,7 +1026,7 @@ void Server::op_scene(Client &c, const cr::Json &j)
     SceneLayers layers;
     double on = 0, order = 0;
     if (!num(j, "contend", 0, 1, &contend, &err) || !num(j, "layers", 0, 1, &on, &err) ||
-        !num(j, "layers_order", INT32_MIN, INT32_MAX - 1024, &order, &err) ||
+        !num(j, "layers_order", kLowestLayersOrder, INT32_MAX - 1024, &order, &err) ||
         !check_scene_source(scene_files_, str(j, "file"), str(j, "res"), str(j, "sha256"), &src, &err)) {
         log_warn("client %llu (%s): scene file refused: %s", (unsigned long long)c.id, c.app.c_str(), err.c_str());
         error(c, "scene", ref, err);

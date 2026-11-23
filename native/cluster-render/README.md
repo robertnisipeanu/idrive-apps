@@ -252,7 +252,9 @@ Beside the layers:
   layers on screen sample it as an asset. A canvas may have a depth-stencil
   buffer of its own, the one place stencil tests are offered, and may be
   drawn once and again only when what is in it changes, for artwork the
-  display then keeps (PROTOCOL.md "Canvases").
+  display then keeps; one drawn each frame is skipped while nothing shown
+  samples it. Its pixels are premultiplied: sample it with `blend`
+  `premultiplied` (PROTOCOL.md "Canvases").
 - **Render state:** an effect layer or mesh part blends by a preset
   (`alpha`, `add`, `none`, `premultiplied`, `max`, `min`, `subtract`) or
   by its own factors and operations, writes only the colour channels it

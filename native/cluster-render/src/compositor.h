@@ -262,7 +262,8 @@ public:
     uint32_t add_asset(uint64_t owner, int target, const AssetParams &ap, std::string *err);
     /* A canvas (canvas.h) of the client's on target, at most
      * kClientCanvases a client and kCanvases in all, its memory in the
-     * service's pixel memory; its layers are effect and mesh layers made
+     * service's pixel memory, a client's canvases at most half of it; its
+     * layers are effect and mesh layers made
      * with LayerParams::canvas. Bound, dropped and listed as an asset
      * (bind(), remove_asset()); dropped only with no layer in it or
      * sampling it. 0 with *err when refused. */
@@ -275,7 +276,9 @@ public:
     /* False with *err while a layer samples it. */
     bool remove_asset(uint64_t owner, uint32_t id, std::string *err);
     /* The layer's sampler (of part, for a mesh layer) samples the asset,
-     * which must be on its target; replaces what it sampled. */
+     * which must be on its target; replaces what it sampled. A layer in a
+     * canvas samples only canvases made before its own, which are drawn
+     * before it. */
     bool bind(uint64_t owner, uint32_t layer, uint32_t part, const std::string &sampler, uint32_t asset,
               std::string *err);
     /* After a change of a layer's scene objects outside stage(), so the next
@@ -522,6 +525,7 @@ private:
         std::map<int, Host> hosts;   /* by hosted target */
     };
     struct Target {
+        bool flushing = false;   /* slots_->flushing() at the last render() */
         std::unique_ptr<Graph> graph;
         /* Or the scene of a scene content's file: which content's, its
          * serial, and its files' bytes. */
@@ -782,6 +786,13 @@ private:
     void arrange_canvases(int ti);
     /* What a bind of id draws from: an asset's buffer or a canvas's. */
     int bound_buffer(uint32_t id) const;
+    /* A layer, on screen or in a canvas, samples id. */
+    bool sampled(uint32_t id) const;
+    /* Every layer sampling id bound again (its buffer is new). */
+    void rebind(uint32_t id);
+    /* Each canvas drawn every frame on the target drawn only while a layer
+     * visible on screen samples it, directly or through other canvases. */
+    void enable_canvases(int ti, Target &t);
     std::string refused_reason(uint32_t id) const;
     std::map<uint32_t, SceneEntry> scenes_;
     std::map<std::pair<int, uint64_t>, LayerHost> layer_hosts_;   /* by (hosted target, owner) */

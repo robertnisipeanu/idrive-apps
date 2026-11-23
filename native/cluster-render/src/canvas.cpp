@@ -100,7 +100,19 @@ bool Canvas::attach(Graph *g)
     }
     refused_.clear();
     adapter_.reset(new Adapter(g, handle_));
-    dirty_ = true;
+    dirty_ = enabled_ = true;
+    return true;
+}
+
+bool Canvas::enable(bool on)
+{
+    if (!g_ || spec_.once || on == enabled_)
+        return false;
+    if (!g_->enable_canvas(handle_, on)) {
+        log_warn("canvas %u: not %s", id_, on ? "enabled" : "disabled");
+        return false;
+    }
+    enabled_ = on;
     return true;
 }
 

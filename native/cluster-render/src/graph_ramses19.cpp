@@ -725,7 +725,9 @@ public:
         Surface sf;
         sf.w = c.w;
         sf.h = c.h;
-        sf.base = kCanvasBase + (canvas_seq_++ % kCanvases) * kCanvasSpan;
+        if (canvas_seq_ == kCanvasSlots)
+            renumber_canvases();
+        sf.base = kCanvasBase + canvas_seq_++ * kCanvasSpan;
         sf.rt = rt;
         sf.color = color;
         sf.depth = depth;
@@ -796,6 +798,50 @@ public:
             scene_->destroy(*sf.depth);
         scene_->destroy(*sf.color);
         canvases_.erase(it);
+    }
+
+    bool enable_canvas(int canvas, bool on) override
+    {
+        auto it = canvases_.find(canvas);
+        if (it == canvases_.end() || it->second.once)
+            return false;
+        Surface &sf = it->second;
+        sf.enabled = on;
+        bool good = ok(sf.copy_pass->setEnabled(on));
+        for (Segment &seg : sf.segments)
+            good = ok(seg.pass->setEnabled(on)) && good;
+        for (auto &kv : views_)
+            if (kv.second.surface == canvas)
+                good = ok(kv.second.pass->setEnabled(on)) && good;
+        return good;
+    }
+
+    bool read_canvas(int canvas, CanvasReadback *out) const override
+    {
+        auto it = canvases_.find(canvas);
+        if (it == canvases_.end())
+            return false;
+        const Surface &sf = it->second;
+        auto buffer = [](const ramses::RenderBuffer *b, int *format, int *type, int *access) {
+            if (!b)
+                return;
+            *format = (int)b->getBufferFormat();
+            *type = (int)b->getBufferType();
+            *access = (int)b->getAccessMode();
+        };
+        buffer(sf.color, &out->color_format, &out->color_type, &out->color_access);
+        buffer(sf.shown, &out->shown_format, &out->shown_type, &out->shown_access);
+        buffer(sf.depth, &out->depth_format, &out->depth_type, &out->depth_access);
+        bool r = false, g = false, b = false, a = false;
+        ramses::EBlendOperation color = ramses::EBlendOperation_Add, alpha = ramses::EBlendOperation_Add;
+        if (!ok(sf.copy_app->getColorWriteMask(r, g, b, a)) || !ok(sf.copy_app->getBlendingOperations(color, alpha)))
+            return false;
+        out->copy_writes_alpha = a;
+        out->copy_blends = color != ramses::EBlendOperation_Disabled || alpha != ramses::EBlendOperation_Disabled;
+        out->enabled = sf.copy_pass->isEnabled() && sf.segments[0].pass->isEnabled();
+        out->first_order = sf.segments[0].pass->getRenderOrder();
+        out->copy_order = sf.copy_pass->getRenderOrder();
+        return true;
     }
 
     /* A canvas drawn once draws once more, with its next flush. */
@@ -876,6 +922,7 @@ private:
         ramses::RenderTarget *rt = nullptr;
         ramses::RenderBuffer *color = nullptr, *depth = nullptr;
         bool once = false;
+        bool enabled = true;   /* enable_canvas() */
         /* The copy: color turned over into shown, which layers sample. */
         ramses::RenderBuffer *shown = nullptr;
         ramses::RenderTarget *shown_rt = nullptr;
@@ -1109,7 +1156,23 @@ private:
         if (!canvas)
             return true;
         const Surface &sf = canvases_.at(canvas);
-        return ok(pass->setRenderTarget(sf.rt)) && (!sf.once || ok(pass->setRenderOnce(true)));
+        return ok(pass->setRenderTarget(sf.rt)) && (!sf.once || ok(pass->setRenderOnce(true))) &&
+               (sf.enabled || ok(pass->setEnabled(false)));
+    }
+
+    /* Every slot of render orders taken once in this scene: the canvases
+     * there take the first ones again, in the order they were made, which
+     * is the order of their handles. */
+    void renumber_canvases()
+    {
+        canvas_seq_ = 0;
+        for (auto &kv : canvases_) {
+            Surface &sf = kv.second;
+            sf.base = kCanvasBase + canvas_seq_++ * kCanvasSpan;
+            if (!ok(sf.copy_pass->setRenderOrder(sf.base + kCanvasSpan - 1)))
+                log_error("ramses: canvas %d: copy pass not ordered", kv.first);
+        }
+        layout_dirty_ = true;   /* their passes and views at their new bases */
     }
 
     /* A view clears depth when one of its parts tests it. */
@@ -1266,9 +1329,6 @@ private:
         }
     }
 
-    /* Canvases' render orders: a block of kCanvasSpan each, from kCanvasBase,
-     * far below the target's (0, or a scene file's layers_order). */
-    static const int32_t kCanvasBase = -1000000000, kCanvasSpan = 4096, kCanvases = 100000;
     /* The canvases' copy: the unit quad, v turned over. */
     static constexpr const char *kCopyVs = "#version 100\nattribute vec2 a_position;\nuniform mat4 u_mvp;\n"
                                            "varying vec2 v_p;\nvoid main() {\n    v_p = a_position;\n"

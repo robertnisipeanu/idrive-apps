@@ -10,10 +10,11 @@
  * Its layers see the target's scene through graph(): a Graph that makes
  * their quads and views in the canvas and passes everything else on, so a
  * layer is the same object on screen or in a canvas. Drawn once (once),
- * the canvas is drawn again only in the flushes that change something in
- * it (touch()); otherwise every frame. A depth canvas has a depth-stencil
- * buffer of its own, the one place stencil state is offered: on screen it
- * would reach the display's buffer, which other scenes use. */
+ * the canvas is drawn again only in the flushes that change something in it
+ * or that it samples (touch()); otherwise every frame while enabled
+ * (enable(): while something shown samples it). A depth canvas has a
+ * depth-stencil buffer of its own, the one place stencil state is offered:
+ * on screen it would reach the display's buffer, which other scenes use. */
 #ifndef CRS_CANVAS_H
 #define CRS_CANVAS_H
 
@@ -45,7 +46,8 @@ public:
     /* What it holds of the display's memory, counted in the service's
      * pixel memory: RGBA8 twice (what its passes draw, and the copy layers
      * sample), and as much again for a depth-stencil buffer. */
-    uint64_t memory() const { return pixels() * 4 * (spec_.depth ? 3 : 2); }
+    static uint64_t memory(const CanvasSpec &s) { return (uint64_t)s.w * s.h * 4 * (s.depth ? 3 : 2); }
+    uint64_t memory() const { return memory(spec_); }
 
     /* Made in a published scene; false when the renderer refuses it. */
     bool attach(Graph *g);
@@ -61,6 +63,12 @@ public:
 
     /* Something in it changed: a canvas drawn once draws again. */
     void touch() { dirty_ = true; }
+    /* Drawn in the next flush: every frame while enabled, or once and
+     * touched since it was last drawn. */
+    bool due() const { return handle_ && (spec_.once ? dirty_ : enabled_); }
+    /* A canvas drawn every frame drawn or not (Graph::enable_canvas); true
+     * when that changed. One drawn once is always enabled. */
+    bool enable(bool on);
     /* Its redraw, when due; the caller flushes. */
     Stage stage();
     void committed(bool ok);
@@ -74,7 +82,7 @@ private:
     int handle_ = 0;
     std::unique_ptr<Adapter> adapter_;
     std::string refused_;
-    bool dirty_ = false, staged_ = false;
+    bool dirty_ = false, staged_ = false, enabled_ = true;
 };
 
 }  // namespace crs

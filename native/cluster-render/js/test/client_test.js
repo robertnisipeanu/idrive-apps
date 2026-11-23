@@ -27,7 +27,9 @@
  * samplers: an effect layer's blending set and changed, a part's depth
  * test, an rgba8 asset whose mip levels the service makes and an etc2rgba
  * one sent with its chain, and a factor the service lacks refused; a
- * canvas drawn in with stencil state and sampled on screen;
+ * canvas drawn in with stencil state and sampled on screen; to a service
+ * without canvases (a rollback) nothing of a canvas sent, all of it to one
+ * that takes them;
  * close() and connect() in one tick making one connection. */
 'use strict';
 
@@ -35,6 +37,7 @@ const assert = require('assert');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { ClusterRender } = require('../cluster_render_client.js');
 
@@ -423,6 +426,68 @@ async function main() {
     [inCv, onScreen, cv].forEach((r) => ovl.drop(r));
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
+
+    /* Rolled back to a service without canvases: none of a canvas sent to
+     * it (it would draw a layer drawn in one on screen), made before its
+     * hello or after; all of it to a service that takes them. */
+    const got = [];
+    let peer = null;
+    const old = net.createServer((s) => {
+        peer = s;
+        let buf = Buffer.alloc(0);
+        s.on('data', (d) => {
+            buf = Buffer.concat([buf, d]);
+            while (buf.length >= 5 && buf.length >= 4 + buf.readUInt32LE(0)) {
+                const len = buf.readUInt32LE(0);
+                got.push(buf[4] === 0x4a ? JSON.parse(buf.slice(5, 4 + len).toString('utf8')) : { binary: true });
+                buf = buf.slice(4 + len);
+            }
+        });
+        s.on('error', () => {});
+    });
+    const oldSock = sock + '.old';
+    await new Promise((r) => old.listen(oldSock, r));
+    const hello = (extra) => {
+        const body = Buffer.from(JSON.stringify(Object.assign({ ev: 'hello', proto: 1, backend: 'id7',
+            targets: 'map:1088x480,panel:1920x720' }, extra)));
+        const head = Buffer.alloc(5);
+        head.writeUInt32LE(body.length + 1, 0);
+        head[4] = 0x4a;
+        peer.write(Buffer.concat([head, body]));
+    };
+    const rc = new ClusterRender('rolled', oldSock);
+    rc.connect();
+    const rcv = rc.canvas({ target: 'panel', w: 32, h: 32 });
+    const rin = rc.effect({ target: 'panel', canvas: rcv, w: 32, h: 32, fs: 'void main(){}' });
+    const rout = rc.effect({ target: 'panel', w: 32, h: 32, fs: 'void main(){}' });
+    rc.bind(rout, 'u_cv', rcv);
+    await until(() => peer !== null, 2000);
+    await sleep(100);
+    hello({});
+    await until(() => rc.ready, 2000);
+    rc.uniform(rin, 'u_level', [0.5]);
+    rc.set(rin, { x: 4 });
+    const rmesh = rc.mesh({ target: 'panel', canvas: rcv, w: 32, h: 32 });
+    rc.part(rmesh, 1, { vs: 'void main(){}', fs: 'void main(){}' });
+    rc.geometry(rmesh, 1, { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] });
+    await sleep(100);
+    ok('older service: no canvas, nothing drawn in one, no bind of one sent, before or after its hello',
+        rc.canvases === false && got.some((m) => m.op === 'layer' && m.ref === rout) &&
+        got.every((m) => !m.binary && m.op !== 'canvas' && m.canvas === undefined && m.op !== 'bind' &&
+            m.ref !== rin && m.ref !== rmesh));
+    got.length = 0;
+    peer.destroy();
+    peer = null;
+    await until(() => peer !== null, 3000);
+    await sleep(100);
+    hello({ canvas: 1 });
+    ok('a service that takes canvases: the canvas, the layers in it, a part, its geometry and the bind sent ' +
+        'after its hello', await until(() => got.some((m) => m.op === 'bind' && m.ref === rout), 2000) &&
+        got.some((m) => m.op === 'canvas' && m.ref === rcv) && got.some((m) => m.op === 'layer' && m.ref === rin &&
+        m.canvas === rcv && m.x === 4) && got.some((m) => m.op === 'part' && m.ref === rmesh) &&
+        got.some((m) => m.binary) && got.some((m) => m.op === 'uniform' && m.ref === rin));
+    rc.close();
+    old.close();
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',

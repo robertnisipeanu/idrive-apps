@@ -2614,7 +2614,177 @@ static void canvases()
     r.comp->remove_owner(1);
     ok("canvas: the client gone: its layers, canvases and all gone", r.comp->canvases().empty() &&
                                                                      r.comp->layers().empty());
-    (void)c3;
+}
+
+/* Layers in canvases under the rules of layers on screen: bound to an
+ * immutable asset's texture when it is made, in each scene, and drawn only
+ * once what they sample is in their buffers, nothing they sample refused; a
+ * canvas samples only canvases made before it; a canvas drawn once drawn
+ * again for what it samples (through other canvases too, not for any asset
+ * written) and when its target is shown again after a park; one drawn every
+ * frame drawn only while something visible samples it; a client's canvases
+ * at most half the pixel memory. */
+static void canvases_as_layers()
+{
+    Rig r;
+    std::string err, why;
+    CanvasSpec cs;
+    cs.w = cs.h = 64;
+    cs.once = true;
+    const uint32_t a = r.comp->add_canvas(1, r.panel, cs, &err);
+    const uint32_t b = r.comp->add_canvas(1, r.panel, cs, &err);
+    LayerParams pa = params(Klass::Content, R(0, 0, 64, 64));
+    pa.canvas = a;
+    LayerParams pb = pa;
+    pb.canvas = b;
+    const uint32_t in_a = r.comp->add_effect(1, r.panel, pa, "", kSample, 0, r.now, &err);
+    const uint32_t in_b = r.comp->add_effect(1, r.panel, pb, "", kSample, 0, r.now, &err);
+    ok("canvas order: a layer in a canvas does not sample a canvas made after its own",
+       !r.comp->bind(1, in_a, 0, "u_atlas", b, &err) &&
+           err == "a layer in a canvas samples only canvases made before its own");
+    ok("canvas order: it samples one made before", r.comp->bind(1, in_b, 0, "u_atlas", a, &err));
+    AssetParams ep;
+    ep.format = TexFormat::ETC2RGBA;
+    ep.w = ep.h = 8;
+    const uint32_t etc = r.comp->add_asset(1, r.panel, ep, &err);
+    ok("immutable: a layer in a canvas samples a compressed asset", r.comp->bind(1, in_a, 0, "u_atlas", etc, &err));
+    const uint32_t shown = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+                                              r.now, &err);
+    r.comp->bind(1, shown, 0, "u_atlas", b, &err);
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(100);
+    /* The quad drawn in the canvas made n-th (from 0) in the scene. */
+    auto in_canvas = [&](size_t n) -> const FakeQuad * {
+        FakeGraph *g = r.g("panel");
+        if (!g || g->shown.canvases.size() <= n)
+            return nullptr;
+        const int handle = std::next(g->shown.canvases.begin(), (long)n)->first;
+        for (const auto &kv : g->shown.quads)
+            if (kv.second.canvas == handle)
+                return &kv.second;
+        return nullptr;
+    };
+    auto etc_buffer = [&]() {
+        FakeGraph *g = r.g("panel");
+        for (const auto &kv : g ? g->shown.buffers : std::map<int, FakeBuffer>())
+            if (kv.second.f == TexFormat::ETC2RGBA)
+                return kv.first;
+        return 0;
+    };
+    ok("immutable: before its pixels the layer in the canvas stalls, not drawn",
+       r.comp->state(in_a, &why) == LayerState::Stalled && in_canvas(0) && !in_canvas(0)->visible);
+    std::vector<uint8_t> blocks(tex_bytes(TexFormat::ETC2RGBA, 8, 8), 0x55);
+    r.comp->asset(1, etc)->update({}, blocks.data(), blocks.size(), &err);
+    r.run(200);
+    const FakeQuad *qa = in_canvas(0);
+    ok("immutable: its texture made, the layer in the canvas bound to it, drawn and shown",
+       etc_buffer() && qa && qa->textures.count("u_atlas") && qa->textures.at("u_atlas") == etc_buffer() &&
+           qa->visible && r.comp->state(in_a, &why) == LayerState::Shown);
+    r.comp->unpublish(r.slots.targets()[r.panel]);
+    std::string perr;
+    r.comp->publish(r.slots.targets()[r.panel], &perr);
+    r.run(200);
+    qa = in_canvas(0);
+    const FakeQuad *qb = in_canvas(1);
+    FakeGraph *g = r.g("panel");
+    const int ha = g ? g->shown.canvases.begin()->first : 0;
+    ok("a new scene: bound again to the texture made again, and to the canvas made before",
+       etc_buffer() && qa && qa->textures.count("u_atlas") && qa->textures.at("u_atlas") == etc_buffer() && qa->visible &&
+           qb && qb->textures.count("u_atlas") && qb->textures.at("u_atlas") == ha && qb->visible);
+
+    /* Drawn once: again for what it samples. */
+    auto redraws = [&](size_t n) {
+        FakeGraph *gg = r.g("panel");
+        return gg && gg->shown.canvases.size() > n ? std::next(gg->shown.canvases.begin(), (long)n)->second.redraws
+                                                   : -1;
+    };
+    r.run(300);
+    const int ra = redraws(0), rb = redraws(1);
+    AssetParams other;
+    other.w = other.h = 4;
+    const uint32_t x = r.comp->add_asset(1, r.panel, other, &err);
+    std::vector<uint8_t> px(4 * 4 * 4, 9);
+    r.comp->asset(1, x)->update({}, px.data(), px.size(), &err);
+    r.run(200);
+    ok("once: an asset none of its layers samples written: not drawn again",
+       ra >= 1 && redraws(0) == ra && redraws(1) == rb);
+    const float v = 0.25f;
+    static_cast<EffectLayer *>(r.comp->layer(1, in_a))->set_uniform("u_level", &v, 1);
+    r.run(100);
+    ok("once: a layer in canvas a changed: a drawn again, and b, which samples a",
+       redraws(0) == ra + 1 && redraws(1) == rb + 1);
+    r.slots.on_parked(0x01000400, r.now);
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(200);
+    ok("once: shown again after a park: drawn again", redraws(0) == ra + 2 && redraws(1) == rb + 2);
+
+    /* Drawn every frame: only while something visible samples it. */
+    CanvasSpec live;
+    live.w = live.h = 32;
+    const uint32_t lc = r.comp->add_canvas(1, r.panel, live, &err);
+    const uint32_t lc2 = r.comp->add_canvas(1, r.panel, live, &err);
+    LayerParams pl = params(Klass::Content, R(0, 0, 32, 32));
+    pl.canvas = lc2;
+    const uint32_t in_lc2 = r.comp->add_effect(1, r.panel, pl, "", kSample, 0, r.now, &err);
+    r.run(200);
+    auto enabled = [&](uint32_t id) {
+        FakeGraph *gg = r.g("panel");
+        const Canvas *c = r.comp->canvas(id);
+        return gg && c && gg->shown.canvases.count(c->buffer()) && gg->shown.canvases.at(c->buffer()).enabled;
+    };
+    ok("every frame: nothing samples it: not drawn", lc && lc2 && !enabled(lc) && !enabled(lc2));
+    const uint32_t viewer = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(100, 0, 32, 32)), "", kSample, 0,
+                                               r.now, &err);
+    r.comp->bind(1, in_lc2, 0, "u_atlas", lc, &err);
+    r.comp->bind(1, viewer, 0, "u_atlas", lc2, &err);
+    r.run(200);
+    ok("every frame: sampled by a layer shown: drawn, and the canvas it samples through its layer",
+       enabled(lc2) && enabled(lc));
+    Layer *vl = r.comp->layer(1, viewer);
+    vl->params.visible = false;
+    r.comp->changed(vl);
+    r.run(200);
+    ok("every frame: that layer hidden: neither drawn", !enabled(lc2) && !enabled(lc));
+    vl->params.visible = true;
+    r.comp->changed(vl);
+    r.run(200);
+    ok("every frame: shown again: both drawn", enabled(lc2) && enabled(lc));
+
+    /* A texture the renderer refused: the layer in the canvas not drawn. */
+    Rig no;
+    no.gpu.refuse_textures = true;
+    const uint32_t nc = no.comp->add_canvas(1, no.panel, cs, &err);
+    LayerParams pn = params(Klass::Content, R(0, 0, 64, 64));
+    pn.canvas = nc;
+    const uint32_t in_n = no.comp->add_effect(1, no.panel, pn, "", kSample, 0, no.now, &err);
+    const uint32_t nb = no.comp->add_asset(1, no.panel, ep, &err);
+    no.comp->bind(1, in_n, 0, "u_atlas", nb, &err);
+    no.comp->asset(1, nb)->update({}, blocks.data(), blocks.size(), &err);
+    const uint32_t nshown = no.comp->add_effect(1, no.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+                                                no.now, &err);
+    no.comp->bind(1, nshown, 0, "u_atlas", nc, &err);
+    no.run(200);
+    no.slots.on_shown(0x01000400, no.now);
+    no.run(200);
+    FakeGraph *ng = no.g("panel");
+    bool drawn = false;
+    for (const auto &kv : ng ? ng->shown.quads : std::map<int, FakeQuad>())
+        drawn = drawn || (kv.second.canvas && kv.second.visible);
+    ok("refused: the layer in the canvas is an error, not drawn",
+       ng && no.comp->state(in_n, &why) == LayerState::Error && !drawn);
+
+    /* Pixel memory: a client's canvases at most half of it. */
+    Rig m;
+    CanvasSpec half;
+    half.w = half.h = 1024;
+    CanvasSpec tiny;
+    tiny.w = tiny.h = 8;
+    ok("memory: a client's canvases up to half the pixel memory",
+       m.comp->add_canvas(1, m.panel, half, &err) && !m.comp->add_canvas(1, m.panel, tiny, &err) &&
+           err.find("at most half the service's pixel memory") != std::string::npos);
+    ok("memory: another client's canvases have the rest", m.comp->add_canvas(2, m.panel, tiny, &err) != 0);
 }
 
 int main()
@@ -2658,6 +2828,7 @@ int main()
     render_state();
     mipmapped_assets();
     canvases();
+    canvases_as_layers();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }
