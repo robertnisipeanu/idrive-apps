@@ -732,7 +732,10 @@ public:
         auto it = anims_.find(anim);
         if (it == anims_.end())
             return animate(node, a);
-        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !animatable(node, a)) {
+        ramses::Node *target = nullptr;
+        ramses::Appearance *app = nullptr;
+        ramses::UniformInput in;
+        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a, &target, &app, &in)) {
             stop(anim);
             return 0;
         }
@@ -1082,16 +1085,31 @@ private:
 
     /* A node animate() can play a on: a quad, part or view, and a's uniform
      * in its effect. */
-    bool animatable(int node, const Animation &a)
+    /* What animation a on node plays: the node a quad, part or view turns,
+     * and for a uniform its appearance and input. False when there is none. */
+    bool resolve(int node, const Animation &a, ramses::Node **target, ramses::Appearance **app,
+                 ramses::UniformInput *in)
     {
-        if (!quads_.count(node) && !parts_.count(node) && !views_.count(node))
+        auto q = quads_.find(node);
+        auto p = parts_.find(node);
+        auto v = views_.find(node);
+        *target = q != quads_.end()   ? (ramses::Node *)q->second.turned
+                  : p != parts_.end() ? &node_of(p->second)
+                  : v != views_.end() ? (ramses::Node *)v->second.cam
+                                      : nullptr;
+        *app = nullptr;
+        const ramses::Effect *fx = look(node, app);
+        return *target &&
+               (a.property != Animated::Uniform || (fx && ok(fx->findUniformInput(a.uniform.c_str(), *in))));
+    }
+
+    bool read_animation(int anim, uint64_t *start) override
+    {
+        auto it = anims_.find(anim);
+        if (it == anims_.end() || !it->second.anim)
             return false;
-        if (a.property != Animated::Uniform)
-            return true;
-        ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(node, &app);
-        ramses::UniformInput in;
-        return fx && ok(fx->findUniformInput(a.uniform.c_str(), in));
+        *start = it->second.anim->getStartTime();
+        return true;
     }
 
     /* An animation that goes: stopped and taken out of its sequence, its
@@ -1144,24 +1162,17 @@ private:
     {
         const int node = an.node;
         const Animation &a = an.a;
-        auto q = quads_.find(node);
-        auto p = parts_.find(node);
-        auto v = views_.find(node);
-        ramses::Node *target = q != quads_.end()   ? (ramses::Node *)q->second.turned
-                               : p != parts_.end() ? &node_of(p->second)
-                               : v != views_.end() ? (ramses::Node *)v->second.cam
-                                                   : nullptr;
+        ramses::Node *target = nullptr;
         ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(node, &app);
         ramses::UniformInput in;
-        if (!target || (a.property == Animated::Uniform && (!fx || !ok(fx->findUniformInput(a.uniform.c_str(), in)))))
+        if (!resolve(node, a, &target, &app, &in))
             return false;
         if (!anim_)
             anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
         if (!anim_)
             return false;
         *made = true;
-        const bool on_quad = q != quads_.end();
+        const bool on_quad = quads_.count(node) != 0;
         /* The renderer's conventions: y up, so down is negative y, and its
          * rotations are left-handed, so a quad's clockwise turn is positive
          * z and the right-handed angles of parts and cameras are negated. */
@@ -1364,13 +1375,18 @@ private:
         return nullptr;
     }
 
+    /* A node going: its animations retired, as stop() does, the system made
+     * again only once the retired keys outnumber the live ones. */
     void stop_on(int node)
     {
-        const size_t before = anims_.size();
-        for (auto it = anims_.begin(); it != anims_.end();)
-            it = it->second.node == node ? anims_.erase(it) : std::next(it);
-        if (anims_.size() != before)
-            rebuild();
+        for (auto it = anims_.begin(); it != anims_.end();) {
+            if (it->second.node != node) {
+                ++it;
+                continue;
+            }
+            retire(it->second);
+            it = anims_.erase(it);
+        }
     }
 
     /* Puts every quad and view in its pass, in draw order (plan_passes). */

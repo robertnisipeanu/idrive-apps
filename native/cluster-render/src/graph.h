@@ -448,6 +448,9 @@ public:
     /* Bytes of animation keys made since the last call, which the next
      * flush sends to the renderer. */
     virtual uint64_t take_animation_bytes() { return 0; }
+    /* When the animation started, in the renderer's clock; false where the
+     * backend cannot say, or it is not made yet (tests). */
+    virtual bool read_animation(int, uint64_t *) { return false; }
 
     /* A canvas: its handle is a buffer handle too (texture(), not
      * drop_buffer()). 0 where the backend has none. Quads and views drawn

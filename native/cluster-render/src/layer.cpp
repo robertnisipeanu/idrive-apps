@@ -136,6 +136,10 @@ bool Layer::play(uint32_t anim, uint32_t part, const Animation &a, std::string *
             *err = "the renderer refused the animation";
             return false;
         }
+        /* moved to another part, property or uniform: the old one goes back
+         * to what the client set */
+        if (now->second.part != part || now->second.a.property != a.property || now->second.a.uniform != a.uniform)
+            restore(now->second.part, now->second.a);
         now->second.part = part;
         now->second.a = a;
         now->second.handle = handle;

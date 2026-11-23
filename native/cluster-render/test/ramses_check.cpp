@@ -589,6 +589,30 @@ static void backend(Gpu &gpu)
                 ms, (unsigned long long)per);
     ok("animations: a needle replaced 50 times among 16 animated layers makes its own keys each time",
        made && per == 17 * 8);
+    /* A quad dropped with its animation playing: it is retired, no other
+     * animation made again. */
+    g->drop_quad(dials.back());
+    dials.pop_back();
+    played.pop_back();
+    ok("animations: a quad dropped with its animation playing makes no other again",
+       g->flush(11) && g->take_animation_bytes() == 0);
+#ifndef CRS_RAMSES27
+    /* Replaced past the retired keys' threshold: the animation system made
+     * again, the live animations keeping when they started, and a
+     * replacement due in that flush made in it. */
+    uint64_t start_before = 0, start_after = 0, needle_start = 0;
+    const bool read = g->read_animation(played[1], &start_before);
+    bool rebuilt = false;
+    for (int k = 0; k < 40 && !rebuilt && made; k++) {
+        needle = g->replace(needle, dials[0], dial);
+        made = needle && g->flush(11);
+        rebuilt = g->take_animation_bytes() > dial.t.size() * 8;
+    }
+    ok("animations: past the retired keys' threshold made again, the live ones from when they started, the due one "
+       "made",
+       read && rebuilt && g->read_animation(played[1], &start_after) && start_after == start_before &&
+           g->read_animation(needle, &needle_start) && needle_start > 0);
+#endif
     for (size_t i = 0; i < dials.size(); i++) {
         g->stop(i ? played[i] : needle);
         g->drop_quad(dials[i]);
@@ -864,7 +888,7 @@ int main()
     mp.camera.t[2] = 6;
     const uint32_t box = comp.add_mesh(5, 1, cp, mp, now, &err);
     MeshLayer *ml = static_cast<MeshLayer *>(comp.layer(5, box));
-    const bool parted = comp.add_part(5, box, 1, kLitVs, kLitFs, PartLook(), &err) &&
+    const bool parted = comp.add_part(5, box, 1, kLitVs, kLitFs, PartLook(), 0, &err) &&
                         comp.geometry(5, box, 1, cube_mesh(), now, &err);
     const float orange[4] = {1, 0.45f, 0, 1};
     ml->set_uniform(1, "u_color", orange, 4);

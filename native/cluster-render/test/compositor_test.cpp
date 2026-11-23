@@ -1471,7 +1471,7 @@ static void republish_rebuilds()
     mp.projection.fov = 40;
     const uint32_t mesh = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(100, 100, 400, 300)), mp, r.now, &err);
     MeshLayer *m = static_cast<MeshLayer *>(r.comp->layer(1, mesh));
-    r.comp->add_part(1, mesh, 1, kLitVs, kSample, PartLook(), &err);
+    r.comp->add_part(1, mesh, 1, kLitVs, kSample, PartLook(), 0, &err);
     r.comp->geometry(1, mesh, 1, fan(4, true), r.now, &err);
     Pose pose;
     pose.r[1] = 30;
@@ -1691,15 +1691,15 @@ static void meshes()
     MeshParams mp;
     const uint32_t id = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 0, 640, 480)), mp, r.now, &err);
     ok("a part's vertex shader must read a_position",
-       !r.comp->add_part(1, id, 1, "#version 100\nvoid main(){gl_Position=vec4(0.0);}", kPartFs, PartLook(), &err));
+       !r.comp->add_part(1, id, 1, "#version 100\nvoid main(){gl_Position=vec4(0.0);}", kPartFs, PartLook(), 0, &err));
     PartLook glow;
     glow.depth = false;
     glow.cull = Cull::None;
     glow.blend = Blend::Add;
     ok("parts with their own shaders and looks",
-       r.comp->add_part(1, id, 1, kLitVs, kPartFs, PartLook(), &err) &&
-           r.comp->add_part(1, id, 2, kFlatVs, kPartFs, glow, &err));
-    ok("a part number once", !r.comp->add_part(1, id, 2, kFlatVs, kPartFs, glow, &err));
+       r.comp->add_part(1, id, 1, kLitVs, kPartFs, PartLook(), 0, &err) &&
+           r.comp->add_part(1, id, 2, kFlatVs, kPartFs, glow, 0, &err));
+    ok("a part number once", !r.comp->add_part(1, id, 2, kFlatVs, kPartFs, glow, 0, &err));
     r.run(100);
     std::string why;
     ok("no geometry yet: stalled, nothing asked", r.comp->state(id, &why) == LayerState::Stalled &&
@@ -1741,7 +1741,7 @@ static void meshes()
     lim.pixel_bytes = 64 * 1024;
     Rig small(0, lim);
     const uint32_t sid = small.comp->add_mesh(1, small.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, small.now, &err);
-    small.comp->add_part(1, sid, 1, kFlatVs, kPartFs, PartLook(), &err);
+    small.comp->add_part(1, sid, 1, kFlatVs, kPartFs, PartLook(), 0, &err);
     ok("geometry counts in the service's memory", !small.comp->geometry(1, sid, 1, fan(6000, false), small.now, &err) &&
                                                      err.find("memory") != std::string::npos);
 }
@@ -1755,7 +1755,7 @@ static void pass_order()
         LayerParams lp = params(k, R(0, 0, 400, 300));
         lp.z = z;
         const uint32_t id = r.comp->add_mesh(1, r.panel, lp, mp, r.now, &err);
-        r.comp->add_part(1, id, 1, kFlatVs, kPartFs, PartLook(), &err);
+        r.comp->add_part(1, id, 1, kFlatVs, kPartFs, PartLook(), 0, &err);
         r.comp->geometry(1, id, 1, fan(2, false), r.now, &err);
         return id;
     };
@@ -1788,7 +1788,7 @@ static void pass_order()
     LayerParams xp = params(Klass::Alert, R(0, 0, 400, 300));
     xp.exclusive = true;
     const uint32_t alert = r.comp->add_mesh(2, r.panel, xp, mp, r.now, &err);
-    r.comp->add_part(2, alert, 1, kFlatVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(2, alert, 1, kFlatVs, kPartFs, PartLook(), 0, &err);
     r.comp->geometry(2, alert, 1, fan(2, false), r.now, &err);
     r.step(10);
     std::string why;
@@ -1843,7 +1843,7 @@ static void animations()
     MeshParams mp;
     const uint32_t mid = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
     Layer *m = r.comp->layer(1, mid);
-    r.comp->add_part(1, mid, 1, kFlatVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(1, mid, 1, kFlatVs, kPartFs, PartLook(), 0, &err);
     ok("a mesh layer's camera moves", m->animate(1, 0, keys(Animated::Translate, 3, {0, 1000}, {0, 0, 0, 0, 0, 5}), &err));
     ok("but has no scale", !m->animate(2, 0, keys(Animated::Scale, 3, {0}, {1, 1, 1}), &err));
     ok("a part turns in 3D", m->animate(2, 1, keys(Animated::Rotate, 3, {0, 1000}, {0, 0, 0, 0, 360, 0}), &err));
@@ -2350,7 +2350,7 @@ static void render_state()
     decal.custom.op = BlendOp::Max;
     decal.color_mask = kMaskA;
     ok("render state: a part with its own depth test, blending and mask",
-       r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, decal, &err) &&
+       r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, decal, 0, &err) &&
            r.comp->geometry(1, mesh, 1, fan(4, true), r.now, &err));
     r.run(200);
     const FakePart *part = nullptr;
@@ -2367,7 +2367,7 @@ static void render_state()
        !r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", huge + kSample, 0, r.now, &err) &&
            err.find("at most 65536 bytes") != std::string::npos && r.gpu.next_effect == effects);
     ok("render state: and a part's vertex shader",
-       !r.comp->add_part(1, mesh, 2, huge + kLitVs, kPartFs, PartLook(), &err) &&
+       !r.comp->add_part(1, mesh, 2, huge + kLitVs, kPartFs, PartLook(), 0, &err) &&
            err.find("at most 65536 bytes") != std::string::npos && r.gpu.next_effect == effects);
     (void)plain;
 }
@@ -2579,7 +2579,7 @@ static void canvases()
     LayerParams min = params(Klass::Content, R(0, 0, 256, 128));
     min.canvas = cv;
     const uint32_t mesh = r.comp->add_mesh(1, r.panel, min, mp, r.now, &err);
-    r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, PartLook(), 0, &err);
     r.comp->geometry(1, mesh, 1, fan(4, true), r.now, &err);
     r.run(200);
     bool view_in = false;
@@ -2970,6 +2970,39 @@ static void hierarchies()
        again && g && g->replaces == replaces + 1 && g->shown.animations.size() == 1 &&
            g->shown.animations.begin()->second.a.v[4] == 120 && g->animation_taken == taken + 2 * 16);
 
+    /* Moved to another part: the old one's pose set back. */
+    int pivot_h = 0;
+    for (const auto &kv : g ? g->shown.parts : std::map<int, FakePart>())
+        if (kv.second.pivot)
+            pivot_h = kv.first;
+    const int poses = pivot_h ? g->shown.parts[pivot_h].poses : -1;
+    ml->animate(1, 1, spin, &err);
+    r.comp->touch(ml);
+    r.run(100);
+    ok("animation: moved to another part, the old part's pose set back",
+       pivot_h && g->shown.parts[pivot_h].poses > poses);
+    /* Moved to another uniform: the old one's own value sent again. */
+    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0, r.now,
+                                           &err);
+    EffectLayer *el = static_cast<EffectLayer *>(r.comp->layer(1, fx));
+    const float level = 0.25f;
+    el->set_uniform("u_level", &level, 1);
+    el->animate(2, 0, keys(Animated::Uniform, 1, {0, 9}, {0, 1}, "u_level"), &err);
+    r.comp->touch(el);
+    r.run(100);
+    int sets = -1;
+    for (const auto &kv : g->shown.quads)
+        if (kv.second.uniforms.count("u_level"))
+            sets = kv.second.sets.at("u_level");
+    el->animate(2, 0, keys(Animated::Uniform, 1, {0, 9}, {0, 1}, "u_fade"), &err);
+    r.comp->touch(el);
+    r.run(100);
+    int after = -1;
+    for (const auto &kv : g->shown.quads)
+        if (kv.second.uniforms.count("u_level"))
+            after = kv.second.sets.at("u_level");
+    ok("animation: moved to another uniform, the old uniform's own value sent again", sets >= 1 && after > sets);
+
     /* Curves at the ends of the float range. */
     Animation wide;
     wide.t = {0, 10};
@@ -2984,6 +3017,66 @@ static void hierarchies()
     const Animation kept = over;
     ok("curves: a smooth curve past the float range refused, the keys as they were",
        !sample_curve(Curve::Smooth, &over) && over.t == kept.t && over.v == kept.v);
+}
+
+/* Animation keys on the upload budget: what a flush sent is paid when the
+ * budget allows a write; a client's keys past an eighth of the cap a second
+ * refused, so another client's writes go on. */
+static void animation_keys_within_budget()
+{
+    std::string err;
+    Animation big;
+    big.property = Animated::Uniform;
+    big.uniform = "u_level";
+    for (uint32_t k = 0; k < 1009; k++) {
+        big.t.push_back(k * 4);
+        big.v.push_back((float)(k % 2));
+    }
+    const uint64_t bytes = big.t.size() * 8;
+
+    Rig slow(1024);
+    const uint32_t fx = slow.comp->add_effect(1, slow.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
+                                              slow.now, &err);
+    Layer *l = slow.comp->layer(1, fx);
+    slow.run(200);
+    slow.slots.on_shown(0x01000400, slow.now);
+    slow.run(500);
+    l->animate(1, 0, big, &err);
+    slow.comp->touch(l);
+    slow.run(30);
+    ok("keys: a flush's animation keys paid from the upload budget",
+       slow.comp->pacer().allowance() < 0 && slow.comp->pacer().allowance() > -(int64_t)bytes);
+
+    Rig r(100 * 1024);
+    const uint32_t img = r.comp->add_image(2, r.panel, params(Klass::Overlay, R(200, 0, 32, 32)), 32, 32, 30,
+                                           Sampling::Nearest, r.now, &err);
+    ImageLayer *il = static_cast<ImageLayer *>(r.comp->layer(2, img));
+    const uint32_t anim_fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
+                                                r.now, &err);
+    Layer *al = r.comp->layer(1, anim_fx);
+    std::vector<uint8_t> px(32 * 32 * 4);
+    il->update({}, px.data(), px.size(), &err);
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(200);
+    const uint64_t frames = il->write_stats().frames;
+    int refused = 0, taken = 0;
+    for (int tick = 0; tick < 300; tick++) {
+        std::fill(px.begin(), px.end(), (uint8_t)tick);
+        il->update({}, px.data(), px.size(), &err);
+        if (r.comp->admit_keys(1, bytes, &err)) {
+            al->animate(1, 0, big, &err);
+            r.comp->touch(al);
+            taken++;
+        } else {
+            refused++;
+        }
+        r.step(10);
+    }
+    ok("keys: a client's past an eighth of the upload budget a second refused",
+       taken > 0 && refused > 0 && err.find("an eighth of the upload budget") != std::string::npos);
+    ok("keys: another client's writes go on (over 40 of 3 s's 4 KB frames at 100 KB/s)",
+       il->write_stats().frames - frames > 40);
 }
 
 int main()
@@ -3030,6 +3123,7 @@ int main()
     canvases_as_layers();
     curves();
     hierarchies();
+    animation_keys_within_budget();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

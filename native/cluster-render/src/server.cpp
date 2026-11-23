@@ -1231,11 +1231,10 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             err = "parts are for mesh layers";
         else if (part == 0)
             err = "parts are numbered from 1";
-        else if (!num(j, "parent", 1, 4294967295.0, &parent, &err))
-            ;
-        else if (!pivot && (str(j, "vs").empty() || str(j, "fs").empty()))
+        else if (num(j, "parent", 1, 4294967295.0, &parent, &err) && !pivot &&
+                 (str(j, "vs").empty() || str(j, "fs").empty()))
             err = "a part needs vs and fs";
-        else if (pivot || look_fields(j, false, &look, &err, stencil_ok(l->params)))
+        else if (err.empty() && (pivot || look_fields(j, false, &look, &err, stencil_ok(l->params))))
             comp_->add_part(c.id, l->id(), part, pivot ? "" : str(j, "vs"), pivot ? "" : str(j, "fs"), look,
                             (uint32_t)parent, &err);
         if (!err.empty())
@@ -1287,7 +1286,8 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             error(c, op, ref, "a uniform's animation needs its name");
             return;
         }
-        if (!l->animate((uint32_t)anim_d, part, a, &err))
+        if (!comp_->admit_keys(c.id, a.t.size() * (4 + 4 * a.width), &err) ||
+            !l->animate((uint32_t)anim_d, part, a, &err))
             error(c, op, ref, err);
         else
             comp_->touch(l);

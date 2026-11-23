@@ -1764,8 +1764,36 @@ void Compositor::render(int64_t now_ms)
         pacer_.set_rate(governor_.cap());
 }
 
+bool Compositor::admit_keys(uint64_t owner, uint64_t bytes, std::string *err)
+{
+    if (!pacer_.limited())
+        return true;
+    const uint64_t cap = governor_.cap() / kKeyShare;
+    KeyWindow &w = keys_[owner];
+    if (now_ms_ - w.start_ms >= 1000) {
+        w.start_ms = now_ms_;
+        w.bytes = 0;
+    }
+    if (w.bytes + bytes > cap) {
+        *err = "animation keys past this client's " + std::to_string(cap / 1024) +
+               " KB a second (an eighth of the upload budget): send it again later";
+        return false;
+    }
+    w.bytes += bytes;
+    return true;
+}
+
 void Compositor::render_target(int ti, Target &t, int64_t now_ms)
 {
+    /* Animation keys a flush sent are paid as a write is: when the budget
+     * allows one, all at once, so it goes negative by one such payment at
+     * most (admit_keys() bounds what a client adds). */
+    if (t.keys_owed && pacer_for(ti).ready(now_ms)) {
+        pacer_for(ti).spend(t.keys_owed);
+        if (!slots_->targets()[ti].share)
+            load(t.keys_owed, now_ms);
+        t.keys_owed = 0;
+    }
     /* Held tiles a change uncovers go in the flush that carries the change.
      * While the budget does not allow that write, the change waits (the
      * scene keeps what the last flush showed for it) and everything else
@@ -1924,10 +1952,10 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
     const int64_t t0 = clock_us_();
     /* A graph over a file flushes the file's scene, edits and all. */
     const bool ok = t.graph ? t.graph->flush(++t.tag) : t.file->flush(++t.tag);
-    /* animation keys go to the renderer as scene data: on the budget */
+    /* animation keys go to the renderer as scene data: owed to the budget,
+     * paid when it allows a write (render_target()) */
     if (t.graph)
-        if (const uint64_t keys = t.graph->take_animation_bytes())
-            charge(ti, keys, now_ms);
+        t.keys_owed += t.graph->take_animation_bytes();
     const int64_t took = clock_us_() - t0;
     if (!ok)
         evidence(spec, Evidence::FlushFailure, now_ms, spec.name);

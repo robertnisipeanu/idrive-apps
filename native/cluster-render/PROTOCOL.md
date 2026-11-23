@@ -252,8 +252,11 @@ it again replaces it where it is (a needle sent to a new value moves on from
 there; several replacements before the next flush, only the newest is
 made), `stop` ends it and its property goes back to what the client set. A
 layer plays at most 16. An animation's keys go to the renderer with the
-scene and count in the upload budget (about 8 bytes a key with one value);
-replacing or stopping one sends only its own.
+scene and count in the upload budget (about 8 bytes a key with one value),
+paid when the budget allows a write; replacing, stopping or dropping one
+sends only its own. A client's keys are at most an eighth of the upload cap
+a second; past that an `animate` is refused (`animation keys past this
+client's ... KB a second`) and may be sent again later.
 
 | Field | |
 |---|---|

@@ -54,6 +54,7 @@ struct FakeQuad {
     std::map<std::string, std::vector<float>> uniforms;
     std::map<std::string, UniformType> types;   /* uniforms set as arrays */
     PartLook look = quad_look();
+    std::map<std::string, int> sets;   /* uniform() calls by name */
     int styles = 0;   /* style() calls */
     int canvas = 0;   /* the canvas it is drawn in; 0: the target */
 };
@@ -81,6 +82,7 @@ struct FakePart {
     uint32_t vertices = 0, indices = 0;
     unsigned attributes = 0;
     int geometries = 0;   /* geometry() calls */
+    int poses = 0;        /* pose() calls */
     bool pivot = false;   /* a node(): draws nothing */
     int parent = 0;       /* the part or node it follows; 0: the view */
     std::map<std::string, int> textures;
@@ -251,6 +253,7 @@ public:
         if (!has(quad))
             return false;
         pending.quads[quad].uniforms[name] = std::vector<float>(v, v + n);
+        pending.quads[quad].sets[name]++;
         return true;
     }
     bool uniform_array(int quad, const char *name, UniformType t, const float *v, uint32_t elements) override
@@ -346,7 +349,7 @@ public:
     bool pose(int part, const Pose &p) override
     {
         auto it = pending.parts.find(part);
-        return it != pending.parts.end() && (it->second.pose = p, true);
+        return it != pending.parts.end() && (it->second.pose = p, it->second.poses++, true);
     }
     void drop_part(int part) override
     {
