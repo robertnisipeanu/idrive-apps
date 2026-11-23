@@ -123,6 +123,24 @@ bool Layer::play(uint32_t anim, uint32_t part, const Animation &a, std::string *
         *err = e;
         return false;
     }
+    /* One playing: replaced where it is, from where it is (a needle sent to
+     * a new value), without its static pose in between. */
+    auto now = played_.find(anim);
+    if (g_ && !defer_starts_ && now != played_.end() && now->second.handle && !now->second.pending) {
+        const int node = animated(part);
+        const int handle = node ? g_->replace(now->second.handle, node, a) : 0;
+        if (!handle) {
+            if (node)
+                restore(now->second.part, now->second.a);
+            played_.erase(now);
+            *err = "the renderer refused the animation";
+            return false;
+        }
+        now->second.part = part;
+        now->second.a = a;
+        now->second.handle = handle;
+        return true;
+    }
     stop(anim);
     Played p;
     p.part = part;

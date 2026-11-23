@@ -251,9 +251,16 @@ public:
                         const std::string &fs, uint32_t time_fps, int64_t now_ms, std::string *err);
     uint32_t add_mesh(uint64_t owner, int target, const LayerParams &lp, const MeshParams &mp, int64_t now_ms,
                       std::string *err);
-    /* A mesh layer's part, its effect compiled here; false with *err. */
+    /* A mesh layer's part, its effect compiled here, following parent (0:
+     * the view); with no vs and fs a pivot (MeshLayer::add_part()). False
+     * with *err, nothing made. */
     bool add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs, const std::string &fs,
-                  const PartLook &look, std::string *err);
+                  const PartLook &look, uint32_t parent, std::string *err);
+    bool add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs, const std::string &fs,
+                  const PartLook &look, std::string *err)
+    {
+        return add_part(owner, layer, part, vs, fs, look, 0, err);
+    }
     /* A part's geometry, within the service's memory; false with *err. */
     bool geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                   std::string *err);

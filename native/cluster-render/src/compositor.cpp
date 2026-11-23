@@ -388,7 +388,7 @@ uint32_t Compositor::add_mesh(uint64_t owner, int target, const LayerParams &lp,
 }
 
 bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs,
-                          const std::string &fs, const PartLook &look, std::string *err)
+                          const std::string &fs, const PartLook &look, uint32_t parent, std::string *err)
 {
     CanvasEntry *in = nullptr;
     Entry *en = find(layer, &in);
@@ -409,17 +409,21 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
         *err = "a shader is at most " + std::to_string(kMaxShader) + " bytes";
         return false;
     }
-    const int fx = gpu_->effect(vs.c_str(), fs.c_str(), err);
-    if (!fx)
-        return false;
-    const unsigned attrs = gpu_->attributes(fx);
-    if (!(attrs & kAttrPosition)) {
-        gpu_->drop_effect(fx);
-        *err = "a part's vertex shader reads attribute vec3 a_position";
-        return false;
+    int fx = 0;
+    unsigned attrs = 0;
+    if (!vs.empty() || !fs.empty()) {   /* else a pivot */
+        if (!(fx = gpu_->effect(vs.c_str(), fs.c_str(), err)))
+            return false;
+        attrs = gpu_->attributes(fx);
+        if (!(attrs & kAttrPosition)) {
+            gpu_->drop_effect(fx);
+            *err = "a part's vertex shader reads attribute vec3 a_position";
+            return false;
+        }
     }
-    if (!m->add_part(part, fx, attrs, look, err)) {
-        gpu_->drop_effect(fx);
+    if (!m->add_part(part, fx, attrs, look, parent, err)) {
+        if (fx)
+            gpu_->drop_effect(fx);
         return false;
     }
     touch(m);
@@ -1920,6 +1924,10 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
     const int64_t t0 = clock_us_();
     /* A graph over a file flushes the file's scene, edits and all. */
     const bool ok = t.graph ? t.graph->flush(++t.tag) : t.file->flush(++t.tag);
+    /* animation keys go to the renderer as scene data: on the budget */
+    if (t.graph)
+        if (const uint64_t keys = t.graph->take_animation_bytes())
+            charge(ti, keys, now_ms);
     const int64_t took = clock_us_() - t0;
     if (!ok)
         evidence(spec, Evidence::FlushFailure, now_ms, spec.name);

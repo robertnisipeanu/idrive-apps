@@ -51,6 +51,7 @@
  * - others_fps: a shown layer holding the other clients' videos and
  *   composites, and releasing them. */
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -2855,8 +2856,11 @@ static void curves()
 }
 
 /* Part hierarchies: a pivot that draws nothing, parts following it and each
- * other, refusals for a missing or looping parent, all made again in a new
- * scene with every parent, whatever the parts' numbers. */
+ * other, a part or parent that is not there refused with nothing made
+ * (parents are made first, so they never loop), all made again in a new
+ * scene with every parent, whatever the parts' numbers; and in a canvas, a
+ * pivot and a part following it, made before the canvas is in a scene and
+ * after. Curves past the float range: refused, or worked out in double. */
 static void hierarchies()
 {
     Rig r;
@@ -2864,14 +2868,14 @@ static void hierarchies()
     MeshParams mp;
     const uint32_t id = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 0, 640, 480)), mp, r.now, &err);
     MeshLayer *m = static_cast<MeshLayer *>(r.comp->layer(1, id));
-    ok("hierarchy: a pivot", m->add_pivot(9, &err));
-    ok("hierarchy: a part following it",
-       r.comp->add_part(1, id, 1, kLitVs, kPartFs, PartLook(), &err) && m->set_parent(1, 9, &err));
-    ok("hierarchy: a part following that part",
-       r.comp->add_part(1, id, 2, kLitVs, kPartFs, PartLook(), &err) && m->set_parent(2, 1, &err));
-    ok("hierarchy: a part does not follow itself", !m->set_parent(2, 2, &err));
-    ok("hierarchy: nor one that follows it", !m->set_parent(9, 2, &err) && err == "a part cannot follow itself");
-    ok("hierarchy: nor a part that is not there", !m->set_parent(1, 7, &err));
+    ok("hierarchy: a pivot", r.comp->add_part(1, id, 9, "", "", PartLook(), 0, &err));
+    ok("hierarchy: a part following it", r.comp->add_part(1, id, 1, kLitVs, kPartFs, PartLook(), 9, &err));
+    ok("hierarchy: a part following that part", r.comp->add_part(1, id, 2, kLitVs, kPartFs, PartLook(), 1, &err));
+    ok("hierarchy: a parent that is not there refused, nothing made",
+       !r.comp->add_part(1, id, 3, kLitVs, kPartFs, PartLook(), 7, &err) && !m->has_part(3) &&
+           err == "a part's parent is another part of the layer, made before it");
+    ok("hierarchy: a part that is there refused", !r.comp->add_part(1, id, 1, "", "", PartLook(), 0, &err) &&
+                                                      err == "part 1 exists");
     ok("hierarchy: a pivot is not drawn: geometry refused", !r.comp->geometry(1, id, 9, fan(4, true), r.now, &err));
     r.comp->geometry(1, id, 1, fan(4, true), r.now, &err);
     r.comp->geometry(1, id, 2, fan(4, true), r.now, &err);
@@ -2909,6 +2913,77 @@ static void hierarchies()
     check("in a new scene");
     std::string why;
     ok("hierarchy: the layer drawn", r.comp->state(id, &why) != LayerState::Error);
+
+    /* In a canvas: made before the canvas is in a scene, and after. */
+    Rig cr;
+    CanvasSpec cs;
+    cs.w = cs.h = 64;
+    const uint32_t cv = cr.comp->add_canvas(1, cr.panel, cs, &err);
+    LayerParams in = params(Klass::Content, R(0, 0, 64, 64));
+    in.canvas = cv;
+    const uint32_t cm = cr.comp->add_mesh(1, cr.panel, in, mp, cr.now, &err);
+    ok("hierarchy in a canvas: a pivot and a part following it, the canvas in no scene yet",
+       cm && cr.comp->add_part(1, cm, 1, "", "", PartLook(), 0, &err) &&
+           cr.comp->add_part(1, cm, 2, kLitVs, kPartFs, PartLook(), 1, &err));
+    cr.comp->geometry(1, cm, 2, fan(4, true), cr.now, &err);
+    const uint32_t shown = cr.comp->add_effect(1, cr.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+                                               cr.now, &err);
+    cr.comp->bind(1, shown, 0, "u_atlas", cv, &err);
+    cr.run(300);
+    auto followed = [&](int *pairs) {
+        FakeGraph *cg = cr.g("panel");
+        *pairs = 0;
+        if (!cg)
+            return false;
+        for (const auto &kv : cg->shown.parts)
+            if (!kv.second.pivot && kv.second.parent && cg->shown.parts.count(kv.second.parent) &&
+                cg->shown.parts.at(kv.second.parent).pivot)
+                ++*pairs;
+        return true;
+    };
+    int pairs = 0;
+    ok("hierarchy in a canvas: made in its scene, the part following the pivot, the layer drawn",
+       followed(&pairs) && pairs == 1 && cr.comp->state(cm, &why) == LayerState::Shown);
+    ok("hierarchy in a canvas: another pivot and part made in the scene",
+       cr.comp->add_part(1, cm, 3, "", "", PartLook(), 0, &err) &&
+           cr.comp->add_part(1, cm, 4, kLitVs, kPartFs, PartLook(), 3, &err) && (cr.run(300), followed(&pairs)) &&
+           pairs == 2 && cr.comp->state(cm, &why) == LayerState::Shown);
+
+    /* A playing animation replaced (a needle sent to a new value): in place,
+     * one replace(), no stop; its keys' bytes taken at the flush. */
+    Layer *ml = r.comp->layer(1, id);
+    Animation spin;
+    spin.property = Animated::Rotate;
+    spin.width = 3;
+    spin.t = {0, 1000};
+    spin.v = {0, 0, 0, 0, 90, 0};
+    ml->animate(1, 9, spin, &err);
+    r.comp->touch(ml);
+    r.run(100);
+    const int replaces = g ? g->replaces : -1;
+    const uint64_t taken = g ? g->animation_taken : 0;
+    spin.v = {0, 90, 0, 0, 120, 0};
+    const bool again = ml->animate(1, 9, spin, &err);
+    r.comp->touch(ml);
+    r.run(100);
+    ok("animation: one playing replaced in place, its new keys' bytes taken at the flush",
+       again && g && g->replaces == replaces + 1 && g->shown.animations.size() == 1 &&
+           g->shown.animations.begin()->second.a.v[4] == 120 && g->animation_taken == taken + 2 * 16);
+
+    /* Curves at the ends of the float range. */
+    Animation wide;
+    wide.t = {0, 10};
+    wide.v = {-3e38f, 3e38f};
+    bool finite = sample_curve(Curve::EaseIn, &wide) && wide.t.size() > 2;
+    for (float x : wide.v)
+        finite = finite && std::isfinite(x);
+    ok("curves: keys -3e38 and 3e38 eased: worked out in double, every key finite", finite);
+    Animation over;
+    over.t = {0, 10, 20};
+    over.v = {3.4e38f, 3.4e38f, -3.4e38f};
+    const Animation kept = over;
+    ok("curves: a smooth curve past the float range refused, the keys as they were",
+       !sample_curve(Curve::Smooth, &over) && over.t == kept.t && over.v == kept.v);
 }
 
 int main()

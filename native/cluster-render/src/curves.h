@@ -36,8 +36,10 @@ inline uint32_t curve_steps(size_t keys)
     return s > 16 ? 16 : s < 1 ? 1 : (uint32_t)s;
 }
 
-/* *a's keys as linear keys along curve c (Linear and Step: as they are). */
-void sample_curve(Curve c, Animation *a);
+/* *a's keys as linear keys along curve c (Linear and Step: as they are),
+ * worked out in double. False, *a unchanged, when a sampled key or a slope
+ * is not a finite float (keys near the ends of the float range). */
+bool sample_curve(Curve c, Animation *a);
 
 }  // namespace crs
 

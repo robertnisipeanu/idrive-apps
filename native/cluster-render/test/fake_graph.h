@@ -360,9 +360,30 @@ public:
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
         pending.animations[next] = FakeAnimation{node, a};
+        animation_bytes += a.t.size() * (4 + 4 * a.width);
         return next++;
     }
     void stop(int anim) override { pending.animations.erase(anim); }
+    /* In place, as RAMSES 19's. */
+    int replace(int anim, int node, const Animation &a) override
+    {
+        if (!pending.animations.count(anim))
+            return animate(node, a);
+        replaces++;
+        pending.animations[anim] = FakeAnimation{node, a};
+        animation_bytes += a.t.size() * (4 + 4 * a.width);
+        return anim;
+    }
+    uint64_t take_animation_bytes() override
+    {
+        const uint64_t b = animation_bytes;
+        animation_bytes = 0;
+        animation_taken += b;
+        return b;
+    }
+    int replaces = 0;                 /* replace() calls on a playing animation */
+    uint64_t animation_bytes = 0;     /* keys made since take_animation_bytes() */
+    uint64_t animation_taken = 0;     /* and taken by it, in all */
 
     int node(int view) override
     {

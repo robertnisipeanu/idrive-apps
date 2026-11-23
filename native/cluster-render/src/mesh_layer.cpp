@@ -49,7 +49,8 @@ bool MeshLayer::create(uint32_t number, Part &p)
     return true;
 }
 
-bool MeshLayer::add_part(uint32_t part, int effect, unsigned attributes, const PartLook &look, std::string *err)
+bool MeshLayer::add_part(uint32_t part, int effect, unsigned attributes, const PartLook &look, uint32_t parent,
+                         std::string *err)
 {
     if (parts_.count(part)) {
         *err = "part " + std::to_string(part) + " exists";
@@ -57,63 +58,26 @@ bool MeshLayer::add_part(uint32_t part, int effect, unsigned attributes, const P
     }
     if (parts_.size() >= kMaxParts) {
         *err = "at most " + std::to_string(kMaxParts) + " parts a mesh layer";
+        return false;
+    }
+    auto up = parts_.find(parent);
+    if (parent && up == parts_.end()) {
+        *err = "a part's parent is another part of the layer, made before it";
         return false;
     }
     Part &p = parts_[part];
     p.effect = effect;
+    p.pivot = effect == 0;
     p.attributes = attributes;
     p.look = look;
-    if (g_ && !create(part, p)) {
+    p.parent = parent;
+    if (g_ && (!create(part, p) || (parent && !g_->parent(p.handle, up->second.handle)))) {
         if (p.handle)
             g_->drop_part(p.handle);
         parts_.erase(part);
-        *err = "the renderer refused the part";
+        *err = std::string("the renderer refused the ") + (effect ? "part" : "pivot");
         return false;
     }
-    return true;
-}
-
-bool MeshLayer::add_pivot(uint32_t part, std::string *err)
-{
-    if (parts_.count(part)) {
-        *err = "part " + std::to_string(part) + " exists";
-        return false;
-    }
-    if (parts_.size() >= kMaxParts) {
-        *err = "at most " + std::to_string(kMaxParts) + " parts a mesh layer";
-        return false;
-    }
-    Part &p = parts_[part];
-    p.pivot = true;
-    if (g_ && !create(part, p)) {
-        if (p.handle)
-            g_->drop_part(p.handle);
-        parts_.erase(part);
-        *err = "the renderer refused the pivot";
-        return false;
-    }
-    return true;
-}
-
-bool MeshLayer::set_parent(uint32_t part, uint32_t parent, std::string *err)
-{
-    auto c = parts_.find(part);
-    auto p = parts_.find(parent);
-    if (c == parts_.end() || p == parts_.end() || part == parent) {
-        *err = "a part's parent is another part of the layer";
-        return false;
-    }
-    /* made before it: no loop */
-    for (uint32_t up = parent; up; up = parts_[up].parent)
-        if (up == part) {
-            *err = "a part cannot follow itself";
-            return false;
-        }
-    if (g_ && c->second.handle && p->second.handle && !g_->parent(c->second.handle, p->second.handle)) {
-        *err = "the renderer refused the parent";
-        return false;
-    }
-    c->second.parent = parent;
     return true;
 }
 

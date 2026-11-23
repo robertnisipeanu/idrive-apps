@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -544,6 +545,57 @@ static void backend(Gpu &gpu)
     g->drop_part(follower);
 #ifndef CRS_RAMSES27
     ok("hierarchy: the scene described whole", described("check"));
+#endif
+
+    /* A needle sent a new value at 10 Hz (a smooth curve of two keys, 17
+     * sampled) among 16 quads each played by a smooth curve of 64 keys
+     * (1,009 sampled): each replacement makes its own keys, not the others'
+     * (on RAMSES 19 the old ones retired, the system made again only when
+     * they outnumber the live ones), measured. */
+    std::vector<uint32_t> tk;
+    std::vector<float> vk;
+    for (int k = 0; k < 64; k++) {
+        tk.push_back((uint32_t)k * 100);
+        vk.push_back((float)(k % 7) * 10.0f);
+    }
+    Animation dial = keyed(Animated::Rotate, 1, tk, vk);
+    sample_curve(Curve::Smooth, &dial);
+    std::vector<int> dials, played;
+    bool made = dial.t.size() == 1009;
+    for (int i = 0; i < 16 && made; i++) {
+        Rect nr;
+        nr.x = 40 * i;
+        nr.y = 600;
+        nr.w = nr.h = 32;
+        dials.push_back(g->quad(glyph_fx, nr));
+        played.push_back(dials.back() ? g->animate(dials.back(), dial) : 0);
+        made = played.back() && g->show(dials.back(), true);
+    }
+    made = made && g->flush(10);
+    g->take_animation_bytes();
+    int needle = played.empty() ? 0 : played[0];
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int k = 0; k < 50 && made; k++) {
+        Animation n = keyed(Animated::Rotate, 1, {0, 100}, {(float)k, (float)k + 1.0f});
+        sample_curve(Curve::Smooth, &n);
+        needle = g->replace(needle, dials[0], n);
+        made = needle && g->flush(11);
+    }
+    const double ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 50;
+    const uint64_t per = g->take_animation_bytes() / 50;
+    std::printf("     a 10 Hz needle among 16 layers of 1,009-key animations: %.2f ms a replacement with its flush, "
+                "%llu key bytes a replacement\n",
+                ms, (unsigned long long)per);
+    ok("animations: a needle replaced 50 times among 16 animated layers makes its own keys each time",
+       made && per == 17 * 8);
+    for (size_t i = 0; i < dials.size(); i++) {
+        g->stop(i ? played[i] : needle);
+        g->drop_quad(dials[i]);
+    }
+    ok("animations: stopped and dropped", g->flush(12));
+#ifndef CRS_RAMSES27
+    ok("animations: with replaced and stopped ones retired, the scene described whole", described("check"));
 #endif
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,

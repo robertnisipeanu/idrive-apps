@@ -1222,25 +1222,22 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         else if (!comp_->bind(c.id, l->id(), part, sampler, a->second, &err))
             error(c, op, ref, err);
     } else if (op == "part") {
+        /* everything checked before anything is made: a refused part,
+         * pivot or parent leaves nothing */
         PartLook look;
+        double parent = 0;
+        const bool pivot = str(j, "node") == "1";
         if (!mesh)
             err = "parts are for mesh layers";
         else if (part == 0)
             err = "parts are numbered from 1";
-        else if (j.count("node") && str(j, "node") == "1") {
-            if (static_cast<MeshLayer *>(l)->add_pivot(part, &err))
-                comp_->touch(l);
-        } else if (str(j, "vs").empty() || str(j, "fs").empty())
+        else if (!num(j, "parent", 1, 4294967295.0, &parent, &err))
+            ;
+        else if (!pivot && (str(j, "vs").empty() || str(j, "fs").empty()))
             err = "a part needs vs and fs";
-        else if (look_fields(j, false, &look, &err, stencil_ok(l->params)))
-            comp_->add_part(c.id, l->id(), part, str(j, "vs"), str(j, "fs"), look, &err);
-        if (err.empty() && j.count("parent")) {
-            double parent = 0;
-            /* the part stays made, following the view, when its parent is refused */
-            if (num(j, "parent", 1, 4294967295.0, &parent, &err))
-                static_cast<MeshLayer *>(l)->set_parent(part, (uint32_t)parent, &err);
-            comp_->touch(l);
-        }
+        else if (pivot || look_fields(j, false, &look, &err, stencil_ok(l->params)))
+            comp_->add_part(c.id, l->id(), part, pivot ? "" : str(j, "vs"), pivot ? "" : str(j, "fs"), look,
+                            (uint32_t)parent, &err);
         if (!err.empty())
             error(c, op, ref, err);
     } else if (op == "transform") {
@@ -1282,7 +1279,10 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         a.step = interp == 1;
         static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
                                        Curve::Smooth};
-        sample_curve(curves[interp], &a);
+        if (!sample_curve(curves[interp], &a)) {
+            error(c, op, ref, "the curve leaves the numbers a key holds: keys too far apart for " + str(j, "interp"));
+            return;
+        }
         if (a.property == Animated::Uniform && (a.uniform.empty() || a.uniform.size() > 64)) {
             error(c, op, ref, "a uniform's animation needs its name");
             return;

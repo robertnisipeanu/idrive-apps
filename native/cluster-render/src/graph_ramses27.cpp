@@ -814,6 +814,7 @@ public:
             return 0;
         }
         anims_[next_] = an;
+        anim_bytes_ += a.t.size() * (4 + 4 * a.width);   /* a time and the values a key */
         return next_++;
     }
 
@@ -825,6 +826,13 @@ public:
         it->second.seq->stop();
         destroy_anim(it->second);
         anims_.erase(it);
+    }
+
+    uint64_t take_animation_bytes() override
+    {
+        const uint64_t b = anim_bytes_;
+        anim_bytes_ = 0;
+        return b;
     }
 
     /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
@@ -1422,6 +1430,7 @@ private:
     ramses::Scene *scene_ = nullptr;
     ramses::ArrayResource *pos_ = nullptr, *idx_ = nullptr;   /* the unit quad */
     ramses::AnimationSystemRealTime *anim_ = nullptr;
+    uint64_t anim_bytes_ = 0;   /* animation keys made since take_animation_bytes() */
     /* The target's own surface, and the canvases', by handle. */
     Surface main_;
     std::map<int, Surface> canvases_;

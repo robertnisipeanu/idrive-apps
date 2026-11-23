@@ -18,7 +18,10 @@ it used to drop it.
 Animations can be eased (`ease_in`, `ease_out`, `ease_in_out`) or follow a
 smooth curve through their keys, played by the cluster with nothing sent
 per frame. A mesh part can follow another part or a pivot that draws
-nothing, so one animation moves everything attached to it.
+nothing, so one animation moves everything attached to it. On iDrive 7,
+replacing or stopping an animation (a needle sent a new value) no longer
+makes every animation on the cluster again: it sends only its own keys,
+which now count in the upload budget.
 
 Canvases: an app's effect and mesh layers can draw into an off-screen
 picture of its own, which its layers on screen then show like an asset.

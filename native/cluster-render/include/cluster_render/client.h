@@ -491,6 +491,11 @@ private:
     static bool in_canvas(const Layer &l);
     /* Held here, not sent: one in_canvas() until a hello with canvas. */
     bool held(uint32_t ref) const;
+    /* A part or pivot of a mesh layer, its fields after op, ref and part:
+     * false, nothing sent, when the layer, the part or the parent is not as
+     * pivot() and part() say. */
+    bool add_part(uint32_t ref, uint32_t part, uint32_t parent,
+                  std::vector<std::pair<std::string, std::string>> fields);
     /* json, about ref, queued unless ref is held. */
     void queue_for(uint32_t ref, const std::string &json);
     /* Every layer, part, bind and animation made so far: those of canvases

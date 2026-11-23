@@ -937,23 +937,23 @@ bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const Rend
 
 bool Client::pivot(uint32_t ref, uint32_t part, uint32_t parent)
 {
-    auto it = layers_.find(ref);
-    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part) ||
-        (parent && !it->second.parts.count(parent)))
-        return false;
-    Part &p = it->second.parts[part];
-    p.made = ++parts_made_;
-    std::vector<std::pair<std::string, std::string>> kv = {
-        {"op", json_quote("part")}, {"ref", num(ref)}, {"part", num(part)}, {"node", "1"}};
-    if (parent)
-        kv.push_back({"parent", num(parent)});
-    p.json = json_object(kv);
-    queue(p.json);
-    send_now();
-    return true;
+    return add_part(ref, part, parent, {{"node", "1"}});
 }
 
 bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look, uint32_t parent)
+{
+    std::vector<std::pair<std::string, std::string>> kv = {{"vs", json_quote(po.vs)},
+                                                           {"fs", json_quote(po.fs)},
+                                                           {"depth", flag(po.depth)},
+                                                           {"cull", json_quote(po.cull)}};
+    if (look.blend.empty())
+        kv.push_back({"blend", json_quote(po.blend)});
+    look_fields(&kv, look);
+    return add_part(ref, part, parent, kv);
+}
+
+bool Client::add_part(uint32_t ref, uint32_t part, uint32_t parent,
+                      std::vector<std::pair<std::string, std::string>> fields)
 {
     auto it = layers_.find(ref);
     if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part) ||
@@ -961,19 +961,10 @@ bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const Rend
         return false;
     Part &p = it->second.parts[part];
     p.made = ++parts_made_;
-    std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("part")},
-                                                           {"ref", num(ref)},
-                                                           {"part", num(part)},
-                                                           {"vs", json_quote(po.vs)},
-                                                           {"fs", json_quote(po.fs)},
-                                                           {"depth", flag(po.depth)},
-                                                           {"cull", json_quote(po.cull)}};
-    if (look.blend.empty())
-        kv.push_back({"blend", json_quote(po.blend)});
-    look_fields(&kv, look);
+    fields.insert(fields.begin(), {{"op", json_quote("part")}, {"ref", num(ref)}, {"part", num(part)}});
     if (parent)
-        kv.push_back({"parent", num(parent)});
-    p.json = json_object(kv);
+        fields.push_back({"parent", num(parent)});
+    p.json = json_object(fields);
     queue_for(ref, p.json);
     send_now();
     return true;

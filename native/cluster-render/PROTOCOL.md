@@ -248,8 +248,12 @@ bytes spend the shared upload budget.
 
 The renderer plays an animation by itself; nothing is sent per frame. `anim`
 is the client's number for it (1 or more), unique within the layer: sending
-it again replaces it, `stop` ends it and its property goes back to what the
-client set. A layer plays at most 16.
+it again replaces it where it is (a needle sent to a new value moves on from
+there; several replacements before the next flush, only the newest is
+made), `stop` ends it and its property goes back to what the client set. A
+layer plays at most 16. An animation's keys go to the renderer with the
+scene and count in the upload budget (about 8 bytes a key with one value);
+replacing or stopping one sends only its own.
 
 | Field | |
 |---|---|
@@ -274,7 +278,9 @@ An eased curve is played by the renderer as linear keys the service
 samples from it: each segment in up to 16 steps, at least a millisecond
 apart, at most 1,024 keys in all. It plays the same on RAMSES 19 and RAMSES
 27 (which has no curved splines), and costs no more to send than its
-keys.
+keys. The service works the curve out in double; a curve that leaves the
+range of a float (keys near ±3.4e38) is refused (`the curve leaves the
+numbers a key holds`).
 
 ### Part hierarchies
 
@@ -283,10 +289,13 @@ Send these only to a service whose hello has `nodes` 1. A part sent with
 transform and animations are relative to its parent's, so turning a parent
 turns everything that follows it. A part sent with `node` 1 and no shaders
 is a pivot: it draws nothing and takes no geometry (`a pivot draws
-nothing`), and is transformed, animated and followed as a part. A part
-never follows itself or a part that follows it. The parts of a layer are
-made again in each new scene, each with its parent; the client libraries
-send parts again after a reconnect in the order they were made.
+nothing`), and is transformed, animated and followed as a part. A parent
+is made first, so a part never follows itself or a part that follows it; a
+part whose parent is not there is refused with nothing made (`a part's
+parent is another part of the layer, made before it`). Pivots and parents
+work alike in a [canvas](#canvases). The parts of a layer are made again in
+each new scene, each with its parent; the client libraries send parts again
+after a reconnect in the order they were made.
 
 ### Animating preloaded assets
 

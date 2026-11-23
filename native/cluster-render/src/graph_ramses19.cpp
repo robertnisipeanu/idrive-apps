@@ -725,16 +725,39 @@ public:
         return next_++;
     }
 
-    /* The animation system goes whole, its objects with it, and the
-     * animations that stay are made again in a new one, each from when it
-     * started. VERIFIED on the unit's libramses 19: a destroyed spline or
-     * animated property leaves its animation system one the library cannot
-     * describe, and it crashes the process when a renderer subscribes to
-     * the scene again, or when the scene is saved. */
+    /* Its objects retired (retire()), the new animation made at the next
+     * flush, where the newest of several replacements is made alone. */
+    int replace(int anim, int node, const Animation &a) override
+    {
+        auto it = anims_.find(anim);
+        if (it == anims_.end())
+            return animate(node, a);
+        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !animatable(node, a)) {
+            stop(anim);
+            return 0;
+        }
+        retire(it->second);
+        it->second.node = node;
+        it->second.a = a;
+        it->second.start = 0;
+        it->second.due = true;
+        return anim;
+    }
+
     void stop(int anim) override
     {
-        if (anims_.erase(anim))
-            rebuild();
+        auto it = anims_.find(anim);
+        if (it == anims_.end())
+            return;
+        retire(it->second);
+        anims_.erase(it);
+    }
+
+    uint64_t take_animation_bytes() override
+    {
+        const uint64_t b = anim_bytes_;
+        anim_bytes_ = 0;
+        return b;
     }
 
     /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
@@ -902,6 +925,7 @@ public:
     {
         if (layout_dirty_)
             relayout();
+        settle_animations();
         const ramses::status_t s = scene_->flush(ramses::ESceneFlushMode_Synchronous, tag);
         if (!ok(s) && !flush_failing_)
             log_error("ramses: flush %llu: %s", (unsigned long long)tag, client_.getStatusMessage(s));
@@ -1053,8 +1077,65 @@ private:
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
         ramses::Spline *spline = nullptr;
+        bool due = false;   /* replaced: made at the next flush */
     };
 
+    /* A node animate() can play a on: a quad, part or view, and a's uniform
+     * in its effect. */
+    bool animatable(int node, const Animation &a)
+    {
+        if (!quads_.count(node) && !parts_.count(node) && !views_.count(node))
+            return false;
+        if (a.property != Animated::Uniform)
+            return true;
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(node, &app);
+        ramses::UniformInput in;
+        return fx && ok(fx->findUniformInput(a.uniform.c_str(), in));
+    }
+
+    /* An animation that goes: stopped and taken out of its sequence, its
+     * objects left in the system (destroying them alone leaves a system the
+     * library cannot describe, VERIFIED on the unit's libramses 19: it
+     * crashes the process when a renderer subscribes to the scene again, or
+     * when the scene is saved). Their keys count until settle_animations()
+     * makes the system again. */
+    void retire(Anim &an)
+    {
+        if (an.seq && an.anim && (!ok(an.seq->stop()) || !ok(an.seq->removeAnimation(*an.anim))))
+            log_warn("ramses: an animation not stopped");
+        if (an.seq)
+            retired_keys_ += an.a.t.size();
+        an.seq = nullptr;
+        an.anim = nullptr;
+        an.prop = nullptr;
+        an.spline = nullptr;
+    }
+
+    /* Before a flush: the replacements made, and the animation system made
+     * again, with only the animations that play, once the retired keys
+     * outnumber those (and kRetiredKeys): a replacement makes its own keys,
+     * and the rebuilds they bring at most as many again. */
+    void settle_animations()
+    {
+        size_t live = 0;
+        for (auto it = anims_.begin(); it != anims_.end();) {
+            Anim &an = it->second;
+            live += an.a.t.size();
+            bool made = false;
+            if (!an.due || build(an, &made)) {
+                an.due = false;
+                ++it;
+                continue;
+            }
+            log_error("ramses: animation %d refused", it->first);
+            if (made)
+                retired_keys_ = SIZE_MAX;   /* half made: the system goes */
+            it = anims_.erase(it);
+        }
+        if (retired_keys_ > kRetiredKeys && retired_keys_ > live)
+            rebuild();
+    }
     /* Makes an's objects in the animation system (made when there is none)
      * and starts it at an.start, or now. An unknown node or uniform is
      * refused before anything is made; *made: objects were made, which a
@@ -1112,18 +1193,24 @@ private:
         if (!ok(an.seq->startAt(at)))
             return false;
         an.start = at;
+        anim_bytes_ += a.t.size() * (4 + 4 * a.width);   /* a time and the values a key */
         return true;
     }
 
+    /* The animation system goes whole, its objects and those retired with
+     * it, and the animations that stay are made again in a new one, each
+     * from when it started. */
     void rebuild()
     {
         if (anim_)
             scene_->destroy(*anim_);
         anim_ = nullptr;
+        retired_keys_ = 0;
         bool left = false;
         for (auto it = anims_.begin(); it != anims_.end();) {
             bool made = false;
             if (build(it->second, &made)) {
+                it->second.due = false;
                 ++it;
                 continue;
             }
@@ -1383,6 +1470,11 @@ private:
     const ramses::UInt16Array &idx_;
     ramses::Scene *scene_ = nullptr;
     ramses::AnimationSystemRealTime *anim_ = nullptr;
+    /* Keys of retired animations still in anim_, and of animations made
+     * since take_animation_bytes(), in bytes. */
+    size_t retired_keys_ = 0;
+    uint64_t anim_bytes_ = 0;
+    static const size_t kRetiredKeys = 4096;
     /* The target's own surface, and the canvases', by handle. */
     Surface main_;
     std::map<int, Surface> canvases_;

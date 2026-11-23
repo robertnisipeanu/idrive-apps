@@ -2866,7 +2866,17 @@ static void motion_over_socket()
                std::string::npos;
     };
     ok("motion: an unknown interp refused", refused("animate", 1, "interp must be linear, step, ease_in"));
-    ok("motion: a parent that is not there refused", refused("part", 1, "a part's parent is another part"));
+    const crs::MeshLayer *rm = nullptr;
+    for (const crs::Layer *l : r.svc->compositor().layers())
+        if (std::string(l->kind()) == "mesh" && (!rm || l->id() > rm->id()))
+            rm = static_cast<const crs::MeshLayer *>(l);
+    ok("motion: a parent that is not there refused, the part not made",
+       refused("part", 1, "a part's parent is another part") && rm && rm->has_part(1) && !rm->has_part(2));
+    raw.send("{\"op\":\"animate\",\"ref\":1,\"part\":1,\"anim\":2,\"property\":\"rotate\","
+             "\"keys\":\"0:0,0,3.4e38 10:0,0,3.4e38 20:0,0,-3.4e38\",\"interp\":\"smooth\"}");
+    r.pump(50);
+    ok("motion: a curve past the float range refused",
+       raw.events().find("the curve leaves the numbers a key holds") != std::string::npos);
     ok("motion: a pivot's geometry refused", ev.find("a pivot draws nothing") != std::string::npos);
 }
 

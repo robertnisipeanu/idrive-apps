@@ -436,6 +436,19 @@ public:
     /* Sends everything changed since the last flush as one update, tagged. */
     virtual bool flush(uint64_t tag) = 0;
 
+    /* Animation anim (animate()'s) replaced by a on node: its handle, the
+     * same or a new one; 0 when refused, anim then stopped. A graph may make
+     * it at its next flush, keeping only the newest of several replacements
+     * before it. */
+    virtual int replace(int anim, int node, const Animation &a)
+    {
+        stop(anim);
+        return animate(node, a);
+    }
+    /* Bytes of animation keys made since the last call, which the next
+     * flush sends to the renderer. */
+    virtual uint64_t take_animation_bytes() { return 0; }
+
     /* A canvas: its handle is a buffer handle too (texture(), not
      * drop_buffer()). 0 where the backend has none. Quads and views drawn
      * into it come from quad_in() and view_in(), and are ordered among
