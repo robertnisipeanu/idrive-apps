@@ -94,6 +94,10 @@
     "2.4 GHz": "2,4 GHz",
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın.",
     "Own settings for this driver": "Bu sürücüye özel ayarlar",
-    "Keep HUD map over BMW's pop-ups": "HUD haritasını BMW açılır pencerelerinin üstünde tut"
+    "Keep HUD map over BMW's pop-ups": "HUD haritasını BMW açılır pencerelerinin üstünde tut",
+    "Guidance area: Applies to all CarPlay navigation apps": "Yönlendirme alanı: Tüm CarPlay navigasyon uygulamaları için geçerlidir",
+    "Guidance area": "Yönlendirme alanı",
+    "Default": "Standart",
+    "Yandex Maps (experimental)": "Yandex Maps (deneysel)"
   }
 }

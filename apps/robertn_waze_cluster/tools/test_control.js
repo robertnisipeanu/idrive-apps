@@ -599,6 +599,38 @@ test('extra status fields are ignored; an unrecognised state is not shown as pat
     c.close();
 });
 
+test('Yandex safe area is opt-in, reversible, capability-gated and compared to the selected area', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch() && c.connectedRender());
+    const announce = (extra) => patch._broadcast(Object.assign({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb',
+        res: '1088x480', safe: '504x368+286+72', safearea: 'standard' }, extra));
+    announce();
+    await until('standard choice', () => c.patchStatus && c.patchStatus.safearea === 'standard');
+    assert.strictEqual(c.safearea(), 'standard');
+    assert.strictEqual(c.canChooseSafearea(), true);
+    const before = patch.received.length;
+    [undefined, null, '', 'unknown', 'standard'].forEach((v) => c.chooseSafearea(v));
+    await sleep(20);
+    assert.strictEqual(patch.received.length, before, 'invalid and unchanged profiles send nothing');
+    c.chooseSafearea('yandex');
+    await until('Yandex request', () => patch.received.some((m) => m.cmd === 'cp-safearea' && m.value === 'yandex'));
+    announce({ safearea: 'yandex', safe: '504x368+433+72' });
+    await until('Yandex current', () => c.safearea() === 'yandex' && c.statusText() === 'Status: Patched');
+    c.chooseSafearea('standard');
+    await until('standard request', () => patch.received.some((m) => m.cmd === 'cp-safearea' && m.value === 'standard'));
+    announce({ safearea: 'yandex' });
+    await until('mismatched geometry needs update', () => c.statusText() === 'Status: Update needed');
+    announce({ safearea: 'yandex', safe: '504x368+433+72', pending: 'apply' });
+    await until('pending selection', () => c.pending() === 'apply');
+    assert.strictEqual(c.canChooseSafearea(), false);
+    assert(c.safeareaText().includes('(after restart)'));
+    announce({ safearea: undefined });
+    await until('older daemon', () => c.patchStatus.safearea === undefined);
+    assert.strictEqual(c.canChooseSafearea(), false);
+    c.close();
+});
+
 test('an older full-frame safe area prompts CarPlay\'s Patch button, which writes the default', async (render, patch) => {
     const c = control();
     c.open();

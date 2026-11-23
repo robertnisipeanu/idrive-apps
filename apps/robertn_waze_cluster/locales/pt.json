@@ -94,6 +94,10 @@
     "2.4 GHz": "2,4 GHz",
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi.",
     "Own settings for this driver": "Definições próprias para este condutor",
-    "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups BMW"
+    "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups BMW",
+    "Guidance area: Applies to all CarPlay navigation apps": "Área de indicações: Aplica-se a todas as apps de navegação CarPlay",
+    "Guidance area": "Área de indicações",
+    "Default": "Padrão",
+    "Yandex Maps (experimental)": "Yandex Maps (experimental)"
   }
 }

@@ -23,6 +23,22 @@ Android Auto. The app's **Status** for each tells you.
    to **Map view**.
 4. Connect your phone and start navigation.
 
+## CarPlay guidance area
+
+Under **Guidance area** in the CarPlay section, choose **Default** or
+**Yandex Maps (experimental)**. Default keeps the standard placement;
+Yandex Maps moves the guidance area to the right. If a restart is pending,
+use **Restart head unit** before testing the choice.
+
+The choice is manual and applies to **every CarPlay navigation app**;
+select Default for Apple Maps, Google Maps or Waze. It is shared by the
+car's driver profiles and survives restarts and updates. With the patch
+off, it is kept for the next **Patch** without turning the map on.
+Android Auto is unchanged.
+
+Remove any standalone CarPlay safe-area add-on according to its
+instructions before using this setting.
+
 ## What happens automatically
 
 - Installing the app turns the map on for CarPlay and for Android Auto,

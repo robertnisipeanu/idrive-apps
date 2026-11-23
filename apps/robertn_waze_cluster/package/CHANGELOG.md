@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Choose Default or Yandex Maps (experimental) in CarPlay’s Guidance area
+selector. The choice applies to every CarPlay navigation app and survives
+updates; Android Auto is unchanged.
+
 ## 0.6.15
 
 When boot recovery removes the Android Auto patch because Android Auto

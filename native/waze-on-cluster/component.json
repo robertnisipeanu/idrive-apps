@@ -69,6 +69,11 @@
       "mode": "0644"
     },
     {
+      "path": "carplay_area.js",
+      "from": "patch/carplay_area.js",
+      "mode": "0644"
+    },
+    {
       "path": "patchd.js",
       "from": "patch/patchd.js",
       "mode": "0644"

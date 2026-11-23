@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+An optional Yandex Maps guidance area for CarPlay, selected in the app.
+The standard area remains the default; the choice survives restarts and
+updates.
+
 ## 0.14.10
 
 The tests run at once: `make test` takes about a minute and a half instead

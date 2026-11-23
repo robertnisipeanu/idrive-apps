@@ -1334,7 +1334,21 @@ function runBoot(name) {
  * cb(planned). */
 function retryPlan(name, cb, waitMs, planMs) {
     var rec = inmem.readRecord(name);
-    if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
+    if (!rec || rec.enabled !== true) { cb(false); return; }
+    /* A choice can reach disk just before a shutdown cuts off replanning.
+     * Reconcile it before arming this boot, not only at install time. */
+    if (name === 'carplay') {
+        var area = require('./carplay_area.js');
+        var args = area.reconcile(process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster', rec.args || []);
+        if (JSON.stringify(args) !== JSON.stringify(rec.args)) {
+            try {
+                inmem.disarm(name);
+                inmem.planFailed(name, args, 'the saved CarPlay guidance area needs a new plan');
+                rec = inmem.readRecord(name);
+            } catch (e) { log(name + ': saving the guidance-area plan failed: ' + e.message); cb(false); return; }
+        }
+    }
+    if (!rec.needsPlan) { cb(false); return; }
     var until = Date.now() + (waitMs || 0);
     (function wait() {
         if (!exists(CODING) && Date.now() < until) { setTimeout(wait, 1000); return; }

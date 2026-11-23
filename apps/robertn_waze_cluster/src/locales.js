@@ -98,7 +98,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله.",
    "Own settings for this driver": "إعدادات خاصة لهذا السائق",
-   "Keep HUD map over BMW's pop-ups": "إبقاء خريطة HUD فوق النوافذ المنبثقة من BMW"
+   "Keep HUD map over BMW's pop-ups": "إبقاء خريطة HUD فوق النوافذ المنبثقة من BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "منطقة الإرشادات: تنطبق على جميع تطبيقات الملاحة في CarPlay",
+   "Guidance area": "منطقة الإرشادات",
+   "Default": "قياسي",
+   "Yandex Maps (experimental)": "Yandex Maps (تجريبية)"
   }
  },
  {
@@ -198,7 +202,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi.",
    "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče",
-   "Keep HUD map over BMW's pop-ups": "Ponechat mapu na HUD přes vyskakovací okna BMW"
+   "Keep HUD map over BMW's pop-ups": "Ponechat mapu na HUD přes vyskakovací okna BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Oblast pokynů: Platí pro všechny navigační aplikace CarPlay",
+   "Guidance area": "Oblast pokynů",
+   "Default": "Standardní",
+   "Yandex Maps (experimental)": "Yandex Maps (experimentální)"
   }
  },
  {
@@ -298,7 +306,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone.",
    "Own settings for this driver": "Egne indstillinger for denne fører",
-   "Keep HUD map over BMW's pop-ups": "Behold kort i HUD over BMW's pop-ups"
+   "Keep HUD map over BMW's pop-ups": "Behold kort i HUD over BMW's pop-ups",
+   "Guidance area: Applies to all CarPlay navigation apps": "Vejledningsområde: Gælder alle navigationsapps i CarPlay",
+   "Guidance area": "Vejledningsområde",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (eksperimentelt)"
   }
  },
  {
@@ -398,7 +410,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten.",
    "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer",
-   "Keep HUD map over BMW's pop-ups": "Karte im HUD vor BMW-Pop-ups behalten"
+   "Keep HUD map over BMW's pop-ups": "Karte im HUD vor BMW-Pop-ups behalten",
+   "Guidance area: Applies to all CarPlay navigation apps": "Hinweisbereich: Gilt für alle CarPlay-Navigationsapps",
+   "Guidance area": "Hinweisbereich",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (experimentell)"
   }
  },
  {
@@ -498,7 +514,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi.",
    "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό",
-   "Keep HUD map over BMW's pop-ups": "Διατήρηση χάρτη στο HUD πάνω από τα αναδυόμενα της BMW"
+   "Keep HUD map over BMW's pop-ups": "Διατήρηση χάρτη στο HUD πάνω από τα αναδυόμενα της BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Περιοχή οδηγιών: Ισχύει για όλες τις εφαρμογές πλοήγησης CarPlay",
+   "Guidance area": "Περιοχή οδηγιών",
+   "Default": "Τυπικό",
+   "Yandex Maps (experimental)": "Yandex Maps (πειραματική)"
   }
  },
  {
@@ -598,7 +618,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi.",
    "Own settings for this driver": "Configuración propia para este conductor",
-   "Keep HUD map over BMW's pop-ups": "Mantener mapa en el HUD sobre ventanas emergentes de BMW"
+   "Keep HUD map over BMW's pop-ups": "Mantener mapa en el HUD sobre ventanas emergentes de BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Área de indicaciones: Se aplica a todas las apps de navegación de CarPlay",
+   "Guidance area": "Área de indicaciones",
+   "Default": "Estándar",
+   "Yandex Maps (experimental)": "Yandex Maps (experimental)"
   }
  },
  {
@@ -698,7 +722,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi.",
    "Own settings for this driver": "Ajustes propios para este conductor",
-   "Keep HUD map over BMW's pop-ups": "Mantener mapa en el HUD sobre ventanas emergentes de BMW"
+   "Keep HUD map over BMW's pop-ups": "Mantener mapa en el HUD sobre ventanas emergentes de BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Área de indicaciones: Se aplica a todas las apps de navegación de CarPlay",
+   "Guidance area": "Área de indicaciones",
+   "Default": "Estándar",
+   "Yandex Maps (experimental)": "Yandex Maps (experimental)"
   }
  },
  {
@@ -798,7 +826,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle.",
    "Own settings for this driver": "Omat asetukset tälle kuljettajalle",
-   "Keep HUD map over BMW's pop-ups": "Pidä HUD-kartta BMW:n ponnahdusikkunoiden päällä"
+   "Keep HUD map over BMW's pop-ups": "Pidä HUD-kartta BMW:n ponnahdusikkunoiden päällä",
+   "Guidance area: Applies to all CarPlay navigation apps": "Opastusalue: Koskee kaikkia CarPlay-navigointisovelluksia",
+   "Guidance area": "Opastusalue",
+   "Default": "Vakio",
+   "Yandex Maps (experimental)": "Yandex Maps (kokeellinen)"
   }
  },
  {
@@ -898,7 +930,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
    "Own settings for this driver": "Réglages propres à ce conducteur",
-   "Keep HUD map over BMW's pop-ups": "Garder la carte sur le HUD devant les fenêtres contextuelles BMW"
+   "Keep HUD map over BMW's pop-ups": "Garder la carte sur le HUD devant les fenêtres contextuelles BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Zone de guidage : Pour toutes les apps de navigation CarPlay",
+   "Guidance area": "Zone de guidage",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (expérimentale)"
   }
  },
  {
@@ -998,7 +1034,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
    "Own settings for this driver": "Réglages propres à ce conducteur",
-   "Keep HUD map over BMW's pop-ups": "Garder la carte sur le HUD devant les pop-up BMW"
+   "Keep HUD map over BMW's pop-ups": "Garder la carte sur le HUD devant les pop-up BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Zone de guidage : Pour toutes les apps de navigation CarPlay",
+   "Guidance area": "Zone de guidage",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (expérimentale)"
   }
  },
  {
@@ -1098,7 +1138,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש.",
    "Own settings for this driver": "הגדרות נפרדות לנהג זה",
-   "Keep HUD map over BMW's pop-ups": "השארת המפה ב-HUD מעל החלונות הקופצים של BMW"
+   "Keep HUD map over BMW's pop-ups": "השארת המפה ב-HUD מעל החלונות הקופצים של BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "אזור הנחיות: חל על כל יישומי הניווט ב-CarPlay",
+   "Guidance area": "אזור הנחיות",
+   "Default": "רגיל",
+   "Yandex Maps (experimental)": "Yandex Maps (ניסיוני)"
   }
  },
  {
@@ -1198,7 +1242,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t.",
    "Own settings for this driver": "Saját beállítások ennek a vezetőnek",
-   "Keep HUD map over BMW's pop-ups": "Térkép megtartása a HUD-on a BMW felugró ablakai felett"
+   "Keep HUD map over BMW's pop-ups": "Térkép megtartása a HUD-on a BMW felugró ablakai felett",
+   "Guidance area: Applies to all CarPlay navigation apps": "Útmutatási terület: Minden CarPlay navigációs alkalmazásra érvényes",
+   "Guidance area": "Útmutatási terület",
+   "Default": "Normál",
+   "Yandex Maps (experimental)": "Yandex Maps (kísérleti)"
   }
  },
  {
@@ -1298,7 +1346,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi.",
    "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini",
-   "Keep HUD map over BMW's pop-ups": "Pertahankan peta di HUD di atas pop-up BMW"
+   "Keep HUD map over BMW's pop-ups": "Pertahankan peta di HUD di atas pop-up BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Area petunjuk: Berlaku untuk semua aplikasi navigasi CarPlay",
+   "Guidance area": "Area petunjuk",
+   "Default": "Standar",
+   "Yandex Maps (experimental)": "Yandex Maps (eksperimental)"
   }
  },
  {
@@ -1398,7 +1450,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi.",
    "Own settings for this driver": "Impostazioni proprie per questo conducente",
-   "Keep HUD map over BMW's pop-ups": "Mantieni la mappa sull'HUD sopra i pop-up BMW"
+   "Keep HUD map over BMW's pop-ups": "Mantieni la mappa sull'HUD sopra i pop-up BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Area indicazioni: Si applica a tutte le app di navigazione CarPlay",
+   "Guidance area": "Area indicazioni",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (sperimentale)"
   }
  },
  {
@@ -1498,7 +1554,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。",
    "Own settings for this driver": "このドライバー専用の設定",
-   "Keep HUD map over BMW's pop-ups": "HUDの地図をBMWのポップアップより優先"
+   "Keep HUD map over BMW's pop-ups": "HUDの地図をBMWのポップアップより優先",
+   "Guidance area: Applies to all CarPlay navigation apps": "案内領域：CarPlayのすべてのナビアプリに適用",
+   "Guidance area": "案内領域",
+   "Default": "標準",
+   "Yandex Maps (experimental)": "Yandex Maps （試験的）"
   }
  },
  {
@@ -1598,7 +1658,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오.",
    "Own settings for this driver": "이 운전자 전용 설정",
-   "Keep HUD map over BMW's pop-ups": "BMW 팝업 위에 HUD 지도 유지"
+   "Keep HUD map over BMW's pop-ups": "BMW 팝업 위에 HUD 지도 유지",
+   "Guidance area: Applies to all CarPlay navigation apps": "안내 영역: 모든 CarPlay 내비게이션 앱에 적용",
+   "Guidance area": "안내 영역",
+   "Default": "표준",
+   "Yandex Maps (experimental)": "Yandex Maps (실험적)"
   }
  },
  {
@@ -1698,7 +1762,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone.",
    "Own settings for this driver": "Egne innstillinger for denne føreren",
-   "Keep HUD map over BMW's pop-ups": "Behold kart i HUD over BMWs popup-vinduer"
+   "Keep HUD map over BMW's pop-ups": "Behold kart i HUD over BMWs popup-vinduer",
+   "Guidance area: Applies to all CarPlay navigation apps": "Veiledningsområde: Gjelder alle navigasjonsapper i CarPlay",
+   "Guidance area": "Veiledningsområde",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (eksperimentelt)"
   }
  },
  {
@@ -1800,7 +1868,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan.",
    "Own settings for this driver": "Eigen instellingen voor deze bestuurder",
-   "Keep HUD map over BMW's pop-ups": "Kaart in HUD boven BMW-pop-ups houden"
+   "Keep HUD map over BMW's pop-ups": "Kaart in HUD boven BMW-pop-ups houden",
+   "Guidance area: Applies to all CarPlay navigation apps": "Aanwijzingengebied: Geldt voor alle CarPlay-navigatieapps",
+   "Guidance area": "Aanwijzingengebied",
+   "Default": "Standaard",
+   "Yandex Maps (experimental)": "Yandex Maps (experimenteel)"
   }
  },
  {
@@ -1900,7 +1972,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi.",
    "Own settings for this driver": "Własne ustawienia dla tego kierowcy",
-   "Keep HUD map over BMW's pop-ups": "Zachowaj mapę na HUD nad wyskakującymi oknami BMW"
+   "Keep HUD map over BMW's pop-ups": "Zachowaj mapę na HUD nad wyskakującymi oknami BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Obszar wskazówek: Dotyczy wszystkich aplikacji nawigacyjnych CarPlay",
+   "Guidance area": "Obszar wskazówek",
+   "Default": "Standardowy",
+   "Yandex Maps (experimental)": "Yandex Maps (eksperymentalny)"
   }
  },
  {
@@ -2000,7 +2076,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi.",
    "Own settings for this driver": "Configurações próprias para este motorista",
-   "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups da BMW"
+   "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups da BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Área de instruções: Vale para todos os apps de navegação do CarPlay",
+   "Guidance area": "Área de instruções",
+   "Default": "Padrão",
+   "Yandex Maps (experimental)": "Yandex Maps (experimental)"
   }
  },
  {
@@ -2100,7 +2180,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi.",
    "Own settings for this driver": "Definições próprias para este condutor",
-   "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups BMW"
+   "Keep HUD map over BMW's pop-ups": "Manter mapa no HUD sobre pop-ups BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Área de indicações: Aplica-se a todas as apps de navegação CarPlay",
+   "Guidance area": "Área de indicações",
+   "Default": "Padrão",
+   "Yandex Maps (experimental)": "Yandex Maps (experimental)"
   }
  },
  {
@@ -2200,7 +2284,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi.",
    "Own settings for this driver": "Setări proprii pentru acest șofer",
-   "Keep HUD map over BMW's pop-ups": "Păstrare hartă pe HUD peste ferestrele pop-up BMW"
+   "Keep HUD map over BMW's pop-ups": "Păstrare hartă pe HUD peste ferestrele pop-up BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Zona de indicații: Se aplică tuturor aplicațiilor de navigație CarPlay",
+   "Guidance area": "Zona de indicații",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (experimentală)"
   }
  },
  {
@@ -2300,7 +2388,11 @@ module.exports = [
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi.",
    "Own settings for this driver": "Свои настройки для этого водителя",
-   "Keep HUD map over BMW's pop-ups": "Оставлять карту на HUD поверх всплывающих окон BMW"
+   "Keep HUD map over BMW's pop-ups": "Оставлять карту на HUD поверх всплывающих окон BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Действие: Выбранный профиль применяется ко всем навигаторам CarPlay",
+   "Guidance area": "Адаптация области",
+   "Default": "Базовая",
+   "Yandex Maps (experimental)": "Яндекс Карты (экспериментально)"
   }
  },
  {
@@ -2400,7 +2492,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi.",
    "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča",
-   "Keep HUD map over BMW's pop-ups": "Ponechať mapu na HUD nad kontextovými oknami BMW"
+   "Keep HUD map over BMW's pop-ups": "Ponechať mapu na HUD nad kontextovými oknami BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Oblasť pokynov: Platí pre všetky navigačné aplikácie CarPlay",
+   "Guidance area": "Oblasť pokynov",
+   "Default": "Štandardná",
+   "Yandex Maps (experimental)": "Yandex Maps (experimentálna)"
   }
  },
  {
@@ -2500,7 +2596,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi.",
    "Own settings for this driver": "Lastne nastavitve za tega voznika",
-   "Keep HUD map over BMW's pop-ups": "Ohrani zemljevid na HUD nad pojavnimi okni BMW"
+   "Keep HUD map over BMW's pop-ups": "Ohrani zemljevid na HUD nad pojavnimi okni BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Območje navodil: Velja za vse navigacijske aplikacije CarPlay",
+   "Guidance area": "Območje navodil",
+   "Default": "Standardna",
+   "Yandex Maps (experimental)": "Yandex Maps (poskusno)"
   }
  },
  {
@@ -2600,7 +2700,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone.",
    "Own settings for this driver": "Egna inställningar för den här föraren",
-   "Keep HUD map over BMW's pop-ups": "Behåll karta i HUD över BMW:s popup-fönster"
+   "Keep HUD map over BMW's pop-ups": "Behåll karta i HUD över BMW:s popup-fönster",
+   "Guidance area: Applies to all CarPlay navigation apps": "Anvisningsområde: Gäller alla navigeringsappar i CarPlay",
+   "Guidance area": "Anvisningsområde",
+   "Default": "Standard",
+   "Yandex Maps (experimental)": "Yandex Maps (experimentellt)"
   }
  },
  {
@@ -2700,7 +2804,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone",
    "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้",
-   "Keep HUD map over BMW's pop-ups": "คงแผนที่บน HUD ไว้เหนือป๊อปอัปของ BMW"
+   "Keep HUD map over BMW's pop-ups": "คงแผนที่บน HUD ไว้เหนือป๊อปอัปของ BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "พื้นที่คำแนะนำ: ใช้กับแอปนำทาง CarPlay ทั้งหมด",
+   "Guidance area": "พื้นที่คำแนะนำ",
+   "Default": "มาตรฐาน",
+   "Yandex Maps (experimental)": "Yandex Maps (ทดลอง)"
   }
  },
  {
@@ -2800,7 +2908,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın.",
    "Own settings for this driver": "Bu sürücüye özel ayarlar",
-   "Keep HUD map over BMW's pop-ups": "HUD haritasını BMW açılır pencerelerinin üstünde tut"
+   "Keep HUD map over BMW's pop-ups": "HUD haritasını BMW açılır pencerelerinin üstünde tut",
+   "Guidance area: Applies to all CarPlay navigation apps": "Yönlendirme alanı: Tüm CarPlay navigasyon uygulamaları için geçerlidir",
+   "Guidance area": "Yönlendirme alanı",
+   "Default": "Standart",
+   "Yandex Maps (experimental)": "Yandex Maps (deneysel)"
   }
  },
  {
@@ -2900,7 +3012,11 @@ module.exports = [
    "2.4 GHz": "2,4 ГГц",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi.",
    "Own settings for this driver": "Власні налаштування для цього водія",
-   "Keep HUD map over BMW's pop-ups": "Залишати карту на HUD поверх спливних вікон BMW"
+   "Keep HUD map over BMW's pop-ups": "Залишати карту на HUD поверх спливних вікон BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Область підказок: Для всіх навігаторів CarPlay",
+   "Guidance area": "Область підказок",
+   "Default": "Стандартний",
+   "Yandex Maps (experimental)": "Yandex Maps (експериментально)"
   }
  },
  {
@@ -3000,7 +3116,11 @@ module.exports = [
    "2.4 GHz": "2,4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi.",
    "Own settings for this driver": "Cài đặt riêng cho người lái này",
-   "Keep HUD map over BMW's pop-ups": "Giữ bản đồ trên HUD phía trên cửa sổ bật lên của BMW"
+   "Keep HUD map over BMW's pop-ups": "Giữ bản đồ trên HUD phía trên cửa sổ bật lên của BMW",
+   "Guidance area: Applies to all CarPlay navigation apps": "Vùng chỉ dẫn: Áp dụng cho mọi ứng dụng dẫn đường CarPlay",
+   "Guidance area": "Vùng chỉ dẫn",
+   "Default": "Tiêu chuẩn",
+   "Yandex Maps (experimental)": "Yandex Maps (thử nghiệm)"
   }
  },
  {
@@ -3102,7 +3222,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。",
    "Own settings for this driver": "此驾驶员的专属设置",
-   "Keep HUD map over BMW's pop-ups": "HUD 地图保持在 BMW 弹窗之上"
+   "Keep HUD map over BMW's pop-ups": "HUD 地图保持在 BMW 弹窗之上",
+   "Guidance area: Applies to all CarPlay navigation apps": "提示区域：适用于所有 CarPlay 导航应用",
+   "Guidance area": "提示区域",
+   "Default": "标准",
+   "Yandex Maps (experimental)": "Yandex Maps （实验性）"
   }
  },
  {
@@ -3204,7 +3328,11 @@ module.exports = [
    "2.4 GHz": "2.4 GHz",
    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。",
    "Own settings for this driver": "此駕駛的專屬設定",
-   "Keep HUD map over BMW's pop-ups": "HUD 地圖保持在 BMW 彈出視窗之上"
+   "Keep HUD map over BMW's pop-ups": "HUD 地圖保持在 BMW 彈出視窗之上",
+   "Guidance area: Applies to all CarPlay navigation apps": "提示區域：適用於所有 CarPlay 導航 App",
+   "Guidance area": "提示區域",
+   "Default": "標準",
+   "Yandex Maps (experimental)": "Yandex Maps （實驗性）"
   }
  }
 ];

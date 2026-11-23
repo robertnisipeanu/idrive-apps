@@ -341,8 +341,18 @@ black cluster map or its turn card alone.
 
 `--safe WxH+X+Y` writes another (at least 16x16, inside the frame), `--safe
 full` the whole frame; `--res` scales the default. `patchd` reports `res` and
-`safe`, and the app offers CarPlay's Patch button when either differs from the default.
+`safe`, and the app offers CarPlay's Patch button when the size differs from the
+default or the safe area differs from the selected profile.
 A high-panel binary with stock geometry reads as partially patched.
+
+The app's optional Yandex Maps guidance area is `504x368+433+72`.
+`patchd` reports the chosen profile as `safearea` (`standard` or `yandex`)
+beside the plan's actual `safe` rectangle. The app compares the actual
+rectangle with the chosen profile. `carplay_area.js` keeps the profile in
+`carplay-safearea`, independent of Android Auto and driver profiles, and
+supplies `--safe` to the in-memory plan. The boot step and install hook
+reconcile a saved choice with an older plan before arming it. A change to
+this global rectangle affects all CarPlay navigation apps.
 
 ## Edit 5 — map URL
 

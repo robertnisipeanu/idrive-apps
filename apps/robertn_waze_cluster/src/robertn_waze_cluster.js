@@ -59,7 +59,7 @@ const OnlineApp = require('oap-sdk/src/core/OnlineApp.js');
 const logging = require('oap-sdk/src/logging/logging');
 const someipBuilders = require('oap-sdk/src/someip/someipBuilders');
 const i18n = require('./i18n.js');
-const { WazeClusterControl, ZOOM_STEP, SHOWN_ON } = require('./waze_cluster_control.js');
+const { WazeClusterControl, ZOOM_STEP, SHOWN_ON, SAFEAREA_PROFILES } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
 const { ProfileSync, sessionReader } = require('./profile_sync.js');
@@ -71,6 +71,8 @@ const STATUS_NAME = 'wocStatus';
 const MAP_NAME = 'wocMap';
 const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
+const SAFEAREA_NAME = 'wocSafearea';
+const SAFEAREA_HINT_NAME = 'wocSafeareaHint';
 const RESTART_NAME = 'wocRestart';
 const RESTART_STATUS_NAME = 'wocRestartStatus';
 const WIFI_NAME = 'wocWifi';
@@ -204,7 +206,7 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state || !this._logsState) {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
-        const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
+        const names = [SAFEAREA_NAME, SAFEAREA_HINT_NAME, STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
             AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
             HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, HUD_NAME, HUD_KEEP_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
@@ -216,6 +218,12 @@ class WazeClusterApp extends OnlineApp {
         }
         this._bind(ENABLE_NAME, () => this._control.enableMap());
         this._bind(DISABLE_NAME, () => this._control.disableMap());
+        this._components[SAFEAREA_NAME].on('action', (ev) => this._press(SAFEAREA_NAME, () => {
+            delete this._written[`cell:${SAFEAREA_NAME}:SelectedItem`];
+            const profile = SAFEAREA_PROFILES[ev && ev.row];
+            this._control.chooseSafearea(profile && profile.id);
+            this._render();
+        }));
         this._bind(AA_ENABLE_NAME, () => this._control.enableAa());
         this._bind(AA_DISABLE_NAME, () => this._control.disableAa());
         this._bind(AA_ZOOM_OUT_NAME, () => this._control.zoom(-ZOOM_STEP));
@@ -530,6 +538,12 @@ class WazeClusterApp extends OnlineApp {
             [HUD_MOVE_NAMES.left, t('Move left')], [HUD_MOVE_NAMES.right, t('Move right')], [HUD_MOVE_NAMES.up, t('Move up')],
             [HUD_MOVE_NAMES.down, t('Move down')], [HUD_CENTRE_NAME, t('Centre')],
             [RESTART_NAME, t('Restart head unit')]].forEach(([name, text]) => this._write(name, text));
+        const area = SAFEAREA_PROFILES.findIndex((p) => p.id === c.safearea());
+        this._writeCell(SAFEAREA_NAME, 'HeaderText', c.safeareaText(), 'Text');
+        SAFEAREA_PROFILES.forEach((profile, row) => this._writeCell(SAFEAREA_NAME, 'ItemText',
+            row === 0 && area < 0 ? '—' : t(profile.label), 'Text', row));
+        this._writeCell(SAFEAREA_NAME, 'SelectedItem', Math.max(area, 0), 'UInt');
+        this._write(SAFEAREA_HINT_NAME, t('Guidance area: Applies to all CarPlay navigation apps'));
         this._write(STATUS_NAME, c.statusText());
         this._write(MAP_NAME, c.mapText());
         this._write(AA_STATUS_NAME, c.aaStatusText());
@@ -538,7 +552,7 @@ class WazeClusterApp extends OnlineApp {
         this._setSelected(AA_CARD_NAME, c.cardHidden());
         this._write(CAPTURE_NAME, c.captureButtonText());
         this._write(CAPTURE_STATUS, c.captureText());
-        [[ENABLE_NAME, c.canEnable()], [DISABLE_NAME, c.canDisable()],
+        [[SAFEAREA_NAME, c.canChooseSafearea()], [ENABLE_NAME, c.canEnable()], [DISABLE_NAME, c.canDisable()],
             [AA_ENABLE_NAME, c.canEnableAa()], [AA_DISABLE_NAME, c.canDisableAa()],
             [AA_ZOOM_OUT_NAME, c.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, c.canZoom(ZOOM_STEP)],
             [AA_CARD_NAME, c.canToggleCard()], [CAPTURE_NAME, c.canCapture()], [RESTART_NAME, c.canRestart()]]

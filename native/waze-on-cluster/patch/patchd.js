@@ -32,6 +32,9 @@
  *                    stream sink (the bridge accepts a stream where it rejects a
  *                    file); fifo = file:// FIFO sink
  *                  {"cmd":"revert"}
+ *                  {"cmd":"cp-safearea","value":"standard"|"yandex"}
+ *                    save the global CarPlay guidance area; replan an enabled
+ *                    patch in memory, or keep the choice for the next apply
  *                  {"cmd":"aa-apply"} | {"cmd":"aa-revert"}   the Android Auto patch
  *                  {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
  *                                   save the choice and, with the patch on,
@@ -92,6 +95,7 @@
  *                    mode (when patched): fifo | udp | avb
  *                    res, safe (when the IC_HIGH geometry is patched): the
  *                    advertised size "WxH" and its safe area "WxH+X+Y", else null
+ *                    safearea: chosen guidance area, "standard" | "yandex"
  *                    carplay (after an apply/revert that changed the binary):
  *                    restarted | deferred (takes effect at the next head-unit
  *                    start; state is unknown with that reason until then)
@@ -193,6 +197,9 @@ var aapdConf = require('./aapd_conf.js');
 var STATE_DIR = process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster';
 var AA_DPI_FILE = path.join(STATE_DIR, 'aa-density');
 var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
+/* The saved global CarPlay guidance area; separate from driver profiles. */
+var carplayArea = require('./carplay_area.js');
+var CP_AREA_FILE = carplayArea.file(STATE_DIR);
 /* With the turn card hidden, the crop waze-on-cluster.service passes to the
  * render (EnvironmentFile): the card's rows grow with the density. The
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
@@ -1070,7 +1077,7 @@ function status(extra, aaExtra) {
     readState(function (st) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
-            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
+            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl, safearea: carplayArea.read(STATE_DIR),
                         removable: !!(st.restorable || st.removable), busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
             if (!cpBusy && st.reason) msg.reason = st.reason;
             if (!cpBusy && st.carplay) msg.carplay = st.carplay;
@@ -1756,7 +1763,7 @@ function planArgs(panel, mode, unproven) {
     var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);
     if (mode === 'udp') args.push('--sink', 'udp://127.0.0.1:' + UDP_PORT + '?mime_type=video/H264');
     else if (mode !== 'avb') args.push('--capture', FIFO);
-    return args;
+    return panel === 'high' && carplayArea.read(STATE_DIR) === 'yandex' ? carplayArea.withArea(args, 'yandex') : args;
 }
 
 /* Android Auto's: aapd.conf, the coding and the owner's density and
@@ -2004,7 +2011,7 @@ function inmemHook(which, cb) {
          * whose sites the patcher finds and verifies is planned, on trial
          * until it ran healthy on this car. */
         var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;
-        inmemApply(CP, keep || planArgs('high', 'avb', !!st.backup), true, function (err, roErr, activation, conflict2, why) {
+        inmemApply(CP, carplayArea.reconcile(STATE_DIR, keep || planArgs('high', 'avb', !!st.backup)), true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
             if (conflict2) { out(0, 'carplay left as it is: ' + conflict2, conflict2); return; }
             if (err) { out(1, 'applying the map patch failed: ' + err.message); return; }
@@ -2394,6 +2401,29 @@ function handle(line, sock) {
     var hu = (msg.cmd === 'apply' || msg.cmd === 'aa-apply') && headUnit.refused();
     if (hu) { log(msg.cmd + ' refused: ' + hu); refuse(hu); return; }
     if (/^(aa-)?(apply|revert)$/.test(msg.cmd) && headUnit.variant() === 'HIGHF') highfMark(/^aa-/.test(msg.cmd) ? AA : CP, 'user');
+
+    if (msg.cmd === 'cp-safearea') {
+        if (msg.value !== 'standard' && msg.value !== 'yandex') { refuse('safe area must be standard or yandex'); return; }
+        operate('carplay', 'changing the CarPlay guidance area', function (cb) {
+            readState(function (st) {
+                if (st.conflict) { cb(new Error(st.conflict)); return; }
+                var rec = inmem.readRecord('carplay');
+                var enabled = (rec && rec.enabled === true) || st.binary === 'patched' || st.pending === 'apply';
+                var args = rec && Array.isArray(rec.args) && rec.args.length ? rec.args : planArgs('high', 'avb', true);
+                if (enabled && !carplayArea.supported(args)) {
+                    cb(new Error('guidance area requires the standard IC_HIGH 1088x480 map')); return;
+                }
+                try { saveFile(CP_AREA_FILE, msg.value + '\n'); } catch (e) { cb(e); return; }
+                log('CarPlay guidance area: ' + msg.value + ' chosen');
+                /* Choosing an area while the map is off never turns it on. */
+                if (!enabled) { cb(null); return; }
+                inmemApply(CP, carplayArea.withArea(args, msg.value), false, function (e, ro, activation, conflict, why) {
+                    cb(e || (conflict || why ? new Error(conflict || why) : null), ro, activation);
+                });
+            });
+        });
+        return;
+    }
 
     if (msg.cmd === 'apply' || msg.cmd === 'revert') {
         var panel = msg.panel;

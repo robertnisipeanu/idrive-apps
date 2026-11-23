@@ -157,6 +157,16 @@ cluster the map goes on its map slot, or into a hosting app's scene or theme.
 0.10.9 read, is not read; it stays on the unit for a downgrade, and the log
 names it at each start.
 
+### CarPlay guidance-area choice
+
+`patchd` saves `standard` (the default) or `yandex` in
+`/var/opt/waze-on-cluster/carplay-safearea`. The app's `cp-safearea` command
+replans an enabled IC_HIGH 1088x480 map, keeping its other arguments, or
+saves the choice for the next apply while the patch is off. Install
+activation and boot recovery reconcile the saved choice before arming.
+Without a saved choice, custom CLI plans are preserved. See PATCH.md,
+"Safe area", for the rectangles and protocol.
+
 ### Map size and upload
 
 cluster-render writes only the 64x64 tiles of a frame that changed. The

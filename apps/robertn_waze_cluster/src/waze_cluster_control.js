@@ -104,6 +104,12 @@ const SIZE = '1088x480';
 /* The safe area CarPlay's Patch button writes: where the phone keeps its guidance UI,
  * inside the part of the map the gauges leave visible. */
 const SAFE = '504x368+286+72';
+const YANDEX_SAFE = '504x368+433+72';
+/* Guidance profiles in selector order; patchd saves their stable IDs. */
+const SAFEAREA_PROFILES = [
+    { id: 'standard', label: 'Default', safe: SAFE },
+    { id: 'yandex', label: 'Yandex Maps (experimental)', safe: YANDEX_SAFE }
+];
 /* The HUD map's size: HUD_STEP_PCT steps from HUD_MIN_PCT to HUD_MAX_PCT (85 %, the widest the HUD shows
  * whole), HUD_SIZE_STEPS of them. Standard (0) counts as HUD_STANDARD_PCT, about what the fitted box is. */
 const HUD_MIN_PCT = 30, HUD_MAX_PCT = 85, HUD_STEP_PCT = 5, HUD_STANDARD_PCT = 57;
@@ -376,6 +382,29 @@ class WazeClusterControl extends EventEmitter {
         if (this.canDisable()) {
             this._lastPatchCmd = 'revert';
             this.patch.send({ cmd: 'revert' });
+        }
+    }
+
+    /* The selected area applies to every CarPlay navigator, not per app.
+     * An older daemon omits safearea: keep the selector disabled there. */
+    safearea() {
+        const ps = this.patchStatus;
+        return ps && SAFEAREA_PROFILES.some((p) => p.id === ps.safearea) ? ps.safearea : null;
+    }
+
+    canChooseSafearea() {
+        const ps = this.patchStatus;
+        return this.connectedPatch() && this.safearea() !== null &&
+            !this.busy() && !this.pending() && !ps.conflict;
+    }
+
+    safeareaText() {
+        return t('Guidance area') + afterRestart(this.pending() === 'apply');
+    }
+
+    chooseSafearea(value) {
+        if (this.canChooseSafearea() && value !== this.safearea() && SAFEAREA_PROFILES.some((p) => p.id === value)) {
+            this.patch.send({ cmd: 'cp-safearea', value });
         }
     }
 
@@ -699,8 +728,9 @@ class WazeClusterControl extends EventEmitter {
      * panel, size or safe area, from an older app, or the cluster map URL without
      * the arrival-time card. */
     _outdated(ps) {
+        const profile = SAFEAREA_PROFILES.find((p) => p.id === ps.safearea) || SAFEAREA_PROFILES[0];
         return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
-            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE) || ps.mapurl === 'no-eta');
+            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== profile.safe) || ps.mapurl === 'no-eta');
     }
 
     /* ---- BMW's turn box ---- */
@@ -1096,5 +1126,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH,
-    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, HUD_SIZE_STEPS
+    SIZE, SAFE, SAFEAREA_PROFILES, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, HUD_SIZE_STEPS
 };

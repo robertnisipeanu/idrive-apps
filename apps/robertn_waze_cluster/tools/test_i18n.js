@@ -34,6 +34,7 @@ const used = new Set();
 const literal = /\bt\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1\s*[,)]/g;
 // t() given an element of a list: the list's words are keys
 const DYNAMIC = {
+    'robertn_waze_cluster.js': ['t(profile.label)'],
     'waze_cluster_control.js': ['t(RESTART_FAILED[r.code] || RESTART_FAILED.error)'],
     'logs_control.js': ['t(ERRORS[s.error] || ERRORS.failed)']
 };
@@ -50,6 +51,7 @@ MODULES.forEach((m) => {
     eq(other, DYNAMIC[name] || [], `${name}: every t() of a word not written out is a known list's`);
 });
 Object.values(require(path.join(SRC, 'waze_cluster_control.js')).RESTART_FAILED).forEach((w) => used.add(w));
+require(path.join(SRC, 'waze_cluster_control.js')).SAFEAREA_PROFILES.forEach((p) => used.add(p.label));
 Object.values(require(path.join(SRC, 'logs_control.js')).ERRORS).forEach((w) => used.add(w));
 Object.values(locales.RHMI_TEXTS).forEach((w) => used.add(w));
 ok(used.size > 40, `the app's words (${used.size})`);

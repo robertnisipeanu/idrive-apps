@@ -790,6 +790,66 @@
               }
             }
           ]
+        },
+        "64": {
+          "type": "dropDownMenu",
+          "name": "wocSafearea",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "ItemText": {
+                "value": "Default",
+                "type": "Text"
+              }
+            },
+            {
+              "ItemText": {
+                "value": "Yandex Maps (experimental)",
+                "type": "Text"
+              }
+            }
+          ],
+          "cells": {
+            "HeaderText": {
+              "value": "Guidance area",
+              "type": "Text"
+            },
+            "SelectedItem": {
+              "value": 0,
+              "type": "UInt"
+            }
+          }
+        },
+        "65": {
+          "type": "label",
+          "name": "wocSafeareaHint",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Guidance area: Applies to all CarPlay navigation apps",
+                "type": "Text"
+              }
+            }
+          ]
         }
       }
     },

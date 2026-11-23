@@ -287,7 +287,8 @@ async function main() {
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
-        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
+        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocSafearea Guidance area: Default',
+        'wocSafeareaHint Guidance area: Applies to all CarPlay navigation apps', 'wocWifi ', 'wocWifiHint ',
         'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
         'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card",
         'wocRestart Restart head unit', 'wocRestartStatus '],
@@ -362,6 +363,17 @@ async function main() {
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
+        await until('safe-area switch ready', () => byName.wocSafearea.enabled === true);
+        assert.strictEqual(byName.wocSafearea.shown(), 'Guidance area: Default');
+        assert.strictEqual(byName.wocSafearea.desc.type, 'dropDownMenu');
+        byName.wocSafearea.pick(1);
+        await until('Yandex area selected', () => byName.wocSafearea.shown() === 'Guidance area: Yandex Maps (experimental)' && patch.safe === '504x368+433+72');
+        assert.strictEqual(status.text, 'Status: Patched');
+        // The app deduplicates HMI presses for 400 ms.
+        await sleep(410);
+        byName.wocSafearea.pick(0);
+        await until('standard area restored', () => byName.wocSafearea.shown() === 'Guidance area: Default' && patch.safe === '504x368+286+72');
+        console.log('ok   the CarPlay guidance-area selector switches to Yandex and back');
         assert.deepStrictEqual(tileCalls, ['init', 'availability ENABLED'],
             'the tile: enabled, its name and icon left to the app manager');
         console.log('ok   the tile keeps the name and icon the app manager gave it');
