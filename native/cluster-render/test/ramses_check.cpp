@@ -766,6 +766,28 @@ static void backend(Gpu &gpu)
     ok("animations: stopped and dropped", g->flush(12));
 #ifndef CRS_RAMSES27
     ok("animations: with replaced and stopped ones retired, the scene described whole", described("check"));
+    /* Draw modes and instances: every mode, and a GLSL ES 3.00 part drawn
+     * 8 times by gl_InstanceID. */
+    const int es3 = gpu.effect("#version 300 es\nin vec3 a_position;\nuniform mat4 u_mvp;\n"
+                               "void main(){gl_PointSize=3.0;gl_Position=u_mvp*vec4(a_position+"
+                               "vec3(float(gl_InstanceID)*0.3,0.0,0.0),1.0);}",
+                               "#version 300 es\nprecision mediump float;\nout vec4 o;\nvoid main(){o=vec4(1.0);}",
+                               &err);
+    bool modes = es3 != 0;
+    std::vector<int> drawn;
+    for (Draw d : {Draw::Triangles, Draw::TriangleStrip, Draw::Lines, Draw::LineLoop, Draw::Points}) {
+        PartLook look;
+        look.draw = d;
+        look.instances = 8;
+        const int p = modes ? g->part(v1, es3, look) : 0;
+        modes = modes && p && g->geometry(p, cube.geometry());
+        drawn.push_back(p);
+    }
+    ok("draw: every draw mode, 8 instances each, from a GLSL ES 3.00 effect", modes && g->flush(8));
+    for (int p : drawn)
+        g->drop_part(p);
+#ifndef CRS_RAMSES27
+    ok("draw: the scene described whole", described("check"));
 #endif
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,

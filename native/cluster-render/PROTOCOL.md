@@ -44,7 +44,7 @@ lacks.
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
-| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)) |
+| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)); `draw` and `instances` ([below](#draw-modes-and-instances)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
 | `stop` | `ref`, `anim` |
@@ -237,8 +237,9 @@ f32 positions (xyz per vertex) |
 u16 indices (triangles)
 ```
 
-All little-endian. 1 to 65535 vertices; 3 to 196605 indices, whole
-triangles, each less than the vertex count; every value finite; the body at
+All little-endian. 1 to 65535 vertices; 1 to 196605 indices, as many as
+the part's draw mode takes (whole triangles by default), each less than the
+vertex count; every value finite; the body at
 most 4 MiB and exactly this long. Anything else is refused with an `error`
 event (`op` `mesh`). The geometry becomes immutable resources in the
 renderer: a part's geometry may be replaced, at most once a second, and its
@@ -298,6 +299,20 @@ apart, at most 1,024 keys in all. It plays the same on RAMSES 19 and RAMSES
 keys. The service works the curve out in double; a curve that leaves the
 range of a float (keys near ±3.4e38) is refused (`the curve leaves the
 numbers a key holds`).
+
+### Draw modes and instances
+
+Send these only to a service whose hello has `draw` 1. A part's `draw` is
+how its indices are drawn, the modes RAMSES 19 and RAMSES 27 share:
+`triangles` (default; whole triangles), `triangle_strip` (3 or more),
+`lines` (whole pairs), `line_loop` (2 or more) or `points` (1 or more; the
+vertex shader sets `gl_PointSize`). Lines are a pixel wide. Geometry whose
+index count does not fit its part's mode is refused (`the part's indices
+are ...`). A part's `instances` (1-256, default 1) draws its geometry that
+many times in one draw, `gl_InstanceID` telling them apart in a GLSL ES
+3.00 vertex shader (`#version 300 es`, `in` and `out` in place of
+`attribute` and `varying`); its vertices times its instances are at most
+1,048,576. Both are set when the part is made.
 
 ### Part hierarchies
 
@@ -773,7 +788,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes and instances](#draw-modes-and-instances)) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

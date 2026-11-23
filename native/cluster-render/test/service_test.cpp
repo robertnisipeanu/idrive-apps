@@ -2888,6 +2888,32 @@ static void motion_over_socket()
          at = later.find("a pivot (node 1) has no shaders", at + 1))
         n++;
     ok("motion: a pivot sent with shaders refused, nothing made", n == 2 && rm && !rm->has_part(3) && !rm->has_part(4));
+
+    /* Draw modes and instances over the socket. */
+    ok("draw: the hello says the service takes draw modes", c.takes_draw());
+    cr::RenderState lines;
+    lines.draw = "lines";
+    lines.instances = 4;
+    cr::Geometry seg;
+    seg.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
+    seg.indices = {0, 1, 2, 3};
+    ok("draw: a part of 4 instances of lines", c.part(box, 3, po, lines) && c.geometry(box, 3, seg));
+    r.pump(300);
+    FakeGraph *g = r.gpu.graph("panel");
+    bool drawn = false;
+    if (g)
+        for (const auto &kv : g->shown.parts)
+            drawn = drawn || (kv.second.look.draw == Draw::Lines && kv.second.look.instances == 4 &&
+                              kv.second.geometry && kv.second.indices == 4);
+    ok("draw: drawn as asked", drawn);
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":4,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"draw\":\"quads\"}");
+    raw.send("{\"op\":\"part\",\"ref\":1,\"part\":5,\"vs\":\"attribute vec3 a_position;void main(){}\","
+             "\"fs\":\"void main(){}\",\"instances\":300}");
+    r.pump(50);
+    const std::string ev2 = raw.events();
+    ok("draw: an unknown draw mode refused", ev2.find("draw must be triangles, triangle_strip") != std::string::npos);
+    ok("draw: past 256 instances refused", ev2.find("instances must be a number from 1 to 256") != std::string::npos);
 }
 
 /* A reconnect under a small upload budget: the client sends every animation

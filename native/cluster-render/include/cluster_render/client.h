@@ -116,6 +116,12 @@ struct RenderState {
      * (-1: not sent). */
     std::string stencil_func, stencil_fail, stencil_depth_fail, stencil_pass;
     int stencil_ref = -1, stencil_mask = -1;
+    /* Parts, to a service whose hello has draw (Client::takes_draw()): draw
+     * triangles, triangle_strip, lines, line_loop or points (empty:
+     * triangles); instances 1-256 (0: not sent), gl_InstanceID in a GLSL ES
+     * 3.00 vertex shader. */
+    std::string draw;
+    unsigned instances = 0;
 };
 
 /* GLSL ES 1.00; the fragment shader gets varying vec2 v_uv (0,0 at the
@@ -434,6 +440,8 @@ public:
     bool takes_curves() const { return curves_; }
     /* The service's hello takes pivots and parents (pivot(), part()). */
     bool takes_nodes() const { return nodes_; }
+    /* The service's hello takes a part's draw mode and instances (RenderState). */
+    bool takes_draw() const { return draw_; }
 
 private:
     struct Part {
@@ -553,6 +561,7 @@ private:
     bool canvas_ = false;           /* and canvases */
     bool curves_ = false;           /* and eased curves */
     bool nodes_ = false;            /* and pivots and parents */
+    bool draw_ = false;             /* and draw modes and instances */
     uint64_t parts_made_ = 0;
 };
 

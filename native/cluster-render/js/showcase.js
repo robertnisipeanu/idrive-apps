@@ -21,7 +21,10 @@
  *   motion  eased curves and part hierarchies (a service whose hello has
  *           curves and nodes): two needles swept the same way, linear and
  *           ease_in_out; an arm and a spinning tip that follow a pivot the
- *           renderer turns along a smooth curve.
+ *           renderer turns along a smooth curve;
+ *   geometry draw modes and instances (a service whose hello has draw):
+ *           16 cubes drawn as instances of one, a ring as a line loop and
+ *           a field of points, all turned by the renderer.
  * Every animation runs in the renderer; the client sends only the text once
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
@@ -29,7 +32,7 @@
  * On the unit (Node 8): copy this file and cluster_render_client.js into one
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion]
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -38,7 +41,7 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -145,6 +148,48 @@ varying vec2 v_uv;
 void main() {
     float a = u_color.a * smoothstep(0.5, 0.0, length(v_uv - 0.5));
     gl_FragColor = vec4(u_color.rgb * a, a);
+}`;
+
+/* GLSL ES 3.00: each instance its own place in a 4x4 grid and colour. */
+const INSTANCED_VS = `#version 300 es
+in vec3 a_position;
+in vec3 a_normal;
+uniform mat4 u_mvp;
+uniform mat4 u_normal;
+out vec3 v_n;
+out vec3 v_c;
+void main() {
+    float i = float(gl_InstanceID);
+    vec3 at = vec3(mod(i, 4.0) * 2.6 - 3.9, floor(i / 4.0) * 2.6 - 3.9, 0.0);
+    v_n = (u_normal * vec4(a_normal, 0.0)).xyz;
+    v_c = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + i * 0.4);
+    gl_Position = u_mvp * vec4(a_position * 0.8 + at, 1.0);
+}`;
+
+const INSTANCED_FS = `#version 300 es
+precision mediump float;
+in vec3 v_n;
+in vec3 v_c;
+out vec4 o;
+void main() {
+    float d = max(dot(normalize(v_n), normalize(vec3(0.4, 0.7, 0.6))), 0.0);
+    o = vec4(v_c * (0.25 + 0.75 * d), 1.0);
+}`;
+
+/* Points and lines: a colour, each point 3 pixels. */
+const FLAT_VS = `#version 100
+attribute vec3 a_position;
+uniform mat4 u_mvp;
+void main() {
+    gl_PointSize = 3.0;
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}`;
+
+const FLAT_FS = `#version 100
+precision mediump float;
+uniform vec4 u_color;
+void main() {
+    gl_FragColor = u_color;
 }`;
 
 /* Seven-segment glyphs, 16x32 each, in one 512x32 R8 atlas. */
@@ -450,6 +495,39 @@ function main() {
         cr.animate(rig, { part: 10, property: 'rotate', interp: 'smooth', loop: true,
             keys: '0:0,0,0 1500:0,0,70 2500:0,0,40 4000:0,0,160 6000:0,0,360' });
         cr.animate(rig, { part: 2, property: 'rotate', loop: true, keys: '0:0,0,0 1000:360,360,0' });
+    }
+
+    if (on('geometry')) {
+        /* 16 cubes: one cube's geometry, drawn 16 times. */
+        const grid = name(cr.mesh({ target: target, x: Math.round(W * 0.02), y: Math.round(H * 0.05),
+            w: Math.round(W * 0.4), h: Math.round(H * 0.9), fov: 30, cz: 22 }), 'instances');
+        cr.part(grid, 1, { vs: INSTANCED_VS, fs: INSTANCED_FS, depth: true, cull: 'back', instances: 16 });
+        cr.geometry(grid, 1, cube());
+        cr.animate(grid, { part: 1, property: 'rotate', keys: '0:0,0,0 8000:0,360,0', loop: true });
+        /* A ring as a line loop and a field of points, turned together. */
+        const sky = name(cr.mesh({ target: target, x: Math.round(W * 0.5), y: Math.round(H * 0.05),
+            w: Math.round(W * 0.45), h: Math.round(H * 0.9), fov: 30, cz: 9 }), 'lines and points');
+        const ring = { positions: [], indices: [] };
+        for (let k = 0; k < 96; k++) {
+            const a = k * Math.PI * 2 / 96;
+            ring.positions.push(Math.cos(a) * 2.2, Math.sin(a) * 2.2, 0);
+            ring.indices.push(k);
+        }
+        cr.part(sky, 1, { vs: FLAT_VS, fs: FLAT_FS, depth: false, cull: 'none', draw: 'line_loop' });
+        cr.geometry(sky, 1, ring);
+        cr.uniform(sky, 'u_color', [0.4, 0.8, 1, 1], { part: 1 });
+        const stars = { positions: [], indices: [] };
+        let seed = 7;
+        const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+        for (let k = 0; k < 600; k++) {
+            stars.positions.push(rnd() * 6 - 3, rnd() * 6 - 3, rnd() * 2 - 1);
+            stars.indices.push(k);
+        }
+        cr.part(sky, 2, { vs: FLAT_VS, fs: FLAT_FS, depth: false, cull: 'none', draw: 'points' });
+        cr.geometry(sky, 2, stars);
+        cr.uniform(sky, 'u_color', [1, 0.9, 0.6, 1], { part: 2 });
+        cr.animate(sky, { part: 1, property: 'rotate', keys: '0:60,0,0 6000:60,0,360', loop: true });
+        cr.animate(sky, { part: 2, property: 'rotate', keys: '0:0,0,0 12000:0,360,0', loop: true });
     }
 
     if (on('alert')) {

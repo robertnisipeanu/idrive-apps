@@ -253,6 +253,16 @@ inline bool operator==(const StencilState &a, const StencilState &b)
     return a.func == b.func && a.ref == b.ref && a.mask == b.mask && a.fail == b.fail &&
            a.depth_fail == b.depth_fail && a.pass == b.pass;
 }
+/* How a part's indices are drawn: the modes RAMSES 19 and RAMSES 27 share.
+ * Lines are a pixel wide (neither sets the GL line width). */
+enum class Draw { Triangles, TriangleStrip, Lines, LineLoop, Points };
+/* The fewest indices a mode draws, and the multiple its count is of. */
+inline uint32_t draw_min(Draw d) { return d == Draw::Points ? 1 : d == Draw::Lines || d == Draw::LineLoop ? 2 : 3; }
+inline uint32_t draw_step(Draw d) { return d == Draw::Triangles ? 3 : d == Draw::Lines ? 2 : 1; }
+/* Instances a part draws at most, and their vertices together at most. */
+const uint32_t kMaxInstances = 256;
+const uint64_t kMaxInstancedVertices = 1048576;
+
 /* Colour channels written, as bits. */
 const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;
 /* How a part (or a quad, with style()) is drawn: depth tested with
@@ -269,6 +279,8 @@ struct PartLook {
     BlendState custom;
     uint8_t color_mask = kMaskRGBA;
     StencilState stencil;
+    Draw draw = Draw::Triangles;   /* a part's; a quad's is its two triangles */
+    uint32_t instances = 1;        /* a part's: gl_InstanceID 0 to instances - 1 */
 
     BlendState blending() const { return has_custom ? custom : blend_state(blend); }
     DepthFunc depth_test() const { return depth ? depth_func : DepthFunc::Off; }
@@ -277,7 +289,8 @@ struct PartLook {
 inline bool operator==(const PartLook &a, const PartLook &b)
 {
     return a.depth_test() == b.depth_test() && a.depth_writes() == b.depth_writes() && a.cull == b.cull &&
-           a.blending() == b.blending() && a.color_mask == b.color_mask && a.stencil == b.stencil;
+           a.blending() == b.blending() && a.color_mask == b.color_mask && a.stencil == b.stencil &&
+           a.draw == b.draw && a.instances == b.instances;
 }
 inline bool operator!=(const PartLook &a, const PartLook &b) { return !(a == b); }
 /* A quad's look unless styled: blended at source alpha, no depth, no

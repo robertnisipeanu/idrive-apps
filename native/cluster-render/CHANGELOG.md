@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.3
+A mesh part can draw lines, a line loop, points or a triangle strip as well
+as triangles, and draw its geometry up to 256 times at once (instances),
+for gauge ticks, star fields or rows of identical shapes sent once.
+
 Animations can be eased (`ease_in`, `ease_out`, `ease_in_out`) or follow a
 smooth curve through their keys, played by the cluster with nothing sent
 per frame. A mesh part can follow another part or a pivot that draws

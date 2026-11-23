@@ -92,6 +92,10 @@ bool apply_look(ramses::Appearance &app, const PartLook &look)
                                                                  : ramses::ECullMode_Disabled)) &&
                 ok(app.setColorWriteMask(look.color_mask & kMaskR, look.color_mask & kMaskG, look.color_mask & kMaskB,
                                          look.color_mask & kMaskA));
+    static const ramses::EDrawMode modes[] = {ramses::EDrawMode_Triangles, ramses::EDrawMode_TriangleStrip,
+                                              ramses::EDrawMode_Lines, ramses::EDrawMode_LineLoop,
+                                              ramses::EDrawMode_Points};
+    good = good && ok(app.setDrawMode(modes[(int)look.draw]));
     const StencilState &st = look.stencil;
     good = good && ok(app.setStencilFunction(stencil_func(st.func), st.ref, st.mask)) &&
            ok(app.setStencilOperation(stencil_op(st.fail), stencil_op(st.depth_fail), stencil_op(st.pass)));
@@ -569,6 +573,12 @@ public:
             if (mesh) scene_->destroy(*mesh);
             if (geo) scene_->destroy(*geo);
             if (app) scene_->destroy(*app);
+            return 0;
+        }
+        if (look.instances > 1 && !ok(mesh->setInstanceCount(look.instances))) {
+            scene_->destroy(*mesh);
+            scene_->destroy(*geo);
+            scene_->destroy(*app);
             return 0;
         }
         Part p;

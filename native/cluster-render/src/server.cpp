@@ -184,6 +184,17 @@ bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err,
     if (!num(j, "depth", 0, 1, &depth, err) || !choice(j, "depth_func", funcs, &func, err) ||
         !num(j, "depth_write", 0, 1, &write, err) || !choice(j, "cull", {"back", "front", "none"}, &cull, err))
         return false;
+    int draw = (int)look->draw;
+    double instances = look->instances;
+    if (!choice(j, "draw", {"triangles", "triangle_strip", "lines", "line_loop", "points"}, &draw, err) ||
+        !num(j, "instances", 1, kMaxInstances, &instances, err))
+        return false;
+    if (instances != (double)(uint32_t)instances) {
+        *err = "instances is a whole number from 1 to 256";
+        return false;
+    }
+    look->draw = (Draw)draw;
+    look->instances = (uint32_t)instances;
     look->depth = depth != 0;
     look->depth_func = (DepthFunc)(func + 1);
     look->depth_write = write != 0;
@@ -797,7 +808,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"host_layers", "1"},
                                  {"canvas", "1"},
                                  {"curves", "1"},
-                                 {"nodes", "1"}}));
+                                 {"nodes", "1"},
+                                 {"draw", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();

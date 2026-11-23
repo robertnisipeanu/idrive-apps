@@ -99,6 +99,17 @@ bool MeshLayer::set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std
         *err = "a pivot draws nothing: it has no geometry";
         return false;
     }
+    static const char *const kinds[] = {"whole triangles", "a triangle strip of 3 or more",
+                                        "whole lines", "a line loop of 2 or more", "points"};
+    const size_t indices = data.index.size();
+    if (indices < draw_min(p.look.draw) || indices % draw_step(p.look.draw)) {
+        *err = std::string("the part's indices are ") + kinds[(int)p.look.draw];
+        return false;
+    }
+    if ((uint64_t)data.vertices * p.look.instances > kMaxInstancedVertices) {
+        *err = "a part's vertices times its instances are at most 1048576";
+        return false;
+    }
     static const struct { unsigned bit; const char *name; } attrs[] = {
         {kAttrNormal, "a_normal"}, {kAttrTexcoord, "a_texcoord"}, {kAttrColor, "a_color"}};
     for (const auto &a : attrs)

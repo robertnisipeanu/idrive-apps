@@ -203,13 +203,19 @@ namespace ramses
         EDepthWrite_Enabled = 1
     };
 
+    // The values Appearance::setDrawMode takes (VERIFIED: its table at
+    // 0x69a560 maps 0-4 to the library's internal Points, Lines, Triangles,
+    // TriangleStrip, LineLoop; a new appearance reads back 2 and draws
+    // triangles; 3 draws a strip). getDrawModeString indexes the internal
+    // names with the public value, so its order (Points, Lines, LineLoop,
+    // Triangles, TriangleStrip) is not this one. The same as RAMSES 27's.
     enum EDrawMode
     {
         EDrawMode_Points = 0,
         EDrawMode_Lines = 1,
-        EDrawMode_LineLoop = 2,
-        EDrawMode_Triangles = 3,
-        EDrawMode_TriangleStrip = 4
+        EDrawMode_Triangles = 2,
+        EDrawMode_TriangleStrip = 3,
+        EDrawMode_LineLoop = 4
     };
 
     enum EStencilFunc

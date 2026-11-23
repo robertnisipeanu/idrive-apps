@@ -272,6 +272,9 @@ Beside the layers:
   offset and scale, a part's pose, a mesh camera, or a uniform, linear,
   stepped or eased (`ease_in`, `ease_out`, `ease_in_out`, `smooth`); nothing
   is sent per frame.
+- **Draw modes and instances:** a mesh part draws triangles, a triangle
+  strip, lines, a line loop or points, and its geometry up to 256 times in
+  one draw by `gl_InstanceID` (PROTOCOL.md "Draw modes and instances").
 - **Part hierarchies:** a mesh part can follow another part or a pivot that
   draws nothing, so one animation turns a whole assembly (PROTOCOL.md "Part
   hierarchies").

@@ -66,7 +66,7 @@ const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'c
 const LOOK_KEYS = ['blend', 'blend_src', 'blend_dst', 'blend_src_alpha', 'blend_dst_alpha', 'blend_op',
     'blend_op_alpha', 'color_mask', 'stencil_func', 'stencil_ref', 'stencil_mask', 'stencil_fail',
     'stencil_depth_fail', 'stencil_pass'];
-const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull'];
+const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull', 'draw', 'instances'];
 const BLEND_KEYS = LOOK_KEYS.filter((k) => k.indexOf('blend_') === 0);
 
 /* An effect layer's kept look takes a set's look fields as the service
@@ -292,6 +292,7 @@ class ClusterRender extends EventEmitter {
             this.canvases = ev.canvas === 1;   /* takes canvases and layers drawn in them */
             this.curves = ev.curves === 1;   /* takes interp ease_in, ease_out, ease_in_out, smooth */
             this.nodes = ev.nodes === 1;   /* takes pivot parts and parents */
+            this.draw = ev.draw === 1;   /* takes a part's draw mode and instances */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -664,7 +665,10 @@ class ClusterRender extends EventEmitter {
      * service whose hello has nodes: node: true, a pivot that draws nothing
      * (no shaders), and parent, the number of a part made before that this
      * one follows (its transform then relative to the parent's). Parts are
-     * made again after a reconnect in the order they were made. */
+     * made again after a reconnect in the order they were made. To a
+     * service whose hello has draw: draw ('triangles' default,
+     * 'triangle_strip', 'lines', 'line_loop', 'points') and instances
+     * (1-256; gl_InstanceID in a GLSL ES 3.00 vertex shader). */
     part(ref, part, opts) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'mesh' || !(part > 0) || l.parts.has(part)) return false;
@@ -691,7 +695,7 @@ class ClusterRender extends EventEmitter {
         const v = g.positions.length / 3;
         const per = (a, n) => !a || !a.length || a.length === v * n;
         if (!p || !(v >= 1 && v <= 65535 && Number.isInteger(v)) || !per(g.normals, 3) || !per(g.texcoords, 2) ||
-            !per(g.colors, 4) || !(g.indices.length >= 3 && g.indices.length % 3 === 0 && g.indices.length <= 196605)) {
+            !per(g.colors, 4) || !(g.indices.length >= 1 && g.indices.length <= 196605)) {
             return false;
         }
         for (let i = 0; i < g.indices.length; i++) if (!(g.indices[i] < v)) return false;

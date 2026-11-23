@@ -146,7 +146,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -234,6 +234,7 @@ void Client::read_events()
             canvas_ = j["canvas"] == "1";
             curves_ = j["curves"] == "1";
             nodes_ = j["nodes"] == "1";
+            draw_ = j["draw"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -468,6 +469,10 @@ void look_fields(std::vector<std::pair<std::string, std::string>> *kv, const Ren
         kv->push_back({"stencil_ref", std::to_string(r.stencil_ref)});
     if (r.stencil_mask >= 0)
         kv->push_back({"stencil_mask", std::to_string(r.stencil_mask)});
+    if (!r.draw.empty())
+        kv->push_back({"draw", json_quote(r.draw)});
+    if (r.instances)
+        kv->push_back({"instances", std::to_string(r.instances)});
 }
 
 }  // namespace
@@ -978,7 +983,7 @@ bool Client::geometry(uint32_t ref, uint32_t part, const Geometry &g)
     const size_t v = g.positions.size() / 3;
     if (g.positions.size() % 3 || v < 1 || v > kMaxMeshVertices || (!g.normals.empty() && g.normals.size() != v * 3) ||
         (!g.texcoords.empty() && g.texcoords.size() != v * 2) || (!g.colors.empty() && g.colors.size() != v * 4) ||
-        g.indices.size() < 3 || g.indices.size() % 3 || g.indices.size() > kMaxMeshIndices)
+        g.indices.empty() || g.indices.size() > kMaxMeshIndices)
         return false;
     for (uint16_t i : g.indices)
         if (i >= v)

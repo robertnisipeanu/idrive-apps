@@ -661,6 +661,8 @@ public:
         for (const auto &n : names)
             if (v.find(std::string("attribute vec3 ") + n.name) != std::string::npos ||
                 v.find(std::string("attribute vec2 ") + n.name) != std::string::npos ||
+                v.find(std::string("in vec3 ") + n.name) != std::string::npos || /* GLSL ES 3.00 */
+                v.find(std::string("in vec2 ") + n.name) != std::string::npos || v.find(std::string("in vec4 ") + n.name) != std::string::npos ||
                 v.find(std::string("attribute vec4 ") + n.name) != std::string::npos)
                 a |= n.bit;
         effects[next_effect] = fs;

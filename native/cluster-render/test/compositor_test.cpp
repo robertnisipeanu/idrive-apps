@@ -3450,6 +3450,40 @@ static void keys_waiting_where_parked()
        r.g("map") && r.g("map")->animations_due() && r.comp->pacer().allowance() == int64_t(64 * 1024 * 250 / 1000));
 }
 
+/* Draw modes and instances: a part's index count checked by its mode, its
+ * vertices times its instances bounded, both given to the renderer. */
+static void draw_modes()
+{
+    Rig r;
+    std::string err;
+    MeshParams mp;
+    const uint32_t id = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(0, 0, 640, 480)), mp, r.now, &err);
+    PartLook lines;
+    lines.draw = Draw::Lines;
+    PartLook many;
+    many.instances = 200;
+    ok("draw: a part of lines, one of 200 instances",
+       r.comp->add_part(1, id, 1, kLitVs, kPartFs, lines, 0, &err) && r.comp->add_part(1, id, 2, kLitVs, kPartFs, many, 0, &err));
+    MeshData odd = fan(4, true);
+    odd.index.pop_back();
+    ok("draw: lines take whole lines", !r.comp->geometry(1, id, 1, std::move(odd), r.now, &err) &&
+                                           err == "the part's indices are whole lines");
+    MeshData pairs = fan(4, true);
+    pairs.index.resize(4);
+    ok("draw: and are taken", r.comp->geometry(1, id, 1, std::move(pairs), r.now, &err));
+    ok("draw: 200 instances of 6000 vertices refused", !r.comp->geometry(1, id, 2, fan(6000, true), r.now, &err) &&
+                                                            err.find("1048576") != std::string::npos);
+    ok("draw: of 4 taken", r.comp->geometry(1, id, 2, fan(4, true), r.now, &err));
+    r.run(300);
+    FakeGraph *g = r.g("panel");
+    bool drawn_lines = false, drawn_many = false;
+    for (const auto &kv : g ? g->shown.parts : std::map<int, FakePart>()) {
+        drawn_lines = drawn_lines || (kv.second.look.draw == Draw::Lines && kv.second.geometry);
+        drawn_many = drawn_many || (kv.second.look.instances == 200 && kv.second.geometry);
+    }
+    ok("draw: both drawn as asked", drawn_lines && drawn_many);
+}
+
 int main()
 {
     image_first_upload();
@@ -3499,6 +3533,7 @@ int main()
     writes_and_keys_within_cap();
     keys_waiting_where_parked();
     pacer_settled_at_its_old_rate();
+    draw_modes();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

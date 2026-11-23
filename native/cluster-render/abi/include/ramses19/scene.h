@@ -222,6 +222,7 @@ namespace ramses
         status_t setCullingMode(ECullMode mode);
         status_t getCullingMode(ECullMode& mode) const;
         status_t setDrawMode(EDrawMode mode);
+        status_t getDrawMode(EDrawMode& mode) const;
         status_t setColorWriteMask(bool writeRed, bool writeGreen, bool writeBlue, bool writeAlpha);
         status_t getColorWriteMask(bool& writeRed, bool& writeGreen, bool& writeBlue, bool& writeAlpha) const;
         status_t setStencilFunction(EStencilFunc func, uint32_t ref, uint8_t mask);
