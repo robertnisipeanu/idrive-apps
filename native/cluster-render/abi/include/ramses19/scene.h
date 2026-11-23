@@ -226,7 +226,9 @@ namespace ramses
         status_t setColorWriteMask(bool writeRed, bool writeGreen, bool writeBlue, bool writeAlpha);
         status_t getColorWriteMask(bool& writeRed, bool& writeGreen, bool& writeBlue, bool& writeAlpha) const;
         status_t setStencilFunction(EStencilFunc func, uint32_t ref, uint8_t mask);
+        status_t getStencilFunction(EStencilFunc& func, uint32_t& ref, uint8_t& mask) const;
         status_t setStencilOperation(EStencilOperation sfail, EStencilOperation dpfail, EStencilOperation dppass);
+        status_t getStencilOperation(EStencilOperation& sfail, EStencilOperation& dpfail, EStencilOperation& dppass) const;
 
         const Effect& getEffect() const;
 

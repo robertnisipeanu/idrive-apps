@@ -766,6 +766,8 @@ static void backend(Gpu &gpu)
     ok("animations: stopped and dropped", g->flush(12));
 #ifndef CRS_RAMSES27
     ok("animations: with replaced and stopped ones retired, the scene described whole", described("check"));
+#endif
+
     /* Draw modes and instances: every mode, and a GLSL ES 3.00 part drawn
      * 8 times by gl_InstanceID. */
     const int es3 = gpu.effect("#version 300 es\nin vec3 a_position;\nuniform mat4 u_mvp;\n"
@@ -784,6 +786,89 @@ static void backend(Gpu &gpu)
         drawn.push_back(p);
     }
     ok("draw: every draw mode, 8 instances each, from a GLSL ES 3.00 effect", modes && g->flush(8));
+    const int es3_quad = gpu.effect("#version 300 es\nin vec2 a_position;\nuniform mat4 u_mvp;\nout vec2 v_uv;\n"
+                                    "void main(){v_uv=a_position;gl_Position=u_mvp*vec4(a_position,0.0,1.0);}",
+                                    "#version 300 es\nprecision mediump float;\nin vec2 v_uv;\nout vec4 o;\n"
+                                    "void main(){o=vec4(v_uv,0.0,1.0);}",
+                                    &err);
+    Rect er;
+    er.w = er.h = 64;
+    const int eq = es3_quad ? g->quad(es3_quad, er) : 0;
+    ok("draw: an effect quad from GLSL ES 3.00 shaders", eq && g->show(eq, true) && g->flush(8));
+
+    /* Every value of each render state enum set on a part and read back
+     * from the library through the backend's own tables; and a new
+     * appearance, as the library makes it, read through the same tables:
+     * triangles, back faces culled, depth tested less-or-equal and written,
+     * stencil off, every channel written. A table out of the library's
+     * order reads its defaults as other values (ABI.md: each setter keeps
+     * the value, and the renderer's GL tables give it the header's
+     * meaning). */
+    std::vector<PartLook> looks;
+    for (int d = 0; d < 5; d++) {
+        looks.push_back(PartLook());
+        looks.back().draw = (Draw)d;
+    }
+    for (int c = 0; c < 3; c++) {
+        looks.push_back(PartLook());
+        looks.back().cull = (Cull)c;
+    }
+    for (int f = 0; f < 9; f++) {
+        looks.push_back(PartLook());
+        looks.back().depth = f != 0;
+        looks.back().depth_func = f ? (DepthFunc)f : DepthFunc::LessEqual;
+        looks.back().depth_write = f % 2 == 0;
+    }
+    for (int f = 0; f < 6; f++) {
+        looks.push_back(PartLook());
+        BlendState &b = looks.back().custom;
+        looks.back().has_custom = true;
+        b.src = (BlendFactor)f;
+        b.dst = (BlendFactor)((f + 1) % 6);
+        b.src_alpha = (BlendFactor)((f + 2) % 6);
+        b.dst_alpha = (BlendFactor)((f + 3) % 6);
+        b.op = (BlendOp)(f % 5);
+        b.op_alpha = (BlendOp)((f + 1) % 5);
+    }
+    looks.push_back(PartLook());
+    looks.back().blend = Blend::None;
+    for (int s = 0; s < 9; s++) {
+        looks.push_back(PartLook());
+        StencilState &st = looks.back().stencil;
+        st.func = (StencilFunc)s;
+        st.ref = (uint8_t)(s * 20);
+        st.mask = 0xf0;
+        st.fail = (StencilOp)(s % 8);
+        st.depth_fail = (StencilOp)((s + 1) % 8);
+        st.pass = (StencilOp)((s + 2) % 8);
+    }
+    for (int m = 0; m < 16; m++) {
+        looks.push_back(PartLook());
+        looks.back().color_mask = (uint8_t)m;
+    }
+    int read = 0;
+    for (const PartLook &l : looks) {
+        const int p = g->part(v1, lit_fx, l);
+        PartLook back;
+        if (p && g->read_look(p, &back) && back == l)
+            read++;
+        else
+            std::printf("     not read back: look %d\n", read);
+        g->drop_part(p);
+    }
+    ok("render state: every draw mode, cull mode, depth function, blend factor and operation, stencil function and "
+       "operation and colour mask read back as set",
+       read == (int)looks.size());
+    const int fresh_part = g->part(v1, lit_fx, PartLook());
+    PartLook fresh;
+    ok("render state: a new appearance reads triangles, back faces culled, depth less-or-equal and written, no "
+       "stencil, every channel",
+       fresh_part && g->read_look(fresh_part, &fresh, true) && fresh.draw == Draw::Triangles &&
+           fresh.cull == Cull::Back && fresh.depth_test() == DepthFunc::LessEqual && fresh.depth_writes() &&
+           fresh.stencil.func == StencilFunc::Off && fresh.color_mask == kMaskRGBA);
+    g->drop_part(fresh_part);
+    g->drop_quad(eq);
+    gpu.drop_effect(es3_quad);
     for (int p : drawn)
         g->drop_part(p);
 #ifndef CRS_RAMSES27

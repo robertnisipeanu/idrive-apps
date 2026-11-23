@@ -128,8 +128,8 @@ Kind fields:
 | image | `iw`, `ih` | the rect | the image size, up to 1920x720 |
 | | `fps` | 30 | writes a second at most |
 | | `sampling` | `nearest` | or `bilinear` (a rect of another size than the image) |
-| effect | `fs` | — | the fragment shader, GLSL ES 1.00, with `varying vec2 v_uv` (0,0 at the top-left) |
-| | `vs` | the service's | a vertex shader with `attribute vec2 a_position` and `uniform mat4 u_mvp` |
+| effect | `fs` | — | the fragment shader, with `v_uv` (0,0 at the top-left): GLSL ES 1.00 (`varying vec2 v_uv`) with the service's `vs`, or the version of the client's `vs` |
+| | `vs` | the service's (GLSL ES 1.00) | a vertex shader with `a_position` (vec2) and `uniform mat4 u_mvp`: GLSL ES 1.00, or 3.00 (`#version 300 es`, `in` and `out` for `attribute` and `varying`), as its `fs` |
 | | `time_fps` | 0 | `u_time` (seconds since the layer was made) updated this often |
 | | `time` | 0 | 1: `u_time` from the renderer's own clock, seconds from 0 to 3600 and again, nothing sent per frame (declare it `highp`); excludes `time_fps` |
 | | `blend`, `blend_*`, `color_mask` | `alpha`, `rgba` | how its quad blends and which channels it writes ([below](#render-state)); a `set` changes them |
@@ -208,13 +208,16 @@ uncompressed ones cost upload at each change.
 
 ### Shaders
 
-GLSL ES 1.00. The renderer fills these uniforms wherever a shader declares
-them, so in every shader they are reserved for it and must be mat4:
+GLSL ES 1.00, or GLSL ES 3.00 where a shader starts `#version 300 es` (the
+two shaders of an effect or part the same version; `in` and `out` in place
+of `attribute` and `varying`). The renderer fills these uniforms wherever a
+shader declares them, so in every shader they are reserved for it and must
+be mat4:
 `u_mvp`, `u_mv`, `u_m`, `u_v`, `u_p` (model-view-projection, model-view,
 model, view, projection) and `u_normal` (the inverse transpose of `u_mv`).
-A part's vertex shader reads `attribute vec3 a_position` and any of
-`vec3 a_normal`, `vec2 a_texcoord`, `vec4 a_color`; its geometry must carry
-every attribute it reads.
+A part's vertex shader reads `vec3 a_position` (an `attribute`, or `in` in
+GLSL ES 3.00) and any of `vec3 a_normal`, `vec2 a_texcoord`, `vec4
+a_color`; its geometry must carry every attribute it reads.
 
 ### Uniforms
 
@@ -234,7 +237,7 @@ f32 positions (xyz per vertex) |
 [f32 normals (xyz)]    mask 1
 [f32 texcoords (uv)]   mask 2
 [f32 colors (rgba)]    mask 4
-u16 indices (triangles)
+u16 indices (as the part's draw mode takes them)
 ```
 
 All little-endian. 1 to 65535 vertices; 1 to 196605 indices, as many as
@@ -313,6 +316,15 @@ many times in one draw, `gl_InstanceID` telling them apart in a GLSL ES
 3.00 vertex shader (`#version 300 es`, `in` and `out` in place of
 `attribute` and `varying`); its vertices times its instances are at most
 1,048,576. Both are set when the part is made.
+
+What a frame draws is bounded, in indices drawn (a part's indices times its
+instances): a part at most 196,605 (65,535 triangles, as many as one part's
+geometry holds without instances), a mesh layer's parts together 393,216,
+and every mesh layer on a target, of every client, on screen and in
+canvases, 786,432 (262,144 triangles). Geometry past one of them is refused
+(`a part draws at most 196605 indices: ...`, `a mesh layer's parts draw at
+most 393216 indices together`, `a target's mesh layers draw at most 786432
+indices together`).
 
 ### Part hierarchies
 

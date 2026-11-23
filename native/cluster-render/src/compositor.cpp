@@ -417,7 +417,7 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
         attrs = gpu_->attributes(fx);
         if (!(attrs & kAttrPosition)) {
             gpu_->drop_effect(fx);
-            *err = "a part's vertex shader reads attribute vec3 a_position";
+            *err = "a part's vertex shader reads a vec3 a_position (attribute, or in with #version 300 es)";
             return false;
         }
     }
@@ -444,12 +444,23 @@ bool Compositor::geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshDat
         return false;
     }
     MeshLayer *m = static_cast<MeshLayer *>(e.layer.get());
+    /* what the target's other mesh layers draw, on screen or in a canvas */
+    uint64_t others = 0;
+    auto count = [&](const std::map<uint32_t, Entry> &in) {
+        for (const auto &kv : in)
+            if (kv.second.layer.get() != m && kv.second.layer->target() == m->target() &&
+                !std::strcmp(kv.second.layer->kind(), "mesh"))
+                others += static_cast<const MeshLayer *>(kv.second.layer.get())->drawn_indices();
+    };
+    count(layers_);
+    for (const auto &ck : canvases_)
+        count(ck.second.layers);
     const size_t bytes = e.pixel_bytes - m->part_bytes(part) + data.bytes();
     if (memory() - e.pixel_bytes + bytes > limits_.pixel_bytes) {
         *err = "the service's pixel memory is full";
         return false;
     }
-    if (!m->set_geometry(part, std::move(data), now_ms, err))
+    if (!m->set_geometry(part, std::move(data), now_ms, err, others < kMaxTargetIndices ? kMaxTargetIndices - others : 0))
         return false;
     e.pixel_bytes = bytes;
     return true;

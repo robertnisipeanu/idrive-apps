@@ -58,12 +58,18 @@ public:
     bool add_part(uint32_t part, int effect, unsigned attributes, const PartLook &look, uint32_t parent,
                   std::string *err);
     bool has_part(uint32_t part) const { return parts_.count(part) != 0; }
+    /* Indices its parts draw (indices times instances), but part except's. */
+    uint64_t drawn_indices(uint32_t except = 0) const;
     /* Bytes the part's geometry holds. */
     size_t part_bytes(uint32_t part) const;
-    /* Replaces the part's geometry. False with *err when it lacks an
-     * attribute the part's vertex shader reads, or the part's last geometry
-     * came less than kGeometryMs ago. */
-    bool set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std::string *err);
+    /* Replaces the part's geometry. False with *err when its index count
+     * does not fit the part's draw mode, it lacks an attribute the part's
+     * vertex shader reads, the part, the layer or (target_room: what the
+     * target's other mesh layers leave) the target would draw past its
+     * bound (graph.h kMaxPartIndices), or the part's last geometry came less
+     * than kGeometryMs ago. */
+    bool set_geometry(uint32_t part, MeshData &&data, int64_t now_ms, std::string *err,
+                      uint64_t target_room = kMaxTargetIndices);
     bool set_pose(uint32_t part, const Pose &p);
     /* The part's pose as the client set it. */
     Pose pose(uint32_t part) const;

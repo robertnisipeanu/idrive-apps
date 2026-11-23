@@ -259,9 +259,25 @@ enum class Draw { Triangles, TriangleStrip, Lines, LineLoop, Points };
 /* The fewest indices a mode draws, and the multiple its count is of. */
 inline uint32_t draw_min(Draw d) { return d == Draw::Points ? 1 : d == Draw::Lines || d == Draw::LineLoop ? 2 : 3; }
 inline uint32_t draw_step(Draw d) { return d == Draw::Triangles ? 3 : d == Draw::Lines ? 2 : 1; }
+/* Which of an enum's n values forward maps to lib, or -1: a backend's
+ * table read backwards (Graph::read_look). */
+template <class E, class L, class F> int unmap(L lib, int n, F forward)
+{
+    for (int i = 0; i < n; i++)
+        if (forward((E)i) == lib)
+            return i;
+    return -1;
+}
+
 /* Instances a part draws at most, and their vertices together at most. */
 const uint32_t kMaxInstances = 256;
 const uint64_t kMaxInstancedVertices = 1048576;
+/* What the GPU draws, in indices drawn (a part's indices times its
+ * instances): a part at most kMaxPartIndices (as many as one part's
+ * geometry holds, 65,535 triangles), a mesh layer's parts together
+ * kMaxLayerIndices, and every mesh layer on a target, of every client and
+ * canvas, kMaxTargetIndices (262,144 triangles a frame). */
+const uint64_t kMaxPartIndices = 196605, kMaxLayerIndices = 393216, kMaxTargetIndices = 786432;
 
 /* Colour channels written, as bits. */
 const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;
@@ -737,6 +753,11 @@ public:
     virtual int canvas(const CanvasSpec &) { return 0; }
     virtual void drop_canvas(int) {}
     virtual bool redraw(int) { return false; }
+    /* A part's render state as the library holds it, read back with its
+     * getters through the backend's own tables (instances aside); with
+     * fresh, a new appearance of the part's effect, as the library makes
+     * it. False where it cannot say (tests). */
+    virtual bool read_look(int, PartLook *, bool = false) { return false; }
     /* A canvas not drawn once: drawn each frame while enabled (as it is
      * made), not drawn at all while not, keeping its last picture. */
     virtual bool enable_canvas(int, bool) { return false; }

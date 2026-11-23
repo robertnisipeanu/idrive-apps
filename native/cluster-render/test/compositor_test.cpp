@@ -3482,6 +3482,43 @@ static void draw_modes()
         drawn_many = drawn_many || (kv.second.look.instances == 200 && kv.second.geometry);
     }
     ok("draw: both drawn as asked", drawn_lines && drawn_many);
+
+    /* What a frame draws, in indices times instances: a part, a layer's
+     * parts, every mesh layer on the target. */
+    auto tris = [](uint32_t n) {
+        MeshData d;
+        d.vertices = 3;
+        d.position = {0, 0, -5, 1, 0, -5, 0, 1, -5};
+        d.normal = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+        for (uint32_t i = 0; i < n; i++)
+            d.index.insert(d.index.end(), {0, 1, 2});
+        return d;
+    };
+    PartLook lots;
+    lots.instances = 256;
+    r.comp->add_part(1, id, 3, kLitVs, kPartFs, lots, &err);
+    ok("bound: a part of 65535 triangles drawn 256 times refused",
+       !r.comp->geometry(1, id, 3, tris(65535), r.now, &err) &&
+           err == "a part draws at most 196605 indices: its indices times its instances");
+    ok("bound: of 255 triangles 256 times (195840 indices) taken", r.comp->geometry(1, id, 3, tris(255), r.now, &err));
+    r.comp->add_part(1, id, 4, kLitVs, kPartFs, PartLook(), &err);
+    ok("bound: a layer's parts past 393216 indices together refused",
+       !r.comp->geometry(1, id, 4, tris(65535), r.now, &err) &&
+           err == "a mesh layer's parts draw at most 393216 indices together");
+    ok("bound: within them taken", r.comp->geometry(1, id, 4, tris(60000), r.now, &err));
+    const uint32_t id2 = r.comp->add_mesh(2, r.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
+    r.comp->add_part(2, id2, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(2, id2, 2, kLitVs, kPartFs, PartLook(), &err);
+    ok("bound: another client's layer of 393210 indices taken",
+       r.comp->geometry(2, id2, 1, tris(65535), r.now, &err) && r.comp->geometry(2, id2, 2, tris(65535), r.now, &err));
+    const uint32_t id3 = r.comp->add_mesh(2, r.panel, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
+    r.comp->add_part(2, id3, 1, kLitVs, kPartFs, PartLook(), &err);
+    ok("bound: the target's mesh layers past 786432 indices together refused",
+       !r.comp->geometry(2, id3, 1, tris(10000), r.now, &err) &&
+           err == "a target's mesh layers draw at most 786432 indices together");
+    const uint32_t id4 = r.comp->add_mesh(2, r.map, params(Klass::Content, R(0, 0, 64, 64)), mp, r.now, &err);
+    r.comp->add_part(2, id4, 1, kLitVs, kPartFs, PartLook(), &err);
+    ok("bound: another target's are its own", r.comp->geometry(2, id4, 1, tris(10000), r.now, &err));
 }
 
 int main()

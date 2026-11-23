@@ -5,7 +5,10 @@
 ## 0.8.3
 A mesh part can draw lines, a line loop, points or a triangle strip as well
 as triangles, and draw its geometry up to 256 times at once (instances),
-for gauge ticks, star fields or rows of identical shapes sent once.
+for gauge ticks, star fields or rows of identical shapes sent once. What
+the mesh layers on a target draw is bounded: a part's indices times its
+instances, a layer's parts together and every mesh layer on the target.
+Effect layers and mesh parts take GLSL ES 3.00 shaders.
 
 Animations can be eased (`ease_in`, `ease_out`, `ease_in_out`) or follow a
 smooth curve through their keys, played by the cluster with nothing sent

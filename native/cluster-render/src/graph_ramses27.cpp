@@ -136,20 +136,30 @@ ramses::EStencilOperation stencil_op(StencilOp o)
     }
 }
 
+ramses::ECullMode cull_mode(Cull c)
+{
+    return c == Cull::Back ? ramses::ECullMode_BackFacing
+           : c == Cull::Front ? ramses::ECullMode_FrontFacing
+                              : ramses::ECullMode_Disabled;
+}
+
+ramses::EDrawMode draw_mode(Draw d)
+{
+    static const ramses::EDrawMode modes[] = {ramses::EDrawMode_Triangles, ramses::EDrawMode_TriangleStrip,
+                                              ramses::EDrawMode_Lines, ramses::EDrawMode_LineLoop,
+                                              ramses::EDrawMode_Points};
+    return modes[(int)d];
+}
+
 /* The appearance draws as look has it (graph.h PartLook). */
 bool apply_look(ramses::Appearance &app, const PartLook &look)
 {
     const BlendState b = look.blending();
     bool good = ok(app.setDepthFunction(depth27(look.depth_test()))) && ok(app.setDepthWrite(look.depth_writes() ? ramses::EDepthWrite_Enabled : ramses::EDepthWrite_Disabled)) &&
-                ok(app.setCullingMode(look.cull == Cull::Back    ? ramses::ECullMode_BackFacing
-                                      : look.cull == Cull::Front ? ramses::ECullMode_FrontFacing
-                                                                 : ramses::ECullMode_Disabled)) &&
+                ok(app.setCullingMode(cull_mode(look.cull))) &&
                 ok(app.setColorWriteMask(look.color_mask & kMaskR, look.color_mask & kMaskG, look.color_mask & kMaskB,
                                          look.color_mask & kMaskA));
-    static const ramses::EDrawMode modes[] = {ramses::EDrawMode_Triangles, ramses::EDrawMode_TriangleStrip,
-                                              ramses::EDrawMode_Lines, ramses::EDrawMode_LineLoop,
-                                              ramses::EDrawMode_Points};
-    good = good && ok(app.setDrawMode(modes[(int)look.draw]));
+    good = good && ok(app.setDrawMode(draw_mode(look.draw)));
     const StencilState &st = look.stencil;
     good = good && ok(app.setStencilFunction(stencil_func(st.func), st.ref, st.mask)) &&
            ok(app.setStencilOperation(stencil_op(st.fail), stencil_op(st.depth_fail), stencil_op(st.pass)));
@@ -158,6 +168,65 @@ bool apply_look(ramses::Appearance &app, const PartLook &look)
     return good &&
            ok(app.setBlendingFactors(factor27(b.src), factor27(b.dst), factor27(b.src_alpha), factor27(b.dst_alpha))) &&
            ok(app.setBlendingOperations(op27(b.op), op27(b.op_alpha)));
+}
+
+/* app's render state as look_of() would set it (Graph::read_look). */
+bool look_of(const ramses::Appearance &app, PartLook *out)
+{
+    ramses::EDrawMode draw;
+    ramses::ECullMode cull;
+    ramses::EDepthFunc depth;
+    ramses::EDepthWrite write;
+    ramses::EBlendFactor bs, bd, bsa, bda;
+    ramses::EBlendOperation oc, oa;
+    ramses::EStencilFunc sf;
+    ramses::EStencilOperation fail, dfail, pass;
+    uint8_t ref = 0;
+    uint8_t mask = 0;
+    bool r = false, g = false, b = false, a = false;
+    if (!ok(app.getDrawMode(draw)) || !ok(app.getCullingMode(cull)) || !ok(app.getDepthFunction(depth)) ||
+        !ok(app.getDepthWriteMode(write)) || !ok(app.getBlendingFactors(bs, bd, bsa, bda)) ||
+        !ok(app.getBlendingOperations(oc, oa)) || !ok(app.getColorWriteMask(r, g, b, a)) ||
+        !ok(app.getStencilFunction(sf, ref, mask)) || !ok(app.getStencilOperation(fail, dfail, pass)))
+        return false;
+    PartLook l;
+    const int d = unmap<Draw>(draw, 5, [](Draw x) { return draw_mode(x); });
+    const int c = unmap<Cull>(cull, 3, [](Cull x) { return cull_mode(x); });
+    const int df = unmap<DepthFunc>(depth, 9, [](DepthFunc x) { return depth27(x); });
+    const int s = unmap<StencilFunc>(sf, 9, [](StencilFunc x) { return stencil_func(x); });
+    auto f = [](ramses::EBlendFactor x) { return unmap<BlendFactor>(x, 6, [](BlendFactor y) { return factor27(y); }); };
+    auto o = [](ramses::EStencilOperation x) { return unmap<StencilOp>(x, 8, [](StencilOp y) { return stencil_op(y); }); };
+    if (d < 0 || c < 0 || df < 0 || s < 0 || f(bs) < 0 || f(bd) < 0 || f(bsa) < 0 || f(bda) < 0 || o(fail) < 0 ||
+        o(dfail) < 0 || o(pass) < 0)
+        return false;
+    l.draw = (Draw)d;
+    l.cull = (Cull)c;
+    l.depth = df != (int)DepthFunc::Off;
+    l.depth_func = l.depth ? (DepthFunc)df : DepthFunc::LessEqual;
+    l.depth_write = write == ramses::EDepthWrite_Enabled;
+    l.has_custom = true;
+    l.custom.on = !(oc == ramses::EBlendOperation_Disabled && oa == ramses::EBlendOperation_Disabled);
+    if (l.custom.on) {
+        const int opc = unmap<BlendOp>(oc, 5, [](BlendOp x) { return op27(x); });
+        const int opa = unmap<BlendOp>(oa, 5, [](BlendOp x) { return op27(x); });
+        if (opc < 0 || opa < 0)
+            return false;
+        l.custom.src = (BlendFactor)f(bs);
+        l.custom.dst = (BlendFactor)f(bd);
+        l.custom.src_alpha = (BlendFactor)f(bsa);
+        l.custom.dst_alpha = (BlendFactor)f(bda);
+        l.custom.op = (BlendOp)opc;
+        l.custom.op_alpha = (BlendOp)opa;
+    }
+    l.color_mask = (uint8_t)((r ? kMaskR : 0) | (g ? kMaskG : 0) | (b ? kMaskB : 0) | (a ? kMaskA : 0));
+    l.stencil.func = (StencilFunc)s;
+    l.stencil.ref = (uint8_t)ref;
+    l.stencil.mask = mask;
+    l.stencil.fail = (StencilOp)o(fail);
+    l.stencil.depth_fail = (StencilOp)o(dfail);
+    l.stencil.pass = (StencilOp)o(pass);
+    *out = l;
+    return true;
 }
 
 ramses::EVisibilityMode visible(bool on) { return on ? ramses::EVisibilityMode::Visible : ramses::EVisibilityMode::Invisible; }
@@ -618,16 +687,11 @@ public:
         ramses::GeometryBinding *geo = scene_->createGeometryBinding(*fx);
         ramses::MeshNode *mesh = scene_->createMeshNode();
         if (!app || !geo || !mesh || !apply_look(*app, look) || !ok(mesh->setAppearance(*app)) ||
-            !ok(mesh->setGeometryBinding(*geo)) || !ok(mesh->setParent(*v->second.root))) {
+            !ok(mesh->setGeometryBinding(*geo)) || !ok(mesh->setParent(*v->second.root)) ||
+            (look.instances > 1 && !ok(mesh->setInstanceCount(look.instances)))) {
             if (mesh) scene_->destroy(*mesh);
             if (geo) scene_->destroy(*geo);
             if (app) scene_->destroy(*app);
-            return 0;
-        }
-        if (look.instances > 1 && !ok(mesh->setInstanceCount(look.instances))) {
-            scene_->destroy(*mesh);
-            scene_->destroy(*geo);
-            scene_->destroy(*app);
             return 0;
         }
         Part p;
@@ -964,6 +1028,20 @@ public:
         out->first_order = sf.segments[0].pass->getRenderOrder();
         out->copy_order = sf.copy_pass->getRenderOrder();
         return true;
+    }
+
+    bool read_look(int part, PartLook *out, bool fresh) override
+    {
+        auto it = parts_.find(part);
+        if (it == parts_.end() || !it->second.app)
+            return false;
+        if (!fresh)
+            return look_of(*it->second.app, out);
+        ramses::Appearance *app = scene_->createAppearance(*it->second.effect);
+        const bool good = app && look_of(*app, out);
+        if (app)
+            scene_->destroy(*app);
+        return good;
     }
 
     /* A canvas drawn once draws once more, with its next flush. */

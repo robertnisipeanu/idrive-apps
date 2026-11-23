@@ -124,8 +124,9 @@ struct RenderState {
     unsigned instances = 0;
 };
 
-/* GLSL ES 1.00; the fragment shader gets varying vec2 v_uv (0,0 at the
- * top-left). vs empty: the service's quad vertex shader. */
+/* GLSL ES 1.00, or 3.00 (#version 300 es) with a vs of the same version;
+ * the fragment shader gets v_uv (0,0 at the top-left). vs empty: the
+ * service's quad vertex shader, GLSL ES 1.00. */
 struct EffectOptions {
     std::string fs, vs;
     unsigned time_fps = 0;   /* u_time (seconds) updated this often; 0: none */
@@ -182,8 +183,9 @@ struct MeshOptions {
     float crx = 0, cry = 0, crz = 0;   /* and rotation, degrees; it looks down -z */
 };
 
-/* A mesh part's shaders (GLSL ES 1.00; attributes a_position, a_normal,
- * a_texcoord, a_color) and how it is drawn. */
+/* A mesh part's shaders (GLSL ES 1.00, or 3.00 with #version 300 es and in
+ * for attribute; a_position, a_normal, a_texcoord, a_color) and how it is
+ * drawn. */
 struct PartOptions {
     std::string vs, fs;
     bool depth = true;              /* tested (less or equal) and written */
@@ -191,7 +193,8 @@ struct PartOptions {
     std::string blend = "alpha";    /* alpha, add or none */
 };
 
-/* A part's vertices and triangles: positions and normals xyz, texture
+/* A part's vertices and indices, drawn as its draw mode says (triangles by
+ * default; RenderState::draw): positions and normals xyz, texture
  * coordinates uv, colours rgba, one per vertex (each but positions may be
  * empty), up to 65535 vertices and 196605 indices. */
 struct Geometry {

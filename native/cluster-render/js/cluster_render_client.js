@@ -687,8 +687,9 @@ class ClusterRender extends EventEmitter {
     }
 
     /* g: positions (xyz), normals (xyz), texcoords (uv), colors (rgba) per
-     * vertex, the last three optional, and indices (triangles). The service
-     * takes a part's new geometry at most once a second. */
+     * vertex, the last three optional, and indices, as many as the part's
+     * draw mode takes (whole triangles by default). The service takes a
+     * part's new geometry at most once a second. */
     geometry(ref, part, g) {
         const l = this.layers.get(ref);
         const p = l && l.parts.get(part);
