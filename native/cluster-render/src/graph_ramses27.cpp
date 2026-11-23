@@ -12,6 +12,10 @@
 #include "ramses-client-api/AnimationSequence.h"
 #include "ramses-client-api/AnimationSystemRealTime.h"
 #include "ramses-client-api/Appearance.h"
+#include "ramses-client-api/DataFloat.h"
+#include "ramses-client-api/DataVector2f.h"
+#include "ramses-client-api/DataVector3f.h"
+#include "ramses-client-api/DataVector4f.h"
 #include "ramses-client-api/ArrayResource.h"
 #include "ramses-client-api/AttributeInput.h"
 #include "ramses-client-api/Effect.h"
@@ -1076,6 +1080,67 @@ public:
         return good;
     }
 
+    int value(uint32_t width) override
+    {
+        ramses::DataObject *d = width == 1   ? (ramses::DataObject *)scene_->createDataFloat()
+                                : width == 2 ? (ramses::DataObject *)scene_->createDataVector2f()
+                                : width == 3 ? (ramses::DataObject *)scene_->createDataVector3f()
+                                : width == 4 ? (ramses::DataObject *)scene_->createDataVector4f()
+                                             : nullptr;
+        if (!d)
+            return 0;
+        values_[next_] = Value{d, width};
+        return next_++;
+    }
+
+    bool set_value(int value, const float *v) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return false;
+        ramses::DataObject *d = it->second.data;
+        switch (it->second.width) {
+        case 1: return ok(static_cast<ramses::DataFloat *>(d)->setValue(v[0]));
+        case 2: return ok(static_cast<ramses::DataVector2f *>(d)->setValue(v[0], v[1]));
+        case 3: return ok(static_cast<ramses::DataVector3f *>(d)->setValue(v[0], v[1], v[2]));
+        default: return ok(static_cast<ramses::DataVector4f *>(d)->setValue(v[0], v[1], v[2], v[3]));
+        }
+    }
+
+    /* The library refuses a data object of another type than the uniform. */
+    bool link(int drawable, const char *name, int value) override
+    {
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(drawable, &app);
+        ramses::UniformInput in;
+        auto it = values_.find(value);
+        if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
+            return false;
+        /* the library refuses an array uniform (logging an error) */
+        if (value && in.getElementCount() != 1)
+            return false;
+        /* the uniform a float, vec2, vec3 or vec4 as the value: the library
+         * logs an error for another */
+        static const ramses::EEffectInputDataType types[4] = {
+            ramses::EEffectInputDataType_Float, ramses::EEffectInputDataType_Vector2F,
+            ramses::EEffectInputDataType_Vector3F, ramses::EEffectInputDataType_Vector4F};
+        if (value && in.getDataType() != types[it->second.width - 1])
+            return false;
+        if (app->isInputBound(in) && !ok(app->unbindInput(in)))
+            return false;
+        return !value || ok(app->bindInput(in, *it->second.data));
+    }
+
+    void drop_value(int value) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return;
+        stop_on(value);
+        scene_->destroy(*it->second.data);
+        values_.erase(it);
+    }
+
     /* A canvas drawn once draws once more, with its next flush. */
     bool redraw(int canvas) override
     {
@@ -1446,6 +1511,10 @@ private:
     }
     bool resolve(int node, const Animation &a)
     {
+        if (a.property == Animated::Value) {
+            auto dv = values_.find(node);
+            return dv != values_.end() && dv->second.width == a.width;
+        }
         bool on_quad = false;
         if (!target_of(node, &on_quad))
             return false;
@@ -1471,7 +1540,8 @@ private:
             anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
         bool on_q = false;
         ramses::Node *target = anim_ ? target_of(node, &on_q) : nullptr;
-        if (!target)
+        auto dv = values_.find(node);
+        if (!anim_ || (a.property == Animated::Value ? dv == values_.end() : !target))
             return false;
         const bool on_quad = on_q;
         /* The renderer's conventions: y up, so down is negative y, and its
@@ -1487,7 +1557,10 @@ private:
                 vals[k] = -vals[k];
 
         an.spline = spline(a, vals);
-        if (a.property == Animated::Uniform) {
+        if (a.property == Animated::Value) {
+            if (an.spline)
+                an.prop = anim_->createAnimatedProperty(*dv->second.data);
+        } else if (a.property == Animated::Uniform) {
             ramses::Appearance *app = nullptr;
             const ramses::Effect *fx = look(node, &app);
             ramses::UniformInput in;
@@ -1633,6 +1706,12 @@ private:
     ramses::Scene *scene_ = nullptr;
     ramses::ArrayResource *pos_ = nullptr, *idx_ = nullptr;   /* the unit quad */
     ramses::AnimationSystemRealTime *anim_ = nullptr;
+    /* Shared values: a data object each, of width floats. */
+    struct Value {
+        ramses::DataObject *data = nullptr;
+        uint32_t width = 1;
+    };
+    std::map<int, Value> values_;
     /* The target's own surface, and the canvases', by handle. */
     Surface main_;
     std::map<int, Surface> canvases_;
@@ -1710,9 +1789,16 @@ int Ramses27Gpu::effect(const char *vs, const char *fs, std::string *err)
             continue;
         EffectInput e;
         e.name = u.getName();
-        e.kind = u.getDataType() == ramses::EEffectInputDataType_TextureSampler2D     ? EffectInput::Sampler2D
-                 : u.getDataType() == ramses::EEffectInputDataType_TextureSamplerCube ? EffectInput::SamplerCube
-                                                                                      : EffectInput::Other;
+        e.elements = u.getElementCount();
+        switch (u.getDataType()) {
+        case ramses::EEffectInputDataType_TextureSampler2D: e.kind = EffectInput::Sampler2D; break;
+        case ramses::EEffectInputDataType_TextureSamplerCube: e.kind = EffectInput::SamplerCube; break;
+        case ramses::EEffectInputDataType_Float: e.kind = EffectInput::Float; break;
+        case ramses::EEffectInputDataType_Vector2F: e.kind = EffectInput::Vec2; break;
+        case ramses::EEffectInputDataType_Vector3F: e.kind = EffectInput::Vec3; break;
+        case ramses::EEffectInputDataType_Vector4F: e.kind = EffectInput::Vec4; break;
+        default: e.kind = EffectInput::Other; break;
+        }
         s.inputs.push_back(e);
     }
     scratch_->destroy(*fx);

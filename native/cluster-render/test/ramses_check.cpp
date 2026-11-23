@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../src/compositor.h"
+#include "cluster_render/text.h"
 #include "../src/curves.h"
 #include "fake_port.h"
 #include "log.h"
@@ -982,7 +983,7 @@ static void backend(Gpu &gpu)
            known && kind.count("u_a") && kind["u_a"] == EffectInput::Sampler2D && kind.count("u_b") &&
                kind["u_b"] == EffectInput::Sampler2D && kind.count("u_c") && kind["u_c"] == defined &&
                kind.count("u_d") && kind["u_d"] == branched && kind.count("u_e") &&
-               kind["u_e"] == EffectInput::SamplerCube && kind.count("u_tint") && kind["u_tint"] == EffectInput::Other &&
+               kind["u_e"] == EffectInput::SamplerCube && kind.count("u_tint") && kind["u_tint"] == EffectInput::Vec4 &&
                kind.count("u_k") && kind["u_k"] == branched);
         if (fx)
             gpu.drop_effect(fx);
@@ -1066,6 +1067,123 @@ static void backend(Gpu &gpu)
 #ifndef CRS_RAMSES27
     ok("cube and draw: the scene described whole", described("check"));
 #endif
+
+    /* Shared values: a float and a vec3, a quad's and a part's uniforms
+     * following them, set, the float animated, replaced and stopped; a value
+     * of another type than its uniform refused; unlinked; dropped. */
+    const int lvl_fx = gpu.effect(kQuadVertexShader,
+                                  "#version 100\nprecision mediump float;\nuniform float u_level;\nuniform vec3 u_tint;\n"
+                                  "varying vec2 v_uv;\nvoid main(){gl_FragColor=vec4(u_tint*u_level,1.0);}",
+                                  &err);
+    Rect lr;
+    lr.w = lr.h = 64;
+    const int vq = lvl_fx ? g->quad(lvl_fx, lr) : 0;
+    const int vp = g->part(v1, all_fx, PartLook());
+    const int level = g->value(1), warmth = g->value(3);
+    const float half = 0.5f, warm[3] = {1.0f, 0.5f, 0.2f};
+    Animation pulse = keyed(Animated::Value, 1, {0, 500, 1000}, {0, 1, 0});
+    int pulsing = 0;
+    ok("values: a float and a vec3 a quad's and a part's uniforms follow, set, the float animated",
+       vq && vp && level && warmth && g->geometry(vp, cube.geometry()) && g->show(vq, true) &&
+           g->set_value(level, &half) && g->set_value(warmth, warm) && g->link(vq, "u_level", level) &&
+           g->link(vp, "u_fade", level) && g->link(vq, "u_tint", warmth) && g->link(vp, "u_tint", warmth) &&
+           (pulsing = g->animate(level, pulse)) && g->flush(13));
+    ok("values: a value of another type than the uniform refused", !g->link(vq, "u_level", warmth));
+    {
+        /* the library refuses an array (logging an error the run fails on):
+         * refused before it is asked */
+        const int arr_fx = gpu.effect(kQuadVertexShader,
+                                      "#version 100\nprecision mediump float;\nuniform float u_arr[4];\n"
+                                      "void main(){gl_FragColor=vec4(u_arr[0]+u_arr[3]);}",
+                                      &err);
+        const int aq = arr_fx ? g->quad(arr_fx, lr) : 0;
+        ok("values: an array uniform refused", aq && !g->link(aq, "u_arr", level) && g->flush(13));
+        /* As the library compiled the effect: the second of a list and a
+         * struct's member linked; an unused uniform linked where the
+         * library reports it, and refused by the service where it does
+         * not, never failing at the flush. */
+        const int list_fx = gpu.effect(kQuadVertexShader,
+                                       "#version 100\nprecision mediump float;\nuniform vec3 u_near, u_far;\n"
+                                       "struct Lamp { float k; vec3 c; };\nuniform Lamp u_lamp;\nuniform float u_unused;\n"
+                                       "void main(){gl_FragColor=vec4((u_near+u_far+u_lamp.c)*u_lamp.k,1.0);}",
+                                       &err);
+        std::vector<EffectInput> lin;
+        std::map<std::string, EffectInput> by;
+        const bool listed = list_fx && gpu.inputs(list_fx, &lin);
+        std::string member, names;
+        for (const EffectInput &e : lin) {
+            by[e.name] = e;
+            names += " " + e.name;
+            if (e.name.find("u_lamp") != std::string::npos && e.name.find('k') != std::string::npos &&
+                e.kind == EffectInput::Float)
+                member = e.name;
+        }
+        std::printf("     the library's uniforms:%s\n", names.c_str());
+        const int lq = list_fx ? g->quad(list_fx, lr) : 0;
+        const int errs = cld::log_errors;
+        const bool unused_listed = by.count("u_unused") != 0;
+        ok("values: the second of a list of vec3s and a struct's float member, as the library reports them, linked",
+           listed && lq && by.count("u_far") && by["u_far"].kind == EffectInput::Vec3 && by["u_far"].elements == 1 &&
+               g->link(lq, "u_far", warmth) && !member.empty() && g->link(lq, member.c_str(), level) && g->flush(13) &&
+               cld::log_errors == errs);
+        ok("values: an unused uniform linked where the library reports it, else not there to link",
+           unused_listed ? g->link(lq, "u_unused", level) && g->flush(13) && cld::log_errors == errs
+                         : !g->link(lq, "u_unused", level));
+        g->link(lq, "u_far", 0);
+        g->link(lq, member.c_str(), 0);
+        g->link(lq, "u_unused", 0);
+        g->drop_quad(lq);
+        if (list_fx)
+            gpu.drop_effect(list_fx);
+        g->drop_quad(aq);
+        gpu.drop_effect(arr_fx);
+    }
+    pulse.v = {1, 0, 1};
+    pulsing = g->replace(pulsing, level, pulse);
+    ok("values: its animation replaced", pulsing && g->flush(14));
+    g->stop(pulsing);
+    ok("values: stopped, set again, unlinked",
+       g->set_value(level, warm) && g->link(vq, "u_level", 0) && g->link(vp, "u_fade", 0) &&
+           g->link(vq, "u_tint", 0) && g->link(vp, "u_tint", 0) && g->flush(15));
+    /* a value that was animated dropped while another animation plays:
+     * no animation made again for it (its data object kept while a system
+     * that animated it lasts) */
+    const int spin = g->animate(vq, keyed(Animated::Rotate, 1, {0, 1000}, {0, 360}, true));
+    const bool spun = spin && g->flush(15);
+    g->take_animation_bytes();
+    g->drop_value(level);
+    const bool none_again = g->flush(15) && g->take_animation_bytes() == 0;
+    g->stop(spin);
+    g->drop_value(warmth);
+    g->drop_quad(vq);
+    g->drop_part(vp);
+    ok("values: dropped, an animated one making no other animation again", spun && none_again && g->flush(16));
+#ifndef CRS_RAMSES27
+    ok("values: the scene described whole", described("check"));
+#endif
+    gpu.drop_effect(lvl_fx);
+
+    /* The text helper's shader (cluster_render/text.h), at 1 glyph and the
+     * most: a loop over a uniform array, compiled and drawn. */
+    bool texts = true;
+    for (unsigned n : {1u, cr::kMaxTextGlyphs}) {
+        const int tfx = gpu.effect(kQuadVertexShader, cr::text_fragment_shader(n).c_str(), &err);
+        Rect tr;
+        tr.w = 200;
+        tr.h = 32;
+        const int tq = tfx ? g->quad(tfx, tr) : 0;
+        std::vector<float> boxes(n * 4, 0.0f);
+        boxes[1] = 0.5f;
+        boxes[3] = 1.0f;
+        const float count = 1, white[4] = {1, 1, 1, 1};
+        texts = texts && tq && g->uniform_array(tq, "u_glyphs", UniformType::Vec4, boxes.data(), n) &&
+                g->uniform(tq, "u_count", &count, 1) && g->uniform(tq, "u_color", white, 4) && g->show(tq, true) &&
+                g->flush(17);
+        g->drop_quad(tq);
+        if (tfx)
+            gpu.drop_effect(tfx);
+    }
+    ok("text: its shader at 1 and 14 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
@@ -1503,6 +1621,19 @@ int main()
        comp.state(sc, &reason) == LayerState::Shown && comp.state(hosted, &reason) == LayerState::Shown &&
            comp.state(edge, &reason) == LayerState::Shown && lp0 && lp0->getRenderOrder() == 2 &&
            gauge_edited(client, 30));
+#ifndef CRS_RAMSES27
+    /* A value over the file: made in its scene, the effect's u_level
+     * linked to it. */
+    const float over_level = 0.5f;
+    const uint32_t over_value = comp.add_value(8, 1, 1, &over_level, &err);
+    run(100);
+    const bool over_linked = over_value && comp.link(8, edge, 0, "u_level", over_value, &err);
+    run(100);
+    ok("layers over the file: a value made in its scene, an effect's uniform linked to it",
+       over_linked && comp.linked(8, edge, 0, "u_level") && comp.state(edge, &reason) == LayerState::Shown);
+    if (!over_linked)
+        std::printf("     %s\n", err.c_str());
+#endif
     comp.remove_owner(8);
     run(500);
     ok("the layers gone, the file stays", comp.state(sc, &reason) == LayerState::Shown && client.findObjectByName("gauge"));

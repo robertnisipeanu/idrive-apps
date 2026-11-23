@@ -94,6 +94,11 @@ public:
     size_t staged_bytes() const override { return staged_; }
     std::string stats() const override;
     int drawable(uint32_t part) const override;
+    Uniforms *uniforms_of(uint32_t part) override
+    {
+        auto it = parts_.find(part);
+        return it == parts_.end() ? nullptr : &it->second.uniforms;
+    }
     std::string refusal() const override { return refusal_; }
 
 protected:

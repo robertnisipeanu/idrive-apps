@@ -25,6 +25,12 @@
  *   geometry draw modes and instances (a service whose hello has draw):
  *           16 cubes drawn as instances of one, a ring as a line loop and
  *           a field of points, all turned by the renderer;
+ *   label   text from the text helper (cluster_render_text.js): a clock,
+ *           a speed and a status line in a proportional 5x7 font made here,
+ *           each changed by two uniforms (its glyph boxes and their count);
+ *   values  eight lamps whose glow follows one shared value the renderer
+ *           animates, all in step, and whose rims follow a second value
+ *           set every two seconds (a service whose hello has values);
  *   cubemap a cube map of six coloured faces (a service whose hello has
  *           cube) on a cube the renderer turns, and on one facing the
  *           camera, which shows the +z face (blue).
@@ -32,10 +38,11 @@
  * a second and the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
  *
- * On the unit (Node 8): copy this file and cluster_render_client.js into one
- * directory and run it as a user that may open the service's socket (group
- * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|cubemap]
+ * On the unit (Node 8): copy this file, cluster_render_client.js and
+ * cluster_render_text.js into one directory and run it as a user that may
+ * open the service's socket (group tm_oap_app, or root); Ctrl-C ends it and
+ * its layers go with it.
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|label|values|cubemap]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -44,7 +51,8 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'cubemap'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'label',
+    'values', 'cubemap'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -193,6 +201,84 @@ precision mediump float;
 uniform vec4 u_color;
 void main() {
     gl_FragColor = u_color;
+}`;
+
+/* A 5x7 dot font: seven rows of five columns a glyph, '#' a dot. */
+const DOTS = {
+    '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+    '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+    '3': ['####.', '....#', '....#', '.###.', '....#', '....#', '####.'],
+    '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+    '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+    '6': ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+    '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+    '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+    '9': ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+    'A': ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+    'C': ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+    'D': ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+    'E': ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+    'G': ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+    'H': ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+    'I': ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    'K': ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+    'L': ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+    'M': ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
+    'N': ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
+    'O': ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    'P': ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    'R': ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+    'S': ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+    'T': ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+    'U': ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    'Y': ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+    ':': ['.', '#', '#', '.', '#', '#', '.'],
+    '.': ['.', '.', '.', '.', '.', '#', '#'],
+    '/': ['....#', '...#.', '...#.', '..#..', '.#...', '.#...', '#....'],
+    '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....']
+};
+
+/* The dot font as glyph bitmaps for Font.fromGlyphs: each dot a round spot
+ * s pixels across, a line 9 dots high (a dot above and below). */
+function dotFont(Font, s) {
+    const glyphs = Object.keys(DOTS).map((c) => {
+        const rows = DOTS[c], w = rows[0].length * s, h = 7 * s, px = Buffer.alloc(w * h);
+        rows.forEach((row, r) => Array.from(row).forEach((d, k) => {
+            if (d !== '#') return;
+            for (let y = 0; y < s; y++)
+                for (let x = 0; x < s; x++) {
+                    const dx = (x + 0.5) / s - 0.5, dy = (y + 0.5) / s - 0.5;
+                    const a = Math.max(0, Math.min(1, (0.46 - Math.sqrt(dx * dx + dy * dy)) * s));
+                    px[(r * s + y) * w + k * s + x] = Math.round(255 * a);
+                }
+        }));
+        return { char: c, w: w, h: h, top: s, advance: w + s, pixels: px };
+    });
+    glyphs.push({ char: ' ', w: 0, h: 0, top: 0, advance: 3 * s, pixels: Buffer.alloc(0) });
+    return Font.fromGlyphs(9 * s, glyphs);
+}
+
+/* The label page's lines, [x, y, h, w] as fractions of the target: each
+ * wide enough for its longest text in dotFont() on the panel. */
+const LABEL_LINES = { clock: [0.05, 0.12, 0.18, 0.31], speed: [0.37, 0.38, 0.3, 0.58],
+    status: [0.05, 0.78, 0.1, 0.9] };
+/* The status line's states: 14 glyphs at most, of the font's letters. */
+const LABEL_STATES = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];
+
+/* A lamp: its colour lit by u_glow, a rim of u_rim; premultiplied. */
+const LAMP_FS = `#version 100
+precision mediump float;
+uniform float u_glow;
+uniform vec3 u_color;
+uniform vec3 u_rim;
+varying vec2 v_uv;
+void main() {
+    float d = length(v_uv - 0.5) * 2.0;
+    float core = smoothstep(0.85, 0.0, d) * (0.15 + 0.85 * u_glow);
+    float ring = smoothstep(0.07, 0.0, abs(d - 0.9));
+    float a = max(core, ring);
+    gl_FragColor = vec4(u_color * core + u_rim * ring, a);
 }`;
 
 /* A cube sampling a cube map by its own direction from its centre. */
@@ -573,6 +659,64 @@ function main() {
         cr.animate(sky, { part: 2, property: 'rotate', keys: '0:0,0,0 12000:0,360,0', loop: true });
     }
 
+    if (on('label')) {
+        /* Three Text layers from one atlas sent once; each change sends two
+         * uniforms, its glyph boxes and their count. */
+        const { Font, Text } = require('./cluster_render_text.js');
+        const font = dotFont(Font, 8);
+        const atlas = name(font.asset(cr, target), 'dot font atlas');
+        const line = (at, opts) => new Text(cr, font, atlas, Object.assign({ target: target, x: Math.round(W * at[0]),
+            y: Math.round(H * at[1]), w: Math.round(W * at[3]), h: Math.round(H * at[2]) }, opts));
+        const clock = line(LABEL_LINES.clock, { color: [1, 1, 1, 1], maxGlyphs: 8 });
+        const speed = line(LABEL_LINES.speed, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
+        const status = line(LABEL_LINES.status, { color: [1, 0.75, 0.2, 1], align: 'center' });
+        /* a target narrower than the panel may cut a line: said once */
+        let cut = false;
+        const show = (t, text, what) => {
+            const fits = t.set(text);
+            if (!fits && !cut) log(what + ' "' + text + '" is wider than its line on this target: shown cut');
+            cut = cut || !fits;
+        };
+        name(clock.ref, 'clock');
+        name(speed.ref, 'speed');
+        name(status.ref, 'status');
+        const states = LABEL_STATES;
+        let v = 0, k = 0;
+        const tick = () => {
+            const d = new Date();
+            show(clock, ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
+                ('0' + d.getSeconds()).slice(-2), 'the clock');
+            v = (v + 7) % 180;
+            show(speed, v + ' KM/H', 'the speed');
+            speed.color(v > 130 ? [1, 0.3, 0.25, 1] : [0.3, 0.85, 1, 1]);
+        };
+        tick();
+        show(status, states[0], 'the status');
+        setInterval(tick, 500);
+        setInterval(() => show(status, states[++k % states.length], 'the status'), 2000);
+    }
+
+    if (on('values')) {
+        /* One value the renderer animates, which every lamp's u_glow
+         * follows; another the app sets, every lamp's u_rim. */
+        const glow = name(cr.value({ target: target, v: 0 }), 'glow');
+        const rim = name(cr.value({ target: target, type: 'vec3', v: [1, 1, 1] }), 'rim');
+        const colours = [[1, 0.2, 0.2], [1, 0.55, 0.1], [1, 0.9, 0.1], [0.3, 1, 0.3], [0.1, 0.9, 0.9],
+            [0.2, 0.5, 1], [0.6, 0.3, 1], [1, 0.3, 0.8]];
+        const size = Math.round(Math.min(W / 10, H * 0.6));
+        colours.forEach((c, i) => {
+            const lamp = name(cr.effect({ target: target, x: Math.round(W * 0.05 + i * W * 0.113), y: Math.round((H - size) / 2),
+                w: size, h: size, fs: LAMP_FS, blend: 'premultiplied' }), 'lamp ' + i);
+            cr.uniform(lamp, 'u_color', c);
+            cr.link(lamp, 'u_glow', glow);
+            cr.link(lamp, 'u_rim', rim);
+        });
+        cr.animate(glow, { property: 'value', keys: '0:0 700:1 1400:0', loop: true, interp: 'smooth' });
+        const rims = [[1, 1, 1], [1, 0.8, 0.2], [0.3, 0.8, 1]];
+        let k = 0;
+        setInterval(() => cr.setValue(rim, rims[++k % rims.length]), 2000);
+    }
+
     if (on('cubemap')) {
         const sky = name(cr.asset({ target: target, w: 64, h: 64, cube: true, sampling: 'bilinear' }), 'cube map');
         cr.pixels(sky, null, skyFaces());
@@ -603,4 +747,6 @@ function main() {
     cr.connect();
 }
 
-main();
+/* Run, or required (the test): the label page's font and lines. */
+if (require.main === module) main();
+else module.exports = { dotFont, LABEL_LINES, LABEL_STATES };

@@ -57,6 +57,7 @@ struct FakeQuad {
     std::map<std::string, UniformType> types;   /* uniforms set as arrays */
     PartLook look = quad_look();
     std::map<std::string, int> sets;   /* uniform() calls by name */
+    std::map<std::string, int> links;   /* uniform -> value (link()) */
     int styles = 0;   /* style() calls */
     int canvas = 0;   /* the canvas it is drawn in; 0: the target */
 };
@@ -87,6 +88,7 @@ struct FakePart {
     int poses = 0;        /* pose() calls */
     bool pivot = false;   /* a node(): draws nothing */
     int parent = 0;       /* the part or node it follows; 0: the view */
+    std::map<std::string, int> links;   /* uniform -> value (link()) */
     std::map<std::string, int> textures;
     std::map<std::string, std::vector<float>> uniforms;
     std::map<std::string, UniformType> types;
@@ -95,6 +97,12 @@ struct FakePart {
 /* Kept as the backends keep theirs (AnimTable), with no objects. */
 struct FakeAnimation : AnimState {};
 
+struct FakeValue {
+    uint32_t width = 1;
+    std::vector<float> v;
+    int sets = 0;   /* set_value() calls */
+};
+
 struct FakeState {
     std::map<int, FakeBuffer> buffers;
     std::map<int, FakeQuad> quads;
@@ -102,6 +110,7 @@ struct FakeState {
     std::map<int, FakePart> parts;
     std::map<int, FakeAnimation> animations;
     std::map<int, FakeCanvas> canvases;
+    std::map<int, FakeValue> values;
 };
 
 class FakeGraph : public Graph {
@@ -365,10 +374,53 @@ public:
         stop_on(part);
         pending.parts.erase(part);
     }
+    int value(uint32_t width) override
+    {
+        if (width < 1 || width > 4)
+            return 0;
+        pending.values[next].width = width;
+        pending.values[next].v.assign(width, 0.0f);
+        return next++;
+    }
+    bool set_value(int value, const float *v) override
+    {
+        auto it = pending.values.find(value);
+        if (it == pending.values.end())
+            return false;
+        it->second.v.assign(v, v + it->second.width);
+        it->second.sets++;
+        return true;
+    }
+    /* A uniform named unknown_uniform is not in the shader. */
+    bool link(int drawable, const char *name, int value) override
+    {
+        if ((value && !pending.values.count(value)) || unknown_uniform == name)
+            return false;
+        std::map<std::string, int> *links = pending.parts.count(drawable)  ? &pending.parts[drawable].links
+                                            : pending.quads.count(drawable) ? &pending.quads[drawable].links
+                                                                            : nullptr;
+        if (!links)
+            return false;
+        if (value)
+            (*links)[name] = value;
+        else
+            links->erase(name);
+        return true;
+    }
+    void drop_value(int value) override
+    {
+        stop_on(value);
+        pending.values.erase(value);
+    }
+
     int animate(int node, const Animation &a) override
     {
-        if (!has(node) && !pending.parts.count(node) && !pending.views.count(node))
+        if (a.property == Animated::Value) {
+            if (!pending.values.count(node) || a.width != pending.values[node].width)
+                return 0;
+        } else if (!has(node) && !pending.parts.count(node) && !pending.views.count(node)) {
             return 0;
+        }
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
         table().add(next, node, a);
@@ -730,8 +782,14 @@ public:
                 break;
             const EffectInput::Kind k = w[t] == "sampler2D"     ? EffectInput::Sampler2D
                                         : w[t] == "samplerCube" ? EffectInput::SamplerCube
+                                        : w[t] == "float"       ? EffectInput::Float
+                                        : w[t] == "vec2"        ? EffectInput::Vec2
+                                        : w[t] == "vec3"        ? EffectInput::Vec3
+                                        : w[t] == "vec4"        ? EffectInput::Vec4
                                                                 : EffectInput::Other;
             for (size_t n = t + 1; n < w.size() && w[n] != ";"; n++) {
+                if (w[n] == "[" && n + 1 < w.size() && std::isdigit((unsigned char)w[n + 1][0]) && !out->empty())
+                    out->back().elements = (uint32_t)std::atoi(w[n + 1].c_str());
                 if (w[n] == "," || w[n] == "[" || w[n] == "]" || std::isdigit((unsigned char)w[n][0]))
                     continue;
                 EffectInput in;
