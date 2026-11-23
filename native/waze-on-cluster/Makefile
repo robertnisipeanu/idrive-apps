@@ -40,7 +40,7 @@ KIT      = $(CR)/kit
 # the unit's toolchain ABI: the shared renderer's build image, by the same tag
 IMAGE   := cluster-render-build:$(shell cksum < $(CR)/docker/Dockerfile | cut -d' ' -f1)
 DOCKER_IMAGE = docker image inspect $(IMAGE) >/dev/null 2>&1 || \
-	docker build -q --platform linux/amd64 -t $(IMAGE) $(CR)/docker
+	docker build --progress=plain --platform linux/amd64 -t $(IMAGE) $(CR)/docker
 CXXFLAGS = -std=c++14 -O2 -g -Wall -Wextra -Werror
 CPPFLAGS = -I. -Isrc -I$(KIT) -I$(CR)/include -Iabi/include -I$(CR)/src
 

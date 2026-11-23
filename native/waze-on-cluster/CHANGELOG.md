@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Building from source retries a failed package download and shows its
+error.
+
 ## 0.14.8
 
 The tests remove their temporary files and stop the processes they start
