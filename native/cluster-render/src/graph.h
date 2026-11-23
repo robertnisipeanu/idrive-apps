@@ -834,11 +834,13 @@ public:
 };
 
 /* A uniform of a compiled effect, as the library reflects it; Sampler: a
- * sampler whose kind the backend cannot tell. */
+ * sampler whose kind the backend cannot tell; elements: an array's (1 for
+ * a plain uniform). */
 struct EffectInput {
-    enum Kind { Other, Sampler2D, SamplerCube, Sampler };
+    enum Kind { Other, Sampler2D, SamplerCube, Sampler, Float, Vec2, Vec3, Vec4 };
     std::string name;
     Kind kind = Other;
+    uint32_t elements = 1;
 };
 
 /* The participant: effects (shared by every scene) and the scenes. */

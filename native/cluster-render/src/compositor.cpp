@@ -191,9 +191,9 @@ int Compositor::compile(const std::string &vs, const std::string &fs, std::strin
     const int fx = gpu_->effect(vs.c_str(), fs.c_str(), err);
     std::vector<EffectInput> in;
     if (fx && gpu_->inputs(fx, &in)) {
-        std::map<std::string, EffectInput::Kind> &kinds = inputs_[fx];
+        std::map<std::string, EffectInput> &known = inputs_[fx];
         for (const EffectInput &e : in)
-            kinds[e.name] = e.kind;
+            known[e.name] = e;
     }
     return fx;
 }
@@ -721,7 +721,17 @@ bool Compositor::set_value(uint64_t owner, uint32_t id, const float *v, std::str
         t.graph->set_value(ve.handle, ve.v);
         t.dirty = true;
     }
+    touch_linked(id);
     return true;
+}
+
+void Compositor::touch_linked(uint32_t value)
+{
+    for (auto &ck : canvases_)
+        for (const auto &kv : ck.second.layers)
+            for (const auto &l : kv.second.links)
+                if (l.second == value)
+                    ck.second.canvas->touch();
 }
 
 bool Compositor::animate_value(uint64_t owner, uint32_t id, uint32_t anim, const Animation &a, std::string *err)
@@ -744,6 +754,7 @@ bool Compositor::animate_value(uint64_t owner, uint32_t id, uint32_t anim, const
     }
     Animation played = a;
     played.property = Animated::Value;
+    played.owner = owner;   /* its turn among the target's clients (key_turns()) */
     Target &t = targets_[ve.target];
     int handle = 0;
     if (t.graph && ve.handle) {
@@ -759,6 +770,7 @@ bool Compositor::animate_value(uint64_t owner, uint32_t id, uint32_t anim, const
     ValueEntry::Played &p = ve.anims[anim];
     p.a = played;
     p.handle = handle;
+    touch_linked(id);
     return true;
 }
 
@@ -778,6 +790,7 @@ bool Compositor::stop_value(uint64_t owner, uint32_t id, uint32_t anim)
         t.dirty = true;
     }
     it->second.anims.erase(p);
+    touch_linked(id);
     return true;
 }
 
@@ -808,6 +821,32 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
     if (value && v->second.target != e.layer->target()) {
         *err = "the value is on another target";
         return false;
+    }
+    /* checked against the effect's uniforms as the library compiled it,
+     * scene or none: there, plain, of the value's type */
+    static const char *const kTypes[] = {"float", "vec2", "vec3", "vec4"};
+    static const EffectInput::Kind kKinds[] = {EffectInput::Float, EffectInput::Vec2, EffectInput::Vec3,
+                                               EffectInput::Vec4};
+    const int fx = kind == "effect" ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
+    if (value && !fx) {
+        *err = "a pivot has no uniforms";
+        return false;
+    }
+    auto compiled = inputs_.find(fx);
+    if (value && compiled != inputs_.end()) {
+        auto d = compiled->second.find(name);
+        if (d == compiled->second.end()) {
+            *err = "the shader has no uniform " + name;
+            return false;
+        }
+        if (d->second.elements != 1) {
+            *err = "the shader's " + name + " is an array: a value is linked to a plain uniform";
+            return false;
+        }
+        if (d->second.kind != kKinds[v->second.width - 1]) {
+            *err = "the shader's " + name + " is no " + kTypes[v->second.width - 1] + ", the value's type";
+            return false;
+        }
     }
     if (value && e.layer->animating(part, name)) {
         *err = "an animation plays the uniform: stop it first";
@@ -1063,12 +1102,14 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
     auto compiled = inputs_.find(fx);
     if (compiled != inputs_.end()) {
         auto type = compiled->second.find(sampler);
-        if (type == compiled->second.end() || type->second == EffectInput::Other) {
+        if (type == compiled->second.end() ||
+            (type->second.kind != EffectInput::Sampler2D && type->second.kind != EffectInput::SamplerCube &&
+             type->second.kind != EffectInput::Sampler)) {
             *err = "the shader has no sampler " + sampler;
             return false;
         }
         const bool cube = a != assets_.end() && a->second.asset->params().cube;
-        if (type->second != EffectInput::Sampler && cube != (type->second == EffectInput::SamplerCube)) {
+        if (type->second.kind != EffectInput::Sampler && cube != (type->second.kind == EffectInput::SamplerCube)) {
             *err = "the shader's " + sampler + (cube ? " is a sampler2D: a cube map is bound to a samplerCube"
                                                      : " is a samplerCube: only a cube map is bound to it");
             return false;

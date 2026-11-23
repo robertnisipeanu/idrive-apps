@@ -815,7 +815,9 @@ public:
     size_t compiled_effects() const { return inputs_.size(); }
 private:
     /* By effect: its uniforms' kinds as the library compiled it (Gpu::inputs()). */
-    std::map<int, std::map<std::string, EffectInput::Kind>> inputs_;
+    std::map<int, std::map<std::string, EffectInput>> inputs_;
+    /* Every canvas a layer of which follows the value drawn again. */
+    void touch_linked(uint32_t value);
     /* Every asset the layer samples has pixels; and its buffer holds them. */
     bool assets_have(const Entry &e) const;
     bool assets_clean(const Entry &e) const;

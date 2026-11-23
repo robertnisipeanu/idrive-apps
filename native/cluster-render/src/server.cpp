@@ -292,50 +292,6 @@ bool numbers(const std::string &text, size_t max, std::vector<float> *out)
 
 /* "t:v[,v,v] t:v ...": times in ms, ascending, every key the same number
  * of values (1 to 4). */
-bool parse_keys(const std::string &text, Animation *a, std::string *err);
-
-/* An animate message's anim, property (of a value: none, or value),
- * name, loop, interp and keys, its curve sampled; false with *err. */
-bool animation_fields(const cr::Json &j, bool of_value, Animation *a, double *anim, std::string *err)
-{
-    double loop = 0;
-    int property = 0, interp = 0;
-    if (!num(j, "anim", 1, 4294967295.0, anim, err) || !*anim) {
-        if (err->empty())
-            *err = "anim (the animation's number, 1 or more) missing";
-        return false;
-    }
-    if (!choice(j, "property", {"rotate", "translate", "scale", "uniform", "value"}, &property, err) ||
-        !num(j, "loop", 0, 1, &loop, err) ||
-        !choice(j, "interp", {"linear", "step", "ease_in", "ease_out", "ease_in_out", "smooth"}, &interp, err) ||
-        !parse_keys(str(j, "keys"), a, err))
-        return false;
-    if (of_value ? j.count("property") && property != 4 : !j.count("property") || property == 4) {
-        *err = of_value ? "a value's animation has no property, or value"
-                        : "property must be rotate, translate, scale or uniform";
-        return false;
-    }
-    static const Animated props[] = {Animated::Rotate, Animated::Translate, Animated::Scale, Animated::Uniform,
-                                     Animated::Value};
-    a->property = of_value ? Animated::Value : props[property];
-    a->uniform = str(j, "name");
-    a->loop = loop != 0;
-    a->step = interp == 1;
-    static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
-                                   Curve::Smooth};
-    if (!sample_curve(curves[interp], a)) {
-        *err = "the curve leaves the numbers a key holds: keys too far apart for " + str(j, "interp");
-        return false;
-    }
-    if (a->property == Animated::Uniform && (a->uniform.empty() || a->uniform.size() > 64)) {
-        *err = "a uniform's animation needs its name";
-        return false;
-    }
-    return true;
-}
-
-/* "t:v[,v,v] t:v ...": times in ms, ascending, every key the same number
- * of values (1 to 4). */
 bool parse_keys(const std::string &text, Animation *a, std::string *err)
 {
     static const size_t kMaxKeys = 256;
@@ -378,6 +334,46 @@ bool parse_keys(const std::string &text, Animation *a, std::string *err)
     if (a->t.empty())
         return false;
     err->clear();
+    return true;
+}
+
+/* An animate message's anim, property (of a value: none, or value),
+ * name, loop, interp and keys, its curve sampled; false with *err. */
+bool animation_fields(const cr::Json &j, bool of_value, Animation *a, double *anim, std::string *err)
+{
+    double loop = 0;
+    int property = 0, interp = 0;
+    if (!num(j, "anim", 1, 4294967295.0, anim, err) || !*anim) {
+        if (err->empty())
+            *err = "anim (the animation's number, 1 or more) missing";
+        return false;
+    }
+    if (!choice(j, "property", {"rotate", "translate", "scale", "uniform", "value"}, &property, err) ||
+        !num(j, "loop", 0, 1, &loop, err) ||
+        !choice(j, "interp", {"linear", "step", "ease_in", "ease_out", "ease_in_out", "smooth"}, &interp, err) ||
+        !parse_keys(str(j, "keys"), a, err))
+        return false;
+    if (of_value ? j.count("property") && property != 4 : !j.count("property") || property == 4) {
+        *err = of_value ? "a value's animation has no property, or value"
+                        : "property must be rotate, translate, scale or uniform";
+        return false;
+    }
+    static const Animated props[] = {Animated::Rotate, Animated::Translate, Animated::Scale, Animated::Uniform,
+                                     Animated::Value};
+    a->property = of_value ? Animated::Value : props[property];
+    a->uniform = str(j, "name");
+    a->loop = loop != 0;
+    a->step = interp == 1;
+    static const Curve curves[] = {Curve::Linear, Curve::Step, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut,
+                                   Curve::Smooth};
+    if (!sample_curve(curves[interp], a)) {
+        *err = "the curve leaves the numbers a key holds: keys too far apart for " + str(j, "interp");
+        return false;
+    }
+    if (a->property == Animated::Uniform && (a->uniform.empty() || a->uniform.size() > 64)) {
+        *err = "a uniform's animation needs its name";
+        return false;
+    }
     return true;
 }
 
@@ -1344,10 +1340,13 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         op_uniform(c, ref, l, j);
     } else if (op == "link") {
         double value_d = 0;
-        num(j, "value", 0, 4294967295.0, &value_d, &err);
+        const bool given = j.count("value") && num(j, "value", 0, 4294967295.0, &value_d, &err) &&
+                           value_d == (double)(uint32_t)value_d;
         auto v = c.assets.find((uint32_t)value_d);
         const std::string name = str(j, "name");
-        if (name.empty() || name.size() > 64)
+        if (!given)
+            error(c, op, ref, "value is a value's ref, or 0 to unlink");
+        else if (name.empty() || name.size() > 64)
             error(c, op, ref, "a link needs a uniform name");
         else if (value_d && (v == c.assets.end() || !comp_->value(c.id, v->second)))
             error(c, op, ref, "no such value");

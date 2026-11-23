@@ -60,6 +60,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 
 #include <cstdio>
@@ -3040,7 +3041,11 @@ static void values_over_socket()
         return g;
     };
     check("made", 0.5f);
-    c.set_value(v, {0.9f});
+    ok("values: set", c.set_value(v, {0.9f}));
+    /* refused by the client, so neither sent nor kept for the restart below */
+    ok("values: a set not finite refused, as a value made so",
+       !c.set_value(v, {std::nanf("")}) && !c.set_value(v, {0.1f, 0.2f}) &&
+           !c.value("panel", cr::UniformType::Float, {INFINITY}));
     const uint32_t anim = c.animate(v, pulse);
     r.pump(200);
     FakeGraph *g = check("set", 0.9f);
@@ -3056,11 +3061,16 @@ static void values_over_socket()
     raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
     raw.send("{\"op\":\"value\",\"ref\":1,\"target\":\"panel\",\"type\":\"vec3\",\"v\":\"1 2\"}");
     raw.send("{\"op\":\"value\",\"ref\":2,\"target\":\"panel\",\"type\":\"float\",\"v\":\"0.5\"}");
-    raw.send("{\"op\":\"layer\",\"ref\":3,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":3,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"uniform float "
+             "u_level; void main(){gl_FragColor=vec4(u_level);}\"}");
     raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":9}");
     raw.send("{\"op\":\"animate\",\"ref\":2,\"anim\":1,\"property\":\"rotate\",\"keys\":\"0:0 9:1\"}");
     raw.send("{\"op\":\"value\",\"ref\":2,\"type\":\"vec4\",\"v\":\"1 1 1 1\"}");
     raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":2}");
+    /* malformed: refused, the link kept */
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":\"x\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":2.5}");
     raw.send("{\"op\":\"animate\",\"ref\":3,\"anim\":1,\"property\":\"uniform\",\"name\":\"u_level\",\"keys\":\"0:0 9:1\"}");
     r.pump(50);
     const std::string ev = raw.events();
@@ -3070,6 +3080,11 @@ static void values_over_socket()
     };
     ok("values: v not of the type's width refused", refused("value", 1, "v is 3 finite numbers"));
     ok("values: a link to no value refused", refused("link", 3, "no such value"));
+    size_t malformed = 0;
+    for (size_t at = ev.find("value is a value's ref, or 0 to unlink"); at != std::string::npos;
+         at = ev.find("value is a value's ref, or 0 to unlink", at + 1))
+        malformed++;
+    ok("values: a link's value not a ref refused, all three", malformed == 3);
     ok("values: a value animated as a node refused", refused("animate", 2, "a value's animation has no property"));
     ok("values: its type set when made", refused("value", 2, "a value's type and target are set when it is made"));
     ok("values: a linked uniform's own animation refused", refused("animate", 3, "the uniform follows a value"));

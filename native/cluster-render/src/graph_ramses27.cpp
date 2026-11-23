@@ -1116,6 +1116,9 @@ public:
         auto it = values_.find(value);
         if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
             return false;
+        /* the library refuses an array uniform (logging an error) */
+        if (value && in.getElementCount() != 1)
+            return false;
         /* the uniform a float, vec2, vec3 or vec4 as the value: the library
          * logs an error for another */
         static const ramses::EEffectInputDataType types[4] = {
@@ -1786,9 +1789,16 @@ int Ramses27Gpu::effect(const char *vs, const char *fs, std::string *err)
             continue;
         EffectInput e;
         e.name = u.getName();
-        e.kind = u.getDataType() == ramses::EEffectInputDataType_TextureSampler2D     ? EffectInput::Sampler2D
-                 : u.getDataType() == ramses::EEffectInputDataType_TextureSamplerCube ? EffectInput::SamplerCube
-                                                                                      : EffectInput::Other;
+        e.elements = u.getElementCount();
+        switch (u.getDataType()) {
+        case ramses::EEffectInputDataType_TextureSampler2D: e.kind = EffectInput::Sampler2D; break;
+        case ramses::EEffectInputDataType_TextureSamplerCube: e.kind = EffectInput::SamplerCube; break;
+        case ramses::EEffectInputDataType_Float: e.kind = EffectInput::Float; break;
+        case ramses::EEffectInputDataType_Vector2F: e.kind = EffectInput::Vec2; break;
+        case ramses::EEffectInputDataType_Vector3F: e.kind = EffectInput::Vec3; break;
+        case ramses::EEffectInputDataType_Vector4F: e.kind = EffectInput::Vec4; break;
+        default: e.kind = EffectInput::Other; break;
+        }
         s.inputs.push_back(e);
     }
     scratch_->destroy(*fx);

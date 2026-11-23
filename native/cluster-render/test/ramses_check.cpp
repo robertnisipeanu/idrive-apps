@@ -1088,6 +1088,18 @@ static void backend(Gpu &gpu)
            g->link(vp, "u_fade", level) && g->link(vq, "u_tint", warmth) && g->link(vp, "u_tint", warmth) &&
            (pulsing = g->animate(level, pulse)) && g->flush(13));
     ok("values: a value of another type than the uniform refused", !g->link(vq, "u_level", warmth));
+    {
+        /* the library refuses an array (logging an error the run fails on):
+         * refused before it is asked */
+        const int arr_fx = gpu.effect(kQuadVertexShader,
+                                      "#version 100\nprecision mediump float;\nuniform float u_arr[4];\n"
+                                      "void main(){gl_FragColor=vec4(u_arr[0]+u_arr[3]);}",
+                                      &err);
+        const int aq = arr_fx ? g->quad(arr_fx, lr) : 0;
+        ok("values: an array uniform refused", aq && !g->link(aq, "u_arr", level) && g->flush(13));
+        g->drop_quad(aq);
+        gpu.drop_effect(arr_fx);
+    }
     pulse.v = {1, 0, 1};
     pulsing = g->replace(pulsing, level, pulse);
     ok("values: its animation replaced", pulsing && g->flush(14));
@@ -1541,6 +1553,19 @@ int main()
        comp.state(sc, &reason) == LayerState::Shown && comp.state(hosted, &reason) == LayerState::Shown &&
            comp.state(edge, &reason) == LayerState::Shown && lp0 && lp0->getRenderOrder() == 2 &&
            gauge_edited(client, 30));
+#ifndef CRS_RAMSES27
+    /* A value over the file: made in its scene, the effect's u_level
+     * linked to it. */
+    const float over_level = 0.5f;
+    const uint32_t over_value = comp.add_value(8, 1, 1, &over_level, &err);
+    run(100);
+    const bool over_linked = over_value && comp.link(8, edge, 0, "u_level", over_value, &err);
+    run(100);
+    ok("layers over the file: a value made in its scene, an effect's uniform linked to it",
+       over_linked && comp.linked(8, edge, 0, "u_level") && comp.state(edge, &reason) == LayerState::Shown);
+    if (!over_linked)
+        std::printf("     %s\n", err.c_str());
+#endif
     comp.remove_owner(8);
     run(500);
     ok("the layers gone, the file stays", comp.state(sc, &reason) == LayerState::Shown && client.findObjectByName("gauge"));

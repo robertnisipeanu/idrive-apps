@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -1092,41 +1093,52 @@ void Client::stop(uint32_t ref, uint32_t anim)
     send_now();
 }
 
-uint32_t Client::value(const std::string &target, UniformType type, const std::vector<float> &v)
+/* A value's message: its target, type (by width) and v; empty when v is not
+ * width finite numbers, as the service would refuse it. */
+static std::string value_json(uint32_t ref, const std::string &target, size_t width, const std::vector<float> &v)
 {
     static const char *const names[] = {"float", "vec2", "vec3", "vec4"};
-    if ((int)type > (int)UniformType::Vec4 || v.size() != (size_t)type + 1)
+    if (width < 1 || width > 4 || v.size() != width)
+        return std::string();
+    std::string vs;
+    for (float x : v) {
+        if (!std::isfinite(x))
+            return std::string();
+        vs += (vs.empty() ? "" : " ") + num(x);
+    }
+    return json_object({{"op", json_quote("value")}, {"ref", num(ref)}, {"target", json_quote(target)},
+                        {"type", json_quote(names[width - 1])}, {"v", json_quote(vs)}});
+}
+
+uint32_t Client::value(const std::string &target, UniformType type, const std::vector<float> &v)
+{
+    const std::string m = value_json(next_ref_, target, (size_t)type + 1, v);
+    if (m.empty())
         return 0;
     Layer l;
     l.kind = "value";
     l.lo.target = target;
     l.w = (unsigned)v.size();
+    l.value = m;
     const uint32_t ref = next_ref_++;
-    std::string vs;
-    for (float x : v)
-        vs += (vs.empty() ? "" : " ") + num(x);
-    l.value = json_object({{"op", json_quote("value")}, {"ref", num(ref)}, {"target", json_quote(target)},
-                           {"type", json_quote(names[(int)type])}, {"v", json_quote(vs)}});
     layers_[ref] = l;
     queue(l.value);
     send_now();
     return ref;
 }
 
-void Client::set_value(uint32_t value, const std::vector<float> &v)
+bool Client::set_value(uint32_t value, const std::vector<float> &v)
 {
     auto it = layers_.find(value);
-    if (it == layers_.end() || it->second.kind != "value" || v.size() != it->second.w)
-        return;
-    static const char *const names[] = {"float", "vec2", "vec3", "vec4"};
-    std::string vs;
-    for (float x : v)
-        vs += (vs.empty() ? "" : " ") + num(x);
-    it->second.value = json_object({{"op", json_quote("value")}, {"ref", num(value)},
-                                    {"target", json_quote(it->second.lo.target)},
-                                    {"type", json_quote(names[it->second.w - 1])}, {"v", json_quote(vs)}});
-    queue(it->second.value);
+    const std::string m = it == layers_.end() || it->second.kind != "value"
+                              ? std::string()
+                              : value_json(value, it->second.lo.target, it->second.w, v);
+    if (m.empty())
+        return false;   /* kept as it was, for a reconnect */
+    it->second.value = m;
+    queue(m);
     send_now();
+    return true;
 }
 
 bool Client::link(uint32_t ref, const std::string &uniform, uint32_t value, uint32_t part)

@@ -1154,6 +1154,9 @@ public:
         auto it = values_.find(value);
         if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
             return false;
+        /* the library refuses an array uniform (logging an error) */
+        if (value && in.getElementCount() != 1)
+            return false;
         /* the uniform a float, vec2, vec3 or vec4 as the value: the library
          * logs an error for another */
         if (value && (!types_ || (uint32_t)in.getDataType() != types_->uniform[it->second.width - 1]))
@@ -2258,8 +2261,16 @@ int Ramses19Gpu::effect(const char *vs, const char *fs, std::string *err)
                 continue;
             EffectInput e;
             e.name = u.getName();
+            e.elements = u.getElementCount();
             const uint32_t type = (uint32_t)u.getDataType();
-            if (type != types_.sampler2d && type != types_.sampler_cube) {
+            static const EffectInput::Kind floats[] = {EffectInput::Float, EffectInput::Vec2, EffectInput::Vec3,
+                                                       EffectInput::Vec4};
+            int f = 0;
+            while (f < 4 && types_.uniform[f] != type)
+                f++;
+            if (f < 4) {
+                e.kind = floats[f];
+            } else if (type != types_.sampler2d && type != types_.sampler_cube) {
                 e.kind = EffectInput::Other;
             } else if (types_.sampler2d != types_.sampler_cube) {
                 e.kind = type == types_.sampler2d ? EffectInput::Sampler2D : EffectInput::SamplerCube;

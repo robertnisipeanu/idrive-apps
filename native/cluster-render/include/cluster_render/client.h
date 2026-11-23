@@ -304,9 +304,11 @@ public:
      * Vec4, v its first value (as many numbers). Uniforms of the client's
      * effect layers and mesh parts there follow it (link()); set_value()
      * sets it, animate() with property "value" animates it, for all of them
-     * at once. 0 when v does not fit the type. */
+     * at once. 0 when v is not as many finite numbers as the type takes. */
     uint32_t value(const std::string &target, UniformType type, const std::vector<float> &v);
-    void set_value(uint32_t value, const std::vector<float> &v);
+    /* False, nothing sent or kept, when v is not as many finite numbers as
+     * the value takes. */
+    bool set_value(uint32_t value, const std::vector<float> &v);
     /* The layer's uniform (part's, for a mesh layer) follows the value, of
      * the uniform's type; value 0: it does not, and takes its own value
      * again. False, nothing sent, when the layer or the value is not one. */

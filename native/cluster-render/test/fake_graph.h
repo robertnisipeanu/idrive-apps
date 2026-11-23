@@ -783,8 +783,14 @@ public:
                 break;
             const EffectInput::Kind k = w[t] == "sampler2D"     ? EffectInput::Sampler2D
                                         : w[t] == "samplerCube" ? EffectInput::SamplerCube
+                                        : w[t] == "float"       ? EffectInput::Float
+                                        : w[t] == "vec2"        ? EffectInput::Vec2
+                                        : w[t] == "vec3"        ? EffectInput::Vec3
+                                        : w[t] == "vec4"        ? EffectInput::Vec4
                                                                 : EffectInput::Other;
             for (size_t n = t + 1; n < w.size() && w[n] != ";"; n++) {
+                if (w[n] == "[" && n + 1 < w.size() && std::isdigit((unsigned char)w[n + 1][0]) && !out->empty())
+                    out->back().elements = (uint32_t)std::atoi(w[n + 1].c_str());
                 if (w[n] == "," || w[n] == "[" || w[n] == "]" || std::isdigit((unsigned char)w[n][0]))
                     continue;
                 EffectInput in;

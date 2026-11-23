@@ -1314,6 +1314,14 @@ static const char *const kLitVs = "#version 100\nattribute vec3 a_position;\natt
                                   "uniform mat4 u_mvp;\nuniform mat4 u_normal;\nvarying vec3 v_n;\n"
                                   "void main() { v_n = (u_normal * vec4(a_normal, 0.0)).xyz;\n"
                                   "  gl_Position = u_mvp * vec4(a_position, 1.0); }";
+/* A sampler and the uniforms the values tests link: u_level, u_fade, an
+ * array and a vec4. */
+static const char *const kLevelFs = "#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\n"
+                                    "uniform float u_level;\nuniform mediump float u_fade;\n"
+                                    "uniform float u_bars[4]; // uniform float u_gone;\n"
+                                    "uniform vec4 u_tint;\nvarying vec2 v_uv;\n"
+                                    "void main() { gl_FragColor = texture2D(u_atlas, v_uv) * u_level * u_fade *"
+                                    " u_bars[0] * u_tint; }";
 static const char *const kFlatVs = "#version 100\nattribute vec3 a_position;\nuniform mat4 u_mvp;\n"
                                    "void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }";
 static const char *const kPartFs = "#version 100\nprecision mediump float;\nuniform vec4 u_color;\n"
@@ -3677,18 +3685,18 @@ static void shared_values()
     const float half = 0.5f;
     const uint32_t level = r.comp->add_value(1, r.panel, 1, &half, &err);
     ok("values: made", level && r.comp->value(1, level) && !r.comp->value(2, level));
-    const uint32_t a = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0, r.now,
+    const uint32_t a = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kLevelFs, 0, r.now,
                                           &err);
     CanvasSpec cs;
     cs.w = cs.h = 64;
     const uint32_t cv = r.comp->add_canvas(1, r.panel, cs, &err);
     LayerParams in = params(Klass::Content, R(0, 0, 64, 64));
     in.canvas = cv;
-    const uint32_t b = r.comp->add_effect(1, r.panel, in, "", kSample, 0, r.now, &err);
+    const uint32_t b = r.comp->add_effect(1, r.panel, in, "", kLevelFs, 0, r.now, &err);
     r.comp->bind(1, a, 0, "u_atlas", cv, &err);
     MeshParams mp;
     const uint32_t m = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(100, 0, 64, 64)), mp, r.now, &err);
-    r.comp->add_part(1, m, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->add_part(1, m, 1, kLitVs, kLevelFs, PartLook(), 0, &err);
     r.comp->geometry(1, m, 1, fan(4, true), r.now, &err);
     const float own = 0.25f;
     static_cast<EffectLayer *>(r.comp->layer(1, a))->set_uniform("u_level", &own, 1);
@@ -3748,7 +3756,7 @@ static void shared_values()
     ok("values: keys of another width refused", !r.comp->animate_value(1, level, 2, keys(Animated::Value, 3, {0, 9},
                                                                                          {0, 0, 0, 1, 1, 1}),
                                                                        &err));
-    const uint32_t other = r.comp->add_effect(2, r.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", kSample, 0, r.now,
+    const uint32_t other = r.comp->add_effect(2, r.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", kLevelFs, 0, r.now,
                                               &err);
     ok("values: another client's value is not one's own",
        !r.comp->link(2, other, 0, "u_level", level, &err) && err == "no such value");
@@ -3757,6 +3765,30 @@ static void shared_values()
        !r.comp->link(1, a, 0, "u_tint", far, &err) && err == "the value is on another target");
     Layer *al = r.comp->layer(1, a);
     al->animate(5, 0, keys(Animated::Uniform, 1, {0, 9}, {0, 1}, "u_fade"), &err);
+    /* Checked from the shader, before any scene. */
+    {
+        Rig q;
+        const uint32_t lv = q.comp->add_value(1, q.panel, 1, &half, &err);
+        const float four[4] = {1, 1, 1, 1};
+        const uint32_t tint = q.comp->add_value(1, q.panel, 4, four, &err);
+        const uint32_t e = q.comp->add_effect(1, q.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", kLevelFs, 0,
+                                              q.now, &err);
+        MeshParams qp;
+        const uint32_t qm = q.comp->add_mesh(1, q.panel, params(Klass::Content, R(0, 0, 8, 8)), qp, q.now, &err);
+        q.comp->add_part(1, qm, 9, "", "", PartLook(), 0, &err);
+        ok("values: before a scene, a uniform the shader lacks refused",
+           !q.comp->link(1, e, 0, "u_gone", lv, &err) && err == "the shader has no uniform u_gone" &&
+               !q.comp->linked(1, e, 0, "u_gone"));
+        ok("values: before a scene, a uniform of another type refused",
+           !q.comp->link(1, e, 0, "u_level", tint, &err) &&
+               err == "the shader's u_level is a float, the value a vec4");
+        ok("values: before a scene, an array refused",
+           !q.comp->link(1, e, 0, "u_bars", lv, &err) &&
+               err == "the shader's u_bars is an array: a value is linked to a plain uniform");
+        ok("values: a pivot refused", !q.comp->link(1, qm, 9, "u_level", lv, &err) && !q.comp->linked(1, qm, 9, "u_level"));
+        ok("values: before a scene, a uniform declared with its precision and of the type linked",
+           q.comp->link(1, e, 0, "u_fade", lv, &err) && q.comp->link(1, e, 0, "u_tint", tint, &err));
+    }
     ok("values: a uniform an animation plays refused", !r.comp->link(1, a, 0, "u_fade", level, &err) &&
                                                            err == "an animation plays the uniform: stop it first");
     uint32_t made = 0;
@@ -3772,6 +3804,37 @@ static void shared_values()
         own_back = own_back || (kv.second.uniforms.count("u_level") && kv.second.uniforms.at("u_level")[0] == 0.25f &&
                                 !kv.second.links.count("u_level"));
     ok("values: the quad's u_level its own 0.25", own_back);
+
+    /* A canvas drawn once draws again when a value its layers follow
+     * changes: set, animated or stopped. */
+    {
+        CanvasSpec ocs;
+        ocs.w = ocs.h = 64;
+        ocs.once = true;
+        const uint32_t oc = r.comp->add_canvas(1, r.panel, ocs, &err);
+        LayerParams oin = params(Klass::Content, R(0, 0, 64, 64));
+        oin.canvas = oc;
+        const uint32_t still = r.comp->add_effect(1, r.panel, oin, "", kLevelFs, 0, r.now, &err);
+        r.comp->link(1, still, 0, "u_level", level, &err);
+        r.run(300);
+        FakeGraph *og = r.g("panel");
+        int oh = 0;
+        for (const auto &kv : og ? og->shown.canvases : std::map<int, FakeCanvas>())
+            if (kv.second.spec.once)
+                oh = kv.first;
+        const int first = oh ? og->shown.canvases[oh].redraws : -1;
+        r.run(300);
+        const float again = 0.3f;
+        r.comp->set_value(1, level, &again, &err);
+        r.run(50);
+        ok("values: a canvas drawn once that follows it drawn again when it is set",
+           oh && first >= 1 && og->shown.canvases[oh].redraws == first + 1);
+        r.comp->animate_value(1, level, 5, keys(Animated::Value, 1, {0, 9}, {0, 1}), &err);
+        r.run(50);
+        r.comp->stop_value(1, level, 5);
+        r.run(50);
+        ok("values: and when it is animated and stopped", oh && og->shown.canvases[oh].redraws == first + 3);
+    }
     const int vh = g && !g->shown.values.empty() ? g->shown.values.begin()->first : -1;
     ok("values: dropped, its links undone, its animation gone",
        r.comp->remove_asset(1, level, &err) && (r.run(50), true) && !r.comp->value(1, level) &&
