@@ -353,6 +353,42 @@ work alike in a [canvas](#canvases). The parts of a layer are made again in
 each new scene, each with its parent; the client libraries send parts again
 after a reconnect in the order they were made.
 
+### Text
+
+The service draws no text of its own: an app sends a font once, as an
+`r8` asset, and draws strings from it in effect layers. Both clients come
+with a helper that does this with the layer kinds above, with no service
+change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
+`libcluster_render_client.a`), and any client can do the same:
+
+- **The font's atlas** is one row of its glyphs, each a whole line high
+  with a column of 0 between them, at most 2048 pixels wide: an `r8`
+  asset sampled `bilinear`, sent once. The helper makes it from glyph
+  bitmaps (any rasteriser the app has, at build time or on the unit), a
+  monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
+  pixels, R8 or the alpha of RGBA).
+- **A string** is an effect layer, its rect one line high, whose fragment
+  shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
+  u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in
+  the atlas (0-1), the last one covering a pixel drawn, `u_count` glyphs
+  used, in `u_color` (premultiplied out, `blend` `premultiplied`). The app
+  lays the string out (advances, kerning, UTF-8, alignment) and sends the
+  array: one `uniform` message of a few hundred bytes a change, whatever
+  the font's size; the atlas is never sent again. A glyph the font lacks
+  takes a space's advance.
+- **Cost:** each pixel of the rect tests at most `n` glyphs (16 by
+  default, 1-64), and the shader holds `n` + 2 uniform vectors; GLSL ES
+  1.00 guarantees 16 to a fragment shader, a GPU usually far more.
+
+```js
+const { Font, Text } = require('./cluster_render_text.js');
+const font = Font.fromBMFont(fntText, { pixels: pageAlpha, w: 512, h: 256 });
+const atlas = font.asset(cr, 'panel');
+const speed = new Text(cr, font, atlas, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
+    align: 'right', color: [1, 1, 1, 1] });
+speed.set('123 km/h');
+```
+
 ### Animating preloaded assets
 
 Artwork sent once as assets is animated with no more pixels sent: an effect

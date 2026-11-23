@@ -64,7 +64,7 @@ CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
 UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
 UNIT8_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
 LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp src/ceiling_memory.cpp
-CLIENT_SRC = client/client.cpp client/protocol.cpp
+CLIENT_SRC = client/client.cpp client/protocol.cpp client/text.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
 	test-ramses test-ramses27 clean
@@ -207,7 +207,7 @@ $(H)/scene_test: $(O)/test/scene_test.o $(CORE_OBJ)
 $(H)/settings_test: $(O)/test/settings_test.o $(O)/src/settings.o $(O)/src/config.o $(O)/src/holds.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-$(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o
+$(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o $(O)/client/text.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/host_service: $(O)/test/host_service.o $(CORE_OBJ)
@@ -307,9 +307,9 @@ test-ramses:
 
 $(T)/ramses_check: test/ramses_check.cpp test/fake_port.h src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
 		$(wildcard abi/include/ramses19/*.h) \
-		$(T)/stub/$(RAMSES_SONAME)
+		client/client.cpp client/text.cpp include/cluster_render/text.h $(T)/stub/$(RAMSES_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ test/ramses_check.cpp \
-		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(T)/stub/$(RAMSES_SONAME)
+		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) client/client.cpp client/text.cpp $(T)/stub/$(RAMSES_SONAME)
 
 # The same on iDrive 8's libramses 27 (TCP, no renderer).
 test-ramses27:
@@ -324,16 +324,19 @@ test-ramses27:
 
 $(T)/ramses_check27: test/ramses_check.cpp test/fake_port.h src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
 		$(wildcard abi/include/ramses27/ramses-client-api/*.h) \
-		$(T)/stub/$(RAMSES27_SONAME)
+		client/client.cpp client/text.cpp include/cluster_render/text.h $(T)/stub/$(RAMSES27_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS27) -DCRS_RAMSES27 -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ \
-		test/ramses_check.cpp src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) $(T)/stub/$(RAMSES27_SONAME)
+		test/ramses_check.cpp src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) client/client.cpp client/text.cpp \
+		$(T)/stub/$(RAMSES27_SONAME)
 
 # The C++ client for native producers on the unit, as a static library.
-$(T)/libcluster_render_client.a: $(CLIENT_SRC) include/cluster_render/client.h include/cluster_render/protocol.h
+$(T)/libcluster_render_client.a: $(CLIENT_SRC) include/cluster_render/client.h include/cluster_render/protocol.h \
+		include/cluster_render/text.h
 	mkdir -p $(T)/client
 	g++ $(CXXFLAGS) -Iinclude -c client/client.cpp -o $(T)/client/client.o
 	g++ $(CXXFLAGS) -Iinclude -c client/protocol.cpp -o $(T)/client/protocol.o
-	ar rcs $@ $(T)/client/client.o $(T)/client/protocol.o
+	g++ $(CXXFLAGS) -Iinclude -c client/text.cpp -o $(T)/client/text.o
+	ar rcs $@ $(T)/client/client.o $(T)/client/protocol.o $(T)/client/text.o
 
 clean:
 	rm -rf $(BUILD)

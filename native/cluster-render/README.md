@@ -26,6 +26,7 @@ slots between its clients, and spends one upload budget for all of them.
 | `src/` | the service: slot arbitration, the layer stack, layers, the upload governor, the iDrive 7 and iDrive 8 backends, the socket | — (one process, `hmi_5000`) |
 | `include/`, `client/` | the C++ client and protocol, `libcluster_render_client.a` on the unit | native producers |
 | `js/cluster_render_client.js` | the Node 8 client | OAP apps |
+| `js/cluster_render_text.js`, `include/cluster_render/text.h`, `client/text.cpp` | the text helper, for both clients (PROTOCOL.md "Text") | apps that draw text |
 | `dcsm/`, `abi/`, `tools/`, `docker/` | the Dcsm2 client ([dcsm/DCSM.md](dcsm/DCSM.md)), the units' RAMSES 19, RAMSES 27 and vsomeip ABI ([abi/ABI.md](abi/ABI.md), [abi/ABI27.md](abi/ABI27.md)), the ABI checks and the unit's toolchain | the service's build |
 
 Frames cross a socket: a whole 1088x480 video frame is 783 KB. An app's
@@ -39,6 +40,10 @@ takes them, a whole scene file a root install put in place ("Layers").
 - **OAP apps** copy `js/cluster_render_client.js` into their sources (Node 8,
   only the `net` and `events` builtins). The installed copy is
   `/var/opt/cluster-render/current/cluster_render_client.js`.
+- **Text:** `js/cluster_render_text.js` (installed beside the client) and
+  `include/cluster_render/text.h` (in `libcluster_render_client.a`) make a
+  font's atlas once and draw strings from it in effect layers, a change of
+  string a few hundred bytes (PROTOCOL.md "Text").
 - Any other language speaks [PROTOCOL.md](PROTOCOL.md) over the socket.
 
 A client needs only the socket's group, `tm_oap_app`, which every OAP app

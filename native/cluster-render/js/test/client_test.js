@@ -41,6 +41,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { ClusterRender } = require('../cluster_render_client.js');
+const { Font, Text } = require('../cluster_render_text.js');
 
 const bin = process.argv[2];
 const sock = '/tmp/crs-js-test-' + process.pid + '.sock';
@@ -493,6 +494,36 @@ async function main() {
     ovl.drop(lvl);
     ok('values: dropped, the link forgotten here', Object.keys(ovl.layers.get(fxA).links).length === 0);
     ovl.drop(fxA);
+
+    {   /* The text helper (cluster_render_text.js), in a block: its names its own. */
+    const grid = Buffer.alloc(16 * 16);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) grid[y * 16 + x] = x < 8 ? 255 : 128;
+    const font = Font.fromGrid({ pixels: grid, w: 16, h: 16, cols: 2, rows: 1, chars: '12' });
+    let l = font.layout('12', 32);
+    ok('text: a grid font laid out at twice its height', font.w === 19 && font.lineHeight === 16 &&
+        font.pixels[1] === 255 && font.pixels[10] === 128 && l.boxes.length === 2 && l.boxes[1].x0 === 16 &&
+        l.boxes[1].u0 === 10 && l.width === 32);
+    const kerned = Font.fromGlyphs(8, [{ char: 'A', w: 4, h: 2, top: 3, advance: 5, pixels: Buffer.alloc(8, 200) },
+        { char: ' ', w: 0, h: 0, advance: 3, pixels: Buffer.alloc(0) }], new Map([['65,65', -2]]));
+    l = kerned.layout('A A\u20acAA', 8);
+    ok('text: glyph bitmaps, kerning, a missing character a space', kerned.pixels[3 * kerned.w + 1] === 200 &&
+        l.boxes.length === 4 && l.boxes[2].x0 === 16 && l.boxes[3].x0 === 19 && l.width === 24);
+    const bm = Font.fromBMFont('common lineHeight=8 base=6\nchar id=65 x=0 y=0 width=4 height=6 xoffset=1 yoffset=2 ' +
+        'xadvance=6\nchar id=66 x=4 y=0 width=4 height=6 xoffset=0 yoffset=2 xadvance=5\nkerning first=65 second=66 ' +
+        'amount=-1\n', { pixels: Buffer.alloc(8 * 6 * 4, 90), w: 8, h: 6, bpp: 4 });
+    l = bm.layout('AB', 8);
+    ok('text: a BMFont', bm.lineHeight === 8 && l.boxes[0].x0 === 1 && l.boxes[1].x0 === 5 && l.width === 10);
+    const fontRef = font.asset(ovl, 'panel');
+    const label = new Text(ovl, font, fontRef, { target: 'panel', klass: 'overlay', x: 600, y: 40, w: 200, h: 32,
+        align: 'center', maxGlyphs: 4 });
+    const textRefused = eo.refused.length;
+    ok('text: set, centred, and more glyphs than it holds: false',
+        label.ref > 0 && label.set('12') && !label.set('12121') && label.set('21'));
+    ok('text: shown, nothing refused', await until(() => eo.layer[label.ref] === 'shown', 3000) &&
+        (await sleep(200), eo.refused.slice(textRefused).filter((r) => /^(uniform|bind|layer|asset)/.test(r)).length === 0));
+    label.drop();
+    ovl.drop(fontRef);
+    }
 
     /* Rolled back to a service without canvases: none of a canvas sent to
      * it (it would draw a layer drawn in one on screen), made before its
