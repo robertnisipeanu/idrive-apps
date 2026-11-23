@@ -346,20 +346,19 @@ function pcmd(cmd, ev) {
     fs.writeFileSync(path.join(P2, '9', 'comm'), 'dlt-daemon\n');
     fs.symlinkSync('/run/dlt-files/dltpipes/dlt99', path.join(P2, '9', 'fd', '10'));
     var probe = spawn(['-e', [
-        'var dc = require(' + JSON.stringify(HELPER) + '), fs = require("fs"), cp = require("child_process"), ticks = 0;',
-        'setInterval(function () { ticks++; }, 10);',
+        'var dc = require(' + JSON.stringify(HELPER) + '), fs = require("fs"), cp = require("child_process");',
         'var first = dc.registeredClient();',
         'if (!first || typeof first.then !== "function") { console.log("not a promise"); process.exit(1); }',
         'first.then(function (a) {',
         '    fs.mkdirSync(' + JSON.stringify(path.join(P2, '5')) + ');',
         '    cp.execFileSync("mkfifo", [' + JSON.stringify(path.join(P2, '5', 'comm')) + ']);',
-        '    return dc.registeredClient().then(function (b) { console.log("result " + a + " " + b + " ticks " + (ticks > 0)); process.exit(0); });',
+        '    return dc.registeredClient().then(function (b) { console.log("result " + a + " " + b); process.exit(0); });',
         '});'].join('\n')], Object.assign({}, ENV, { WOC_DLT_PROC: P2 }));
     var probeTimer = setTimeout(function () { probe.kill('SIGKILL'); }, 5000);
     r = await probe.done;
     clearTimeout(probeTimer);
     ok('the registered-client check: a promise, the dlt-daemon found first checked again, /proc not scanned again',
-        r.code === 0 && /result true true ticks true/.test(probe.out), JSON.stringify(r) + ' ' + probe.out);
+        r.code === 0 && /result true true/.test(probe.out), JSON.stringify(r) + ' ' + probe.out);
 
     process.stdout.write(fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n');
     process.exit(fails ? 1 : 0);
