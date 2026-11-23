@@ -409,8 +409,7 @@ public:
     }
     void drop_value(int value) override
     {
-        for (auto it = pending.animations.begin(); it != pending.animations.end();)
-            it = it->second.node == value ? pending.animations.erase(it) : std::next(it);
+        stop_on(value);
         pending.values.erase(value);
     }
 

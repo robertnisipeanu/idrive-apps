@@ -833,7 +833,13 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
         return false;
     }
     auto compiled = inputs_.find(fx);
-    if (value && compiled != inputs_.end()) {
+    if (value && compiled == inputs_.end()) {
+        /* nothing to check it against: it would fail at the display, the
+         * uniform's own value already held back */
+        *err = "the display cannot describe this shader's uniforms: no link to it";
+        return false;
+    }
+    if (value) {
         auto d = compiled->second.find(name);
         if (d == compiled->second.end()) {
             *err = "the shader has no uniform " + name;
@@ -1021,10 +1027,7 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
             unlink(ck.second.layers);
         Target &t = targets_[val->second.target];
         if (t.graph && val->second.handle) {
-            for (const auto &a : val->second.anims)
-                if (a.second.handle)
-                    t.graph->stop(a.second.handle);
-            t.graph->drop_value(val->second.handle);
+            t.graph->drop_value(val->second.handle);   /* its animations with it */
             t.dirty = true;
         }
         values_.erase(val);

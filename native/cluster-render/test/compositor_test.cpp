@@ -3792,6 +3792,16 @@ static void shared_values()
         const uint32_t trio = q.comp->add_value(1, q.panel, 3, three, &err);
         ok("values: before a scene, the second of a list of vec3s linked",
            trio && q.comp->link(1, e, 0, "u_far", trio, &err) && q.comp->linked(1, e, 0, "u_far"));
+        /* an effect the display cannot describe: no link, its uniform's
+         * own value kept */
+        q.gpu.no_inputs = true;
+        const uint32_t blind = q.comp->add_effect(1, q.panel, params(Klass::Overlay, R(8, 0, 8, 8)), "", kLevelFs, 0,
+                                                  q.now, &err);
+        ok("values: a shader the display cannot describe: a link refused, nothing held back",
+           blind && !q.comp->link(1, blind, 0, "u_level", lv, &err) &&
+               err == "the display cannot describe this shader's uniforms: no link to it" &&
+               !q.comp->linked(1, blind, 0, "u_level"));
+        q.gpu.no_inputs = false;
     }
     ok("values: a uniform an animation plays refused", !r.comp->link(1, a, 0, "u_fade", level, &err) &&
                                                            err == "an animation plays the uniform: stop it first");
@@ -3849,6 +3859,47 @@ static void shared_values()
     ok("values: the client gone, its values gone", !r.comp->value(1, pair) && !r.comp->value(1, far));
 }
 
+/* A value's animation through its target's key bucket (#258): paid from it,
+ * below 0 by less than one animation, the writes' pacer untouched, and
+ * taking its turn with another client's layer animation. */
+static void value_keys()
+{
+    std::string err;
+    Rig r(64 * 1024);
+    const float zero = 0;
+    const uint32_t v = r.comp->add_value(1, r.panel, 1, &zero, &err);
+    const uint32_t fx = r.comp->add_effect(2, r.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0, r.now,
+                                           &err);
+    Layer *l = r.comp->layer(2, fx);
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(200);
+    Animation big;
+    big.property = Animated::Value;
+    for (uint32_t k = 0; k < 1009; k++) {
+        big.t.push_back(k * 4);
+        big.v.push_back((float)(k % 2));
+    }
+    r.comp->animate_value(1, v, 1, big, &err);
+    r.run(30);
+    FakeGraph *g = r.g("panel");
+    ok("value keys: paid from the target's bucket, below 0 by less than one animation, the writes' pacer untouched",
+       g && g->made_by[1] == key_bytes(big) && r.comp->key_bucket(r.panel) < 0 &&
+           r.comp->key_bucket(r.panel) > -(int64_t)key_bytes(big) && r.comp->pacer().allowance() > 0);
+    Animation layer_keys = big;
+    layer_keys.property = Animated::Uniform;
+    layer_keys.uniform = "u_level";
+    layer_keys.owner = 2;
+    l->animate(1, 0, layer_keys, &err);
+    r.comp->touch(l);
+    big.v[0] = 5;
+    r.comp->animate_value(1, v, 1, big, &err);
+    for (int k = 0; k < 600 && (g->made_by[2] == 0 || g->made_by[1] < 2 * key_bytes(big)); k++)
+        r.step(10);
+    ok("value keys: the value's replacement and another client's layer animation both made in their turns",
+       g->made_by[1] == 2 * key_bytes(big) && g->made_by[2] == key_bytes(layer_keys));
+}
+
 int main()
 {
     image_first_upload();
@@ -3902,6 +3953,7 @@ int main()
     cube_maps();
     compiled_samplers();
     shared_values();
+    value_keys();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

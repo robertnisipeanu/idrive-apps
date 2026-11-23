@@ -501,7 +501,10 @@ however many follow it.
   (`the shader has no uniform ...`), plain, not an array (`... is an array:
   a value is linked to a plain uniform`), and of the value's type (`the
   shader's u_glow is a vec3, the value a float`); a pivot has none (`a
-  pivot has no uniforms`). A
+  pivot has no uniforms`). Where the display cannot describe a shader's
+  uniforms, no link to it is taken (`the display cannot describe this
+  shader's uniforms: no link to it`) and its uniforms keep their own
+  values. A
   followed uniform's own `uniform` messages are kept, not drawn, and drawn
   again when it is unlinked. A uniform an animation of the layer plays is
   not linked (`an animation plays the uniform: stop it first`), nor is a
