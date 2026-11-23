@@ -2930,14 +2930,26 @@ static void motion_over_socket()
     ca.w = 8;
     const uint32_t sky = c.cube(ca);
     std::vector<uint8_t> faces(6 * 8 * 8 * 4, 90);
-    ok("cube: made, its six faces taken", sky && c.pixels(sky, {}, faces.data(), faces.size()));
-    r.pump(200);
+    ok("cube: made, its six faces taken; a rect, and the faces again, refused here",
+       sky && c.pixels(sky, {}, faces.data(), faces.size()) &&
+           !c.pixels(sky, {cr::FrameRect{0, 0, 1, 1}}, faces.data(), 4) &&
+           !c.pixels(sky, {}, faces.data(), faces.size()));
+    cr::LayerOptions env;
+    env.target = "panel";
+    env.klass = "overlay";
+    env.w = env.h = 16;
+    const uint32_t mirror = c.effect(env, cr::EffectOptions{"#version 100\nprecision mediump float;\n"
+                                                            "uniform samplerCube u_sky;\nvarying vec2 v_uv;\n"
+                                                            "void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv,1.0));}",
+                                                            "", 0});
+    c.bind(mirror, "u_sky", sky);
+    r.pump(300);
     FakeGraph *gc = r.gpu.graph("panel");
     bool made = false;
     if (gc)
         for (const auto &kv : gc->shown.buffers)
             made = made || (kv.second.cube && kv.second.w == 8 && kv.second.px == faces);
-    ok("cube: in the panel's scene", made || r.svc->server().status_text(r.now).find("8x8 (cube map)") != std::string::npos);
+    ok("cube: made in the panel's scene with its six faces", made);
     raw.send("{\"op\":\"asset\",\"ref\":9,\"target\":\"panel\",\"w\":8,\"h\":4,\"cube\":1}");
     r.pump(50);
     ok("cube: a face that is not square refused", raw.events().find("a cube map's faces are square") != std::string::npos);

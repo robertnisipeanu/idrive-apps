@@ -11,10 +11,10 @@
  * write leaves the buffer unlike the asset (unclean) until it is written
  * whole again; the layers sampling it are not drawn meanwhile.
  *
- * An etc2rgba or etc2rgb asset is compressed: it is sent whole, once, and
- * each scene of its target gets an immutable texture made from it at the
- * asset's first stage there. No rectangles, no scratch. A
- * texture the renderer refuses leaves the asset refused().
+ * An etc2rgba or etc2rgb asset (compressed) and a cube map are immutable:
+ * sent whole, once, and each scene of its target gets an immutable texture
+ * made from it at the asset's first stage there. No rectangles, no scratch.
+ * A texture the renderer refuses leaves the asset refused().
  *
  * Sampled with mipmaps (sampling_mips()), an asset has every mip level down
  * to 1x1. An rgba8 or r8 asset's levels are made here from its pixels (each
@@ -58,21 +58,21 @@ public:
     static const uint32_t kMaxRects = 16;   /* more pending: written whole */
 
     Asset(uint32_t id, int target, crk::UploadPacer &pacer, const AssetParams &p);
-    /* Why an asset of this size cannot be: it must fit one frame message
-     * (a compressed one with its mip levels). */
+    /* Why such an asset cannot be: it must fit one frame message (a
+     * compressed one with its mip levels, a cube map with its six faces),
+     * and a cube map's faces are square, without mip levels. */
     static const char *size_error(const AssetParams &p);
 
     uint32_t id() const { return id_; }
     int target() const { return target_; }
     const AssetParams &params() const { return p_; }
     uint32_t bpp() const { return p_.format == TexFormat::R8 ? 1 : 4; }
-    bool compressed() const { return tex_compressed(p_.format); }
     /* Sent whole and once: compressed, or a cube map. */
     bool immutable() const { return p_.immutable(); }
-    /* Its pixels, mip levels included. */
+    /* Its pixels, mip levels and faces included. */
     size_t bytes() const { return p_.bytes(); }
-    /* What it holds of the service's pixel memory: its pixels and mip
-     * levels, and a rectangle scratch as large unless compressed. */
+    /* What it holds of the service's pixel memory: its pixels, mip levels
+     * and faces, and a rectangle scratch as large unless immutable. */
     uint64_t memory() const { return memory(p_); }
     static uint64_t memory(const AssetParams &p)
     {

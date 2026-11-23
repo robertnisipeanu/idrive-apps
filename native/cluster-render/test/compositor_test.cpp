@@ -1303,6 +1303,10 @@ static void many_layers_within_budget()
 }
 
 
+/* As kSample, the atlas a cube map. */
+static const char *const kSampleCube = "#version 100\nprecision mediump float;\n/* uniform sampler2D u_atlas; */\n"
+                                       "uniform lowp samplerCube u_atlas;\nvarying vec2 v_uv;\n"
+                                       "void main(){gl_FragColor=textureCube(u_atlas,vec3(v_uv,1.0));}";
 static const char *const kSample = "#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\n"
                                    "uniform vec4 u_glyphs[3];\nvarying vec2 v_uv;\n"
                                    "void main() { gl_FragColor = texture2D(u_atlas, v_uv) * u_glyphs[0]; }";
@@ -3556,9 +3560,20 @@ static void cube_maps()
     ok("cube: the six faces taken", r.comp->asset(1, c)->update({}, faces.data(), faces.size(), &err));
     ok("cube: sent once", !r.comp->asset(1, c)->update({}, faces.data(), faces.size(), &err) &&
                               err == "a cube map is sent once");
-    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0,
+    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSampleCube, 0,
                                            r.now, &err);
-    ok("cube: an effect samples it", r.comp->bind(1, fx, 0, "u_atlas", c, &err));
+    ok("cube: an effect samples it by its samplerCube", r.comp->bind(1, fx, 0, "u_atlas", c, &err));
+    const uint32_t flat = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(64, 0, 64, 64)), "", kSample, 0,
+                                             r.now, &err);
+    ok("cube: bound to a sampler2D refused", !r.comp->bind(1, flat, 0, "u_atlas", c, &err) &&
+                                                 err == "the shader's u_atlas is a sampler2D: a cube map is bound to a "
+                                                        "samplerCube");
+    AssetParams plain;
+    plain.w = plain.h = 4;
+    const uint32_t two = r.comp->add_asset(1, r.panel, plain, &err);
+    ok("cube: a 2D asset bound to a samplerCube refused",
+       two && !r.comp->bind(1, fx, 0, "u_atlas", two, &err) &&
+           err == "the shader's u_atlas is a samplerCube: only a cube map is bound to it");
     r.run(300);
     FakeGraph *g = r.g("panel");
     int cube = 0;
@@ -3579,7 +3594,7 @@ static void cube_maps()
     const uint32_t cv = cr.comp->add_canvas(1, cr.panel, cs, &err);
     LayerParams in = params(Klass::Content, R(0, 0, 32, 32));
     in.canvas = cv;
-    const uint32_t sky = cr.comp->add_effect(1, cr.panel, in, "", kSample, 0, cr.now, &err);
+    const uint32_t sky = cr.comp->add_effect(1, cr.panel, in, "", kSampleCube, 0, cr.now, &err);
     cr.comp->bind(1, sky, 0, "u_atlas", cc, &err);
     const uint32_t shown = cr.comp->add_effect(1, cr.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
                                                cr.now, &err);

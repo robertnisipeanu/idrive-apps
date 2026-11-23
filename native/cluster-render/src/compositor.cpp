@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -186,13 +187,65 @@ uint64_t Compositor::memory() const
     return bytes;
 }
 
+/* The sampler uniforms a shader declares, by name: 1 a sampler2D, 2 a
+ * samplerCube. Comments skipped; precision qualifiers between uniform and
+ * the type allowed. */
+std::map<std::string, int> samplers_in(const std::string &src)
+{
+    std::vector<std::string> words;
+    std::string w;
+    for (size_t i = 0; i <= src.size(); i++) {
+        const char c = i < src.size() ? src[i] : ' ';
+        if (c == '/' && i + 1 < src.size() && (src[i + 1] == '/' || src[i + 1] == '*')) {
+            const bool line = src[i + 1] == '/';
+            const size_t end = line ? src.find('\n', i) : src.find("*/", i + 2);
+            i = end == std::string::npos ? src.size() : end + (line ? 0 : 1);
+            continue;
+        }
+        if (std::isalnum((unsigned char)c) || c == '_') {
+            w += c;
+            continue;
+        }
+        if (!w.empty())
+            words.push_back(w);
+        w.clear();
+        if (c == ';')
+            words.push_back(";");
+    }
+    std::map<std::string, int> out;
+    for (size_t i = 0; i + 2 < words.size(); i++) {
+        if (words[i] != "uniform")
+            continue;
+        size_t t = i + 1;
+        while (t < words.size() && (words[t] == "lowp" || words[t] == "mediump" || words[t] == "highp"))
+            t++;
+        if (t + 1 < words.size() && (words[t] == "sampler2D" || words[t] == "samplerCube"))
+            out[words[t + 1]] = words[t] == "samplerCube" ? 2 : 1;
+    }
+    return out;
+}
+
+int Compositor::compile(const std::string &vs, const std::string &fs, std::string *err)
+{
+    const int fx = gpu_->effect(vs.c_str(), fs.c_str(), err);
+    if (fx)
+        samplers_[fx] = samplers_in(vs + "\n" + fs);
+    return fx;
+}
+
+void Compositor::drop_effect(int fx)
+{
+    samplers_.erase(fx);
+    gpu_->drop_effect(fx);
+}
+
 void Compositor::drop_effects(Entry &e)
 {
     if (e.effect)
-        gpu_->drop_effect(e.effect);
+        drop_effect(e.effect);
     if (std::string(e.layer->kind()) == "mesh")
         for (int fx : static_cast<MeshLayer *>(e.layer.get())->effects())
-            gpu_->drop_effect(fx);
+            drop_effect(fx);
 }
 
 bool Compositor::assets_have(const Entry &e) const
@@ -347,7 +400,7 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
     CanvasEntry *in = nullptr;
     if (lp.canvas && !(in = canvas_for(owner, target, lp.canvas, err)))
         return 0;
-    const int fx = gpu_->effect(vs.empty() ? kQuadVertexShader : vs.c_str(), fs.c_str(), err);
+    const int fx = compile(vs.empty() ? kQuadVertexShader : vs, fs, err);
     if (!fx)
         return 0;
     const uint32_t id = admit(owner, target, 0, err);
@@ -416,18 +469,18 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
         return false;
     }
     if (!vs.empty() || !fs.empty()) {   /* else a pivot */
-        if (!(fx = gpu_->effect(vs.c_str(), fs.c_str(), err)))
+        if (!(fx = compile(vs, fs, err)))
             return false;
         attrs = gpu_->attributes(fx);
         if (!(attrs & kAttrPosition)) {
-            gpu_->drop_effect(fx);
+            drop_effect(fx);
             *err = "a part's vertex shader reads a vec3 a_position (attribute, or in with #version 300 es)";
             return false;
         }
     }
     if (!m->add_part(part, fx, attrs, look, parent, err)) {
         if (fx)
-            gpu_->drop_effect(fx);
+            drop_effect(fx);
         return false;
     }
     touch(m);
@@ -815,6 +868,19 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
     if (kind != "effect" && kind != "mesh") {
         *err = "binds are for effect layers and mesh parts";
         return false;
+    }
+    /* a cube map to a samplerCube, any other to a sampler2D */
+    const int fx = kind == "effect" ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
+    auto declared = samplers_.find(fx);
+    auto type = declared == samplers_.end() ? std::map<std::string, int>::const_iterator()
+                                            : declared->second.find(sampler);
+    if (declared != samplers_.end() && type != declared->second.end()) {
+        const bool cube = a != assets_.end() && a->second.asset->params().cube;
+        if (cube != (type->second == 2)) {
+            *err = "the shader's " + sampler + (cube ? " is a sampler2D: a cube map is bound to a samplerCube"
+                                                     : " is a samplerCube: only a cube map is bound to it");
+            return false;
+        }
     }
     if ((a != assets_.end() ? a->second.asset->target() : cv->second.canvas->target()) != e.layer->target()) {
         *err = "the asset is on another target";

@@ -1247,6 +1247,9 @@ bool Client::pixels(uint32_t ref, const std::vector<FrameRect> &rects, const uin
         return false;
     Layer &l = it->second;
     const unsigned w = l.w, h = l.h, bpp = l.bpp;
+    /* a cube map is sent whole and once, as the service takes it */
+    if (l.cube && (!rects.empty() || l.have))
+        return false;
     if (rects.empty()) {
         if (n != l.image.size())
             return false;

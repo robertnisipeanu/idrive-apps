@@ -77,6 +77,12 @@ public:
     bool set_uniform(uint32_t part, const std::string &name, UniformType t, const float *v, uint32_t elements);
     /* The effects its parts are drawn by. */
     std::vector<int> effects() const;
+    /* The part's effect; 0 for a pivot or no such part. */
+    int part_effect(uint32_t part) const
+    {
+        auto it = parts_.find(part);
+        return it == parts_.end() ? 0 : it->second.effect;
+    }
 
     bool ready(int64_t now_ms) const override;
     bool attach(Graph *g, int64_t now_ms, std::string *err) override;

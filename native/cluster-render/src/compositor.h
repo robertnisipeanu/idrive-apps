@@ -770,7 +770,12 @@ private:
      * flush that goes. */
     void mark(Entry &e, uint32_t id, Target &t);
     void apply_binds(Entry &e);
+    /* A client's effect, compiled, and its sampler uniforms' types noted
+     * (samplers_); dropped with them. */
+    int compile(const std::string &vs, const std::string &fs, std::string *err);
+    void drop_effect(int fx);
     void drop_effects(Entry &e);
+    std::map<int, std::map<std::string, int>> samplers_;   /* by effect: 1 sampler2D, 2 samplerCube */
     /* Every asset the layer samples has pixels; and its buffer holds them. */
     bool assets_have(const Entry &e) const;
     bool assets_clean(const Entry &e) const;

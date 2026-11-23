@@ -648,6 +648,10 @@ public:
      * sampler; a buffer as immutable_texture()'s, sampled by a samplerCube.
      * 0 where the backend has none. */
     virtual int cube_texture(TexFormat, uint32_t, const Sampler &, const uint8_t *, size_t) { return 0; }
+    /* A cube texture's size and format as the library holds them, its data
+     * saved to file as the library writes resources (tests); false where
+     * the backend cannot. */
+    virtual bool read_cube(int, uint32_t *, int *, const char *) { return false; }
     /* A quad over r drawn by effect, hidden until show(). Blended over what
      * is below (source alpha), no depth test. */
     virtual int quad(int effect, const Rect &r) = 0;

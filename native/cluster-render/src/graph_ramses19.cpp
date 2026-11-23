@@ -388,8 +388,22 @@ public:
         }
         Buffer b{nullptr, smp, 0};
         b.tex = tex;
+        b.cube = true;
         buffers_[next_] = b;
         return next_++;
+    }
+
+    bool read_cube(int buf, uint32_t *size, int *format, const char *file) override
+    {
+        auto it = buffers_.find(buf);
+        if (it == buffers_.end() || !it->second.cube)
+            return false;
+        const ramses::TextureCube *t = static_cast<const ramses::TextureCube *>(it->second.tex);
+        *size = t->getSize();
+        *format = (int)t->getTextureFormat();
+        ramses::ResourceFileDescription d(file);
+        d.add(t);
+        return ok(client_.saveResources(d, false));
     }
 
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
@@ -1088,6 +1102,7 @@ private:
         uint32_t bpp;
         const ramses::Resource *tex = nullptr;   /* an immutable texture: Texture2D or TextureCube */
         uint32_t levels = 1;   /* mip levels */
+        bool cube = false;     /* tex a TextureCube */
     };
     struct Quad {
         ramses::MeshNode *mesh = nullptr;

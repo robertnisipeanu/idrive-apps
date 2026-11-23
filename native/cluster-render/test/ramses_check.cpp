@@ -965,14 +965,43 @@ static void backend(Gpu &gpu)
        sky_fx && cube_rgba && cube_etc2 && sky_q && g->texture(sky_q, "u_sky", cube_rgba) && g->show(sky_q, true) &&
            g->flush(8) && g->texture(sky_q, "u_sky", cube_etc2) && g->flush(9));
     ok("cube: faces of the wrong size refused", !g->cube_texture(TexFormat::RGBA8, 32, bilin, faces.data(), 100));
+#ifndef CRS_RAMSES27
+    /* The faces in the order given: each filled with its own byte, the
+     * texture's data as the library saves it holds them +x, -x, +y, -y, +z,
+     * -z (CubeMipLevelData's pointers in the library's order). */
+    std::vector<uint8_t> marked(6 * 32 * 32 * 4);
+    for (size_t i = 0; i < marked.size(); i++)
+        marked[i] = (uint8_t)(0x31 + i / (32 * 32 * 4) * 0x11);
+    const int cube_marked = g->cube_texture(TexFormat::RGBA8, 32, bilin, marked.data(), 32 * 32 * 4);
+    const std::string res = "/tmp/crs-ramses-check-" + std::to_string(getpid()) + "-cube.ramres";
+    uint32_t cube_size = 0;
+    int cube_format = -1;
+    const bool saved = cube_marked && g->read_cube(cube_marked, &cube_size, &cube_format, res.c_str());
+    std::string bytes;
+    if (FILE *f = std::fopen(res.c_str(), "rb")) {
+        char b[65536];
+        size_t n;
+        while ((n = std::fread(b, 1, sizeof b, f)) > 0)
+            bytes.append(b, n);
+        std::fclose(f);
+    }
+    unlink(res.c_str());
+    size_t at = 0;
+    bool in_order = !bytes.empty();
+    for (int face = 0; face < 6 && in_order; face++) {
+        const size_t found = bytes.find(std::string(32 * 32 * 4, (char)(0x31 + face * 0x11)), at);
+        in_order = found != std::string::npos;
+        at = found + 32 * 32 * 4;
+    }
+    ok("cube: its size and format read back, its six faces saved in the order given",
+       saved && cube_size == 32 && cube_format == (int)ramses::ETextureFormat_RGBA8 && in_order);
+    g->drop_buffer(cube_marked);
+#endif
     g->drop_quad(sky_q);
     g->drop_buffer(cube_rgba);
     g->drop_buffer(cube_etc2);
 #ifndef CRS_RAMSES27
-    ok("cube: the scene described whole", described("check"));
-#endif
-#ifndef CRS_RAMSES27
-    ok("draw: the scene described whole", described("check"));
+    ok("cube and draw: the scene described whole", described("check"));
 #endif
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,

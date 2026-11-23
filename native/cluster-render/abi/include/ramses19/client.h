@@ -145,6 +145,7 @@ namespace ramses
         status_t destroy(const Resource& resource);
         // A scene file keeps its scene id: the loaded scene has the id it was saved with.
         Scene* loadSceneFromFile(const char* fileName, const ResourceFileDescriptionSet& resourceFileInformation);
+        status_t saveResources(const ResourceFileDescription& fileDescription, bool compress) const;
         status_t saveSceneToFile(const Scene& scene, const char* fileName,
                                  const ResourceFileDescriptionSet& resourceFileInformation, bool compress) const;
         RamsesObject* findObjectByName(const char* name);

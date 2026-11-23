@@ -458,7 +458,9 @@ Send `cube` 1 only to a service whose hello has `cube` 1. An asset with
 one frame the six faces one after another, +x, -x, +y, -y, +z, -z, each as
 an asset of that format and size, rows top to bottom. A shader samples it
 with `samplerCube` and `textureCube` (`texture` in GLSL ES 3.00), bound as
-any asset. Like a compressed asset it is sent whole and once (`a cube map
+any asset. A cube map is bound to a `samplerCube`, and only a cube
+map is: a `bind` of a cube map to a `sampler2D`, or of another asset or a
+canvas to a `samplerCube`, is refused (`the shader's u_sky is a ...`). Like a compressed asset it is sent whole and once (`a cube map
 is sent whole, with no rects`, `a cube map is sent once`), has no mip
 levels, and its six faces count once in the pixel memory and the upload
 budget; the faces must fit one frame message (a 479x479 `rgba8` cube map,

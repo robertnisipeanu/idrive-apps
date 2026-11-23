@@ -466,7 +466,8 @@ async function main() {
     status = '';
     ovl.status();
     ok('cube: shown, the status names it', await until(() => eo.layer[env] === 'shown', 3000) &&
-        await until(() => status.indexOf('8x8 (cube map)') >= 0, 1000) && eo.refused.length === refusedBefore + 2);
+        await until(() => status.indexOf('8x8 (cube map)') >= 0, 1000) &&
+        !eo.refused.slice(refusedBefore).some((r) => /^(asset|bind)/.test(r)));
     ovl.drop(env);
     ovl.drop(sky);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
