@@ -806,6 +806,7 @@ class ClusterRender extends EventEmitter {
         if (!l || !l.image) return false;
         const iw = l.iw, ih = l.ih, bpp = l.bpp;
         if ((l.compressed || l.wholeOnly) && rects && rects.length) return false;
+        if (l.wholeOnly && l.have) return false;   /* a cube map is sent once, as the service takes it */
         if (!rects || !rects.length) {
             if (px.length !== l.image.length) return false;
             px.copy(l.image);

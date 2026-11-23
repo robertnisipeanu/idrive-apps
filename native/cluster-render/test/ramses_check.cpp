@@ -950,6 +950,40 @@ static void backend(Gpu &gpu)
     for (int p : drawn)
         g->drop_part(p);
 
+    /* An effect's samplers as the library compiled it: each of a list, a
+     * defined type, the branch its preprocessor took, a comment between
+     * uniform and the type. */
+    {
+        const char *fs = "#version 100\nprecision mediump float;\n#define CUBE samplerCube\n"
+                         "uniform sampler2D u_a, u_b;\nuniform CUBE u_c;\n"
+                         "#if 0\nuniform samplerCube u_d;\n#else\nuniform sampler2D u_d;\n#endif\n"
+                         "uniform/**/samplerCube u_e;\nuniform vec4 u_tint;\nvarying vec2 v_uv;\n"
+                         "void main(){gl_FragColor=(texture2D(u_a,v_uv)+texture2D(u_b,v_uv)+textureCube(u_c,vec3(v_uv,1.0))"
+                         "+texture2D(u_d,v_uv)+textureCube(u_e,vec3(1.0)))*u_tint;}";
+        const int fx = gpu.effect(kQuadVertexShader, fs, &err);
+        std::vector<EffectInput> in;
+        std::map<std::string, EffectInput::Kind> kind;
+        const bool known = fx && gpu.inputs(fx, &in);
+        for (const EffectInput &e : in)
+            kind[e.name] = e.kind;
+#ifdef CRS_RAMSES27
+        /* the library's own types: every kind exact */
+        const EffectInput::Kind defined = EffectInput::SamplerCube, branched = EffectInput::Sampler2D;
+#else
+        /* one data type for both kinds: each from its declarations where
+         * they agree, unknown (never refused) behind a define or across
+         * branches */
+        const EffectInput::Kind defined = EffectInput::Sampler, branched = EffectInput::Sampler;
+#endif
+        ok("samplers: as compiled: each of a list, a defined type, the branch taken, a comment between",
+           known && kind.count("u_a") && kind["u_a"] == EffectInput::Sampler2D && kind.count("u_b") &&
+               kind["u_b"] == EffectInput::Sampler2D && kind.count("u_c") && kind["u_c"] == defined &&
+               kind.count("u_d") && kind["u_d"] == branched && kind.count("u_e") &&
+               kind["u_e"] == EffectInput::SamplerCube && kind.count("u_tint") && kind["u_tint"] == EffectInput::Other);
+        if (fx)
+            gpu.drop_effect(fx);
+    }
+
     /* Cube maps: RGBA8 and ETC2RGBA, sampled by a samplerCube. */
     const int sky_fx = gpu.effect(kQuadVertexShader,
                                   "#version 100\nprecision mediump float;\nuniform samplerCube u_sky;\nvarying vec2 v_uv;\n"
@@ -965,6 +999,31 @@ static void backend(Gpu &gpu)
        sky_fx && cube_rgba && cube_etc2 && sky_q && g->texture(sky_q, "u_sky", cube_rgba) && g->show(sky_q, true) &&
            g->flush(8) && g->texture(sky_q, "u_sky", cube_etc2) && g->flush(9));
     ok("cube: faces of the wrong size refused", !g->cube_texture(TexFormat::RGBA8, 32, bilin, faces.data(), 100));
+    {
+        /* A texture of the other kind: RAMSES 27 refuses it, RAMSES 19
+         * takes it (the service refuses it first where it knows the kind). */
+        const int fx2 = gpu.effect(kQuadVertexShader,
+                                   "#version 100\nprecision mediump float;\nuniform sampler2D u_flat;\nvarying vec2 v_uv;\n"
+                                   "void main(){gl_FragColor=texture2D(u_flat,v_uv);}",
+                                   &err);
+        const int q2 = fx2 ? g->quad(fx2, r) : 0;
+        const int flat = g->buffer(TexFormat::RGBA8, 16, 16, Sampling::Bilinear);
+        const bool cube_on_2d = q2 && g->texture(q2, "u_flat", cube_rgba);
+        const bool flat_on_cube = sky_q && flat && g->texture(sky_q, "u_sky", flat);
+#ifdef CRS_RAMSES27
+        ok("cube: a cube texture on a sampler2D, and a 2D one on a samplerCube, refused by the library",
+           q2 && flat && !cube_on_2d && !flat_on_cube);
+#else
+        ok("cube: a cube texture on a sampler2D, and a 2D one on a samplerCube, taken by the library",
+           q2 && flat && cube_on_2d && flat_on_cube);
+#endif
+        g->texture(sky_q, "u_sky", cube_rgba);
+        g->drop_quad(q2);
+        g->drop_buffer(flat);
+        if (fx2)
+            gpu.drop_effect(fx2);
+        g->flush(9);
+    }
 #ifndef CRS_RAMSES27
     /* The faces in the order given: each filled with its own byte, the
      * texture's data as the library saves it holds them +x, -x, +y, -y, +z,
@@ -1367,10 +1426,12 @@ int main()
        sc && refused.empty() && comp.state(sc, &reason) == LayerState::Shown && gauge_edited(client, 45));
     ok("a uniform bound to a data object refused, reported", problems.size() == 1 &&
                                                                  problems[0].reason.find("bound to a data object") != std::string::npos);
-    const std::set<uint32_t> uniforms(gpu.types().uniform, gpu.types().uniform + 11),
-        datas(gpu.types().data, gpu.types().data + 5);
-    ok("eleven uniform types and five data object types learned, each different",
-       uniforms.size() == 11 && datas.size() == 5 && !uniforms.count(0) && !datas.count(0));
+    std::set<uint32_t> uniforms(gpu.types().uniform, gpu.types().uniform + 11);
+    uniforms.insert(gpu.types().sampler2d);
+    uniforms.insert(gpu.types().sampler_cube);
+    const std::set<uint32_t> datas(gpu.types().data, gpu.types().data + 5);
+    ok("twelve uniform types (one for both kinds of sampler) and five data object types learned, each different",
+       uniforms.size() == 12 && gpu.types().sampler2d == gpu.types().sampler_cube && datas.size() == 5 && !uniforms.count(0) && !datas.count(0));
     for (int i = 0; i <= 30; i++) {
         ed->add("--rotate ^needle_pivot$=0,0," + std::to_string(i * 3));
         run(33);

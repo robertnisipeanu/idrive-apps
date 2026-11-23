@@ -1304,7 +1304,7 @@ static void many_layers_within_budget()
 
 
 /* As kSample, the atlas a cube map. */
-static const char *const kSampleCube = "#version 100\nprecision mediump float;\n/* uniform sampler2D u_atlas; */\n"
+static const char *const kSampleCube = "#version 100\nprecision mediump float;\n"
                                        "uniform lowp samplerCube u_atlas;\nvarying vec2 v_uv;\n"
                                        "void main(){gl_FragColor=textureCube(u_atlas,vec3(v_uv,1.0));}";
 static const char *const kSample = "#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\n"
@@ -3574,6 +3574,19 @@ static void cube_maps()
     ok("cube: a 2D asset bound to a samplerCube refused",
        two && !r.comp->bind(1, fx, 0, "u_atlas", two, &err) &&
            err == "the shader's u_atlas is a samplerCube: only a cube map is bound to it");
+    /* The samplers as the effect was compiled: each of a list. */
+    const uint32_t listed = r.comp->add_effect(
+        1, r.panel, params(Klass::Overlay, R(128, 0, 64, 64)), "",
+        "#version 100\nprecision mediump float;\nuniform sampler2D u_a, u_b;\nuniform vec4 u_tint;\nvarying vec2 v_uv;\n"
+        "void main(){gl_FragColor=texture2D(u_a,v_uv)+texture2D(u_b,v_uv)*u_tint;}",
+        0, r.now, &err);
+    ok("cube: the second of a list of sampler2Ds: a cube map refused, a 2D asset bound",
+       listed && !r.comp->bind(1, listed, 0, "u_b", c, &err) &&
+           err == "the shader's u_b is a sampler2D: a cube map is bound to a samplerCube" &&
+           r.comp->bind(1, listed, 0, "u_b", two, &err));
+    ok("cube: a uniform that is no sampler, and one the effect lacks, refused",
+       !r.comp->bind(1, listed, 0, "u_tint", two, &err) && err == "the shader has no sampler u_tint" &&
+           !r.comp->bind(1, listed, 0, "u_none", two, &err) && err == "the shader has no sampler u_none");
     r.run(300);
     FakeGraph *g = r.g("panel");
     int cube = 0;
@@ -3612,6 +3625,42 @@ static void cube_maps()
         bound_in = bound_in || (kv.second.canvas && kv.second.textures.count("u_atlas") &&
                                 kv.second.textures.at("u_atlas") == cube_in && kv.second.visible);
     ok("cube: a layer in a canvas bound to it once made, and drawn", cube_in && bound_in);
+}
+
+/* An effect's uniforms noted as compiled, and dropped with a layer refused;
+ * where the backend cannot say what it compiled, a sampler the renderer does
+ * not bind leaves the layer in error, never shown. */
+static void compiled_samplers()
+{
+    std::string err;
+    CompositorLimits lim;
+    lim.per_client = 1;
+    Rig one(0, lim);
+    one.comp->add_effect(1, one.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", kSample, 0, one.now, &err);
+    const size_t noted = one.comp->compiled_effects();
+    ok("samplers: an effect whose layer is refused leaves nothing noted",
+       noted == 1 && !one.comp->add_effect(1, one.panel, params(Klass::Overlay, R(8, 0, 8, 8)), "", kSample, 0, one.now,
+                                           &err) &&
+           one.comp->compiled_effects() == noted);
+
+    Rig r;
+    r.gpu.no_inputs = true;
+    r.gpu.unknown_sampler = "u_atlas";
+    AssetParams ap;
+    ap.w = ap.h = 4;
+    const uint32_t a = r.comp->add_asset(1, r.panel, ap, &err);
+    std::vector<uint8_t> px(4 * 4 * 4, 200);
+    r.comp->asset(1, a)->update({}, px.data(), px.size(), &err);
+    const uint32_t fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0, r.now,
+                                           &err);
+    ok("samplers: unknown to the backend, a bind taken before the scene", r.comp->bind(1, fx, 0, "u_atlas", a, &err));
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(300);
+    std::string why;
+    ok("samplers: the renderer not binding it, the layer in error, never shown",
+       r.comp->state(fx, &why) == LayerState::Error && why == "the renderer did not bind asset " + std::to_string(a) +
+                                                                     " to u_atlas");
 }
 
 int main()
@@ -3665,6 +3714,7 @@ int main()
     pacer_settled_at_its_old_rate();
     draw_modes();
     cube_maps();
+    compiled_samplers();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

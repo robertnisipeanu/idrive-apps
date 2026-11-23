@@ -38,6 +38,7 @@ struct Ramses19Types {
     uint32_t node = 0, mesh = 0, persp = 0, ortho = 0, pass = 0, resource = 0;
     uint32_t data[5] = {};      /* DataFloat, DataInt32, DataVector2f, DataVector3f, DataVector4f */
     uint32_t uniform[11] = {};  /* float, vec2-4, int, ivec2-4, mat2-4 */
+    uint32_t sampler2d = 0, sampler_cube = 0;
 };
 
 class Ramses19Gpu : public Gpu {
@@ -50,6 +51,8 @@ public:
     int effect(const char *vs, const char *fs, std::string *err) override;
     void drop_effect(int effect) override;
     unsigned attributes(int effect) const override;
+    /* From the types learned at the first effect (learn()). */
+    bool inputs(int effect, std::vector<EffectInput> *out) const override;
     std::unique_ptr<Graph> scene(const TargetSpec &t, std::string *err) override;
     /* The first one learns the types. */
     std::unique_ptr<FileScene> load(const TargetSpec &t, const std::string &file, const std::vector<std::string> &res,
@@ -64,6 +67,7 @@ private:
     const ramses::Vector2fArray *pos_ = nullptr;
     const ramses::UInt16Array *idx_ = nullptr;
     std::map<int, ramses::Effect *> effects_;
+    std::map<int, std::vector<EffectInput>> inputs_;   /* by effect, read when compiled */
     int next_ = 1;
     Ramses19Types types_;
     bool typed_ = false;

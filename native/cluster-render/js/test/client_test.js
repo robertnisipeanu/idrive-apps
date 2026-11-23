@@ -459,6 +459,8 @@ async function main() {
     const sky = ovl.asset({ target: 'panel', w: 8, h: 8, cube: true, sampling: 'bilinear' });
     ok('cube: its six faces taken here, not a rect', sky > 0 && ovl.pixels(sky, null, Buffer.alloc(6 * 8 * 8 * 4, 80)) &&
         !ovl.pixels(sky, [{ x: 0, y: 0, w: 1, h: 1 }], Buffer.alloc(4)));
+    ok('cube: a second whole send refused here, the first kept for a reconnect',
+        !ovl.pixels(sky, null, Buffer.alloc(6 * 8 * 8 * 4, 99)) && ovl.layers.get(sky).image[0] === 80);
     const env = ovl.effect({ target: 'panel', x: 0, y: 0, w: 32, h: 32,
         fs: 'precision mediump float;uniform samplerCube u_sky;varying vec2 v_uv;' +
             'void main(){gl_FragColor=textureCube(u_sky,vec3(v_uv*2.0-1.0,1.0));}' });

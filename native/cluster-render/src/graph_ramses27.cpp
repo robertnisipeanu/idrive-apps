@@ -1703,6 +1703,18 @@ int Ramses27Gpu::effect(const char *vs, const char *fs, std::string *err)
     s.vs = vs;
     s.fs = fs;
     s.attributes = effect_attributes(*fx);
+    const uint32_t n = fx->getUniformInputCount();
+    for (uint32_t i = 0; i < n; i++) {
+        ramses::UniformInput u;
+        if (!ok(fx->getUniformInput(i, u)) || !u.getName())
+            continue;
+        EffectInput e;
+        e.name = u.getName();
+        e.kind = u.getDataType() == ramses::EEffectInputDataType_TextureSampler2D     ? EffectInput::Sampler2D
+                 : u.getDataType() == ramses::EEffectInputDataType_TextureSamplerCube ? EffectInput::SamplerCube
+                                                                                      : EffectInput::Other;
+        s.inputs.push_back(e);
+    }
     scratch_->destroy(*fx);
     effects_[next_] = s;
     return next_++;
@@ -1720,6 +1732,15 @@ unsigned Ramses27Gpu::attributes(int effect) const
 {
     auto it = effects_.find(effect);
     return it == effects_.end() ? 0 : it->second.attributes;
+}
+
+bool Ramses27Gpu::inputs(int effect, std::vector<EffectInput> *out) const
+{
+    auto it = effects_.find(effect);
+    if (it == effects_.end())
+        return false;
+    *out = it->second.inputs;
+    return true;
 }
 
 const Ramses27Gpu::Source *Ramses27Gpu::source(int effect) const

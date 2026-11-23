@@ -820,6 +820,14 @@ public:
     }
 };
 
+/* A uniform of a compiled effect, as the library reflects it; Sampler: a
+ * sampler whose kind the backend cannot tell. */
+struct EffectInput {
+    enum Kind { Other, Sampler2D, SamplerCube, Sampler };
+    std::string name;
+    Kind kind = Other;
+};
+
 /* The participant: effects (shared by every scene) and the scenes. */
 class Gpu {
 public:
@@ -843,6 +851,15 @@ public:
     virtual void drop_effect(int effect) = 0;
     /* The vertex attributes the effect reads (kAttr* bits). */
     virtual unsigned attributes(int effect) const = 0;
+    /* The effect's uniforms as the library compiled it: declarations in
+     * lists, defines and the branches its preprocessor took, those it left
+     * out absent. False where the backend cannot say. */
+    virtual bool inputs(int effect, std::vector<EffectInput> *out) const
+    {
+        (void)effect;
+        (void)out;
+        return false;
+    }
     /* The target's scene, empty, flushed and published. */
     virtual std::unique_ptr<Graph> scene(const TargetSpec &t, std::string *err) = 0;
 };

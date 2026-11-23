@@ -460,7 +460,14 @@ an asset of that format and size, rows top to bottom. A shader samples it
 with `samplerCube` and `textureCube` (`texture` in GLSL ES 3.00), bound as
 any asset. A cube map is bound to a `samplerCube`, and only a cube
 map is: a `bind` of a cube map to a `sampler2D`, or of another asset or a
-canvas to a `samplerCube`, is refused (`the shader's u_sky is a ...`). Like a compressed asset it is sent whole and once (`a cube map
+canvas to a `samplerCube`, is refused (`the shader's u_sky is a ...`), as
+is one to a uniform the compiled effect has as no sampler (`the shader has
+no sampler ...`). The kinds are the compiled effect's, as the display's
+library reflects them; on iDrive 7, whose library reports one type for
+both, a sampler's kind is taken from its declarations where they agree (a
+type behind a define, or other kinds in other `#if` branches, leave it
+unchecked). A layer whose sampler the display does not bind is in `error`,
+never shown. Like a compressed asset it is sent whole and once (`a cube map
 is sent whole, with no rects`, `a cube map is sent once`), has no mip
 levels, and its six faces count once in the pixel memory and the upload
 budget; the faces must fit one frame message (a 479x479 `rgba8` cube map,

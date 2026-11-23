@@ -10,6 +10,7 @@
 #define CRS_FAKE_GRAPH_H
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -652,6 +653,7 @@ public:
     std::map<std::string, FakeGraph *> live;   /* published scenes by target name */
     int scenes = 0;
     bool refuse_textures = false;         /* each new scene's immutable_texture() refused */
+    std::string unknown_sampler;          /* each new scene's texture() refuses it */
     bool refuse_layers = false;           /* no layers over a file scene, as a backend without them */
     bool fail_loads = false;              /* every scene file fails to load */
     int64_t *clock_us = nullptr;
@@ -677,13 +679,71 @@ public:
                 a |= n.bit;
         effects[next_effect] = fs;
         attrs[next_effect] = a;
+        sources[next_effect] = std::string(vs) + "\n" + fs;
         return next_effect++;
     }
     void drop_effect(int e) override
     {
         effects.erase(e);
         attrs.erase(e);
+        sources.erase(e);
     }
+    /* The fake's reading of the uniforms its shaders declare: comments,
+     * precision and comma lists taken, no preprocessor; none with
+     * no_inputs, as a backend that cannot say. */
+    bool inputs(int e, std::vector<EffectInput> *out) const override
+    {
+        auto it = sources.find(e);
+        if (no_inputs || it == sources.end())
+            return false;
+        std::string src;
+        const std::string &s = it->second;
+        for (size_t i = 0; i < s.size(); i++) {
+            if (s.compare(i, 2, "//") == 0)
+                i = s.find('\n', i) == std::string::npos ? s.size() : s.find('\n', i);
+            else if (s.compare(i, 2, "/*") == 0)
+                i = s.find("*/", i) == std::string::npos ? s.size() : s.find("*/", i) + 1;
+            else
+                src += s[i];
+        }
+        std::vector<std::string> w;
+        std::string cur;
+        for (char c : src + " ") {
+            if (std::isalnum((unsigned char)c) || c == '_') {
+                cur += c;
+                continue;
+            }
+            if (!cur.empty())
+                w.push_back(cur);
+            cur.clear();
+            if (c == ';' || c == ',' || c == '[' || c == ']')
+                w.push_back(std::string(1, c));
+        }
+        out->clear();
+        for (size_t i = 0; i < w.size(); i++) {
+            if (w[i] != "uniform")
+                continue;
+            size_t t = i + 1;
+            while (t < w.size() && (w[t] == "lowp" || w[t] == "mediump" || w[t] == "highp"))
+                t++;
+            if (t >= w.size())
+                break;
+            const EffectInput::Kind k = w[t] == "sampler2D"     ? EffectInput::Sampler2D
+                                        : w[t] == "samplerCube" ? EffectInput::SamplerCube
+                                                                : EffectInput::Other;
+            for (size_t n = t + 1; n < w.size() && w[n] != ";"; n++) {
+                if (w[n] == "," || w[n] == "[" || w[n] == "]" || std::isdigit((unsigned char)w[n][0]))
+                    continue;
+                EffectInput in;
+                in.name = w[n];
+                in.kind = k;
+                out->push_back(in);
+            }
+        }
+        return true;
+    }
+    std::map<int, std::string> sources;   /* handle -> its shaders */
+    bool no_inputs = false;
     unsigned attributes(int e) const override
     {
         auto it = attrs.find(e);
@@ -698,6 +758,7 @@ public:
         g->flush_cost_us = &flush_cost_us;
         g->effect_attributes = &attrs;
         g->refuse_textures = refuse_textures;
+        g->unknown_sampler = unknown_sampler;
         live[t.name] = g;
         scenes++;
         return std::unique_ptr<Graph>(g);

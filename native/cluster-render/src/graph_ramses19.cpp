@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <cctype>
 #include <set>
 
 #include "log.h"
@@ -191,6 +192,55 @@ const struct {
     unsigned bit;
 } kAttributes[] = {{"a_position", kAttrPosition}, {"a_normal", kAttrNormal}, {"a_texcoord", kAttrTexcoord},
                    {"a_color", kAttrColor}};
+
+/* The sampler types name is declared with in src (sampler2D, samplerCube),
+ * comments skipped: RAMSES 19 reflects both kinds as one data type, so a
+ * sampler the library reports takes its kind from its declarations where
+ * they agree, and none (a type behind a define, other kinds in other #if
+ * branches) where they do not. */
+void declared_samplers(const std::string &src, const std::string &name, std::set<std::string> *kinds)
+{
+    std::string text;
+    for (size_t i = 0; i < src.size(); i++) {
+        if (src.compare(i, 2, "//") == 0) {
+            const size_t e = src.find('\n', i);
+            i = e == std::string::npos ? src.size() : e;
+        } else if (src.compare(i, 2, "/*") == 0) {
+            const size_t e = src.find("*/", i + 2);
+            i = e == std::string::npos ? src.size() : e + 1;
+            text += ' ';
+        } else {
+            text += src[i];
+        }
+    }
+    std::vector<std::string> w;
+    std::string cur;
+    for (char c : text + " ") {
+        if (std::isalnum((unsigned char)c) || c == '_') {
+            cur += c;
+            continue;
+        }
+        if (!cur.empty())
+            w.push_back(cur);
+        cur.clear();
+        if (c == ';' || c == ',' || c == '[' || c == '#')
+            w.push_back(std::string(1, c));
+    }
+    for (size_t i = 0; i < w.size(); i++) {
+        if (w[i] != "uniform")
+            continue;
+        size_t t = i + 1;
+        while (t < w.size() && (w[t] == "lowp" || w[t] == "mediump" || w[t] == "highp"))
+            t++;
+        if (t >= w.size())
+            break;
+        bool listed = false;
+        for (size_t n = t + 1; n < w.size() && w[n] != ";" && w[n] != "#"; n++)
+            listed = listed || w[n] == name;
+        if (listed)
+            kinds->insert(w[t]);
+    }
+}
 
 unsigned effect_attributes(const ramses::Effect &fx)
 {
@@ -1714,7 +1764,8 @@ const char *const kProbeVs =
     "  float s = u_f1 + u_f2.x + u_f3.x + u_f4.x + float(u_i1 + u_i2.x + u_i3.x + u_i4.x) + u_m2[0][0] + u_m3[0][0];\n"
     "  gl_Position = u_m4 * vec4(a_p * s, 1.0);\n"
     "}\n";
-const char *const kProbeFs = "precision mediump float;\nvoid main() { gl_FragColor = vec4(1.0); }\n";
+const char *const kProbeFs = "precision mediump float;\nuniform sampler2D u_s2;\nuniform samplerCube u_sc;\n"
+                             "void main() { gl_FragColor = texture2D(u_s2, vec2(0.5)) + textureCube(u_sc, vec3(1.0)); }\n";
 const char *const kProbeUniforms[11] = {"u_f1", "u_f2", "u_f3", "u_f4", "u_i1", "u_i2",
                                         "u_i3", "u_i4", "u_m2", "u_m3", "u_m4"};
 /* Floats or ints in one element of each, in Ramses19Types::uniform's order. */
@@ -1737,6 +1788,10 @@ bool learn(ramses::RamsesClient &client, Ramses19Types *t, std::string *err)
         good = ok(fx->findUniformInput(kProbeUniforms[i], u));
         t->uniform[i] = good ? (uint32_t)u.getDataType() : 0;
     }
+    ramses::UniformInput s2, scube;
+    good = good && ok(fx->findUniformInput("u_s2", s2)) && ok(fx->findUniformInput("u_sc", scube));
+    t->sampler2d = good ? (uint32_t)s2.getDataType() : 0;
+    t->sampler_cube = good ? (uint32_t)scube.getDataType() : 0;
     const ramses::RamsesObject *nodes[4] = {}, *others[8] = {};
     if (good) {
         const ramses::RamsesObject *n[4] = {s->createGroupNode(), s->createMeshNode(), s->createPerspectiveCamera(),
@@ -2088,6 +2143,34 @@ int Ramses19Gpu::effect(const char *vs, const char *fs, std::string *err)
         *err = "effect did not compile";
         return 0;
     }
+    std::string why;
+    if (!typed_)
+        typed_ = learn(client_, &types_, &why);
+    if (typed_) {
+        std::vector<EffectInput> &in = inputs_[next_];
+        const uint32_t n = fx->getUniformInputCount();
+        for (uint32_t i = 0; i < n; i++) {
+            ramses::UniformInput u;
+            if (!ok(fx->getUniformInput(i, u)) || !u.getName())
+                continue;
+            EffectInput e;
+            e.name = u.getName();
+            const uint32_t type = (uint32_t)u.getDataType();
+            if (type != types_.sampler2d && type != types_.sampler_cube) {
+                e.kind = EffectInput::Other;
+            } else if (types_.sampler2d != types_.sampler_cube) {
+                e.kind = type == types_.sampler2d ? EffectInput::Sampler2D : EffectInput::SamplerCube;
+            } else {
+                std::set<std::string> kinds;
+                declared_samplers(std::string(vs) + "\n" + fs, e.name, &kinds);
+                e.kind = kinds.size() != 1          ? EffectInput::Sampler
+                         : *kinds.begin() == "sampler2D"   ? EffectInput::Sampler2D
+                         : *kinds.begin() == "samplerCube" ? EffectInput::SamplerCube
+                                                           : EffectInput::Sampler;
+            }
+            in.push_back(e);
+        }
+    }
     effects_[next_] = fx;
     return next_++;
 }
@@ -2099,6 +2182,16 @@ void Ramses19Gpu::drop_effect(int effect)
         return;
     client_.destroy(*it->second);
     effects_.erase(it);
+    inputs_.erase(effect);
+}
+
+bool Ramses19Gpu::inputs(int effect, std::vector<EffectInput> *out) const
+{
+    auto it = inputs_.find(effect);
+    if (it == inputs_.end())
+        return false;
+    *out = it->second;
+    return true;
 }
 
 unsigned Ramses19Gpu::attributes(int effect) const
