@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-## 0.8.3
 Cube maps: an asset of six square faces that effect layers and mesh parts
 sample by direction, for reflections and environment lighting, sent once.
 
