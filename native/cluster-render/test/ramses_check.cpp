@@ -501,10 +501,10 @@ static void backend(Gpu &gpu)
     ok("animations of every property, linear and step, on quads, parts and cameras",
        a1 && a2 && a3 && a4 && a5 && a6 && a7 && a8 && a9 && a10 && a11 && g->flush(4));
     const int errors = cld::log_errors;
-    ok("refused: a uniform the shader lacks, and one of another width",
+    ok("refused: a uniform the shader lacks, and one of another width, before anything is made",
        !g->animate(p2, keyed(Animated::Uniform, 1, {0, 1000}, {0, 1}, false, "u_none")) &&
            !g->animate(p2, keyed(Animated::Uniform, 3, {0, 1000}, {0, 0, 0, 1, 1, 1}, false, "u_fade")) &&
-           cld::log_errors == errors + 2 && g->flush(4));
+           cld::log_errors == errors && g->flush(4));
     cld::log_errors = errors;
 #ifndef CRS_RAMSES27
     ok("and the scene described whole", described("check"));
@@ -613,6 +613,59 @@ static void backend(Gpu &gpu)
        read && rebuilt && g->read_animation(played[1], &start_after) && start_after == start_before &&
            g->read_animation(needle, &needle_start) && needle_start > 0);
 #endif
+    /* Within a key allowance of one dial's keys a flush: three replaced at
+     * once, by two owners, made one a flush, the rest due meanwhile. */
+    {
+        const uint64_t one = key_bytes(dial);
+        g->key_allowance(one);
+        Animation d1 = dial, d2 = dial;
+        d1.owner = 1;
+        d2.owner = 2;
+        played[1] = g->replace(played[1], dials[1], d1);
+        played[2] = g->replace(played[2], dials[2], d2);
+        played[3] = g->replace(played[3], dials[3], d1);
+        int flushes = 0;
+        bool each_one = played[1] && played[2] && played[3];
+        while (g->animations_due() && flushes < 10) {
+            each_one = each_one && g->flush(13) && g->take_animation_bytes() == one;
+            flushes++;
+        }
+        ok("animations: within the key allowance, three replacements made one a flush, the others due meanwhile",
+           each_one && flushes == 3 && !g->animations_due());
+    }
+#ifndef CRS_RAMSES27
+    /* A needle replaced every flush within the same allowance, past the
+     * retired keys' threshold: the playing dials move to a new system one a
+     * flush, taking turns with the needle, each keeping when it started; a
+     * flush that moves one does not make the needle. */
+    {
+        const uint64_t one = key_bytes(dial);
+        uint64_t kept_before = 0, kept_after = 0;
+        const bool read_kept = g->read_animation(played[5], &kept_before);
+        bool within = true;
+        int moves = 0;
+        for (int k = 0; k < 120 && made; k++) {
+            needle = g->replace(needle, dials[0], dial);
+            made = needle && g->flush(14);
+            const uint64_t b = g->take_animation_bytes();
+            uint64_t at = 0;
+            within = within && b >= one && b < 2 * one;   /* the allowance passed by one animation at most */
+            moves += !g->read_animation(needle, &at);
+        }
+        while (g->animations_due() && made) {
+            made = g->flush(15);
+            const uint64_t b = g->take_animation_bytes();
+            within = within && b >= one && b < 2 * one;
+            moves++;
+        }
+        g->key_allowance(UINT64_MAX);
+        ok("animations: past the threshold within the allowance, the dials moved to a new system a dial a flush, starts kept",
+           made && within && moves >= (int)dials.size() - 1 && read_kept &&
+               g->read_animation(played[5], &kept_after) && kept_after == kept_before);
+        ok("animations: the scene described whole once they moved", described("check"));
+    }
+#endif
+    g->key_allowance(UINT64_MAX);
     for (size_t i = 0; i < dials.size(); i++) {
         g->stop(i ? played[i] : needle);
         g->drop_quad(dials[i]);

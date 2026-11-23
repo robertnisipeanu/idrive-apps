@@ -142,6 +142,9 @@ public:
     {
     }
 
+    /* The library's uniform types (learn()), for animate(); null: unknown. */
+    void set_types(const Ramses19Types *t) { types_ = t; }
+
     ~Ramses19Graph() override
     {
         if (!scene_)
@@ -707,26 +710,25 @@ public:
             clear_depth(v->second, view);
     }
 
+    /* Made at a flush within the key allowance (settle_animations()). */
     int animate(int node, const Animation &a) override
     {
-        if (a.t.empty() || a.v.size() != a.t.size() * a.width)
+        ramses::Node *target = nullptr;
+        ramses::Appearance *app = nullptr;
+        ramses::UniformInput in;
+        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a, &target, &app, &in))
             return 0;
         Anim an;
         an.node = node;
         an.a = a;
-        bool made = false;
-        if (!build(an, &made)) {
-            log_error("ramses: animation refused");
-            if (made)
-                rebuild();
-            return 0;
-        }
+        an.due = true;
+        an.due_seq = ++due_seq_;
         anims_[next_] = an;
         return next_++;
     }
 
-    /* Its objects retired (retire()), the new animation made at the next
-     * flush, where the newest of several replacements is made alone. */
+    /* Its objects retired (retire()), the new animation made at a flush,
+     * where the newest of several replacements is made alone. */
     int replace(int anim, int node, const Animation &a) override
     {
         auto it = anims_.find(anim);
@@ -743,6 +745,8 @@ public:
         it->second.node = node;
         it->second.a = a;
         it->second.start = 0;
+        if (!it->second.due)
+            it->second.due_seq = ++due_seq_;   /* one still due keeps its place */
         it->second.due = true;
         return anim;
     }
@@ -761,6 +765,14 @@ public:
         const uint64_t b = anim_bytes_;
         anim_bytes_ = 0;
         return b;
+    }
+    void key_allowance(uint64_t bytes) override { allowance_ = bytes; }
+    bool animations_due() const override
+    {
+        for (const auto &kv : anims_)
+            if (kv.second.due || kv.second.moving)
+                return true;
+        return false;
     }
 
     /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
@@ -1080,13 +1092,15 @@ private:
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
         ramses::Spline *spline = nullptr;
-        bool due = false;   /* replaced: made at the next flush */
+        ramses::AnimationSystemRealTime *sys = nullptr;   /* the system its objects are in */
+        bool due = false;      /* new or replaced: made at a flush */
+        bool moving = false;   /* playing in old_: made again in anim_ at a flush */
+        uint64_t due_seq = 0;  /* when it fell due: the longest due first, in its owner's turns */
     };
 
-    /* A node animate() can play a on: a quad, part or view, and a's uniform
-     * in its effect. */
     /* What animation a on node plays: the node a quad, part or view turns,
-     * and for a uniform its appearance and input. False when there is none. */
+     * and for a uniform its appearance and input, of a's width (where the
+     * types are known). False when there is none. */
     bool resolve(int node, const Animation &a, ramses::Node **target, ramses::Appearance **app,
                  ramses::UniformInput *in)
     {
@@ -1099,8 +1113,9 @@ private:
                                       : nullptr;
         *app = nullptr;
         const ramses::Effect *fx = look(node, app);
-        return *target &&
-               (a.property != Animated::Uniform || (fx && ok(fx->findUniformInput(a.uniform.c_str(), *in))));
+        return *target && (a.property != Animated::Uniform ||
+                           (fx && ok(fx->findUniformInput(a.uniform.c_str(), *in)) && a.width >= 1 && a.width <= 4 &&
+                            (!types_ || (uint32_t)in->getDataType() == types_->uniform[a.width - 1])));
     }
 
     bool read_animation(int anim, uint64_t *start) override
@@ -1117,47 +1132,91 @@ private:
      * library cannot describe, VERIFIED on the unit's libramses 19: it
      * crashes the process when a renderer subscribes to the scene again, or
      * when the scene is saved). Their keys count until settle_animations()
-     * makes the system again. */
+     * has moved the animations to a new system; those of the system being
+     * left (old_) go with it. */
     void retire(Anim &an)
+    {
+        if (an.seq && an.sys == anim_)
+            retired_keys_ += an.a.t.size();
+        unplay(an);
+    }
+    void unplay(Anim &an)
     {
         if (an.seq && an.anim && (!ok(an.seq->stop()) || !ok(an.seq->removeAnimation(*an.anim))))
             log_warn("ramses: an animation not stopped");
-        if (an.seq)
-            retired_keys_ += an.a.t.size();
         an.seq = nullptr;
         an.anim = nullptr;
         an.prop = nullptr;
         an.spline = nullptr;
+        an.sys = nullptr;
+        an.moving = false;
     }
 
-    /* Before a flush: the replacements made, and the animation system made
-     * again, with only the animations that play, once the retired keys
-     * outnumber those (and kRetiredKeys): a replacement makes its own keys,
-     * and the rebuilds they bring at most as many again. */
+    /* Before a flush: due animations made, owners in turn, until the bytes
+     * made reach the key allowance. Once the retired keys outnumber the
+     * live ones (and kRetiredKeys), a new system: each playing animation
+     * keeps playing in the old one until made again in the new one, from
+     * when it started, within the allowance like any other, and the old
+     * system goes once none is left in it. A replacement makes its own
+     * keys, and the moves it brings at most as many again. */
     void settle_animations()
     {
         size_t live = 0;
-        for (auto it = anims_.begin(); it != anims_.end();) {
-            Anim &an = it->second;
-            live += an.a.t.size();
-            bool made = false;
-            if (!an.due || build(an, &made)) {
-                an.due = false;
-                ++it;
+        for (const auto &kv : anims_)
+            live += kv.second.a.t.size();
+        if (!old_ && anim_ && retired_keys_ > kRetiredKeys && retired_keys_ > live) {
+            old_ = anim_;
+            anim_ = nullptr;
+            retired_keys_ = 0;
+            for (auto &kv : anims_) {
+                kv.second.moving = kv.second.sys == old_;
+                if (kv.second.moving && !kv.second.due)
+                    kv.second.due_seq = ++due_seq_;
+            }
+        }
+        std::vector<std::pair<uint64_t, int>> due;
+        for (const auto &kv : anims_)
+            if (kv.second.due || kv.second.moving)
+                due.emplace_back(kv.second.due_seq, kv.first);
+        std::sort(due.begin(), due.end());
+        for (auto &d : due)
+            d.first = anims_[d.second].a.owner;
+        uint64_t made = 0;
+        for (const auto &d : key_turns(due, turn_)) {
+            if (made >= allowance_)
+                break;
+            auto it = anims_.find(d.second);
+            Anim was = it->second;   /* its objects in old_ while moving */
+            bool half = false;
+            const uint64_t before = anim_bytes_;
+            const bool built = build(it->second, &half);
+            if (was.moving)
+                unplay(was);
+            made += anim_bytes_ - before;
+            turn_ = d.first;
+            if (built) {
+                it->second.due = it->second.moving = false;
                 continue;
             }
             log_error("ramses: animation %d refused", it->first);
-            if (made)
+            if (half)
                 retired_keys_ = SIZE_MAX;   /* half made: the system goes */
-            it = anims_.erase(it);
+            anims_.erase(it);
         }
-        if (retired_keys_ > kRetiredKeys && retired_keys_ > live)
-            rebuild();
+        if (old_) {
+            bool left = false;
+            for (const auto &kv : anims_)
+                left = left || kv.second.moving;
+            if (!left) {
+                scene_->destroy(*old_);
+                old_ = nullptr;
+            }
+        }
     }
     /* Makes an's objects in the animation system (made when there is none)
      * and starts it at an.start, or now. An unknown node or uniform is
      * refused before anything is made; *made: objects were made, which a
-     * refusal leaves to a new system (rebuild()) to take away. */
+     * refusal leaves to a new system (settle_animations()) to take away. */
     bool build(Anim &an, bool *made)
     {
         const int node = an.node;
@@ -1201,36 +1260,12 @@ private:
             !ok(anim_->updateLocalTime()))
             return false;
         const ramses::globalTimeStamp_t at = an.start ? an.start : anim_->getTime();
+        an.sys = anim_;
+        anim_bytes_ += key_bytes(a);
         if (!ok(an.seq->startAt(at)))
             return false;
         an.start = at;
-        anim_bytes_ += a.t.size() * (4 + 4 * a.width);   /* a time and the values a key */
         return true;
-    }
-
-    /* The animation system goes whole, its objects and those retired with
-     * it, and the animations that stay are made again in a new one, each
-     * from when it started. */
-    void rebuild()
-    {
-        if (anim_)
-            scene_->destroy(*anim_);
-        anim_ = nullptr;
-        retired_keys_ = 0;
-        bool left = false;
-        for (auto it = anims_.begin(); it != anims_.end();) {
-            bool made = false;
-            if (build(it->second, &made)) {
-                it->second.due = false;
-                ++it;
-                continue;
-            }
-            log_error("ramses: animation %d refused in a new animation system", it->first);
-            left = left || made;
-            it = anims_.erase(it);
-        }
-        if (left)
-            rebuild();
     }
 
     /* The appearance and effect of a quad or a part. */
@@ -1486,6 +1521,11 @@ private:
     const ramses::UInt16Array &idx_;
     ramses::Scene *scene_ = nullptr;
     ramses::AnimationSystemRealTime *anim_ = nullptr;
+    const Ramses19Types *types_ = nullptr;
+    ramses::AnimationSystemRealTime *old_ = nullptr;   /* being left: its animations move to anim_ */
+    uint64_t allowance_ = UINT64_MAX;   /* key bytes a flush may make (key_allowance()) */
+    uint64_t turn_ = 0;                 /* the owner whose animation the last flush made last */
+    uint64_t due_seq_ = 0;
     /* Keys of retired animations still in anim_, and of animations made
      * since take_animation_bytes(), in bytes. */
     size_t retired_keys_ = 0;
@@ -1822,6 +1862,7 @@ public:
         /* ponytail: room for 1024 passes above it; a file at the top of the range draws nothing over itself */
         base = std::min<int64_t>(base, INT32_MAX - 1024);
         std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, effects_, pos_, idx_));
+        g->set_types(&types_);
         if (!g->over(scene_, w_, h_, (int32_t)base, err))
             return nullptr;
         log_info("ramses: layers over the scene file from render order %lld", (long long)base);
@@ -1925,6 +1966,10 @@ unsigned Ramses19Gpu::attributes(int effect) const
 std::unique_ptr<Graph> Ramses19Gpu::scene(const TargetSpec &t, std::string *err)
 {
     std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, effects_, *pos_, *idx_));
+    std::string why;
+    if (!typed_)
+        typed_ = learn(client_, &types_, &why);
+    g->set_types(typed_ ? &types_ : nullptr);
     if (!g->build(t, err))
         return nullptr;
     return std::unique_ptr<Graph>(g.release());

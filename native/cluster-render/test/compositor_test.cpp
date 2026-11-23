@@ -3019,9 +3019,9 @@ static void hierarchies()
        !sample_curve(Curve::Smooth, &over) && over.t == kept.t && over.v == kept.v);
 }
 
-/* Animation keys on the upload budget: what a flush sent is paid when the
- * budget allows a write; a client's keys past an eighth of the cap a second
- * refused, so another client's writes go on. */
+/* Animation keys on the upload budget: a flush makes them within what the
+ * budget allows, paid as made; many clients' made in turn, another
+ * client's writes going on, the debt bounded and repaid. */
 static void animation_keys_within_budget()
 {
     std::string err;
@@ -3047,36 +3047,65 @@ static void animation_keys_within_budget()
     ok("keys: a flush's animation keys paid from the upload budget",
        slow.comp->pacer().allowance() < 0 && slow.comp->pacer().allowance() > -(int64_t)bytes);
 
+    /* Ten clients replacing an animation every tick on the panel, an
+     * image written every tick by another: the keys are made within the
+     * budget, the clients in turn, the image's writes go on, and the pacer
+     * goes no further into debt than one write, the keys' share held and
+     * one animation. */
     Rig r(100 * 1024);
-    const uint32_t img = r.comp->add_image(2, r.panel, params(Klass::Overlay, R(200, 0, 32, 32)), 32, 32, 30,
+    const uint32_t img = r.comp->add_image(20, r.panel, params(Klass::Overlay, R(200, 0, 32, 32)), 32, 32, 30,
                                            Sampling::Nearest, r.now, &err);
-    ImageLayer *il = static_cast<ImageLayer *>(r.comp->layer(2, img));
-    const uint32_t anim_fx = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 32, 32)), "", kSample, 0,
-                                                r.now, &err);
-    Layer *al = r.comp->layer(1, anim_fx);
+    ImageLayer *il = static_cast<ImageLayer *>(r.comp->layer(20, img));
+    Animation mid = big;
+    mid.t.resize(200);
+    mid.v.resize(200);
+    const int64_t mid_bytes = (int64_t)key_bytes(mid);
+    std::vector<Layer *> movers;
+    for (uint64_t c = 1; c <= 10; c++)
+        movers.push_back(r.comp->layer(c, r.comp->add_effect(c, r.panel, params(Klass::Overlay, R(40 * (int)c, 100, 32, 32)),
+                                                             "", kSample, 0, r.now, &err)));
     std::vector<uint8_t> px(32 * 32 * 4);
     il->update({}, px.data(), px.size(), &err);
     r.run(200);
     r.slots.on_shown(0x01000400, r.now);
     r.run(200);
+    FakeGraph *g = r.g("panel");
     const uint64_t frames = il->write_stats().frames;
-    int refused = 0, taken = 0;
+    int64_t lowest = INT64_MAX;
     for (int tick = 0; tick < 300; tick++) {
         std::fill(px.begin(), px.end(), (uint8_t)tick);
         il->update({}, px.data(), px.size(), &err);
-        if (r.comp->admit_keys(1, bytes, &err)) {
-            al->animate(1, 0, big, &err);
-            r.comp->touch(al);
-            taken++;
-        } else {
-            refused++;
+        for (size_t c = 0; c < movers.size(); c++) {
+            mid.owner = c + 1;
+            mid.v[0] = (float)tick;
+            movers[c]->animate(1, 0, mid, &err);
+            r.comp->touch(movers[c]);
         }
         r.step(10);
+        lowest = std::min(lowest, r.comp->pacer().allowance());
     }
-    ok("keys: a client's past an eighth of the upload budget a second refused",
-       taken > 0 && refused > 0 && err.find("an eighth of the upload budget") != std::string::npos);
+    const int64_t held = (int64_t)(r.comp->governor().cap() / Compositor::kKeyShare) * Compositor::kKeyFrameMs / 1000;
+    uint64_t least = UINT64_MAX, most = 0;
+    for (uint64_t c = 1; c <= 10; c++) {
+        const uint64_t b = g ? g->made_by[c] : 0;
+        least = std::min(least, b);
+        most = std::max(most, b);
+    }
+    ok("keys: ten clients' animations made in turn (each at least half the most any made)",
+       g && least > 0 && most <= 2 * least);
     ok("keys: another client's writes go on (over 40 of 3 s's 4 KB frames at 100 KB/s)",
        il->write_stats().frames - frames > 40);
+    ok("keys: the pacer no further in debt than one write, the keys' share held and one animation",
+       lowest >= -(int64_t)(32 * 32 * 4 + held + mid_bytes));
+    r.run(1000);
+    bool all = g != nullptr;
+    for (const auto &kv : g ? g->shown.animations : std::map<int, FakeAnimation>())
+        all = all && kv.second.made && kv.second.a.v[0] == 299.0f;
+    const uint64_t before = il->write_stats().frames;
+    il->update({}, px.data(), px.size(), &err);
+    r.run(50);
+    ok("keys: the replacements stopped, every client's newest made, the debt repaid: a write goes at once",
+       all && g->shown.animations.size() == 10 && il->write_stats().frames == before + 1);
 }
 
 int main()

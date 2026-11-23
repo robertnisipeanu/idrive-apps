@@ -18,6 +18,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -310,7 +312,34 @@ struct Animation {
     bool step = false;     /* each key's value held until the next */
     std::vector<uint32_t> t;
     std::vector<float> v;
+    uint64_t owner = 0;    /* the client's: whose turn it takes (key_turns()) */
 };
+
+/* The bytes an animation's keys take to the renderer: a time and the
+ * values, a key. */
+inline uint64_t key_bytes(const Animation &a) { return a.t.size() * (4 + 4 * uint64_t(a.width)); }
+
+/* The order a flush makes due animations in: owners in turn, each round
+ * every owner with one due giving the one due longest, from the owner after
+ * last (whose turn the flush last made), so one owner's many animations
+ * never hold back another's, nor a replacement sent every flush its own
+ * others. due: (owner, handle), in the order they fell due. */
+inline std::vector<std::pair<uint64_t, int>> key_turns(const std::vector<std::pair<uint64_t, int>> &due, uint64_t last)
+{
+    std::map<uint64_t, std::deque<int>> by;
+    for (const auto &d : due)
+        by[d.first].push_back(d.second);
+    std::vector<std::pair<uint64_t, int>> out;
+    auto it = by.upper_bound(last);
+    while (!by.empty()) {
+        if (it == by.end())
+            it = by.begin();
+        out.emplace_back(it->first, it->second.front());
+        it->second.pop_front();
+        it = it->second.empty() ? by.erase(it) : std::next(it);
+    }
+    return out;
+}
 
 /* An off-screen canvas (Graph::canvas): w x h RGBA8 the scene's own passes
  * draw into before the target's, with a depth-stencil buffer when depth,
@@ -429,7 +458,8 @@ public:
      * - the uniform of a quad or a part: 1, 3 or 4 values (float, vec3,
      *   vec4).
      * Returns the animation's handle, 0 when refused. A stopped animation
-     * leaves its property at its last value; dropping its node stops it. */
+     * leaves its property at its last value; dropping its node stops it.
+     * A graph may make it at a flush within its key allowance (below). */
     virtual int animate(int node, const Animation &a) = 0;
     virtual void stop(int anim) = 0;
 
@@ -448,6 +478,14 @@ public:
     /* Bytes of animation keys made since the last call, which the next
      * flush sends to the renderer. */
     virtual uint64_t take_animation_bytes() { return 0; }
+    /* The bytes of animation keys the next flushes may make (set before
+     * each; unlimited until set): due animations (animate(), replace(),
+     * those a graph makes again) are made owners in turn (key_turns()), one
+     * after another until what is made reaches it, so a flush passes it by
+     * one animation at most; the rest wait for a later flush, while
+     * animations_due(). */
+    virtual void key_allowance(uint64_t) {}
+    virtual bool animations_due() const { return false; }
     /* When the animation started, in the renderer's clock; false where the
      * backend cannot say, or it is not made yet (tests). */
     virtual bool read_animation(int, uint64_t *) { return false; }

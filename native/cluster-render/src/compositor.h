@@ -256,10 +256,13 @@ public:
      * with *err, nothing made. */
     bool add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs, const std::string &fs,
                   const PartLook &look, uint32_t parent, std::string *err);
-    /* bytes of animation keys a client sends: false with *err past its
-     * share, an eighth of the upload cap a second (kKeyShare). */
-    bool admit_keys(uint64_t owner, uint64_t bytes, std::string *err);
+    /* Animation keys go to the renderer as scene data, made at a target's
+     * flushes within its upload budget (Graph::key_allowance()): what the
+     * pacer allows, or while the pacer is in debt, the keys' own share, an
+     * eighth of the cap (kKeyShare), at most a frame's worth (kKeyFrameMs)
+     * held, so writes cannot starve animations nor animations writes. */
     static const uint64_t kKeyShare = 8;
+    static const int64_t kKeyFrameMs = 33;
     /* A part's geometry, within the service's memory; false with *err. */
     bool geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                   std::string *err);
@@ -532,7 +535,6 @@ private:
     };
     struct Target {
         bool flushing = false;   /* slots_->flushing() at the last render() */
-        uint64_t keys_owed = 0;  /* animation key bytes sent, not yet paid */
         std::unique_ptr<Graph> graph;
         /* Or the scene of a scene content's file: which content's, its
          * serial, and its files' bytes. */
@@ -782,11 +784,15 @@ private:
     std::vector<int> render_order_, render_later_;   /* kept to save allocating them each tick */
     std::map<uint32_t, AssetEntry> assets_;
     std::map<uint32_t, CanvasEntry> canvases_;
-    struct KeyWindow {
-        int64_t start_ms = -1000000;
-        uint64_t bytes = 0;
+    /* The keys' share of a pacer (kKeyShare): bytes they may make while
+     * it is in debt. */
+    struct KeyShare {
+        int64_t tokens = 0;
+        int64_t last_ms = -1;
     };
-    std::map<uint64_t, KeyWindow> keys_;   /* animation key bytes by client, this second */
+    KeyShare key_share_, key_share_hud_;   /* pacer_'s, share_'s */
+    /* The key bytes target ti's next flush may make. */
+    uint64_t key_allowance(int ti, int64_t now_ms);
     /* A layer's entry, in the stack or a canvas (*in, null for the stack);
      * null when none. */
     Entry *find(uint32_t id, CanvasEntry **in = nullptr);

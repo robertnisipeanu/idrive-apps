@@ -758,64 +758,37 @@ public:
             clear_depth(v->second, view);
     }
 
+    /* Made at a flush within the key allowance (settle_animations()). */
     int animate(int node, const Animation &a) override
     {
-        if (a.t.empty() || a.v.size() != a.t.size() * a.width)
+        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a))
             return 0;
-        if (!anim_)
-            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
-        if (!anim_)
-            return 0;
-        auto q = quads_.find(node);
-        auto p = parts_.find(node);
-        auto v = views_.find(node);
-        ramses::Node *target = q != quads_.end()   ? q->second.turned
-                               : p != parts_.end() ? &node_of(p->second)
-                               : v != views_.end() ? (ramses::Node *)v->second.cam
-                                                   : nullptr;
-        if (!target)
-            return 0;
-        const bool on_quad = q != quads_.end();
-        /* The renderer's conventions: y up, so down is negative y, and its
-         * rotations (the three-angle setRotation, as RAMSES 19's) are
-         * left-handed, so a quad's clockwise turn is positive z and the
-         * right-handed angles of parts and cameras are negated. */
-        std::vector<float> vals = a.v;
-        if (!on_quad && a.property == Animated::Rotate)
-            for (float &x : vals)
-                x = -x;
-        if (on_quad && a.property == Animated::Translate)
-            for (size_t k = 1; k < vals.size(); k += 3)
-                vals[k] = -vals[k];
-
         Anim an;
         an.node = node;
-        an.spline = spline(a, vals);
-        if (a.property == Animated::Uniform) {
-            ramses::Appearance *app = nullptr;
-            const ramses::Effect *fx = look(node, &app);
-            ramses::UniformInput in;
-            if (an.spline && fx && ok(fx->findUniformInput(a.uniform.c_str(), in)))
-                an.prop = anim_->createAnimatedProperty(in, *app);
-        } else if (an.spline) {
-            const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
-                                                   : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
-                                                                                       : ramses::EAnimatedProperty_Scaling;
-            an.prop = anim_->createAnimatedProperty(*target, prop,
-                                                    a.width == 1 ? ramses::EAnimatedPropertyComponent_Z
-                                                                 : ramses::EAnimatedPropertyComponent_All);
-        }
-        an.anim = an.prop ? anim_->createAnimation(*an.prop, *an.spline) : nullptr;
-        an.seq = an.anim ? anim_->createAnimationSequence() : nullptr;
-        if (!an.seq || !ok(an.seq->addAnimation(*an.anim)) || (a.loop && !ok(an.seq->setAnimationLooping(*an.anim))) ||
-            !ok(anim_->updateLocalTime()) || !ok(an.seq->start())) {
-            log_error("ramses: animation refused");
-            destroy_anim(an);
+        an.a = a;
+        an.due = true;
+        an.due_seq = ++due_seq_;
+        anims_[next_] = an;
+        return next_++;
+    }
+
+    /* In place: the one playing goes on until the flush that makes this
+     * one, which only the newest of several replacements is. */
+    int replace(int anim, int node, const Animation &a) override
+    {
+        auto it = anims_.find(anim);
+        if (it == anims_.end())
+            return animate(node, a);
+        if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a)) {
+            stop(anim);
             return 0;
         }
-        anims_[next_] = an;
-        anim_bytes_ += a.t.size() * (4 + 4 * a.width);   /* a time and the values a key */
-        return next_++;
+        it->second.node = node;
+        it->second.a = a;
+        if (!it->second.due)
+            it->second.due_seq = ++due_seq_;   /* one still due keeps its place */
+        it->second.due = true;
+        return anim;
     }
 
     void stop(int anim) override
@@ -823,8 +796,9 @@ public:
         auto it = anims_.find(anim);
         if (it == anims_.end())
             return;
-        it->second.seq->stop();
-        destroy_anim(it->second);
+        if (it->second.seq)
+            it->second.seq->stop();
+        destroy_objects(it->second);
         anims_.erase(it);
     }
 
@@ -833,6 +807,14 @@ public:
         const uint64_t b = anim_bytes_;
         anim_bytes_ = 0;
         return b;
+    }
+    void key_allowance(uint64_t bytes) override { allowance_ = bytes; }
+    bool animations_due() const override
+    {
+        for (const auto &kv : anims_)
+            if (kv.second.due)
+                return true;
+        return false;
     }
 
     /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
@@ -1003,6 +985,7 @@ public:
     {
         if (layout_dirty_)
             relayout();
+        settle_animations();
         const ramses::status_t s = scene_->flush(tag);
         if (!ok(s) && !flush_failing_)
             log_error("ramses: flush %llu: %s", (unsigned long long)tag, client_.getStatusMessage(s));
@@ -1143,6 +1126,9 @@ private:
     ramses::Node &node_of(Part &p) { return p.mesh ? *(ramses::Node *)p.mesh : *p.pivot; }
     struct Anim {
         int node = 0;
+        Animation a;
+        bool due = false;   /* new or replaced: made at a flush */
+        uint64_t due_seq = 0;   /* when it fell due: the longest due first, in its owner's turns */
         ramses::AnimationSequence *seq = nullptr;
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
@@ -1315,13 +1301,130 @@ private:
         return nullptr;
     }
 
-    void destroy_anim(Anim &an)
+    void destroy_objects(Anim &an)
     {
         if (an.seq) anim_->destroy(*an.seq);
         if (an.anim) anim_->destroy(*an.anim);
         if (an.prop) anim_->destroy(*an.prop);
         if (an.spline) anim_->destroy(*an.spline);
-        an = Anim();
+        an.seq = nullptr;
+        an.anim = nullptr;
+        an.prop = nullptr;
+        an.spline = nullptr;
+    }
+
+    /* The node animation a plays: a quad, part or view, with a's uniform
+     * in its effect. */
+    ramses::Node *target_of(int node, bool *on_quad)
+    {
+        auto q = quads_.find(node);
+        auto p = parts_.find(node);
+        auto v = views_.find(node);
+        *on_quad = q != quads_.end();
+        return q != quads_.end()   ? q->second.turned
+               : p != parts_.end() ? &node_of(p->second)
+               : v != views_.end() ? (ramses::Node *)v->second.cam
+                                   : nullptr;
+    }
+    bool resolve(int node, const Animation &a)
+    {
+        bool on_quad = false;
+        if (!target_of(node, &on_quad))
+            return false;
+        if (a.property != Animated::Uniform)
+            return true;
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(node, &app);
+        ramses::UniformInput in;
+        static const ramses::EEffectInputDataType widths[] = {
+            ramses::EEffectInputDataType_Float, ramses::EEffectInputDataType_Vector2F,
+            ramses::EEffectInputDataType_Vector3F, ramses::EEffectInputDataType_Vector4F};
+        return fx && ok(fx->findUniformInput(a.uniform.c_str(), in)) && a.width >= 1 && a.width <= 4 &&
+               in.getDataType() == widths[a.width - 1];
+    }
+
+    /* Makes an's objects and starts it; false, nothing left, when the
+     * library refuses. */
+    bool build(Anim &an)
+    {
+        const int node = an.node;
+        const Animation &a = an.a;
+        if (!anim_)
+            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
+        bool on_q = false;
+        ramses::Node *target = anim_ ? target_of(node, &on_q) : nullptr;
+        if (!target)
+            return false;
+        const bool on_quad = on_q;
+        /* The renderer's conventions: y up, so down is negative y, and its
+         * rotations (the three-angle setRotation, as RAMSES 19's) are
+         * left-handed, so a quad's clockwise turn is positive z and the
+         * right-handed angles of parts and cameras are negated. */
+        std::vector<float> vals = a.v;
+        if (!on_quad && a.property == Animated::Rotate)
+            for (float &x : vals)
+                x = -x;
+        if (on_quad && a.property == Animated::Translate)
+            for (size_t k = 1; k < vals.size(); k += 3)
+                vals[k] = -vals[k];
+
+        an.spline = spline(a, vals);
+        if (a.property == Animated::Uniform) {
+            ramses::Appearance *app = nullptr;
+            const ramses::Effect *fx = look(node, &app);
+            ramses::UniformInput in;
+            if (an.spline && fx && ok(fx->findUniformInput(a.uniform.c_str(), in)))
+                an.prop = anim_->createAnimatedProperty(in, *app);
+        } else if (an.spline) {
+            const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
+                                                   : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
+                                                                                       : ramses::EAnimatedProperty_Scaling;
+            an.prop = anim_->createAnimatedProperty(*target, prop,
+                                                    a.width == 1 ? ramses::EAnimatedPropertyComponent_Z
+                                                                 : ramses::EAnimatedPropertyComponent_All);
+        }
+        an.anim = an.prop ? anim_->createAnimation(*an.prop, *an.spline) : nullptr;
+        an.seq = an.anim ? anim_->createAnimationSequence() : nullptr;
+        if (!an.seq || !ok(an.seq->addAnimation(*an.anim)) || (a.loop && !ok(an.seq->setAnimationLooping(*an.anim))) ||
+            !ok(anim_->updateLocalTime()) || !ok(an.seq->start())) {
+            destroy_objects(an);
+            return false;
+        }
+        anim_bytes_ += key_bytes(a);
+        return true;
+    }
+
+    /* Before a flush: due animations made, owners in turn, until the bytes
+     * made reach the key allowance; a replacement's old objects go in the
+     * same flush, so it plays on from where the old one left it. */
+    void settle_animations()
+    {
+        std::vector<std::pair<uint64_t, int>> due;
+        for (const auto &kv : anims_)
+            if (kv.second.due)
+                due.emplace_back(kv.second.due_seq, kv.first);
+        std::sort(due.begin(), due.end());
+        for (auto &d : due)
+            d.first = anims_[d.second].a.owner;
+        uint64_t made = 0;
+        for (const auto &d : key_turns(due, turn_)) {
+            if (made >= allowance_)
+                break;
+            auto it = anims_.find(d.second);
+            if (it->second.seq)
+                it->second.seq->stop();
+            destroy_objects(it->second);
+            const uint64_t before = anim_bytes_;
+            const bool built = build(it->second);
+            made += anim_bytes_ - before;
+            turn_ = d.first;
+            if (built) {
+                it->second.due = false;
+                continue;
+            }
+            log_error("ramses: animation %d refused", it->first);
+            anims_.erase(it);
+        }
     }
 
     void stop_on(int node)
@@ -1431,6 +1534,9 @@ private:
     ramses::ArrayResource *pos_ = nullptr, *idx_ = nullptr;   /* the unit quad */
     ramses::AnimationSystemRealTime *anim_ = nullptr;
     uint64_t anim_bytes_ = 0;   /* animation keys made since take_animation_bytes() */
+    uint64_t allowance_ = UINT64_MAX;   /* key bytes a flush may make (key_allowance()) */
+    uint64_t turn_ = 0;                 /* the owner whose animation the last flush made last */
+    uint64_t due_seq_ = 0;
     /* The target's own surface, and the canvases', by handle. */
     Surface main_;
     std::map<int, Surface> canvases_;

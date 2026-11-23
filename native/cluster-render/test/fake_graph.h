@@ -93,6 +93,8 @@ struct FakePart {
 struct FakeAnimation {
     int node = 0;
     Animation a;
+    bool made = false;   /* made at a flush, within the key allowance */
+    uint64_t due_seq = 0;
 };
 
 struct FakeState {
@@ -362,8 +364,7 @@ public:
             return 0;
         if (a.property == Animated::Uniform && unknown_uniform == a.uniform)
             return 0;
-        pending.animations[next] = FakeAnimation{node, a};
-        animation_bytes += a.t.size() * (4 + 4 * a.width);
+        pending.animations[next] = FakeAnimation{node, a, false, ++due_seq};
         return next++;
     }
     void stop(int anim) override { pending.animations.erase(anim); }
@@ -373,8 +374,8 @@ public:
         if (!pending.animations.count(anim))
             return animate(node, a);
         replaces++;
-        pending.animations[anim] = FakeAnimation{node, a};
-        animation_bytes += a.t.size() * (4 + 4 * a.width);
+        FakeAnimation &fa = pending.animations[anim];
+        fa = FakeAnimation{node, a, false, fa.made ? ++due_seq : fa.due_seq};
         return anim;
     }
     uint64_t take_animation_bytes() override
@@ -384,6 +385,41 @@ public:
         animation_taken += b;
         return b;
     }
+    void key_allowance(uint64_t bytes) override { allowance = bytes; }
+    bool animations_due() const override
+    {
+        for (const auto &kv : pending.animations)
+            if (!kv.second.made)
+                return true;
+        return false;
+    }
+    /* As the backends: due animations made, owners in turn, until the bytes
+     * made reach the allowance. */
+    void make_animations()
+    {
+        std::vector<std::pair<uint64_t, int>> due;
+        for (const auto &kv : pending.animations)
+            if (!kv.second.made)
+                due.emplace_back(kv.second.due_seq, kv.first);
+        std::sort(due.begin(), due.end());
+        for (auto &d : due)
+            d.first = pending.animations[d.second].a.owner;
+        uint64_t made = 0;
+        for (const auto &d : key_turns(due, key_turn)) {
+            if (made >= allowance)
+                break;
+            FakeAnimation &fa = pending.animations[d.second];
+            fa.made = true;
+            made += key_bytes(fa.a);
+            made_by[d.first] += key_bytes(fa.a);
+            key_turn = d.first;
+        }
+        animation_bytes += made;
+    }
+    uint64_t allowance = UINT64_MAX;  /* key_allowance() */
+    uint64_t key_turn = 0;
+    uint64_t due_seq = 0;
+    std::map<uint64_t, uint64_t> made_by;   /* key bytes made, by owner */
     int replaces = 0;                 /* replace() calls on a playing animation */
     uint64_t animation_bytes = 0;     /* keys made since take_animation_bytes() */
     uint64_t animation_taken = 0;     /* and taken by it, in all */
@@ -463,6 +499,7 @@ public:
             *clock_us += *flush_cost_us;
         if (fail_flush)
             return false;
+        make_animations();
         flushed_bytes += written;
         shown = pending;
         shown_writes = writes;

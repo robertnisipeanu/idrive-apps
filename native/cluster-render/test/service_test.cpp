@@ -2880,6 +2880,48 @@ static void motion_over_socket()
     ok("motion: a pivot's geometry refused", ev.find("a pivot draws nothing") != std::string::npos);
 }
 
+/* A reconnect under a small upload budget: the client sends every animation
+ * again at once, past what the budget allows in a second; each is made in
+ * the next flushes the budget allows, none refused, all as before. */
+static void animations_after_a_reconnect()
+{
+    Rig r(16 * 1024);
+    cr::Client c("needles", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    const char *fs = "#version 100\nprecision mediump float;\nuniform float u_level;\nvoid main(){gl_FragColor=vec4(u_level);}";
+    cr::AnimationOptions sweep;
+    sweep.property = "uniform";
+    sweep.name = "u_level";
+    for (int k = 0; k < 256; k++)
+        sweep.keys += (sweep.keys.empty() ? "" : " ") + std::to_string(k * 10) + ":" + std::to_string(k % 2);
+    sweep.loop = true;
+    const int kLayers = 16;
+    for (int i = 0; i < kLayers; i++) {
+        cr::LayerOptions lo;
+        lo.target = "panel";
+        lo.klass = "overlay";
+        lo.x = 40 * i;
+        lo.w = lo.h = 32;
+        c.animate(c.effect(lo, cr::EffectOptions{fs, "", 0}), sweep);
+    }
+    auto made = [&]() {
+        FakeGraph *g = r.gpu.graph("panel");
+        int n = 0;
+        for (const auto &kv : g ? g->shown.animations : std::map<int, FakeAnimation>())
+            n += kv.second.made && kv.second.a.t.size() == 256;
+        return n;
+    };
+    r.pump(4000);
+    ok("animations: sixteen of 2 KB each made within a 16 KB/s budget", made() == kLayers);
+    r.svc.reset();
+    r.start();
+    r.pump(4000);
+    ok("animations: after a reconnect every one made again, none refused", made() == kLayers && e.errors.empty());
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -3397,6 +3439,7 @@ int main()
     canvases_over_socket();
     canvases_to_an_older_service();
     motion_over_socket();
+    animations_after_a_reconnect();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

@@ -1286,8 +1286,8 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             error(c, op, ref, "a uniform's animation needs its name");
             return;
         }
-        if (!comp_->admit_keys(c.id, a.t.size() * (4 + 4 * a.width), &err) ||
-            !l->animate((uint32_t)anim_d, part, a, &err))
+        a.owner = c.id;
+        if (!l->animate((uint32_t)anim_d, part, a, &err))
             error(c, op, ref, err);
         else
             comp_->touch(l);
