@@ -55,6 +55,7 @@ struct FakeQuad {
     std::map<std::string, UniformType> types;   /* uniforms set as arrays */
     PartLook look = quad_look();
     int styles = 0;   /* style() calls */
+    int canvas = 0;   /* the canvas it is drawn in; 0: the target */
 };
 
 struct FakeView {
@@ -63,6 +64,12 @@ struct FakeView {
     Pose camera;
     bool visible = false;
     int32_t order = 0;
+    int canvas = 0;
+};
+
+struct FakeCanvas {
+    CanvasSpec spec;
+    int redraws = 0;   /* redraw() calls */
 };
 
 struct FakePart {
@@ -89,6 +96,7 @@ struct FakeState {
     std::map<int, FakeView> views;
     std::map<int, FakePart> parts;
     std::map<int, FakeAnimation> animations;
+    std::map<int, FakeCanvas> canvases;
 };
 
 class FakeGraph : public Graph {
@@ -104,6 +112,7 @@ public:
     long write_budget = -1;        /* refuse writes once this many bytes went; -1: never */
     bool fail_flush = false;
     bool refuse_textures = false;  /* immutable_texture() refused, as a backend without the format */
+    bool refuse_canvases = false;  /* canvas() refused */
     std::string name;
     std::map<std::string, FakeGraph *> *registry = nullptr;
     const std::map<int, unsigned> *effect_attributes = nullptr;   /* the Gpu's */
@@ -350,6 +359,48 @@ public:
         return next++;
     }
     void stop(int anim) override { pending.animations.erase(anim); }
+
+    int canvas(const CanvasSpec &c) override
+    {
+        if (refuse_canvases || !c.w || !c.h || sampling_mips(c.sampler.sampling))
+            return 0;
+        pending.canvases[next].spec = c;
+        pending.buffers[next] = fake_buffer(TexFormat::RGBA8, c.w, c.h, {}, c.sampler);
+        return next++;
+    }
+    void drop_canvas(int c) override
+    {
+        for (auto it = pending.quads.begin(); it != pending.quads.end();)
+            it = it->second.canvas == c ? pending.quads.erase(it) : std::next(it);
+        for (auto it = pending.views.begin(); it != pending.views.end();)
+            it = it->second.canvas == c ? pending.views.erase(it) : std::next(it);
+        pending.canvases.erase(c);
+        pending.buffers.erase(c);
+    }
+    bool redraw(int c) override
+    {
+        auto it = pending.canvases.find(c);
+        if (it == pending.canvases.end())
+            return false;
+        it->second.redraws++;
+        return true;
+    }
+    int quad_in(int c, int effect, const Rect &r) override
+    {
+        if (c && !pending.canvases.count(c))
+            return 0;
+        const int q = quad(effect, r);
+        pending.quads[q].canvas = c;
+        return q;
+    }
+    int view_in(int c, const Rect &r, const Projection &p, const Pose &camera) override
+    {
+        if (c && !pending.canvases.count(c))
+            return 0;
+        const int v = view(r, p, camera);
+        pending.views[v].canvas = c;
+        return v;
+    }
 
     bool flush(uint64_t tag) override
     {

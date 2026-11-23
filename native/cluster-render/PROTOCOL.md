@@ -42,7 +42,8 @@ lacks.
 | `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`; with mipmaps `nearest_mips`, `bilinear_mips`, `trilinear`, and `min_linear_mag_nearest`, `min_nearest_mag_linear`: [below](#mipmaps-and-samplers)), `wrap` (`clamp` default, `repeat`, `mirror`), `wrap_u`, `wrap_v` (each axis in place of `wrap`), `anisotropy` (1 default, to 16) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
-| `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
+| `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
+| `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
 | `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
@@ -51,7 +52,7 @@ lacks.
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
 | `host` | `ref` (a scene with `layers` 1) or `into` (a target this client's layers are on, [below](#hosting-from-layers)), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
 | `unhost` | `ref` or `into`, `target`: that host of `target` ends; to a service whose hello has `host_layers` 1 |
-| `drop` | `ref`: a layer, a scene, or an asset no layer samples (else refused: `asset in use`) |
+| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), or a canvas nothing draws in or samples (else refused: `canvas in use`) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
 
@@ -94,6 +95,7 @@ Layer fields (all optional):
 
 | Field | Default | Meaning |
 |---|---|---|
+| `canvas` | — | effect and mesh layers: the client's canvas (its ref) the layer draws in, set when it is made ([below](#canvases)); its rect then in the canvas's pixels, its `class` and `z` its order there |
 | `class` | `content` | `ambient`, `content`, `overlay` or `alert`: the stack's order, bottom to top |
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
@@ -323,6 +325,9 @@ video, image or mesh layer's `set` they are ignored.
 | `color_mask` | `rgba` | the channels written: some of `r`, `g`, `b`, `a`, each once, or `none` |
 | `depth_func` | `less_equal` | parts: `less`, `less_equal`, `equal`, `not_equal`, `greater`, `greater_equal`, `always`, `never`; with `depth` 1 |
 | `depth_write` | 1 | parts: 0 tests depth without writing it; with `depth` 1 |
+| `stencil_func` | off | only in a [canvas](#canvases) with `depth` 1, and to a service whose hello has `canvas` 1: `never`, `always`, `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal` (the fragment's `stencil_ref` against the stencil, both under `stencil_mask`) |
+| `stencil_ref`, `stencil_mask` | 0, 255 | 0-255 |
+| `stencil_fail`, `stencil_depth_fail`, `stencil_pass` | `keep` | what the stencil becomes when the test fails, when it passes but depth fails, and when both pass: `keep`, `zero`, `replace` (by `stencil_ref`), `increment`, `increment_wrap`, `decrement`, `decrement_wrap`, `invert` |
 
 A `blend_*` field changes the preset it is sent with (or the look the layer
 has) into a custom one; with `blend` `none` it is refused. The factors are
@@ -336,6 +341,9 @@ What a layer draws stays in its rect's place in the stack: a blend that
 reads or clears the destination changes only the pixels its own quad or
 part covers, as an opaque layer there would. A part's depth test sees only
 its own layer's depth: each mesh layer's pass clears depth first.
+
+Stencil fields on screen, or in a canvas without `depth`, are refused: the
+display's stencil belongs to every scene it draws.
 
 ### Mipmaps and samplers
 
@@ -361,6 +369,44 @@ the asset is drawn smaller and nearest when larger, or the other way round,
 from its picture alone. `mirror` repeats the asset mirrored. `anisotropy`
 2-16 samples a surface seen at a slant sharper, as far as the display's GPU
 goes (iDrive 7 and iDrive 8 not checked on a car).
+
+### Canvases
+
+Send these only to a service whose hello has `canvas` 1. A canvas is a
+client's off-screen picture on a target: `w` x `h` RGBA, drawn in by the
+client's effect and mesh layers made with its `canvas`, and sampled by
+layers on the target (its own or the client's others, not those drawn in
+it) through `bind`, as an asset.
+
+| Field | Default | |
+|---|---|---|
+| `w`, `h` | — | 1-2048 |
+| `depth` | 0 | 1: a depth-stencil buffer of its own, for parts' depth tests and the [stencil](#render-state) fields |
+| `clear` | `0 0 0 0` | the RGBA (0-1) it is cleared to at the start of each frame it is drawn |
+| `once` | 0 | 1: drawn once, and again only with the flush that changes something in it (a layer in it written, moved, shown or hidden; an asset on its target written); its layers' animations and `time` do not move it in between |
+| `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` | `nearest`, `clamp`, 1 | as an asset's, without mipmaps |
+
+- **Drawn** by the display's renderer, in passes of the canvas's own,
+  before the target's own passes and after those of the canvases made
+  before it; its first pass clears it. The canvas's layers are ordered among
+  themselves by `class`, `z` and age, are drawn while visible and ready,
+  and are never in the target's stack: they make no target wanted, are not
+  faded, suspended or held, and show (`layer` event `shown`) once drawn in
+  it. A layer on screen sampling the canvas wants the target as any layer.
+- **Costs** nothing of the upload budget to draw: only what its layers
+  write is sent. Its pixels twice (what its passes draw, and the copy
+  layers sample: the picture turned so that its first row is its top, as
+  an asset's), and once more with `depth`, count in the
+  service's pixel memory. A canvas the display draws every frame costs its
+  GPU: a still picture takes `once`.
+- **Limits:** a client has at most 4 canvases and all clients together 8
+  (past either: `too many canvases`), and a target's canvases together at
+  most 2048x2048 pixels.
+- **Dropped** only with no layer drawn in it or sampling it (`canvas in
+  use`); a client gone takes its layers first, then its canvases.
+- **Made again** in each new scene of its target, with its layers, as
+  assets are. The client libraries make canvases with the assets after a
+  reconnect, before the layers.
 
 ### Scene files
 
@@ -660,7 +706,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

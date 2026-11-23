@@ -69,7 +69,7 @@ void Client::connect_now(int64_t now_ms)
     for (int pass = 0; pass < 2; pass++)
         for (auto &kv : layers_) {
             Layer &l = kv.second;
-            if ((l.kind == "asset") != (pass == 0))
+            if ((l.kind == "asset" || l.kind == "canvas") != (pass == 0))
                 continue;
             queue(layer_json(kv.first, l));
             if (!l.edits.empty())
@@ -116,7 +116,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -201,6 +201,7 @@ void Client::read_events()
             render_state_ = j["render_state"] == "1";
             samplers_ = j["samplers"] == "1";
             host_layers_ = j["host_layers"] == "1";
+            canvas_ = j["canvas"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -421,6 +422,16 @@ void look_fields(std::vector<std::pair<std::string, std::string>> *kv, const Ren
             kv->push_back({f.first, json_quote(*f.second)});
     if (r.depth_write >= 0)
         kv->push_back({"depth_write", r.depth_write ? "1" : "0"});
+    const std::pair<const char *, const std::string *> stencil[] = {
+        {"stencil_func", &r.stencil_func}, {"stencil_fail", &r.stencil_fail},
+        {"stencil_depth_fail", &r.stencil_depth_fail}, {"stencil_pass", &r.stencil_pass}};
+    for (const auto &f : stencil)
+        if (!f.second->empty())
+            kv->push_back({f.first, json_quote(*f.second)});
+    if (r.stencil_ref >= 0)
+        kv->push_back({"stencil_ref", std::to_string(r.stencil_ref)});
+    if (r.stencil_mask >= 0)
+        kv->push_back({"stencil_mask", std::to_string(r.stencil_mask)});
 }
 
 }  // namespace
@@ -466,7 +477,29 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
             kv.push_back({"anisotropy", num(l.sampler.anisotropy)});
         return json_object(kv);
     }
+    if (l.kind == "canvas") {
+        std::vector<std::pair<std::string, std::string>> kv = {
+            {"op", json_quote("canvas")}, {"ref", num(ref)}, {"target", json_quote(l.co.target)},
+            {"w", num(l.co.w)},           {"h", num(l.co.h)}};
+        if (l.co.depth)
+            kv.push_back({"depth", "1"});
+        if (l.co.once)
+            kv.push_back({"once", "1"});
+        kv.push_back({"clear", json_quote(num(l.co.clear[0]) + " " + num(l.co.clear[1]) + " " + num(l.co.clear[2]) +
+                                          " " + num(l.co.clear[3]))});
+        const std::pair<const char *, const std::string *> named[] = {{"sampling", &l.co.sampler.sampling},
+                                                                      {"wrap_u", &l.co.sampler.wrap_u},
+                                                                      {"wrap_v", &l.co.sampler.wrap_v}};
+        for (const auto &f : named)
+            if (!f.second->empty())
+                kv.push_back({f.first, json_quote(*f.second)});
+        if (l.co.sampler.anisotropy)
+            kv.push_back({"anisotropy", num(l.co.sampler.anisotropy)});
+        return json_object(kv);
+    }
     std::vector<std::pair<std::string, std::string>> kv = fields("layer", ref, l.lo);
+    if (l.canvas)
+        kv.push_back({"canvas", num(l.canvas)});
     kv.push_back({"target", json_quote(l.lo.target)});
     kv.push_back({"kind", json_quote(l.kind)});
     if (l.kind == "video") {
@@ -566,6 +599,47 @@ uint32_t Client::effect(const LayerOptions &lo, const EffectOptions &eo, bool cl
     l.eo = eo;
     l.cluster_time = cluster_time;
     l.look = look;
+    return add(l);
+}
+
+uint32_t Client::canvas(const CanvasOptions &co)
+{
+    if (!co.w || !co.h || co.w > 2048 || co.h > 2048)
+        return 0;
+    Layer l;
+    l.kind = "canvas";
+    l.co = co;
+    return add(l);
+}
+
+uint32_t Client::effect_in(uint32_t canvas, const LayerOptions &lo, const EffectOptions &eo, bool cluster_time,
+                           const RenderState &look)
+{
+    auto it = layers_.find(canvas);
+    if (it == layers_.end() || it->second.kind != "canvas")
+        return 0;
+    Layer l;
+    l.kind = "effect";
+    l.lo = lo;
+    l.lo.target = it->second.co.target;
+    l.eo = eo;
+    l.cluster_time = cluster_time;
+    l.look = look;
+    l.canvas = canvas;
+    return add(l);
+}
+
+uint32_t Client::mesh_in(uint32_t canvas, const LayerOptions &lo, const MeshOptions &mo)
+{
+    auto it = layers_.find(canvas);
+    if (it == layers_.end() || it->second.kind != "canvas")
+        return 0;
+    Layer l;
+    l.kind = "mesh";
+    l.lo = lo;
+    l.lo.target = it->second.co.target;
+    l.mo = mo;
+    l.canvas = canvas;
     return add(l);
 }
 
@@ -802,7 +876,7 @@ void Client::bind(uint32_t ref, const std::string &sampler, uint32_t asset, uint
 {
     auto it = layers_.find(ref);
     auto a = layers_.find(asset);
-    if (it == layers_.end() || a == layers_.end() || a->second.kind != "asset")
+    if (it == layers_.end() || a == layers_.end() || (a->second.kind != "asset" && a->second.kind != "canvas"))
         return;
     std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("bind")}, {"ref", num(ref)},
                                                            {"sampler", json_quote(sampler)}, {"asset", num(asset)}};
@@ -935,9 +1009,11 @@ void Client::drop(uint32_t ref)
     if (it == layers_.end())
         return;
     bool sampled = false;
-    for (const auto &kv : layers_)
+    for (const auto &kv : layers_) {
         for (const auto &b : kv.second.binds)
             sampled = sampled || b.second.first == ref;
+        sampled = sampled || kv.second.canvas == ref;   /* a canvas with layers in it */
+    }
     if (it->second.kind == "video")
         spare_.clear();   /* buffers of its size may be needed no more */
     if (!sampled)

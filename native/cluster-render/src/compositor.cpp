@@ -149,10 +149,15 @@ uint32_t Compositor::admit(uint64_t owner, int target, int64_t pixel_bytes, std:
         *err = "unknown target";
         return 0;
     }
-    uint32_t mine = 0;
+    uint32_t mine = 0, all = (uint32_t)layers_.size();
     for (const auto &kv : layers_)
         mine += kv.second.owner == owner;
-    if (layers_.size() >= limits_.layers || mine >= limits_.per_client) {
+    for (const auto &ck : canvases_) {
+        all += (uint32_t)ck.second.layers.size();
+        for (const auto &kv : ck.second.layers)
+            mine += kv.second.owner == owner;
+    }
+    if (all >= limits_.layers || mine >= limits_.per_client) {
         *err = "too many layers";
         return 0;
     }
@@ -170,6 +175,11 @@ uint64_t Compositor::memory() const
         bytes += kv.second.pixel_bytes;
     for (const auto &kv : assets_)
         bytes += kv.second.asset->memory();
+    for (const auto &ck : canvases_) {
+        bytes += ck.second.canvas->memory();
+        for (const auto &kv : ck.second.layers)
+            bytes += kv.second.pixel_bytes;
+    }
     for (const Target &t : targets_)
         bytes += t.composite_bytes;
     return bytes;
@@ -188,7 +198,7 @@ bool Compositor::assets_have(const Entry &e) const
 {
     for (const auto &kv : e.binds) {
         auto a = assets_.find(kv.second);
-        if (a == assets_.end() || !a->second.asset->have())
+        if (a == assets_.end() ? !canvases_.count(kv.second) : !a->second.asset->have())
             return false;
     }
     return true;
@@ -198,7 +208,9 @@ uint32_t Compositor::asset_refused(const Entry &e) const
 {
     for (const auto &kv : e.binds) {
         auto a = assets_.find(kv.second);
-        if (a != assets_.end() && !a->second.asset->refused().empty())
+        auto c = canvases_.find(kv.second);
+        if ((a != assets_.end() && !a->second.asset->refused().empty()) ||
+            (c != canvases_.end() && !c->second.canvas->refused().empty()))
             return kv.second;
     }
     return 0;
@@ -208,7 +220,8 @@ bool Compositor::assets_clean(const Entry &e) const
 {
     for (const auto &kv : e.binds) {
         auto a = assets_.find(kv.second);
-        if (a == assets_.end() || !a->second.asset->clean())
+        auto c = canvases_.find(kv.second);
+        if (a == assets_.end() ? c == canvases_.end() || !c->second.canvas->attached() : !a->second.asset->clean())
             return false;
     }
     return true;
@@ -222,7 +235,7 @@ void Compositor::apply_binds(Entry &e)
     for (const auto &kv : e.binds) {
         const int d = e.layer->drawable(kv.first.first);
         auto a = assets_.find(kv.second);
-        const int buf = a == assets_.end() ? 0 : a->second.asset->buffer();
+        const int buf = bound_buffer(kv.second);
         if (!buf && a != assets_.end() && a->second.asset->compressed())
             continue;   /* bound once its texture is made */
         if (!d || !buf || !t.graph->texture(d, kv.first.second.c_str(), buf))
@@ -330,6 +343,9 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
         *err = "a shader is at most " + std::to_string(kMaxShader) + " bytes";
         return 0;
     }
+    CanvasEntry *in = nullptr;
+    if (lp.canvas && !(in = canvas_for(owner, target, lp.canvas, err)))
+        return 0;
     const int fx = gpu_->effect(vs.empty() ? kQuadVertexShader : vs.c_str(), fs.c_str(), err);
     if (!fx)
         return 0;
@@ -338,12 +354,14 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
         gpu_->drop_effect(fx);
         return 0;
     }
-    Entry &e = layers_[id];
+    Entry &e = in ? in->layers[id] : layers_[id];
     e.layer.reset(new EffectLayer(id, target, ++seq_, pacer_for(target), fx, time_fps, now_ms));
     e.layer->params = lp;
     e.owner = owner;
     e.effect = fx;
-    if (targets_[target].graph)
+    if (in)
+        attach_in(e, *in);
+    else if (targets_[target].graph)
         attach(e, targets_[target]);
     return id;
 }
@@ -351,14 +369,19 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
 uint32_t Compositor::add_mesh(uint64_t owner, int target, const LayerParams &lp, const MeshParams &mp, int64_t,
                               std::string *err)
 {
+    CanvasEntry *in = nullptr;
+    if (lp.canvas && !(in = canvas_for(owner, target, lp.canvas, err)))
+        return 0;
     const uint32_t id = admit(owner, target, 0, err);
     if (!id)
         return 0;
-    Entry &e = layers_[id];
+    Entry &e = in ? in->layers[id] : layers_[id];
     e.layer.reset(new MeshLayer(id, target, ++seq_, pacer_for(target), mp));
     e.layer->params = lp;
     e.owner = owner;
-    if (targets_[target].graph)
+    if (in)
+        attach_in(e, *in);
+    else if (targets_[target].graph)
         attach(e, targets_[target]);
     return id;
 }
@@ -366,16 +389,17 @@ uint32_t Compositor::add_mesh(uint64_t owner, int target, const LayerParams &lp,
 bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs,
                           const std::string &fs, const PartLook &look, std::string *err)
 {
-    auto it = layers_.find(layer);
-    if (it == layers_.end() || it->second.owner != owner) {
+    CanvasEntry *in = nullptr;
+    Entry *en = find(layer, &in);
+    if (!en || en->owner != owner) {
         *err = "no such layer";
         return false;
     }
-    if (std::string(it->second.layer->kind()) != "mesh") {
+    if (std::string(en->layer->kind()) != "mesh") {
         *err = "parts are for mesh layers";
         return false;
     }
-    MeshLayer *m = static_cast<MeshLayer *>(it->second.layer.get());
+    MeshLayer *m = static_cast<MeshLayer *>(en->layer.get());
     if (m->has_part(part)) {
         *err = "part " + std::to_string(part) + " exists";
         return false;
@@ -404,12 +428,12 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
 bool Compositor::geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                           std::string *err)
 {
-    auto it = layers_.find(layer);
-    if (it == layers_.end() || it->second.owner != owner) {
+    Entry *en = find(layer);
+    if (!en || en->owner != owner) {
         *err = "no such layer";
         return false;
     }
-    Entry &e = it->second;
+    Entry &e = *en;
     if (std::string(e.layer->kind()) != "mesh") {
         *err = "geometry is for mesh layers";
         return false;
@@ -424,6 +448,174 @@ bool Compositor::geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshDat
         return false;
     e.pixel_bytes = bytes;
     return true;
+}
+
+uint32_t Compositor::add_canvas(uint64_t owner, int target, const CanvasSpec &spec, std::string *err)
+{
+    if (target < 0 || target >= (int)targets_.size()) {
+        *err = "unknown target";
+        return 0;
+    }
+    if (const char *e = Canvas::spec_error(spec)) {
+        *err = e;
+        return 0;
+    }
+    uint32_t mine = 0;
+    uint64_t pixels = (uint64_t)spec.w * spec.h;
+    for (const auto &kv : canvases_) {
+        mine += kv.second.owner == owner;
+        if (kv.second.canvas->target() == target)
+            pixels += kv.second.canvas->pixels();
+    }
+    if (canvases_.size() >= kCanvases || mine >= kClientCanvases) {
+        *err = "too many canvases";
+        return 0;
+    }
+    if (pixels > Canvas::kMaxTargetPixels) {
+        *err = "the target's canvases together are at most 2048x2048 pixels";
+        return 0;
+    }
+    std::unique_ptr<Canvas> c(new Canvas(0, target, spec));
+    if (memory() + c->memory() > limits_.pixel_bytes) {
+        *err = "the service's pixel memory is full";
+        return 0;
+    }
+    const uint32_t id = next_id_++;
+    CanvasEntry &ce = canvases_[id];
+    ce.canvas.reset(new Canvas(id, target, spec));
+    ce.owner = owner;
+    Target &t = targets_[target];
+    if (t.graph) {
+        ce.canvas->attach(t.graph.get());
+        t.dirty = true;
+    }
+    return id;
+}
+
+const Canvas *Compositor::canvas(uint32_t id) const
+{
+    auto it = canvases_.find(id);
+    return it == canvases_.end() ? nullptr : it->second.canvas.get();
+}
+
+std::vector<const Canvas *> Compositor::canvases() const
+{
+    std::vector<const Canvas *> out;
+    for (const auto &kv : canvases_)
+        out.push_back(kv.second.canvas.get());
+    return out;
+}
+
+Compositor::Entry *Compositor::find(uint32_t id, CanvasEntry **in)
+{
+    if (in)
+        *in = nullptr;
+    auto it = layers_.find(id);
+    if (it != layers_.end())
+        return &it->second;
+    for (auto &ck : canvases_) {
+        auto l = ck.second.layers.find(id);
+        if (l != ck.second.layers.end()) {
+            if (in)
+                *in = &ck.second;
+            return &l->second;
+        }
+    }
+    return nullptr;
+}
+
+const Compositor::Entry *Compositor::find(uint32_t id, const CanvasEntry **in) const
+{
+    CanvasEntry *c = nullptr;
+    const Entry *e = const_cast<Compositor *>(this)->find(id, &c);
+    if (in)
+        *in = c;
+    return e;
+}
+
+Compositor::CanvasEntry *Compositor::canvas_for(uint64_t owner, int target, uint32_t canvas, std::string *err)
+{
+    auto it = canvases_.find(canvas);
+    if (it == canvases_.end() || it->second.owner != owner) {
+        *err = "no such canvas";
+        return nullptr;
+    }
+    if (it->second.canvas->target() != target) {
+        *err = "the canvas is on another target";
+        return nullptr;
+    }
+    return &it->second;
+}
+
+void Compositor::attach_in(Entry &e, CanvasEntry &c)
+{
+    e.drawn = false;
+    e.order = -1;
+    Target &t = targets_[e.layer->target()];
+    if (!c.canvas->attached())
+        return;
+    std::string err;
+    if (!e.layer->attach(c.canvas->graph(), now_ms_, &err)) {
+        e.error = err;
+        log_error("layer %u (%s) in canvas %u: %s", e.layer->id(), e.layer->kind(), c.canvas->id(), err.c_str());
+    } else {
+        e.error.clear();
+        apply_binds(e);
+    }
+    c.canvas->touch();
+    t.dirty = true;
+}
+
+void Compositor::arrange_canvases(int ti)
+{
+    Target &t = targets_[ti];
+    for (auto &ck : canvases_) {
+        CanvasEntry &c = ck.second;
+        if (c.canvas->target() != ti || !c.canvas->attached())
+            continue;
+        std::vector<Entry *> order;
+        for (auto &kv : c.layers)
+            if (kv.second.layer->attached())
+                order.push_back(&kv.second);
+        std::sort(order.begin(), order.end(), [](const Entry *a, const Entry *b) {
+            const LayerParams &p = a->layer->params, &q = b->layer->params;
+            if (p.klass != q.klass)
+                return p.klass < q.klass;
+            if (p.z != q.z)
+                return p.z < q.z;
+            return a->layer->id() < b->layer->id();
+        });
+        for (size_t pos = 0; pos < order.size(); pos++) {
+            Entry &e = *order[pos];
+            const bool drawn = e.layer->params.visible && e.layer->ready(now_ms_) && assets_have(e);
+            const int32_t at = (int32_t)pos * 4;
+            if (drawn == e.drawn && at == e.order)
+                continue;
+            e.layer->arrange(drawn, at);
+            e.drawn = drawn;
+            e.order = at;
+            c.canvas->touch();
+            t.dirty = true;
+        }
+    }
+}
+
+int Compositor::bound_buffer(uint32_t id) const
+{
+    auto a = assets_.find(id);
+    if (a != assets_.end())
+        return a->second.asset->buffer();
+    auto c = canvases_.find(id);
+    return c == canvases_.end() ? 0 : c->second.canvas->buffer();
+}
+
+std::string Compositor::refused_reason(uint32_t id) const
+{
+    auto a = assets_.find(id);
+    if (a != assets_.end())
+        return "asset " + std::to_string(id) + ": " + a->second.asset->refused();
+    auto c = canvases_.find(id);
+    return "canvas " + std::to_string(id) + ": " + (c == canvases_.end() ? std::string("gone") : c->second.canvas->refused());
 }
 
 uint32_t Compositor::add_asset(uint64_t owner, int target, const AssetParams &ap, std::string *err)
@@ -468,17 +660,44 @@ Asset *Compositor::asset(uint64_t owner, uint32_t id)
 
 bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
 {
+    auto cv = canvases_.find(id);
+    if (cv != canvases_.end() && cv->second.owner == owner) {
+        bool sampled = !cv->second.layers.empty();
+        for (const auto &kv : layers_)
+            for (const auto &b : kv.second.binds)
+                sampled = sampled || b.second == id;
+        for (const auto &ck : canvases_)
+            for (const auto &kv : ck.second.layers)
+                for (const auto &b : kv.second.binds)
+                    sampled = sampled || b.second == id;
+        if (sampled) {
+            *err = cv->second.layers.empty() ? "canvas in use" : "canvas in use: its layers go first";
+            return false;
+        }
+        Target &t = targets_[cv->second.canvas->target()];
+        cv->second.canvas->detach(true);
+        if (t.graph)
+            t.dirty = true;
+        canvases_.erase(cv);
+        return true;
+    }
     auto it = assets_.find(id);
     if (it == assets_.end() || it->second.owner != owner) {
         *err = "no such asset";
         return false;
     }
+    bool sampled = false;
     for (const auto &kv : layers_)
         for (const auto &b : kv.second.binds)
-            if (b.second == id) {
-                *err = "asset in use";
-                return false;
-            }
+            sampled = sampled || b.second == id;
+    for (const auto &ck : canvases_)
+        for (const auto &kv : ck.second.layers)
+            for (const auto &b : kv.second.binds)
+                sampled = sampled || b.second == id;
+    if (sampled) {
+        *err = "asset in use";
+        return false;
+    }
     Target &t = targets_[it->second.asset->target()];
     it->second.asset->detach(true);
     if (t.graph)
@@ -490,17 +709,23 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
 bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::string &sampler, uint32_t asset,
                       std::string *err)
 {
-    auto it = layers_.find(layer);
+    CanvasEntry *in = nullptr;
+    Entry *en = find(layer, &in);
     auto a = assets_.find(asset);
-    if (it == layers_.end() || it->second.owner != owner) {
+    auto cv = canvases_.find(asset);
+    if (!en || en->owner != owner) {
         *err = "no such layer";
         return false;
     }
-    if (a == assets_.end() || a->second.owner != owner) {
+    if ((a == assets_.end() || a->second.owner != owner) && (cv == canvases_.end() || cv->second.owner != owner)) {
         *err = "no such asset";
         return false;
     }
-    Entry &e = it->second;
+    if (in && cv != canvases_.end() && in == &cv->second) {
+        *err = "a canvas's layers do not sample the canvas itself";
+        return false;
+    }
+    Entry &e = *en;
     const std::string kind = e.layer->kind();
     if (kind == "effect" && part) {
         *err = "effect layers have no parts";
@@ -514,7 +739,7 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
         *err = "binds are for effect layers and mesh parts";
         return false;
     }
-    if (a->second.asset->target() != e.layer->target()) {
+    if ((a != assets_.end() ? a->second.asset->target() : cv->second.canvas->target()) != e.layer->target()) {
         *err = "the asset is on another target";
         return false;
     }
@@ -525,7 +750,9 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
     }
     Target &t = targets_[e.layer->target()];
     const int d = e.layer->drawable(part);
-    const int buf = a->second.asset->buffer();
+    const int buf = bound_buffer(asset);
+    if (in)
+        in->canvas->touch();
     if (t.graph && d && buf) {
         if (!t.graph->texture(d, sampler.c_str(), buf)) {
             *err = "the shader has no sampler " + sampler;
@@ -542,6 +769,11 @@ void Compositor::touch(Layer *l)
     Target &t = targets_[l->target()];
     if (t.graph)
         t.dirty = true;
+    CanvasEntry *in = nullptr;
+    if (find(l->id(), &in) && in) {
+        in->canvas->touch();
+        return;
+    }
     auto it = layers_.find(l->id());
     if (it != layers_.end())
         mark(it->second, l->id(), t);
@@ -999,8 +1231,8 @@ bool Compositor::outdated(const TargetSpec &spec) const
 
 Layer *Compositor::layer(uint64_t owner, uint32_t id)
 {
-    auto it = layers_.find(id);
-    return it == layers_.end() || it->second.owner != owner ? nullptr : it->second.layer.get();
+    Entry *e = find(id);
+    return !e || e->owner != owner ? nullptr : e->layer.get();
 }
 
 uint64_t Compositor::owner_of(uint32_t id) const
@@ -1008,13 +1240,21 @@ uint64_t Compositor::owner_of(uint32_t id) const
     auto s = scenes_.find(id);
     if (s != scenes_.end())
         return s->second.owner;
-    auto it = layers_.find(id);
-    return it == layers_.end() ? 0 : it->second.owner;
+    const Entry *e = find(id);
+    return e ? e->owner : 0;
 }
 
 void Compositor::changed(Layer *l)
 {
     Target &t = targets_[l->target()];
+    CanvasEntry *in = nullptr;
+    if (find(l->id(), &in) && in) {
+        l->place();
+        in->canvas->touch();
+        if (t.graph)
+            t.dirty = true;
+        return;
+    }
     auto it = layers_.find(l->id());
     /* A held layer takes the change when it is released (commit). */
     if (it == layers_.end() || !it->second.held) {
@@ -1037,6 +1277,21 @@ void Compositor::remove(uint64_t owner, uint32_t id)
             scenes_.erase(s);
             host_serial_++;
         }
+        return;
+    }
+    for (auto &ck : canvases_) {
+        auto in = ck.second.layers.find(id);
+        if (in == ck.second.layers.end())
+            continue;
+        if (in->second.owner != owner)
+            return;
+        Target &t = targets_[in->second.layer->target()];
+        in->second.layer->detach(true);
+        if (t.graph)
+            t.dirty = true;
+        drop_effects(in->second);
+        ck.second.layers.erase(in);
+        ck.second.canvas->touch();
         return;
     }
     auto it = layers_.find(id);
@@ -1062,8 +1317,13 @@ void Compositor::remove(uint64_t owner, uint32_t id)
 
 void Compositor::remove_owner(uint64_t owner)
 {
-    /* Layers first: then no layer samples the assets. */
+    /* Layers first, those in canvases before the stack's: then no layer
+     * samples the assets and canvases. */
     std::vector<uint32_t> ids;
+    for (const auto &ck : canvases_)
+        for (const auto &kv : ck.second.layers)
+            if (kv.second.owner == owner)
+                ids.push_back(kv.first);
     for (const auto &kv : layers_)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);
@@ -1071,6 +1331,9 @@ void Compositor::remove_owner(uint64_t owner)
         remove(owner, id);
     ids.clear();
     for (const auto &kv : assets_)
+        if (kv.second.owner == owner)
+            ids.push_back(kv.first);
+    for (const auto &kv : canvases_)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);
     std::string err;
@@ -1469,6 +1732,44 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         wrote = wrote || s == Stage::Wrote;
         failed = failed || s == Stage::Failed;
     }
+    /* Canvases and their layers, before the layers that sample them; a
+     * canvas drawn once draws again when anything on its target that it
+     * may sample was written. */
+    std::vector<Canvas *> staged_canvases;
+    if (!hold) {
+        arrange_canvases(ti);
+        const bool assets_wrote = !staged_assets.empty();
+        for (auto &ck : canvases_) {
+            Canvas &cv = *ck.second.canvas;
+            if (cv.target() != ti || !cv.attached())
+                continue;
+            if (assets_wrote)
+                cv.touch();
+            for (auto &kv : ck.second.layers) {
+                Layer *l = kv.second.layer.get();
+                if (!l->attached())
+                    continue;
+                const Stage s = l->stage(now_ms);
+                if (s == Stage::Idle)
+                    continue;
+                cv.touch();
+                staged.push_back(l);
+                wrote = wrote || s == Stage::Wrote;
+                failed = failed || s == Stage::Failed;
+            }
+        }
+        for (auto &ck : canvases_) {
+            Canvas &cv = *ck.second.canvas;
+            if (cv.target() != ti)
+                continue;
+            const Stage s = cv.stage();
+            if (s == Stage::Idle)
+                continue;
+            staged_canvases.push_back(&cv);
+            wrote = wrote || s == Stage::Wrote;
+            failed = failed || s == Stage::Failed;
+        }
+    }
     bool composite = false;
     for (size_t pos = t.arr.order.size(); pos-- > 0;) {
         auto it = layers_.find(t.arr.order[pos]);
@@ -1528,6 +1829,8 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
     const bool went = clear ? ok : edits && flush(ti, t, now_ms);
     for (Asset *a : staged_assets)
         a->committed(ok);
+    for (Canvas *c : staged_canvases)
+        c->committed(ok);
     for (Layer *l : staged)
         l->committed(ok, now_ms);
     if (edits && went)
@@ -2076,6 +2379,10 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
     for (const auto &kv : layers_)
         if (slots_->requested(kv.second.layer->target()) || slots_->loaded(kv.second.layer->target()))
             at(kv.second.layer->wake_in_ms(now_ms));
+    for (const auto &ck : canvases_)
+        for (const auto &kv : ck.second.layers)
+            if (slots_->requested(kv.second.layer->target()) || slots_->loaded(kv.second.layer->target()))
+                at(kv.second.layer->wake_in_ms(now_ms));
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         const Target &t = targets_[ti];
         if (t.composite && (slots_->requested((int)ti) || slots_->loaded((int)ti)))
@@ -2117,21 +2424,43 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
                       : std::string("target ") + target_state_name(ts.state) + (ts.reason.empty() ? "" : ": " + ts.reason);
         return LayerState::Waiting;
     }
-    auto it = layers_.find(id);
-    if (it == layers_.end())
+    const CanvasEntry *in = nullptr;
+    const Entry *en = find(id, &in);
+    if (!en)
         return LayerState::Hidden;
-    const Entry &e = it->second;
+    const Entry &e = *en;
     const Layer &l = *e.layer;
     if (!e.error.empty() || !l.refusal().empty()) {
         *reason = e.error.empty() ? l.refusal() : e.error;
         return LayerState::Error;
+    }
+    if (in) {
+        /* In a canvas: shown once drawn in it, whether or not a layer on
+         * screen samples the canvas. */
+        if (const uint32_t refused = asset_refused(e)) {
+            *reason = refused_reason(refused);
+            return LayerState::Error;
+        }
+        if (!in->canvas->refused().empty()) {
+            *reason = "canvas " + std::to_string(in->canvas->id()) + ": " + in->canvas->refused();
+            return LayerState::Error;
+        }
+        if (!l.params.visible)
+            return LayerState::Hidden;
+        if (!l.ready(now_ms_) || !assets_have(e))
+            return LayerState::Stalled;
+        if (e.drawn)
+            return LayerState::Shown;
+        const TargetStatus &ts = slots_->status(l.target());
+        *reason = std::string("target ") + target_state_name(ts.state) + (ts.reason.empty() ? "" : ": " + ts.reason);
+        return LayerState::Waiting;
     }
     if (e.composited && !targets_[l.target()].composite_error.empty()) {
         *reason = targets_[l.target()].composite_error;
         return LayerState::Error;
     }
     if (const uint32_t refused = asset_refused(e)) {
-        *reason = "asset " + std::to_string(refused) + ": " + assets_.at(refused).asset->refused();
+        *reason = refused_reason(refused);
         return LayerState::Error;
     }
     if (!l.params.visible)
@@ -2166,6 +2495,9 @@ std::vector<const Layer *> Compositor::layers() const
     std::vector<const Layer *> out;
     for (const auto &kv : layers_)
         out.push_back(kv.second.layer.get());
+    for (const auto &ck : canvases_)
+        for (const auto &kv : ck.second.layers)
+            out.push_back(kv.second.layer.get());
     return out;
 }
 
@@ -2258,6 +2590,15 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->attach(t.graph.get());
+    /* Canvases before the layers that sample them, and their own layers. */
+    for (auto &ck : canvases_) {
+        if (ck.second.canvas->target() != ti)
+            continue;
+        ck.second.canvas->attach(t.graph.get());
+        for (auto &kv : ck.second.layers)
+            attach_in(kv.second, ck.second);
+    }
+    arrange_canvases(ti);
     for (auto &kv : layers_) {
         Entry &e = kv.second;
         if (e.layer->target() != ti || e.composited)
@@ -2312,6 +2653,16 @@ void Compositor::unpublish(const TargetSpec &spec)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->detach(false);
+    for (auto &ck : canvases_) {
+        if (ck.second.canvas->target() != ti)
+            continue;
+        for (auto &kv : ck.second.layers) {
+            kv.second.layer->detach(false);
+            kv.second.drawn = false;
+            kv.second.order = -1;
+        }
+        ck.second.canvas->detach(false);
+    }
     if (t.composite)
         t.composite->detach(false);
     if (t.file)

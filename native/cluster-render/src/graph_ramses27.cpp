@@ -22,7 +22,10 @@
 #include "ramses-client-api/PerspectiveCamera.h"
 #include "ramses-client-api/RamsesClient.h"
 #include "ramses-client-api/RenderGroup.h"
+#include "ramses-client-api/RenderBuffer.h"
 #include "ramses-client-api/RenderPass.h"
+#include "ramses-client-api/RenderTarget.h"
+#include "ramses-client-api/RenderTargetDescription.h"
 #include "ramses-client-api/Scene.h"
 #include "ramses-client-api/SceneConfig.h"
 #include "ramses-client-api/SplineLinearFloat.h"
@@ -104,6 +107,35 @@ ramses::EDepthFunc depth27(DepthFunc d)
     }
 }
 
+ramses::EStencilFunc stencil_func(StencilFunc f)
+{
+    switch (f) {
+    case StencilFunc::Never: return ramses::EStencilFunc_Never;
+    case StencilFunc::Always: return ramses::EStencilFunc_Always;
+    case StencilFunc::Equal: return ramses::EStencilFunc_Equal;
+    case StencilFunc::NotEqual: return ramses::EStencilFunc_NotEqual;
+    case StencilFunc::Less: return ramses::EStencilFunc_Less;
+    case StencilFunc::LessEqual: return ramses::EStencilFunc_LessEqual;
+    case StencilFunc::Greater: return ramses::EStencilFunc_Greater;
+    case StencilFunc::GreaterEqual: return ramses::EStencilFunc_GreaterEqual;
+    default: return ramses::EStencilFunc_Disabled;
+    }
+}
+
+ramses::EStencilOperation stencil_op(StencilOp o)
+{
+    switch (o) {
+    case StencilOp::Zero: return ramses::EStencilOperation_Zero;
+    case StencilOp::Replace: return ramses::EStencilOperation_Replace;
+    case StencilOp::Increment: return ramses::EStencilOperation_Increment;
+    case StencilOp::IncrementWrap: return ramses::EStencilOperation_IncrementWrap;
+    case StencilOp::Decrement: return ramses::EStencilOperation_Decrement;
+    case StencilOp::DecrementWrap: return ramses::EStencilOperation_DecrementWrap;
+    case StencilOp::Invert: return ramses::EStencilOperation_Invert;
+    default: return ramses::EStencilOperation_Keep;
+    }
+}
+
 /* The appearance draws as look has it (graph.h PartLook). */
 bool apply_look(ramses::Appearance &app, const PartLook &look)
 {
@@ -114,6 +146,9 @@ bool apply_look(ramses::Appearance &app, const PartLook &look)
                                                                  : ramses::ECullMode_Disabled)) &&
                 ok(app.setColorWriteMask(look.color_mask & kMaskR, look.color_mask & kMaskG, look.color_mask & kMaskB,
                                          look.color_mask & kMaskA));
+    const StencilState &st = look.stencil;
+    good = good && ok(app.setStencilFunction(stencil_func(st.func), st.ref, st.mask)) &&
+           ok(app.setStencilOperation(stencil_op(st.fail), stencil_op(st.depth_fail), stencil_op(st.pass)));
     if (!b.on)
         return good && ok(app.setBlendingOperations(ramses::EBlendOperation_Disabled, ramses::EBlendOperation_Disabled));
     return good &&
@@ -201,28 +236,28 @@ public:
             *err = "createScene failed";
             return false;
         }
-        w_ = t.width;
-        h_ = t.height;
+        main_.w = t.width;
+        main_.h = t.height;
         static const float quad[8] = {0, 0, 1, 0, 0, 1, 1, 1};
         static const uint16_t idx[6] = {0, 1, 2, 2, 1, 3};
         pos_ = scene_->createArrayResource(ramses::EDataType::Vector2F, 4, quad);
         idx_ = scene_->createArrayResource(ramses::EDataType::UInt16, 6, idx);
-        cam2d_ = scene_->createOrthographicCamera("cam");
+        main_.cam2d = scene_->createOrthographicCamera("cam");
         Segment s;
         s.pass = scene_->createRenderPass("pass");
         s.group = scene_->createRenderGroup("group");
-        if (!pos_ || !idx_ || !cam2d_ || !s.pass || !s.group) {
+        if (!pos_ || !idx_ || !main_.cam2d || !s.pass || !s.group) {
             *err = "scene objects failed";
             return false;
         }
         /* Pixel space over the whole target, y up; rects are turned over in
          * place(). No pass clears colour (graph_ramses27.h). */
-        cam2d_->setFrustum(0.0f, (float)w_, 0.0f, (float)h_, 0.1f, 10.0f);
-        cam2d_->setViewport(0, 0, w_, h_);
-        s.pass->setCamera(*cam2d_);
+        main_.cam2d->setFrustum(0.0f, (float)main_.w, 0.0f, (float)main_.h, 0.1f, 10.0f);
+        main_.cam2d->setViewport(0, 0, main_.w, main_.h);
+        s.pass->setCamera(*main_.cam2d);
         s.pass->addRenderGroup(*s.group);
         s.pass->setClearFlags(ramses::EClearFlags_None);
-        segments_.push_back(s);
+        main_.segments.push_back(s);
         if (!ok(scene_->flush()) || !ok(scene_->publish(ramses::EScenePublicationMode_LocalAndRemote))) {
             *err = "publish failed";
             return false;
@@ -328,10 +363,12 @@ public:
      * place in the target) and turn (rotation and scale about the pivot,
      * and an animated offset); the mesh is offset by the pivot and scaled
      * to the rect. */
-    int quad(int effect, const Rect &r) override
+    int quad(int effect, const Rect &r) override { return quad_in(0, effect, r); }
+
+    int quad_in(int canvas, int effect, const Rect &r) override
     {
         ramses::Effect *fx = effect_of(effect);
-        if (!fx)
+        if (!fx || (canvas && !canvases_.count(canvas)))
             return 0;
         ramses::Appearance *app = scene_->createAppearance(*fx);
         ramses::GeometryBinding *geo = scene_->createGeometryBinding(*fx);
@@ -353,7 +390,7 @@ public:
         mesh->setAppearance(*app);
         mesh->setGeometryBinding(*geo);
         mesh->setVisibility(visible(false));
-        if (!ok(segments_[0].group->addMeshNode(*mesh, 0))) {
+        if (!ok(surf(canvas).segments[0].group->addMeshNode(*mesh, 0))) {
             scene_->destroy(*mesh);
             scene_->destroy(*turned);
             scene_->destroy(*placed);
@@ -369,6 +406,7 @@ public:
         q.geo = geo;
         q.effect = fx;
         q.r = r;
+        q.surface = canvas;
         quads_[next_] = q;
         lay_out(quads_[next_]);
         layout_dirty_ = true;
@@ -487,7 +525,7 @@ public:
         if (q == quads_.end())
             return;
         stop_on(quad);
-        segments_[q->second.segment].group->removeMeshNode(*q->second.mesh);
+        surf(q->second.surface).segments[q->second.segment].group->removeMeshNode(*q->second.mesh);
         scene_->destroy(*q->second.mesh);
         scene_->destroy(*q->second.turned);
         scene_->destroy(*q->second.placed);
@@ -509,9 +547,14 @@ public:
         buffers_.erase(b);
     }
 
-    int view(const Rect &r, const Projection &p, const Pose &camera) override
+    int view(const Rect &r, const Projection &p, const Pose &camera) override { return view_in(0, r, p, camera); }
+
+    int view_in(int canvas, const Rect &r, const Projection &p, const Pose &camera) override
     {
+        if (canvas && !canvases_.count(canvas))
+            return 0;
         View v;
+        v.surface = canvas;
         v.pass = scene_->createRenderPass();
         v.group = scene_->createRenderGroup();
         v.root = scene_->createNode();
@@ -524,7 +567,8 @@ public:
         v.camera = camera;
         /* A pass takes only a camera with its frustum and viewport set. */
         if (!v.pass || !v.group || !v.root || !v.cam || !frame(v) || !ok(v.pass->setCamera(*v.cam)) ||
-            !ok(v.pass->addRenderGroup(*v.group)) || !ok(v.pass->setClearFlags(ramses::EClearFlags_None))) {
+            !ok(v.pass->addRenderGroup(*v.group)) || !ok(v.pass->setClearFlags(ramses::EClearFlags_None)) ||
+            !in_canvas(v.pass, canvas)) {
             destroy_view(v);
             return 0;
         }
@@ -746,6 +790,126 @@ public:
         anims_.erase(it);
     }
 
+    /* A canvas (graph.h): a colour render buffer, a depth-stencil one with
+     * depth, their render target, a camera over its pixels and its first 2D
+     * pass, which clears it. Its passes take render orders from a base of
+     * its own, below the target's and above the canvases made before. */
+    int canvas(const CanvasSpec &c) override
+    {
+        if (!c.w || !c.h || sampling_mips(c.sampler.sampling))
+            return 0;
+        ramses::RenderBuffer *color = scene_->createRenderBuffer(c.w, c.h, ramses::ERenderBufferType_Color,
+                                                                 ramses::ERenderBufferFormat_RGBA8,
+                                                                 ramses::ERenderBufferAccessMode_ReadWrite);
+        ramses::RenderBuffer *depth =
+            c.depth ? scene_->createRenderBuffer(c.w, c.h, ramses::ERenderBufferType_DepthStencil,
+                                                 ramses::ERenderBufferFormat_Depth24_Stencil8,
+                                                 ramses::ERenderBufferAccessMode_WriteOnly)
+                    : nullptr;
+        ramses::RenderTargetDescription desc;
+        ramses::RenderTarget *rt = nullptr;
+        if (color && (!c.depth || depth) && ok(desc.addRenderBuffer(*color)) &&
+            (!depth || ok(desc.addRenderBuffer(*depth))))
+            rt = scene_->createRenderTarget(desc);
+        ramses::ETextureSamplingMethod min, mag;
+        sampling27(c.sampler.sampling, &min, &mag);
+        ramses::TextureSampler *smp = nullptr;   /* on the copy, below */
+        Surface sf;
+        sf.w = c.w;
+        sf.h = c.h;
+        sf.base = kCanvasBase + (canvas_seq_++ % kCanvases) * kCanvasSpan;
+        sf.rt = rt;
+        sf.color = color;
+        sf.depth = depth;
+        sf.once = c.once;
+        /* layers sample the copy, not what the passes draw in */
+        if (rt && make_copy(sf, c)) {
+            ramses::ETextureSamplingMethod min, mag;
+            sampling27(c.sampler.sampling, &min, &mag);
+            smp = scene_->createTextureSampler(wrap27(c.sampler.u), wrap27(c.sampler.v), min, mag, *sf.shown,
+                                               c.sampler.anisotropy);
+        }
+        sf.cam2d = smp ? scene_->createOrthographicCamera() : nullptr;
+        Segment seg;
+        seg.pass = sf.cam2d ? scene_->createRenderPass() : nullptr;
+        seg.group = seg.pass ? scene_->createRenderGroup() : nullptr;
+        const bool good = seg.group && ok(sf.cam2d->setFrustum(0.0f, (float)c.w, 0.0f, (float)c.h, 0.1f, 10.0f)) &&
+                          ok(sf.cam2d->setViewport(0, 0, c.w, c.h)) && ok(seg.pass->setCamera(*sf.cam2d)) &&
+                          ok(seg.pass->addRenderGroup(*seg.group)) && ok(seg.pass->setRenderTarget(rt)) &&
+                          ok(seg.pass->setClearFlags(ramses::EClearFlags_All)) &&
+                          ok(seg.pass->setClearColor(c.clear[0], c.clear[1], c.clear[2], c.clear[3])) &&
+                          ok(seg.pass->setRenderOrder(sf.base)) && (!c.once || ok(seg.pass->setRenderOnce(true)));
+        if (!good) {
+            log_error("ramses: %ux%u canvas refused", c.w, c.h);
+            destroy_copy(sf);
+            if (seg.group) scene_->destroy(*seg.group);
+            if (seg.pass) scene_->destroy(*seg.pass);
+            if (sf.cam2d) scene_->destroy(*sf.cam2d);
+            if (smp) scene_->destroy(*smp);
+            if (rt) scene_->destroy(*rt);
+            if (depth) scene_->destroy(*depth);
+            if (color) scene_->destroy(*color);
+            return 0;
+        }
+        seg.render_order = sf.base;
+        sf.segments.push_back(seg);
+        canvases_[next_] = sf;
+        buffers_[next_] = Buffer{nullptr, smp};
+        return next_++;
+    }
+
+    void drop_canvas(int canvas) override
+    {
+        auto it = canvases_.find(canvas);
+        if (it == canvases_.end())
+            return;
+        std::vector<int> quads, views;
+        for (const auto &kv : quads_)
+            if (kv.second.surface == canvas)
+                quads.push_back(kv.first);
+        for (const auto &kv : views_)
+            if (kv.second.surface == canvas)
+                views.push_back(kv.first);
+        for (int q : quads)
+            drop_quad(q);
+        for (int v : views)
+            drop_view(v);
+        Surface &sf = it->second;
+        for (Segment &seg : sf.segments) {
+            scene_->destroy(*seg.pass);
+            scene_->destroy(*seg.group);
+        }
+        scene_->destroy(*sf.cam2d);
+        auto b = buffers_.find(canvas);
+        if (b != buffers_.end()) {
+            scene_->destroy(*b->second.sampler);
+            buffers_.erase(b);
+        }
+        destroy_copy(sf);
+        scene_->destroy(*sf.rt);
+        if (sf.depth)
+            scene_->destroy(*sf.depth);
+        scene_->destroy(*sf.color);
+        canvases_.erase(it);
+    }
+
+    /* A canvas drawn once draws once more, with its next flush. */
+    bool redraw(int canvas) override
+    {
+        auto it = canvases_.find(canvas);
+        if (it == canvases_.end())
+            return false;
+        if (!it->second.once)
+            return true;
+        bool good = true;
+        for (Segment &seg : it->second.segments)
+            good = ok(seg.pass->retriggerRenderOnce()) && good;
+        for (auto &kv : views_)
+            if (kv.second.surface == canvas)
+                good = ok(kv.second.pass->retriggerRenderOnce()) && good;
+        return ok(it->second.copy_pass->retriggerRenderOnce()) && good;
+    }
+
     bool flush(uint64_t tag) override
     {
         if (layout_dirty_)
@@ -773,6 +937,7 @@ private:
         int32_t order = 0;
         int32_t grouped_order = 0;   /* its order within its segment's group */
         size_t segment = 0;
+        int surface = 0;             /* its canvas; 0: the target */
         Rect r;
         Turn t;
     };
@@ -792,7 +957,89 @@ private:
         Pose camera;
         int32_t order = 0, render_order = 0;
         bool shown = false, offscreen = false, depth = false;
+        int surface = 0;
     };
+    /* Where quads and views are drawn: the target (canvas 0), or a canvas:
+     * a camera over its pixels, its 2D passes, its render orders from base
+     * up, and a canvas's render target and buffers. */
+    struct Surface {
+        ramses::OrthographicCamera *cam2d = nullptr;
+        std::vector<Segment> segments;
+        uint32_t w = 0, h = 0;
+        int32_t base = 0;
+        ramses::RenderTarget *rt = nullptr;
+        ramses::RenderBuffer *color = nullptr, *depth = nullptr;
+        bool once = false;
+        /* The copy: color turned over into shown, which layers sample. */
+        ramses::RenderBuffer *shown = nullptr;
+        ramses::RenderTarget *shown_rt = nullptr;
+        ramses::TextureSampler *src = nullptr;
+        ramses::OrthographicCamera *copy_cam = nullptr;
+        ramses::RenderPass *copy_pass = nullptr;
+        ramses::RenderGroup *copy_group = nullptr;
+        ramses::MeshNode *copy_mesh = nullptr;
+        ramses::Appearance *copy_app = nullptr;
+        ramses::GeometryBinding *copy_geo = nullptr;
+    };
+    Surface &surf(int canvas) { return canvas ? canvases_.at(canvas) : main_; }
+
+    /* The canvas's copy pass (graph.h CanvasSpec): sf.color sampled
+     * nearest by a unit quad over sf.shown, v turned over, after every other
+     * pass of the canvas; replacing, not blending. */
+    bool make_copy(Surface &sf, const CanvasSpec &c)
+    {
+        if (!copy_fx_)
+            copy_fx_ = compile(*scene_, kCopyVs, kCopyFs);
+        ramses::Effect *fx = copy_fx_;
+        ramses::AttributeInput ain;
+        ramses::UniformInput uin;
+        sf.shown = scene_->createRenderBuffer(c.w, c.h, ramses::ERenderBufferType_Color, ramses::ERenderBufferFormat_RGBA8, ramses::ERenderBufferAccessMode_ReadWrite);
+        ramses::RenderTargetDescription desc;
+        if (!fx || !sf.shown || !ok(desc.addRenderBuffer(*sf.shown)))
+            return false;
+        sf.shown_rt = scene_->createRenderTarget(desc);
+        sf.src = scene_->createTextureSampler(ramses::ETextureAddressMode_Clamp, ramses::ETextureAddressMode_Clamp,
+                                         ramses::ETextureSamplingMethod_Nearest, ramses::ETextureSamplingMethod_Nearest,
+                                         *sf.color);
+        sf.copy_cam = scene_->createOrthographicCamera();
+        sf.copy_pass = scene_->createRenderPass();
+        sf.copy_group = scene_->createRenderGroup();
+        sf.copy_mesh = scene_->createMeshNode();
+        sf.copy_app = scene_->createAppearance(*fx);
+        sf.copy_geo = scene_->createGeometryBinding(*fx);
+        if (!sf.shown_rt || !sf.src || !sf.copy_cam || !sf.copy_pass || !sf.copy_group || !sf.copy_mesh ||
+            !sf.copy_app || !sf.copy_geo)
+            return false;
+        PartLook replace = quad_look();
+        replace.blend = Blend::None;
+        return apply_look(*sf.copy_app, replace) && ok(fx->findAttributeInput("a_position", ain)) &&
+               ok(sf.copy_geo->setInputBuffer(ain, *pos_)) && ok(sf.copy_geo->setIndices(*idx_)) &&
+               ok(fx->findUniformInput("u_src", uin)) && ok(sf.copy_app->setInputTexture(uin, *sf.src)) &&
+               ok(sf.copy_mesh->setAppearance(*sf.copy_app)) && ok(sf.copy_mesh->setGeometryBinding(*sf.copy_geo)) &&
+               ok(sf.copy_mesh->setTranslation(0.0f, 0.0f, -1.0f)) &&
+               ok(sf.copy_cam->setFrustum(0.0f, 1.0f, 0.0f, 1.0f, 0.1f, 10.0f)) &&
+               ok(sf.copy_cam->setViewport(0, 0, c.w, c.h)) && ok(sf.copy_group->addMeshNode(*sf.copy_mesh, 0)) &&
+               ok(sf.copy_pass->setCamera(*sf.copy_cam)) && ok(sf.copy_pass->addRenderGroup(*sf.copy_group)) &&
+               ok(sf.copy_pass->setRenderTarget(sf.shown_rt)) &&
+               ok(sf.copy_pass->setClearFlags(ramses::EClearFlags_None)) &&
+               ok(sf.copy_pass->setRenderOrder(sf.base + kCanvasSpan - 1)) &&
+               (!c.once || ok(sf.copy_pass->setRenderOnce(true)));
+    }
+
+    void destroy_copy(Surface &sf)
+    {
+        if (sf.copy_mesh) scene_->destroy(*sf.copy_mesh);
+        if (sf.copy_geo) scene_->destroy(*sf.copy_geo);
+        if (sf.copy_app) scene_->destroy(*sf.copy_app);
+        if (sf.copy_group) scene_->destroy(*sf.copy_group);
+        if (sf.copy_pass) scene_->destroy(*sf.copy_pass);
+        if (sf.copy_cam) scene_->destroy(*sf.copy_cam);
+        if (sf.src) scene_->destroy(*sf.src);
+        if (sf.shown_rt) scene_->destroy(*sf.shown_rt);
+        if (sf.shown) scene_->destroy(*sf.shown);
+    }
+
+
     struct Part {
         int view = 0;
         ramses::MeshNode *mesh = nullptr;
@@ -847,7 +1094,7 @@ private:
     {
         const Rect &r = q.r;
         const Turn &t = q.t;
-        return ok(q.placed->setTranslation((float)r.x + t.px, (float)h_ - (float)r.y - t.py, 0.0f)) &&
+        return ok(q.placed->setTranslation((float)r.x + t.px, (float)surf(q.surface).h - (float)r.y - t.py, 0.0f)) &&
                ok(q.turned->setTranslation(0.0f, 0.0f, 0.0f)) && ok(q.turned->setRotation(0.0f, 0.0f, t.rotate)) &&
                ok(q.turned->setScaling(t.sx, t.sy, 1.0f)) &&
                ok(q.mesh->setTranslation(-t.px, t.py - (float)r.h, -1.0f)) &&
@@ -859,8 +1106,9 @@ private:
      * reaching past the target's edge is cut, not squeezed. */
     bool frame(View &v)
     {
-        const int64_t x0 = std::max<int64_t>(v.r.x, 0), x1 = std::min<int64_t>((int64_t)v.r.x + v.r.w, w_);
-        const int64_t y0 = std::max<int64_t>(v.r.y, 0), y1 = std::min<int64_t>((int64_t)v.r.y + v.r.h, h_);
+        const uint32_t sw = surf(v.surface).w, sh = surf(v.surface).h;
+        const int64_t x0 = std::max<int64_t>(v.r.x, 0), x1 = std::min<int64_t>((int64_t)v.r.x + v.r.w, sw);
+        const int64_t y0 = std::max<int64_t>(v.r.y, 0), y1 = std::min<int64_t>((int64_t)v.r.y + v.r.h, sh);
         const bool good = ok(v.cam->setTranslation(v.camera.t[0], v.camera.t[1], v.camera.t[2])) &&
                           ok(v.cam->setRotation(-v.camera.r[0], -v.camera.r[1], -v.camera.r[2]));
         const float aspect = v.r.h ? (float)v.r.w / (float)v.r.h : 1.0f;
@@ -875,8 +1123,18 @@ private:
         const float t = top - 2.0f * top * (float)(y0 - v.r.y) / (float)v.r.h;
         const float b = top - 2.0f * top * (float)(y1 - v.r.y) / (float)v.r.h;
         return good && ok(v.cam->setFrustum(l, rr, b, t, v.p.near, v.p.far)) &&
-               ok(v.cam->setViewport((int32_t)x0, (int32_t)(h_ - y1), (uint32_t)(x1 - x0), (uint32_t)(y1 - y0))) &&
+               ok(v.cam->setViewport((int32_t)x0, (int32_t)(sh - y1), (uint32_t)(x1 - x0), (uint32_t)(y1 - y0))) &&
                ok(v.root->setVisibility(visible(v.shown)));
+    }
+
+    /* A pass of canvas draws into its render target (once, when it is drawn
+     * once); the target's passes draw on the display. */
+    bool in_canvas(ramses::RenderPass *pass, int canvas)
+    {
+        if (!canvas)
+            return true;
+        const Surface &sf = canvases_.at(canvas);
+        return ok(pass->setRenderTarget(sf.rt)) && (!sf.once || ok(pass->setRenderOnce(true)));
     }
 
     /* A view clears depth when one of its parts tests it. */
@@ -972,6 +1230,15 @@ private:
     void relayout()
     {
         layout_dirty_ = false;
+        relayout(0, main_);
+        for (auto &kv : canvases_)
+            relayout(kv.first, kv.second);
+    }
+
+    /* A surface's quads and views; a canvas's passes draw into it, the first
+     * clearing it. */
+    void relayout(int canvas, Surface &sf)
+    {
         struct Item {
             int32_t order;
             bool view;
@@ -979,9 +1246,11 @@ private:
         };
         std::vector<Item> items;
         for (const auto &kv : quads_)
-            items.push_back(Item{kv.second.order, false, kv.first});
+            if (kv.second.surface == canvas)
+                items.push_back(Item{kv.second.order, false, kv.first});
         for (const auto &kv : views_)
-            items.push_back(Item{kv.second.order, true, kv.first});
+            if (kv.second.surface == canvas)
+                items.push_back(Item{kv.second.order, true, kv.first});
         std::sort(items.begin(), items.end(), [](const Item &a, const Item &b) {
             return a.order != b.order ? a.order < b.order : a.handle < b.handle;
         });
@@ -996,57 +1265,70 @@ private:
         for (size_t i = 0; i < items.size(); i++)
             if (!items[i].view && !segment_of.count(pass[i]))
                 segment_of.emplace(pass[i], segment_of.size());
-        while (segments_.size() < segment_of.size()) {
+        while (sf.segments.size() < segment_of.size()) {
             Segment s;
             s.pass = scene_->createRenderPass();
             s.group = scene_->createRenderGroup();
-            if (!s.pass || !s.group || !ok(s.pass->setCamera(*cam2d_)) || !ok(s.pass->addRenderGroup(*s.group)) ||
-                !ok(s.pass->setClearFlags(ramses::EClearFlags_None))) {
+            if (!s.pass || !s.group || !ok(s.pass->setCamera(*sf.cam2d)) || !ok(s.pass->addRenderGroup(*s.group)) ||
+                !ok(s.pass->setClearFlags(ramses::EClearFlags_None)) || !in_canvas(s.pass, canvas)) {
                 log_error("ramses: render pass refused");
                 if (s.pass) scene_->destroy(*s.pass);
                 if (s.group) scene_->destroy(*s.group);
                 layout_dirty_ = true;
                 return;
             }
-            segments_.push_back(s);
+            sf.segments.push_back(s);
         }
         for (const auto &kv : segment_of) {
-            Segment &s = segments_[kv.second];
-            if (s.render_order != kv.first && ok(s.pass->setRenderOrder(kv.first)))
-                s.render_order = kv.first;
+            Segment &s = sf.segments[kv.second];
+            if (s.render_order != sf.base + kv.first && ok(s.pass->setRenderOrder(sf.base + kv.first)))
+                s.render_order = sf.base + kv.first;
         }
         for (size_t i = 0; i < items.size(); i++) {
             if (items[i].view) {
                 View &v = views_[items[i].handle];
-                if (v.render_order != pass[i] && ok(v.pass->setRenderOrder(pass[i])))
-                    v.render_order = pass[i];
+                if (v.render_order != sf.base + pass[i] && ok(v.pass->setRenderOrder(sf.base + pass[i])))
+                    v.render_order = sf.base + pass[i];
                 continue;
             }
             Quad &q = quads_[items[i].handle];
             const size_t seg = segment_of[pass[i]];
             if (seg == q.segment && q.grouped_order == q.order)
                 continue;
-            segments_[q.segment].group->removeMeshNode(*q.mesh);
+            sf.segments[q.segment].group->removeMeshNode(*q.mesh);
             q.segment = seg;
             q.grouped_order = q.order;
-            segments_[seg].group->addMeshNode(*q.mesh, q.order);
+            sf.segments[seg].group->addMeshNode(*q.mesh, q.order);
         }
         /* Segments past the plan hold no quads: they go. */
-        while (segments_.size() > segment_of.size()) {
-            scene_->destroy(*segments_.back().pass);
-            scene_->destroy(*segments_.back().group);
-            segments_.pop_back();
+        while (sf.segments.size() > segment_of.size()) {
+            scene_->destroy(*sf.segments.back().pass);
+            scene_->destroy(*sf.segments.back().group);
+            sf.segments.pop_back();
         }
     }
+
+    /* Canvases' render orders: a block of kCanvasSpan each, from kCanvasBase,
+     * far below the target's (0, or a scene file's layers_order). */
+    static const int32_t kCanvasBase = -1000000000, kCanvasSpan = 4096, kCanvases = 100000;
+    /* The canvases' copy: the unit quad, v turned over. */
+    static constexpr const char *kCopyVs = "#version 100\nattribute vec2 a_position;\nuniform mat4 u_mvp;\n"
+                                           "varying vec2 v_p;\nvoid main() {\n    v_p = a_position;\n"
+                                           "    gl_Position = u_mvp * vec4(a_position, 0.0, 1.0);\n}\n";
+    static constexpr const char *kCopyFs = "#version 100\nprecision mediump float;\nuniform sampler2D u_src;\n"
+                                           "varying vec2 v_p;\nvoid main() {\n"
+                                           "    gl_FragColor = texture2D(u_src, vec2(v_p.x, 1.0 - v_p.y));\n}\n";
+    ramses::Effect *copy_fx_ = nullptr;
 
     ramses::RamsesClient &client_;
     Ramses27Gpu &gpu_;
     ramses::Scene *scene_ = nullptr;
     ramses::ArrayResource *pos_ = nullptr, *idx_ = nullptr;   /* the unit quad */
-    ramses::OrthographicCamera *cam2d_ = nullptr;
     ramses::AnimationSystemRealTime *anim_ = nullptr;
-    std::vector<Segment> segments_;
-    uint32_t w_ = 0, h_ = 0;
+    /* The target's own surface, and the canvases', by handle. */
+    Surface main_;
+    std::map<int, Surface> canvases_;
+    int32_t canvas_seq_ = 0;
     bool write_failing_ = false, flush_failing_ = false;   /* log the first of a run */
     bool layout_dirty_ = false;
     std::map<int, ramses::Effect *> fx_;   /* by Gpu effect handle */

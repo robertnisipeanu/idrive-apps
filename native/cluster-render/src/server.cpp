@@ -87,8 +87,41 @@ bool choice(const cr::Json &j, const char *key, const std::vector<std::string> &
 /* The render state fields onto *look: a mesh part's, or an effect layer's
  * (quad: its depth and culling fields are ignored, as a field the service
  * does not know). A blend field over a preset makes the preset custom. */
-bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err)
+bool look_fields(const cr::Json &j, bool quad, PartLook *look, std::string *err, bool stencil = false)
 {
+    static const std::vector<std::string> sfuncs = {"never", "always", "equal", "not_equal",
+                                                    "less", "less_equal", "greater", "greater_equal"};
+    static const std::vector<std::string> sops = {"keep", "zero", "replace", "increment",
+                                                  "increment_wrap", "decrement", "decrement_wrap", "invert"};
+    static const char *const skeys[] = {"stencil_func", "stencil_ref", "stencil_mask",
+                                        "stencil_fail", "stencil_depth_fail", "stencil_pass"};
+    bool any = false;
+    for (const char *k : skeys)
+        any = any || j.count(k);
+    if (any && !stencil) {
+        *err = "stencil fields are for layers in a canvas with depth";
+        return false;
+    }
+    if (any) {
+        StencilState &st = look->stencil;
+        int func = st.func == StencilFunc::Off ? 1 : (int)st.func - 1;
+        int fail = (int)st.fail, dfail = (int)st.depth_fail, pass = (int)st.pass;
+        double ref = st.ref, mask = st.mask;
+        if (!choice(j, "stencil_func", sfuncs, &func, err) || !num(j, "stencil_ref", 0, 255, &ref, err) ||
+            !num(j, "stencil_mask", 0, 255, &mask, err) || !choice(j, "stencil_fail", sops, &fail, err) ||
+            !choice(j, "stencil_depth_fail", sops, &dfail, err) || !choice(j, "stencil_pass", sops, &pass, err))
+            return false;
+        if (ref != (double)(int)ref || mask != (double)(int)mask) {
+            *err = "stencil_ref and stencil_mask are whole numbers from 0 to 255";
+            return false;
+        }
+        st.func = (StencilFunc)(func + 1);
+        st.ref = (uint8_t)ref;
+        st.mask = (uint8_t)mask;
+        st.fail = (StencilOp)fail;
+        st.depth_fail = (StencilOp)dfail;
+        st.pass = (StencilOp)pass;
+    }
     static const std::vector<std::string> presets = {"alpha", "add", "none", "premultiplied", "max", "min", "subtract"};
     static const std::vector<std::string> factors = {"zero",      "one",           "src_alpha",
                                                      "one_minus_src_alpha", "dst_alpha", "one_minus_dst_alpha"};
@@ -574,7 +607,7 @@ bool Server::apply(Layer *l, const cr::Json &j, std::string *err)
      * ignored (a mesh part's is set by its part message). */
     EffectLayer *fx = std::string(l->kind()) == "effect" ? static_cast<EffectLayer *>(l) : nullptr;
     PartLook look = fx ? fx->look() : PartLook();
-    if (fx && !look_fields(j, true, &look, err))
+    if (fx && !look_fields(j, true, &look, err, stencil_ok(l->params)))
         return false;
     MeshLayer *m = std::string(l->kind()) == "mesh" ? static_cast<MeshLayer *>(l) : nullptr;
     MeshParams mp;
@@ -620,11 +653,29 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
     LayerParams lp;
     lp.rect.w = spec.width;
     lp.rect.h = spec.height;
+    const std::string kind = str(j, "kind");
+    if (j.count("canvas")) {
+        /* Drawn in the client's canvas, its rect in the canvas's pixels. */
+        double cref = 0;
+        num(j, "canvas", 0, 4294967295.0, &cref, &err);
+        auto a = c.assets.find((uint32_t)cref);
+        const Canvas *cv = a == c.assets.end() ? nullptr : comp_->canvas(a->second);
+        if (!cv) {
+            error(c, "layer", ref, "no such canvas");
+            return;
+        }
+        if (kind != "effect" && kind != "mesh") {
+            error(c, "layer", ref, "only effect and mesh layers draw in a canvas");
+            return;
+        }
+        lp.canvas = cv->id();
+        lp.rect.w = cv->spec().w;
+        lp.rect.h = cv->spec().h;
+    }
     if (!layer_params(j, &lp, &err)) {
         error(c, "layer", ref, err);
         return;
     }
-    const std::string kind = str(j, "kind");
     uint32_t id = 0;
     double v;
     if (kind == "video") {
@@ -681,7 +732,7 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
             return;
         }
         PartLook look = quad_look();
-        if (!look_fields(j, true, &look, &err)) {
+        if (!look_fields(j, true, &look, &err, stencil_ok(lp))) {
             error(c, "layer", ref, err);
             return;
         }
@@ -736,7 +787,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"others_fps", "1"},
                                  {"render_state", "1"},
                                  {"samplers", "1"},
-                                 {"host_layers", "1"}}));
+                                 {"host_layers", "1"},
+                                 {"canvas", "1"}}));
         c.target_sent.clear();
         c.fps_cap_sent = 0;
         c.host_sent.clear();
@@ -755,6 +807,10 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
     }
     if (op == "asset") {
         op_asset(c, j);
+        return;
+    }
+    if (op == "canvas") {
+        op_canvas(c, j);
         return;
     }
     if (op == "scene") {
@@ -827,6 +883,64 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
         return;
     }
     op_on_layer(c, op, ref, l, j);
+}
+
+bool Server::stencil_ok(const LayerParams &p) const
+{
+    const Canvas *cv = p.canvas ? comp_->canvas(p.canvas) : nullptr;
+    return cv && cv->spec().depth;
+}
+
+void Server::op_canvas(Client &c, const cr::Json &j)
+{
+    double ref_d = 0, w = 0, h = 0, depth = 0, once = 0;
+    std::string err;
+    if (!num(j, "ref", 1, 4294967295.0, &ref_d, &err) || ref_d == 0) {
+        error(c, "canvas", 0, err.empty() ? "ref missing" : err);
+        return;
+    }
+    const uint32_t ref = (uint32_t)ref_d;
+    if (c.refs.count(ref) || c.assets.count(ref)) {
+        error(c, "canvas", ref, "ref in use");
+        return;
+    }
+    const int target = slots_->index(str(j, "target"));
+    if (target < 0 || !slots_->targets()[target].follows.empty()) {
+        error(c, "canvas", ref, "unknown target " + str(j, "target"));
+        return;
+    }
+    CanvasSpec cs;
+    if (!num(j, "w", 1, Canvas::kMaxSide, &w, &err) || !num(j, "h", 1, Canvas::kMaxSide, &h, &err) ||
+        !num(j, "depth", 0, 1, &depth, &err) || !num(j, "once", 0, 1, &once, &err) ||
+        !sampler_fields(j, &cs.sampler, &err)) {
+        error(c, "canvas", ref, err);
+        return;
+    }
+    if (!w || !h || w != (double)(uint32_t)w || h != (double)(uint32_t)h) {
+        error(c, "canvas", ref, "a canvas needs w and h, whole numbers");
+        return;
+    }
+    if (j.count("clear")) {
+        std::vector<float> v;
+        if (!numbers(str(j, "clear"), 4, &v) || v.size() != 4) {
+            error(c, "canvas", ref, "clear is four numbers from 0 to 1");
+            return;
+        }
+        for (int k = 0; k < 4; k++)
+            cs.clear[k] = v[k];
+    }
+    cs.w = (uint32_t)w;
+    cs.h = (uint32_t)h;
+    cs.depth = depth != 0;
+    cs.once = once != 0;
+    const uint32_t id = comp_->add_canvas(c.id, target, cs, &err);
+    if (!id) {
+        error(c, "canvas", ref, err);
+        return;
+    }
+    c.assets[ref] = id;
+    log_info("client %llu (%s): canvas %u on %s (%ux%u%s%s)", (unsigned long long)c.id, c.app.c_str(), id,
+             slots_->targets()[target].name.c_str(), cs.w, cs.h, cs.depth ? ", depth" : "", cs.once ? ", once" : "");
 }
 
 void Server::op_asset(Client &c, const cr::Json &j)
@@ -1106,7 +1220,7 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
             err = "parts are numbered from 1";
         else if (str(j, "vs").empty() || str(j, "fs").empty())
             err = "a part needs vs and fs";
-        else if (look_fields(j, false, &look, &err))
+        else if (look_fields(j, false, &look, &err, stencil_ok(l->params)))
             comp_->add_part(c.id, l->id(), part, str(j, "vs"), str(j, "fs"), look, &err);
         if (!err.empty())
             error(c, op, ref, err);
@@ -1528,6 +1642,15 @@ std::string Server::status_text(int64_t now_ms) const
                                   c.app.c_str(), slots_->targets()[a->target()].name.c_str(), a->stats().c_str());
                     s += line;
                 }
+    for (const Client &c : clients_)
+        for (const auto &kv : c.assets)
+            if (const Canvas *cv = comp_->canvas(kv.second)) {
+                std::snprintf(line, sizeof line, "canvas %u %ux%u%s%s of %s on %s: %s\n", cv->id(), cv->spec().w,
+                              cv->spec().h, cv->spec().depth ? " depth" : "", cv->spec().once ? " once" : "",
+                              c.app.c_str(), slots_->targets()[cv->target()].name.c_str(),
+                              !cv->refused().empty() ? cv->refused().c_str() : cv->attached() ? "made" : "not made yet");
+                s += line;
+            }
     for (const Client &c : clients_)
         for (const auto &kv : c.refs) {
             std::string reason;

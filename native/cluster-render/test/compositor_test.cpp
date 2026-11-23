@@ -2488,6 +2488,135 @@ static void mipmapped_assets()
     ok("mipmaps: anisotropy past 16 refused", Asset::size_error(aniso) != nullptr);
 }
 
+/* Canvases (PROTOCOL.md "Canvases"): checked when made, within each client's
+ * and target's limits; drawn in by effect and mesh layers kept out of the
+ * stack, which never make the target wanted; sampled by a layer on screen,
+ * not by its own layers; a canvas drawn once drawn again only when its
+ * content changes; dropped only when nothing is in it or samples it; made
+ * again with its layers in a new scene; and a client gone takes it all. */
+static void canvases()
+{
+    Rig r;
+    std::string err;
+    CanvasSpec cs;
+    cs.w = 256;
+    cs.h = 128;
+    cs.clear[3] = 1;
+    CanvasSpec bad = cs;
+    bad.w = 4096;
+    ok("canvas: past 2048 refused", !r.comp->add_canvas(1, r.panel, bad, &err) && err.find("2048x2048") != std::string::npos);
+    bad = cs;
+    bad.sampler.sampling = Sampling::Trilinear;
+    ok("canvas: no mipmapped sampling", !r.comp->add_canvas(1, r.panel, bad, &err) && err.find("mip") != std::string::npos);
+    bad = cs;
+    bad.clear[0] = 2;
+    ok("canvas: a clear colour past 1 refused", !r.comp->add_canvas(1, r.panel, bad, &err));
+    const uint32_t cv = r.comp->add_canvas(1, r.panel, cs, &err);
+    ok("canvas: made, its memory RGBA8 twice", cv && r.comp->canvas(cv)->memory() == 256u * 128 * 4 * 2);
+    LayerParams in = params(Klass::Content, R(0, 0, 256, 128));
+    in.canvas = cv;
+    const uint32_t art = r.comp->add_effect(1, r.panel, in, "", kSample, 0, r.now, &err);
+    ok("canvas: a layer of another client cannot draw in it",
+       !r.comp->add_effect(2, r.panel, in, "", kSample, 0, r.now, &err) && err == "no such canvas");
+    ok("canvas: nor a layer of another target", !r.comp->add_effect(1, r.map, in, "", kSample, 0, r.now, &err) &&
+                                                    err == "the canvas is on another target");
+    ok("canvas: its layers do not sample it", !r.comp->bind(1, art, 0, "u_atlas", cv, &err) &&
+                                                  err.find("the canvas itself") != std::string::npos);
+    r.run(200);
+    ok("canvas: a canvas and its layers ask for nothing", r.port.requests == 0 && !r.g("panel"));
+    const uint32_t shown = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(100, 100, 256, 128)), "", kSample,
+                                              0, r.now, &err);
+    ok("canvas: a layer on screen samples it", r.comp->bind(1, shown, 0, "u_atlas", cv, &err));
+    r.run(200);
+    FakeGraph *g = r.g("panel");
+    int handle = 0, in_q = 0, out_q = 0;
+    if (g) {
+        for (const auto &kv : g->shown.canvases)
+            handle = kv.first;
+        for (const auto &kv : g->shown.quads)
+            (kv.second.canvas ? in_q : out_q) = kv.first;
+    }
+    ok("canvas: the target asked for and published, the canvas made in it", r.port.requests == 1 && g && handle &&
+                                                                               g->shown.canvases[handle].spec.w == 256);
+    ok("canvas: its layer drawn in it, the other on screen sampling it",
+       in_q && out_q && g->shown.quads[in_q].canvas == handle && g->shown.quads[in_q].visible &&
+           g->shown.quads[out_q].canvas == 0 && g->shown.quads[out_q].textures["u_atlas"] == handle);
+    std::string why;
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(50);
+    ok("canvas: both layers shown", r.comp->state(art, &why) == LayerState::Shown &&
+                                        r.comp->state(shown, &why) == LayerState::Shown);
+    ok("canvas: dropping it refused while in use", !r.comp->remove_asset(1, cv, &err) &&
+                                                       err == "canvas in use: its layers go first");
+
+    /* Drawn once: again only when what is in it changes. */
+    CanvasSpec once = cs;
+    once.w = once.h = 64;
+    once.once = true;
+    const uint32_t oc = r.comp->add_canvas(1, r.panel, once, &err);
+    LayerParams oin = params(Klass::Content, R(0, 0, 64, 64));
+    oin.canvas = oc;
+    const uint32_t still = r.comp->add_effect(1, r.panel, oin, "", kSample, 0, r.now, &err);
+    r.run(100);
+    int oh = 0;
+    for (const auto &kv : g->shown.canvases)
+        if (kv.second.spec.once)
+            oh = kv.first;
+    const int first = oh ? g->shown.canvases[oh].redraws : -1;
+    r.run(500);
+    ok("canvas: drawn once: nothing changed, not drawn again", oh && first >= 1 && g->shown.canvases[oh].redraws == first);
+    const float v = 0.5f;
+    static_cast<EffectLayer *>(r.comp->layer(1, still))->set_uniform("u_level", &v, 1);
+    r.run(50);
+    ok("canvas: a uniform changed: drawn again, once", g->shown.canvases[oh].redraws == first + 1);
+    r.run(300);
+    ok("canvas: and then not", g->shown.canvases[oh].redraws == first + 1);
+
+    /* A mesh layer in a canvas: its view in the canvas. */
+    MeshParams mp;
+    LayerParams min = params(Klass::Content, R(0, 0, 256, 128));
+    min.canvas = cv;
+    const uint32_t mesh = r.comp->add_mesh(1, r.panel, min, mp, r.now, &err);
+    r.comp->add_part(1, mesh, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->geometry(1, mesh, 1, fan(4, true), r.now, &err);
+    r.run(200);
+    bool view_in = false;
+    for (const auto &kv : g->shown.views)
+        view_in = view_in || (kv.second.canvas == handle && kv.second.visible);
+    ok("canvas: a mesh layer's view drawn in it", view_in && r.comp->state(mesh, &why) == LayerState::Shown);
+
+    /* Limits. */
+    CanvasSpec big;
+    big.w = big.h = 2048;
+    ok("canvas: a target's canvases together at most 2048x2048 pixels",
+       !r.comp->add_canvas(1, r.panel, big, &err) && err.find("together") != std::string::npos);
+    CanvasSpec small;
+    small.w = small.h = 8;
+    const uint32_t c3 = r.comp->add_canvas(1, r.panel, small, &err);
+    const uint32_t c4 = r.comp->add_canvas(1, r.panel, small, &err);
+    ok("canvas: four a client", c3 && c4 && !r.comp->add_canvas(1, r.panel, small, &err) && err == "too many canvases");
+    ok("canvas: one with nothing in it or sampling it is dropped", r.comp->remove_asset(1, c4, &err) &&
+                                                                     !r.comp->canvas(c4));
+
+    /* A new scene: the canvases and their layers made again. */
+    r.comp->unpublish(r.slots.targets()[r.panel]);
+    ok("canvas: the scene gone", !r.g("panel"));
+    std::string perr;
+    r.comp->publish(r.slots.targets()[r.panel], &perr);
+    r.run(100);
+    g = r.g("panel");
+    int quads_in = 0;
+    for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+        quads_in += kv.second.canvas != 0;
+    ok("canvas: published again: the canvases and the layers in them made again",
+       g && g->shown.canvases.size() == 3 && quads_in == 2 && r.comp->state(art, &why) == LayerState::Shown);
+
+    r.comp->remove_owner(1);
+    ok("canvas: the client gone: its layers, canvases and all gone", r.comp->canvases().empty() &&
+                                                                     r.comp->layers().empty());
+    (void)c3;
+}
+
 int main()
 {
     image_first_upload();
@@ -2528,6 +2657,7 @@ int main()
     others_fps();
     render_state();
     mipmapped_assets();
+    canvases();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

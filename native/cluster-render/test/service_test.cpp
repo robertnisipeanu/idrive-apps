@@ -48,7 +48,7 @@
  * client's layers, with no scene (hosting_from_layers, hosting_from_layers_more, holding_into). A layer's
  * preload, end to end (preload). A layer's others_fps holding another
  * client's video and releasing it (others_fps). Render state and samplers
- * (render_state_and_samplers). */
+ * (render_state_and_samplers). Canvases (canvases_over_socket). */
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -2502,6 +2502,108 @@ static void holding_into()
        at("panel", 800) && hosting_c["map"] == "live" && hosting_b["map"].find("waiting") == 0);
 }
 
+/* PROTOCOL.md "Canvases", over the socket with the C++ client: the hello
+ * says the service takes canvases; a depth canvas with an effect drawn in
+ * it with stencil state, sampled by a layer on screen; made again after a
+ * service restart; stencil on screen, a canvas of another client, an image
+ * in a canvas and a canvas past its limits refused with nothing made. */
+static void canvases_over_socket()
+{
+    Rig r;
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("canvas: the hello says the service takes canvases", c.takes_canvas());
+    cr::CanvasOptions co;
+    co.target = "panel";
+    co.w = 320;
+    co.h = 160;
+    co.depth = true;
+    co.clear[3] = 1;
+    const uint32_t cv = c.canvas(co);
+    cr::LayerOptions in;
+    in.w = 320;
+    in.h = 160;
+    cr::RenderState mask;
+    mask.stencil_func = "always";
+    mask.stencil_ref = 1;
+    mask.stencil_pass = "replace";
+    const uint32_t art = c.effect_in(cv, in,
+                                     cr::EffectOptions{"#version 100\nprecision mediump float;\nvoid main(){"
+                                                       "gl_FragColor=vec4(1.0,0.5,0.0,1.0);}",
+                                                       "", 0},
+                                     false, mask);
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.x = 100;
+    lo.y = 100;
+    lo.w = 320;
+    lo.h = 160;
+    const uint32_t shown = c.effect(lo, cr::EffectOptions{"#version 100\nprecision mediump float;\n"
+                                                          "uniform sampler2D u_canvas;\nvarying vec2 v_uv;\n"
+                                                          "void main(){gl_FragColor=texture2D(u_canvas,v_uv);}",
+                                                          "", 0});
+    c.bind(shown, "u_canvas", cv);
+    r.pump(400);
+    auto check = [&](const char *when) {
+        FakeGraph *g = r.gpu.graph("panel");
+        int handle = 0;
+        const FakeQuad *aq = nullptr, *sq = nullptr;
+        if (g) {
+            for (const auto &kv : g->shown.canvases)
+                handle = kv.first;
+            for (const auto &kv : g->shown.quads)
+                (kv.second.canvas ? aq : sq) = &kv.second;
+        }
+        ok((std::string("canvas: ") + when + ": made in the panel's scene, with depth").c_str(),
+           handle && g->shown.canvases.at(handle).spec.depth && g->shown.canvases.at(handle).spec.w == 320);
+        ok((std::string("canvas: ") + when + ": the effect drawn in it, with its stencil state").c_str(),
+           aq && aq->canvas == handle && aq->look.stencil.func == StencilFunc::Always &&
+               aq->look.stencil.ref == 1 && aq->look.stencil.pass == StencilOp::Replace);
+        ok((std::string("canvas: ") + when + ": sampled by the layer on screen").c_str(),
+           sq && sq->textures.count("u_canvas") && sq->textures.at("u_canvas") == handle);
+    };
+    check("made");
+    ok("canvas: both layers shown", e.layer[art] == "shown" && e.layer[shown] == "shown");
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    check("after a service restart");
+    ok("canvas: no error so far", e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"layer\",\"ref\":1,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"stencil_func\":\"always\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":2,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"canvas\":" + std::to_string(cv) + "}");
+    raw.send("{\"op\":\"canvas\",\"ref\":3,\"target\":\"panel\",\"w\":64,\"h\":64}");
+    raw.send("{\"op\":\"layer\",\"ref\":4,\"target\":\"panel\",\"kind\":\"image\",\"canvas\":3}");
+    raw.send("{\"op\":\"layer\",\"ref\":5,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"canvas\":3,\"stencil_func\":\"always\"}");
+    raw.send("{\"op\":\"canvas\",\"ref\":6,\"target\":\"panel\",\"w\":4096,\"h\":64}");
+    raw.send("{\"op\":\"canvas\",\"ref\":7,\"target\":\"panel\",\"w\":64,\"h\":64,\"sampling\":\"trilinear\"}");
+    raw.send("{\"op\":\"canvas\",\"ref\":8,\"target\":\"panel\",\"w\":64,\"h\":64,\"clear\":\"1 1\"}");
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("canvas: stencil on screen refused", refused("layer", 1, "stencil fields are for layers in a canvas with depth"));
+    ok("canvas: another client's canvas is not one's own", refused("layer", 2, "no such canvas"));
+    ok("canvas: an image does not draw in a canvas", refused("layer", 4, "only effect and mesh layers"));
+    ok("canvas: stencil in a canvas without depth refused", refused("layer", 5, "stencil fields are for layers"));
+    ok("canvas: past 2048 refused", refused("canvas", 6, "w must be a number from 1 to 2048"));
+    ok("canvas: mipmapped sampling refused", refused("canvas", 7, "a canvas has no mip levels"));
+    ok("canvas: a clear colour of two numbers refused", refused("canvas", 8, "clear is four numbers"));
+    ok("canvas: the raw client's one canvas made, nothing else",
+       r.svc->compositor().canvases().size() == 2 && r.svc->compositor().layers().size() == 2);
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -3016,6 +3118,7 @@ int main()
     preload();
     others_fps();
     render_state_and_samplers();
+    canvases_over_socket();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

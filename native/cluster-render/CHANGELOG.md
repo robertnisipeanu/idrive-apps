@@ -12,6 +12,11 @@ back to its own place when the app hides its layers, ends the host
 drawn highest over the picture wins, and an app showing a scene file that
 hosts the picture wins over them; the `hosting` event tells each app why it
 waits.
+Canvases: an app's effect and mesh layers can draw into an off-screen
+picture of its own, which its layers on screen then show like an asset.
+A canvas can have its own depth and stencil buffer, for masks and depth
+tests that never touch the display's, and can be drawn once and kept until
+something in it changes.
 
 ## 0.8.1
 

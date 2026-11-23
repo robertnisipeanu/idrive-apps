@@ -56,7 +56,7 @@ H = $(BUILD)/host
 
 KIT_SRC  = kit/dirty_tiles.cpp kit/yuv_atlas.cpp kit/block_pack.cpp
 CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/recv_buffer.cpp src/layer.cpp src/video_layer.cpp \
-           src/video_composite.cpp src/mesh_layer.cpp src/occlusion.cpp src/asset.cpp src/compositor.cpp src/scene_file.cpp \
+           src/video_composite.cpp src/mesh_layer.cpp src/occlusion.cpp src/asset.cpp src/canvas.cpp src/compositor.cpp src/scene_file.cpp \
            src/scene_edit.cpp \
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            src/ceiling_memory.cpp src/link_trace.cpp client/protocol.cpp src/log.cpp

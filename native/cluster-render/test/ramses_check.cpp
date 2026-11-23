@@ -525,6 +525,62 @@ static void backend(Gpu &gpu)
 #ifndef CRS_RAMSES27
     ok("and the scene described whole again", described("check"));
 #endif
+    /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
+     * a quad in it writing the stencil and one testing it, a view with a
+     * part in it, a quad on screen sampling it; one drawn once, redrawn;
+     * both dropped. */
+    CanvasSpec cs;
+    cs.w = 256;
+    cs.h = 128;
+    cs.depth = true;
+    cs.clear[2] = 1;
+    cs.clear[3] = 1;
+    cs.sampler.sampling = Sampling::Bilinear;
+    const int canvas = g->canvas(cs);
+    CanvasSpec os = cs;
+    os.depth = false;
+    os.once = true;
+    const int once = g->canvas(os);
+    Rect cr;
+    cr.w = 128;
+    cr.h = 64;
+    const int cq1 = g->quad_in(canvas, glyph_fx, cr);
+    cr.x = 64;
+    const int cq2 = g->quad_in(canvas, glyph_fx, cr);
+    PartLook writes = quad_look(), tests = quad_look();
+    writes.stencil.func = StencilFunc::Always;
+    writes.stencil.ref = 1;
+    writes.stencil.pass = StencilOp::Replace;
+    writes.color_mask = 0;
+    tests.stencil.func = StencilFunc::NotEqual;
+    tests.stencil.ref = 1;
+    Rect vr2;
+    vr2.w = 256;
+    vr2.h = 128;
+    const int cv = g->view_in(canvas, vr2, persp, cam);
+    const int cp = cv ? g->part(cv, lit_fx, PartLook()) : 0;
+    const int oq = g->quad_in(once, glyph_fx, cr);
+    Rect sr;
+    sr.x = 300; sr.y = 300; sr.w = 256; sr.h = 128;
+    const int screen = g->quad(glyph_fx, sr);
+    ok("canvases: made, quads and a view drawn in them",
+       canvas && once && cq1 && cq2 && cv && cp && oq && screen && g->geometry(cp, cube.geometry()) &&
+           g->style(cq1, writes) && g->style(cq2, tests) && g->show(cq1, true) && g->show(cq2, true) &&
+           g->show(cv, true) && g->show(oq, true) && g->order(cq1, 0) && g->order(cv, 4) && g->order(cq2, 8));
+    ok("canvases: sampled on screen", g->texture(screen, "u_atlas", canvas) && g->texture(screen, "u_sprite", once) &&
+                                          g->show(screen, true) && g->flush(8));
+    ok("canvases: one drawn once, drawn again", g->redraw(once) && g->flush(9));
+    ok("canvases: a quad in a canvas that is gone is refused", !g->quad_in(9999, glyph_fx, cr));
+#ifndef CRS_RAMSES27
+    ok("canvases: the scene described whole", described("check"));
+#endif
+    g->drop_quad(screen);
+    g->drop_canvas(canvas);
+    g->drop_canvas(once);
+    ok("canvases: dropped with what is drawn in them", g->flush(10));
+#ifndef CRS_RAMSES27
+    ok("canvases: and the scene described whole again", described("check"));
+#endif
     g.reset();
     gpu.drop_effect(glyph_fx);
     gpu.drop_effect(all_fx);

@@ -89,6 +89,9 @@ private:
     std::string scene_reason(const Client &c, uint32_t layer) const;
     void op_layer(Client &c, const cr::Json &j, int64_t now_ms);
     void op_asset(Client &c, const cr::Json &j);
+    void op_canvas(Client &c, const cr::Json &j);
+    /* A layer in a canvas with a depth-stencil buffer may test the stencil. */
+    bool stencil_ok(const LayerParams &p) const;
     /* A scene file on a target (PROTOCOL.md "Scene files"), and its edits. */
     void op_scene(Client &c, const cr::Json &j);
     void op_edit(Client &c, uint32_t ref, const cr::Json &j);

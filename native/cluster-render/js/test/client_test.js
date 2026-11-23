@@ -26,7 +26,8 @@
  * when set to 0, dropped, or the held client closes; render state and
  * samplers: an effect layer's blending set and changed, a part's depth
  * test, an rgba8 asset whose mip levels the service makes and an etc2rgba
- * one sent with its chain, and a factor the service lacks refused;
+ * one sent with its chain, and a factor the service lacks refused; a
+ * canvas drawn in with stencil state and sampled on screen;
  * close() and connect() in one tick making one connection. */
 'use strict';
 
@@ -402,8 +403,26 @@ async function main() {
     const bad = ovl.effect({ target: 'panel', fs: 'void main(){}', blend_dst: 'one_minus_src_color' });
     ok('render state: a factor the service lacks refused',
         await until(() => eo.refused.some((r) => r.indexOf('layer: blend_dst must be') === 0), 1000));
+    /* Canvases (PROTOCOL.md "Canvases"). */
+    ok('canvas: the hello says the service takes canvases', ovl.canvases === true);
+    const cv = ovl.canvas({ target: 'panel', w: 128, h: 64, depth: true, clear: [0, 0, 0, 1], once: true });
+    const inCv = ovl.effect({ target: 'panel', canvas: cv, w: 128, h: 64, stencil_func: 'always', stencil_ref: 1,
+        stencil_pass: 'replace', fs: 'precision mediump float;void main(){gl_FragColor=vec4(1.0,0.5,0.0,1.0);}' });
+    const onScreen = ovl.effect({ target: 'panel', klass: 'overlay', x: 300, y: 300, w: 128, h: 64,
+        fs: 'precision mediump float;uniform sampler2D u_cv;varying vec2 v_uv;void main(){gl_FragColor=texture2D(u_cv,v_uv);}' });
+    ovl.bind(onScreen, 'u_cv', cv);
+    ok('canvas: a layer drawn in it and one sampling it, both shown',
+        await until(() => eo.layer[inCv] === 'shown' && eo.layer[onScreen] === 'shown', 3000));
+    status = '';
+    ovl.status();
+    ok('canvas: the status names it', await until(() => /canvas \d+ 128x64 depth once of overlay on panel: made/.test(status), 1000));
+    ok('canvas: nothing refused', eo.refused.length === refusedBefore + 1);
+    ovl.drop(cv);
+    ok('canvas: dropping it with a layer in it refused, kept here',
+        await until(() => eo.refused.some((r) => r.indexOf('drop: canvas in use') === 0), 1000) && ovl.layers.has(cv));
+    [inCv, onScreen, cv].forEach((r) => ovl.drop(r));
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
-    eo.refused.length = refusedBefore;   /* the bad one's refusal, expected */
+    eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',

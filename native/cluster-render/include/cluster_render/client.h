@@ -109,6 +109,13 @@ struct RenderState {
     std::string color_mask;                 /* some of r, g, b and a, or none */
     std::string depth_func;   /* parts: less, less_equal, equal, not_equal, greater, greater_equal, always, never */
     int depth_write = -1;     /* parts: 0 or 1; -1: as depth */
+    /* In a canvas with depth only, to a service whose hello has canvas:
+     * stencil_func never, always, equal, not_equal, less, less_equal,
+     * greater, greater_equal; the ops keep, zero, replace, increment,
+     * increment_wrap, decrement, decrement_wrap, invert; ref and mask 0-255
+     * (-1: not sent). */
+    std::string stencil_func, stencil_fail, stencil_depth_fail, stencil_pass;
+    int stencil_ref = -1, stencil_mask = -1;
 };
 
 /* GLSL ES 1.00; the fragment shader gets varying vec2 v_uv (0,0 at the
@@ -139,6 +146,19 @@ struct AssetOptions {
 struct SamplerOptions {
     std::string sampling, wrap_u, wrap_v;
     unsigned anisotropy = 0;
+};
+
+/* A canvas (PROTOCOL.md "Canvases"): an off-screen picture on target that
+ * effect and mesh layers draw in (effect_in(), mesh_in()) and layers sample
+ * as an asset (bind()); to a service whose hello has canvas
+ * (Client::takes_canvas()). */
+struct CanvasOptions {
+    std::string target;
+    unsigned w = 0, h = 0;   /* up to 2048 */
+    bool depth = false;      /* a depth-stencil buffer of its own */
+    float clear[4] = {0, 0, 0, 0};
+    bool once = false;       /* drawn again only when what is in it changes */
+    SamplerOptions sampler;  /* no mipmaps */
 };
 
 enum class UniformType { Float, Vec2, Vec3, Vec4, Mat4 };
@@ -251,6 +271,13 @@ public:
     uint32_t effect(const LayerOptions &lo, const EffectOptions &eo, bool cluster_time, const RenderState &look);
     /* A 3D layer: its parts drawn in its own pass over lo's rect. */
     uint32_t mesh(const LayerOptions &lo, const MeshOptions &mo);
+    /* A canvas; 0 when its size is out of range. */
+    uint32_t canvas(const CanvasOptions &co);
+    /* Effect and mesh layers drawn in a canvas: lo's rect in the canvas's
+     * pixels (its target the canvas's). */
+    uint32_t effect_in(uint32_t canvas, const LayerOptions &lo, const EffectOptions &eo, bool cluster_time = false,
+                       const RenderState &look = RenderState());
+    uint32_t mesh_in(uint32_t canvas, const LayerOptions &lo, const MeshOptions &mo);
     /* An asset; 0 when its size is out of range. */
     uint32_t asset(const AssetOptions &ao);
     /* With more of its sampler (SamplerOptions). */
@@ -387,6 +414,8 @@ public:
     bool takes_samplers() const { return samplers_; }
     /* The service's hello takes a host from layers (host(const Host &)). */
     bool takes_host_layers() const { return host_layers_; }
+    /* The service's hello takes canvases (CanvasOptions). */
+    bool takes_canvas() const { return canvas_; }
 
 private:
     struct Part {
@@ -399,6 +428,8 @@ private:
         LayerOptions lo;
         RenderState look;                /* an effect layer's */
         SamplerOptions sampler;          /* an asset's */
+        CanvasOptions co;                /* a canvas's */
+        uint32_t canvas = 0;             /* the canvas a layer draws in */
         VideoOptions vo;
         ImageOptions io;
         EffectOptions eo;
@@ -486,6 +517,7 @@ private:
     bool host_layers_ = false;      /* and hosts from layers */
     /* Hosts from this client's layers: by hosted target, (into, message). */
     std::map<std::string, std::pair<std::string, std::string>> layer_hosts_;
+    bool canvas_ = false;           /* and canvases */
 };
 
 }  // namespace cr
