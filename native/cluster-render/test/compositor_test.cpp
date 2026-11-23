@@ -3463,7 +3463,7 @@ static void keys_waiting_where_parked()
 }
 
 /* Draw modes and instances: a part's index count checked by its mode,
- * instances only where the cluster is said to draw them, the indices drawn
+ * instances refused while they are off, the indices drawn
  * bounded by part, layer and target, mode and instances given to the
  * renderer. */
 static void draw_modes()
@@ -3476,9 +3476,11 @@ static void draw_modes()
     lines.draw = Draw::Lines;
     PartLook many;
     many.instances = 200;
-    ok("draw: instances off unless the cluster is said to draw them",
+    ok("draw: instances on by default", r.comp->instancing());
+    r.comp->set_instancing(false);
+    ok("draw: instances off refuses a part of instances above 1",
        !r.comp->add_part(1, id, 2, kLitVs, kPartFs, many, 0, &err) &&
-           err == "instances are off on this cluster (cluster-render.conf instancing)");
+           err == "instances are off on this cluster (cluster-render.conf)");
     r.comp->set_instancing(true);
     ok("draw: a part of lines, one of 200 instances",
        r.comp->add_part(1, id, 1, kLitVs, kPartFs, lines, 0, &err) && r.comp->add_part(1, id, 2, kLitVs, kPartFs, many, 0, &err));

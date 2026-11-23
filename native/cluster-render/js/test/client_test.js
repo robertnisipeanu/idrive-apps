@@ -441,11 +441,13 @@ async function main() {
     ovl.drop(rig);
 
     /* Draw modes and instances. */
-    ok('draw: the hello says the service takes draw modes, not instances', ovl.draw === true && ovl.instances === false);
-    const many = ovl.mesh({ target: 'panel', x: 300, y: 300, w: 50, h: 50 });
-    ovl.part(many, 1, { vs: 'attribute vec3 a_position;void main(){}', fs: 'void main(){}', instances: 4 });
-    ok('draw: instances off as shipped: refused', await until(() =>
-        eo.refused.some((r) => r.indexOf('part: instances are off on this cluster') === 0), 2000));
+    ok('draw: the hello says the service takes draw modes and instances', ovl.draw === true && ovl.instances === true);
+    const many = ovl.mesh({ target: 'panel', x: 300, y: 300, w: 50, h: 50, cz: 5 });
+    ovl.part(many, 1, { vs: 'attribute vec3 a_position;uniform mat4 u_mvp;void main(){gl_Position=u_mvp*vec4(a_position,1.0);}',
+        fs: 'void main(){gl_FragColor=vec4(1.0);}', instances: 4 });
+    ovl.geometry(many, 1, { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] });
+    ok('draw: a part of 4 instances: shown', await until(() => eo.layer[many] === 'shown', 3000) &&
+        !eo.refused.some((r) => r.indexOf('part: instances are off') === 0));
     ovl.drop(many);
     const pts = ovl.mesh({ target: 'panel', x: 0, y: 300, w: 200, h: 200, cz: 5 });
     ovl.part(pts, 1, { vs: '#version 300 es\nin vec3 a_position;uniform mat4 u_mvp;void main(){gl_PointSize=2.0;' +
