@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.3
+Shared values: an app's float or vector that uniforms of several of its
+layers and mesh parts follow, set or animated once for all of them, so a
+glow, a colour or a level drawn in many places stays in step.
+
 Cube maps: an asset of six square faces that effect layers and mesh parts
 sample by direction, for reflections and environment lighting, sent once.
 

@@ -1067,6 +1067,44 @@ static void backend(Gpu &gpu)
     ok("cube and draw: the scene described whole", described("check"));
 #endif
 
+    /* Shared values: a float and a vec3, a quad's and a part's uniforms
+     * following them, set, the float animated, replaced and stopped; a value
+     * of another type than its uniform refused; unlinked; dropped. */
+    const int lvl_fx = gpu.effect(kQuadVertexShader,
+                                  "#version 100\nprecision mediump float;\nuniform float u_level;\nuniform vec3 u_tint;\n"
+                                  "varying vec2 v_uv;\nvoid main(){gl_FragColor=vec4(u_tint*u_level,1.0);}",
+                                  &err);
+    Rect lr;
+    lr.w = lr.h = 64;
+    const int vq = lvl_fx ? g->quad(lvl_fx, lr) : 0;
+    const int vp = g->part(v1, all_fx, PartLook());
+    const int level = g->value(1), warmth = g->value(3);
+    const float half = 0.5f, warm[3] = {1.0f, 0.5f, 0.2f};
+    Animation pulse = keyed(Animated::Value, 1, {0, 500, 1000}, {0, 1, 0});
+    int pulsing = 0;
+    ok("values: a float and a vec3 a quad's and a part's uniforms follow, set, the float animated",
+       vq && vp && level && warmth && g->geometry(vp, cube.geometry()) && g->show(vq, true) &&
+           g->set_value(level, &half) && g->set_value(warmth, warm) && g->link(vq, "u_level", level) &&
+           g->link(vp, "u_fade", level) && g->link(vq, "u_tint", warmth) && g->link(vp, "u_tint", warmth) &&
+           (pulsing = g->animate(level, pulse)) && g->flush(13));
+    ok("values: a value of another type than the uniform refused", !g->link(vq, "u_level", warmth));
+    pulse.v = {1, 0, 1};
+    pulsing = g->replace(pulsing, level, pulse);
+    ok("values: its animation replaced", pulsing && g->flush(14));
+    g->stop(pulsing);
+    ok("values: stopped, set again, unlinked",
+       g->set_value(level, warm) && g->link(vq, "u_level", 0) && g->link(vp, "u_fade", 0) &&
+           g->link(vq, "u_tint", 0) && g->link(vp, "u_tint", 0) && g->flush(15));
+    g->drop_value(level);
+    g->drop_value(warmth);
+    g->drop_quad(vq);
+    g->drop_part(vp);
+    ok("values: dropped", g->flush(16));
+#ifndef CRS_RAMSES27
+    ok("values: the scene described whole", described("check"));
+#endif
+    gpu.drop_effect(lvl_fx);
+
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
      * part in it, a quad on screen sampling it; one drawn once, redrawn;

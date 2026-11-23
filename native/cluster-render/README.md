@@ -247,6 +247,10 @@ Beside the layers:
   and sent with a compressed one; its sampler may mirror, wrap each axis
   its own way and sample anisotropically (PROTOCOL.md "Mipmaps and
   samplers").
+- **Shared values:** a client's float or vector that uniforms of its layers
+  and mesh parts follow, set or animated once for all of them, which the
+  display holds once, so they never drift apart (PROTOCOL.md "Shared
+  values").
 - **Canvases:** a client's off-screen pictures (render targets): its
   effect and mesh layers draw in a canvas in passes of its own, and its
   layers on screen sample it as an asset. A canvas may have a depth-stencil

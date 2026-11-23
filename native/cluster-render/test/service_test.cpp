@@ -2997,6 +2997,84 @@ static void animations_after_a_reconnect()
     ok("animations: after a reconnect every one made again, none refused", made() == kLayers && e.errors.empty());
 }
 
+/* Shared values over the socket (PROTOCOL.md "Shared values"), with the C++
+ * client: a float two effect layers' u_level follow, set and animated once
+ * for both, all made again after a service restart; refusals with nothing
+ * made. */
+static void values_over_socket()
+{
+    Rig r;
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("values: the hello says the service takes shared values", c.takes_values());
+    const uint32_t v = c.value("panel", cr::UniformType::Float, {0.5f});
+    const char *fs = "#version 100\nprecision mediump float;\nuniform float u_level;\nvarying vec2 v_uv;\n"
+                     "void main(){gl_FragColor=vec4(u_level);}";
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.w = lo.h = 32;
+    const uint32_t a = c.effect(lo, cr::EffectOptions{fs, "", 0});
+    lo.x = 100;
+    const uint32_t b = c.effect(lo, cr::EffectOptions{fs, "", 0});
+    ok("values: made, two layers' uniforms linked", v && c.link(a, "u_level", v) && c.link(b, "u_level", v) &&
+                                                       !c.link(a, "u_level", a));
+    cr::AnimationOptions pulse;
+    pulse.property = "value";
+    pulse.keys = "0:0 500:1 1000:0";
+    pulse.loop = true;
+    r.pump(300);
+    auto check = [&](const char *when, float want) {
+        FakeGraph *g = r.gpu.graph("panel");
+        int handle = 0, links = 0;
+        if (g)
+            for (const auto &kv : g->shown.values)
+                handle = kv.first;
+        for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+            links += kv.second.links.count("u_level") && kv.second.links.at("u_level") == handle;
+        ok((std::string("values: ") + when + ": one value, both layers' u_level following it").c_str(),
+           handle && g->shown.values.at(handle).v[0] == want && links == 2);
+        return g;
+    };
+    check("made", 0.5f);
+    c.set_value(v, {0.9f});
+    const uint32_t anim = c.animate(v, pulse);
+    r.pump(200);
+    FakeGraph *g = check("set", 0.9f);
+    ok("values: one animation of it", anim && g && g->shown.animations.size() == 1 &&
+                                          g->shown.animations.begin()->second.a.property == Animated::Value);
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    g = check("after a service restart", 0.9f);
+    ok("values: its animation made again", g && g->shown.animations.size() == 1 && e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"value\",\"ref\":1,\"target\":\"panel\",\"type\":\"vec3\",\"v\":\"1 2\"}");
+    raw.send("{\"op\":\"value\",\"ref\":2,\"target\":\"panel\",\"type\":\"float\",\"v\":\"0.5\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":3,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":9}");
+    raw.send("{\"op\":\"animate\",\"ref\":2,\"anim\":1,\"property\":\"rotate\",\"keys\":\"0:0 9:1\"}");
+    raw.send("{\"op\":\"value\",\"ref\":2,\"type\":\"vec4\",\"v\":\"1 1 1 1\"}");
+    raw.send("{\"op\":\"link\",\"ref\":3,\"name\":\"u_level\",\"value\":2}");
+    raw.send("{\"op\":\"animate\",\"ref\":3,\"anim\":1,\"property\":\"uniform\",\"name\":\"u_level\",\"keys\":\"0:0 9:1\"}");
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("values: v not of the type's width refused", refused("value", 1, "v is 3 finite numbers"));
+    ok("values: a link to no value refused", refused("link", 3, "no such value"));
+    ok("values: a value animated as a node refused", refused("animate", 2, "a value's animation has no property"));
+    ok("values: its type set when made", refused("value", 2, "a value's type and target are set when it is made"));
+    ok("values: a linked uniform's own animation refused", refused("animate", 3, "the uniform follows a value"));
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -3515,6 +3593,7 @@ int main()
     canvases_to_an_older_service();
     motion_over_socket();
     animations_after_a_reconnect();
+    values_over_socket();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

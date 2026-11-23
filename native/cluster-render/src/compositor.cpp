@@ -266,6 +266,13 @@ void Compositor::apply_binds(Entry &e)
             log_error("layer %u: %s", e.layer->id(), e.error.c_str());
         }
     }
+    for (const auto &kv : e.links) {
+        const int d = e.layer->drawable(kv.first.first);
+        auto v = values_.find(kv.second);
+        if (!d || v == values_.end() || !v->second.handle ||
+            !t.graph->link(d, kv.first.second.c_str(), v->second.handle))
+            log_warn("layer %u: %s not linked to value %u", e.layer->id(), kv.first.second.c_str(), kv.second);
+    }
     t.dirty = true;
 }
 
@@ -655,6 +662,186 @@ void Compositor::arrange_canvases(int ti)
     }
 }
 
+uint32_t Compositor::add_value(uint64_t owner, int target, uint32_t width, const float *v, std::string *err)
+{
+    if (target < 0 || target >= (int)targets_.size()) {
+        *err = "unknown target";
+        return 0;
+    }
+    if (width < 1 || width > 4) {
+        *err = "a value is a float, vec2, vec3 or vec4";
+        return 0;
+    }
+    uint32_t mine = 0;
+    for (const auto &kv : values_)
+        mine += kv.second.owner == owner;
+    if (values_.size() >= kValues || mine >= kClientValues) {
+        *err = "too many values";
+        return 0;
+    }
+    const uint32_t id = next_id_++;
+    ValueEntry &ve = values_[id];
+    ve.owner = owner;
+    ve.target = target;
+    ve.width = width;
+    std::copy(v, v + width, ve.v);
+    Target &t = targets_[target];
+    if (t.graph)
+        make_value(t, ve);
+    return id;
+}
+
+void Compositor::make_value(Target &t, ValueEntry &ve)
+{
+    ve.handle = t.graph->value(ve.width);
+    if (!ve.handle || !t.graph->set_value(ve.handle, ve.v))
+        log_warn("compositor: a value refused by the renderer");
+    for (auto &kv : ve.anims)
+        kv.second.handle = ve.handle ? t.graph->animate(ve.handle, kv.second.a) : 0;
+    t.dirty = true;
+}
+
+const Compositor::ValueEntry *Compositor::value(uint64_t owner, uint32_t id) const
+{
+    auto it = values_.find(id);
+    return it == values_.end() || it->second.owner != owner ? nullptr : &it->second;
+}
+
+bool Compositor::set_value(uint64_t owner, uint32_t id, const float *v, std::string *err)
+{
+    auto it = values_.find(id);
+    if (it == values_.end() || it->second.owner != owner) {
+        *err = "no such value";
+        return false;
+    }
+    ValueEntry &ve = it->second;
+    std::copy(v, v + ve.width, ve.v);
+    Target &t = targets_[ve.target];
+    if (t.graph && ve.handle) {
+        t.graph->set_value(ve.handle, ve.v);
+        t.dirty = true;
+    }
+    return true;
+}
+
+bool Compositor::animate_value(uint64_t owner, uint32_t id, uint32_t anim, const Animation &a, std::string *err)
+{
+    auto it = values_.find(id);
+    if (it == values_.end() || it->second.owner != owner) {
+        *err = "no such value";
+        return false;
+    }
+    ValueEntry &ve = it->second;
+    if (a.width != ve.width || ve.width == 2) {
+        *err = ve.width == 2 ? "a vec2 value is set, not animated"
+                             : "each key takes " + std::to_string(ve.width) + " values, as the value";
+        return false;
+    }
+    auto now = ve.anims.find(anim);
+    if (now == ve.anims.end() && ve.anims.size() >= Layer::kMaxAnimations) {
+        *err = "at most " + std::to_string(Layer::kMaxAnimations) + " animations a value";
+        return false;
+    }
+    Animation played = a;
+    played.property = Animated::Value;
+    Target &t = targets_[ve.target];
+    int handle = 0;
+    if (t.graph && ve.handle) {
+        handle = now != ve.anims.end() && now->second.handle ? t.graph->replace(now->second.handle, ve.handle, played)
+                                                             : t.graph->animate(ve.handle, played);
+        if (!handle) {
+            ve.anims.erase(anim);
+            *err = "the renderer refused the animation";
+            return false;
+        }
+        t.dirty = true;
+    }
+    ValueEntry::Played &p = ve.anims[anim];
+    p.a = played;
+    p.handle = handle;
+    return true;
+}
+
+bool Compositor::stop_value(uint64_t owner, uint32_t id, uint32_t anim)
+{
+    auto it = values_.find(id);
+    if (it == values_.end() || it->second.owner != owner)
+        return false;
+    auto p = it->second.anims.find(anim);
+    if (p == it->second.anims.end())
+        return false;
+    Target &t = targets_[it->second.target];
+    if (t.graph && p->second.handle) {
+        t.graph->stop(p->second.handle);
+        /* where the animation left it, the value goes back to what was set */
+        t.graph->set_value(it->second.handle, it->second.v);
+        t.dirty = true;
+    }
+    it->second.anims.erase(p);
+    return true;
+}
+
+bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name, uint32_t value,
+                      std::string *err)
+{
+    Entry *en = find(layer);
+    if (!en || en->owner != owner) {
+        *err = "no such layer";
+        return false;
+    }
+    Entry &e = *en;
+    const std::string kind = e.layer->kind();
+    if (kind != "effect" && kind != "mesh") {
+        *err = "links are for effect layers and mesh parts";
+        return false;
+    }
+    Uniforms *u = e.layer->uniforms_of(part);
+    if (!u) {
+        *err = kind == "effect" ? "effect layers have no parts" : "no such part";
+        return false;
+    }
+    auto v = values_.find(value);
+    if (value && (v == values_.end() || v->second.owner != owner)) {
+        *err = "no such value";
+        return false;
+    }
+    if (value && v->second.target != e.layer->target()) {
+        *err = "the value is on another target";
+        return false;
+    }
+    if (value && e.layer->animating(part, name)) {
+        *err = "an animation plays the uniform: stop it first";
+        return false;
+    }
+    const std::pair<uint32_t, std::string> key(part, name);
+    if (value && !e.links.count(key) && e.links.size() >= kMaxLinks) {
+        *err = "at most " + std::to_string(kMaxLinks) + " links a layer";
+        return false;
+    }
+    Target &t = targets_[e.layer->target()];
+    const int d = e.layer->drawable(part);
+    if (t.graph && d && (value ? v->second.handle : e.links.count(key))) {
+        if (!t.graph->link(d, name.c_str(), value ? v->second.handle : 0)) {
+            *err = "the shader has no uniform " + name + " of the value's type";
+            return false;
+        }
+        t.dirty = true;
+    }
+    u->link(name, value != 0);
+    if (value)
+        e.links[key] = value;
+    else
+        e.links.erase(key);
+    touch(e.layer.get());
+    return true;
+}
+
+bool Compositor::linked(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name) const
+{
+    const Entry *e = find(layer);
+    return e && e->owner == owner && e->links.count(std::make_pair(part, name));
+}
+
 bool Compositor::sampled(uint32_t id) const
 {
     auto in = [id](const std::map<uint32_t, Entry> &m) {
@@ -771,6 +958,36 @@ Asset *Compositor::asset(uint64_t owner, uint32_t id)
 
 bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
 {
+    auto val = values_.find(id);
+    if (val != values_.end() && val->second.owner == owner) {
+        /* its links go, each uniform back to its own value */
+        auto unlink = [&](std::map<uint32_t, Entry> &m) {
+            for (auto &kv : m)
+                for (auto l = kv.second.links.begin(); l != kv.second.links.end();) {
+                    if (l->second != id) {
+                        ++l;
+                        continue;
+                    }
+                    const auto key = l->first;
+                    ++l;
+                    link(kv.second.owner, kv.first, key.first, key.second, 0, err);
+                }
+        };
+        unlink(layers_);
+        for (auto &ck : canvases_)
+            unlink(ck.second.layers);
+        Target &t = targets_[val->second.target];
+        if (t.graph && val->second.handle) {
+            for (const auto &a : val->second.anims)
+                if (a.second.handle)
+                    t.graph->stop(a.second.handle);
+            t.graph->drop_value(val->second.handle);
+            t.dirty = true;
+        }
+        values_.erase(val);
+        err->clear();
+        return true;
+    }
     auto cv = canvases_.find(id);
     if (cv != canvases_.end() && cv->second.owner == owner) {
         if (!cv->second.layers.empty() || sampled(id)) {
@@ -1452,6 +1669,9 @@ void Compositor::remove_owner(uint64_t owner)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);
     for (const auto &kv : canvases_)
+        if (kv.second.owner == owner)
+            ids.push_back(kv.first);
+    for (const auto &kv : values_)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);
     std::string err;
@@ -2768,6 +2988,10 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->attach(t.graph.get());
+    /* Values before the layers linked to them. */
+    for (auto &kv : values_)
+        if (kv.second.target == ti)
+            make_value(t, kv.second);
     /* Canvases before the layers that sample them; their own layers once
      * every canvas is made, so a bind of one made later is applied too. */
     for (auto &ck : canvases_)
@@ -2832,6 +3056,12 @@ void Compositor::unpublish(const TargetSpec &spec)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->detach(false);
+    for (auto &kv : values_)
+        if (kv.second.target == ti) {
+            kv.second.handle = 0;
+            for (auto &a : kv.second.anims)
+                a.second.handle = 0;
+        }
     for (auto &ck : canvases_) {
         if (ck.second.canvas->target() != ti)
             continue;

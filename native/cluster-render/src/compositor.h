@@ -297,6 +297,40 @@ public:
     const Canvas *canvas(uint32_t id) const;
     std::vector<const Canvas *> canvases() const;
     static const uint32_t kClientCanvases = 4, kCanvases = 8;
+    /* A shared value: its width and value, its handle in its target's
+     * scene (0: none), and its animations, made again in each new scene. */
+    struct ValueEntry {
+        uint64_t owner = 0;
+        int target = 0;
+        uint32_t width = 1;
+        float v[4] = {0, 0, 0, 0};
+        int handle = 0;
+        struct Played {
+            Animation a;
+            int handle = 0;
+        };
+        std::map<uint32_t, Played> anims;
+    };
+    /* A shared value (PROTOCOL.md "Shared values") of the client's on
+     * target: width floats (1-4), at most kClientValues a client and
+     * kValues in all, dropped as an asset (remove_asset(): its links go).
+     * 0 with *err when refused. */
+    uint32_t add_value(uint64_t owner, int target, uint32_t width, const float *v, std::string *err);
+    static const uint32_t kClientValues = 32, kValues = 128, kMaxLinks = 32;
+    /* The client's value id; null when none. */
+    const ValueEntry *value(uint64_t owner, uint32_t id) const;
+    bool set_value(uint64_t owner, uint32_t id, const float *v, std::string *err);
+    /* Animation anim of the value (its width 1, 3 or 4), replacing one of
+     * that number; one animation for every uniform linked to it. */
+    bool animate_value(uint64_t owner, uint32_t id, uint32_t anim, const Animation &a, std::string *err);
+    bool stop_value(uint64_t owner, uint32_t id, uint32_t anim);
+    /* The layer's uniform (of part, for a mesh layer) follows the client's
+     * value on its target, of the uniform's type; value 0: it does not, and
+     * takes its own value again. False with *err. */
+    bool link(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name, uint32_t value,
+              std::string *err);
+    /* The layer's part's uniform name follows a value. */
+    bool linked(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name) const;
     /* The asset if it exists and belongs to owner. */
     Asset *asset(uint64_t owner, uint32_t id);
     /* False with *err while a layer samples it. */
@@ -530,6 +564,7 @@ private:
         /* Its look may differ from flushed: in its target's touched list. */
         bool touched = false;
         std::map<std::pair<uint32_t, std::string>, uint32_t> binds;   /* (part, sampler) -> asset */
+        std::map<std::pair<uint32_t, std::string>, uint32_t> links;   /* (part, uniform) -> value */
     };
     struct AssetEntry {
         std::unique_ptr<Asset> asset;
@@ -826,6 +861,9 @@ private:
     /* Every target's key bucket brought up to now_ms, for the time since
      * the last refill that the writes ran at writes_rate(). */
     void refill_keys(int64_t now_ms);
+    std::map<uint32_t, ValueEntry> values_;
+    /* The value made in the target's scene, set, its animations started. */
+    void make_value(Target &t, ValueEntry &ve);
     /* A layer's entry, in the stack or a canvas (*in, null for the stack);
      * null when none. */
     Entry *find(uint32_t id, CanvasEntry **in = nullptr);

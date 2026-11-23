@@ -266,7 +266,8 @@ public:
     {
     }
 
-    /* The library's uniform types (learn()), for animate(); null: unknown. */
+    /* The library's uniform types (learn()), for animate() and link(); null:
+     * unknown. */
     void set_types(const Ramses19Types *t) { types_ = t; }
 
     ~Ramses19Graph() override
@@ -1117,6 +1118,75 @@ public:
         return good;
     }
 
+    int value(uint32_t width) override
+    {
+        ramses::DataObject *d = width == 1   ? (ramses::DataObject *)scene_->createDataFloat()
+                                : width == 2 ? (ramses::DataObject *)scene_->createDataVector2f()
+                                : width == 3 ? (ramses::DataObject *)scene_->createDataVector3f()
+                                : width == 4 ? (ramses::DataObject *)scene_->createDataVector4f()
+                                             : nullptr;
+        if (!d)
+            return 0;
+        values_[next_] = Value{d, width};
+        return next_++;
+    }
+
+    bool set_value(int value, const float *v) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return false;
+        ramses::DataObject *d = it->second.data;
+        switch (it->second.width) {
+        case 1: return ok(static_cast<ramses::DataFloat *>(d)->setValue(v[0]));
+        case 2: return ok(static_cast<ramses::DataVector2f *>(d)->setValue(v[0], v[1]));
+        case 3: return ok(static_cast<ramses::DataVector3f *>(d)->setValue(v[0], v[1], v[2]));
+        default: return ok(static_cast<ramses::DataVector4f *>(d)->setValue(v[0], v[1], v[2], v[3]));
+        }
+    }
+
+    /* The library refuses a data object of another type than the uniform. */
+    bool link(int drawable, const char *name, int value) override
+    {
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(drawable, &app);
+        ramses::UniformInput in;
+        auto it = values_.find(value);
+        if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
+            return false;
+        /* the uniform a float, vec2, vec3 or vec4 as the value: the library
+         * logs an error for another */
+        if (value && (!types_ || (uint32_t)in.getDataType() != types_->uniform[it->second.width - 1]))
+            return false;
+        if (app->isInputBound(in) && !ok(app->unbindInput(in)))
+            return false;
+        return !value || ok(app->bindInput(in, *it->second.data));
+    }
+
+    /* Its animations retired (retire()); its data object kept while an
+     * animation system that animated it lasts, as a retired animation there
+     * may still name it, and taken away with the last such: no system made
+     * again for it, so dropping one costs no other animation's keys. */
+    void drop_value(int value) override
+    {
+        auto it = values_.find(value);
+        if (it == values_.end())
+            return;
+        for (auto a = anims_.begin(); a != anims_.end();) {
+            if (a->second.node != value) {
+                ++a;
+                continue;
+            }
+            retire(a->second);
+            a = anims_.erase(a);
+        }
+        if (it->second.systems.empty())
+            scene_->destroy(*it->second.data);
+        else
+            orphans_.push_back(it->second);
+        values_.erase(it);
+    }
+
     /* A canvas drawn once draws once more, with its next flush. */
     bool redraw(int canvas) override
     {
@@ -1301,6 +1371,11 @@ private:
     bool resolve(int node, const Animation &a, ramses::Node **target, ramses::Appearance **app,
                  ramses::UniformInput *in)
     {
+        if (a.property == Animated::Value) {
+            *target = nullptr;
+            *app = nullptr;
+            return values_.count(node) && values_.at(node).width == a.width;
+        }
         auto q = quads_.find(node);
         auto p = parts_.find(node);
         auto v = views_.find(node);
@@ -1381,6 +1456,17 @@ private:
                 left = left || kv.second.moving;
             if (!left) {
                 scene_->destroy(*old_);
+                for (auto &kv : values_)
+                    kv.second.systems.erase(old_);
+                for (auto o = orphans_.begin(); o != orphans_.end();) {
+                    o->systems.erase(old_);
+                    if (!o->systems.empty()) {
+                        ++o;
+                        continue;
+                    }
+                    scene_->destroy(*o->data);
+                    o = orphans_.erase(o);
+                }
                 old_ = nullptr;
             }
         }
@@ -1430,6 +1516,7 @@ private:
         ramses::UniformInput in;
         if (!resolve(node, a, &target, &app, &in))
             return false;
+        auto dv = values_.find(node);
         if (!anim_)
             anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
         if (!anim_)
@@ -1448,7 +1535,10 @@ private:
                 vals[k] = -vals[k];
 
         an.spline = spline(a, vals);
-        if (an.spline && a.property == Animated::Uniform) {
+        if (an.spline && a.property == Animated::Value) {
+            an.prop = anim_->createAnimatedProperty(*dv->second.data);
+            dv->second.systems.insert(anim_);
+        } else if (an.spline && a.property == Animated::Uniform) {
             an.prop = anim_->createAnimatedProperty(in, *app);
         } else if (an.spline) {
             const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
@@ -1723,6 +1813,18 @@ private:
     ramses::AnimationSystemRealTime *anim_ = nullptr;
     const Ramses19Types *types_ = nullptr;
     ramses::AnimationSystemRealTime *old_ = nullptr;   /* being left: its animations move to anim_ */
+    /* Shared values: a data object each, of width floats; systems: the
+     * animation systems an animation of it was made in, which may name it
+     * while they last. */
+    struct Value {
+        ramses::DataObject *data = nullptr;
+        uint32_t width = 1;
+        std::set<ramses::AnimationSystemRealTime *> systems;
+    };
+    std::map<int, Value> values_;
+    /* Dropped values' data objects, kept while a system that animated them
+     * lasts (settle_animations() takes them away with it). */
+    std::vector<Value> orphans_;
     /* Keys of retired animations still in anim_. */
     size_t retired_keys_ = 0;
     static const size_t kRetiredKeys = 4096;

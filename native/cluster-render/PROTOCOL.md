@@ -44,15 +44,17 @@ lacks.
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
+| `value` | `ref`, `target`, `type` (`float` default, `vec2`, `vec3`, `vec4`), `v` ([below](#shared-values)); sent again with its ref, `v` alone: set |
+| `link` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `name` (the shader's uniform), `value` (a value's ref on the same target; 0: unlinked) ([below](#shared-values)) |
 | `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)); `draw` and `instances` ([below](#draw-modes-and-instances)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
-| `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
+| `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)); `ref` a value's: `property` `value` or none, no `part` or `name` |
 | `stop` | `ref`, `anim` |
 | `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order` ([below](#scene-files)); sent again with its ref, another file in place |
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
 | `host` | `ref` (a scene with `layers` 1) or `into` (a target this client's layers are on, [below](#hosting-from-layers)), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
 | `unhost` | `ref` or `into`, `target`: that host of `target` ends; to a service whose hello has `host_layers` 1 |
-| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), or a canvas nothing draws in or samples (else refused: `canvas in use`) |
+| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
 
@@ -477,6 +479,51 @@ knows no `cube`, the asset is a plain one: its six-face frame is refused
 nothing drawn. Check the hello's `cube` (`takes_cube()`, `cubeMaps`)
 first.
 
+### Shared values
+
+Send these only to a service whose hello has `values` 1. A value is a
+client's float, `vec2`, `vec3` or `vec4` on a target, made by `value` with
+its first `v` (zeros when absent), which uniforms of the client's effect
+layers and mesh parts there follow (`link`), on screen and in canvases.
+One `value` with its ref and a new `v` sets it, and one `animate` of it
+moves it, for every uniform that follows it at once: the display holds it
+once (a RAMSES data object bound to each uniform), so they never drift
+apart, whenever each was linked, and a change costs one value's bytes
+however many follow it.
+
+- **Links:** `link` makes the layer's uniform `name` (a mesh layer's
+  part's, with `part`) follow `value`, a value of the same type as the
+  uniform (else `the shader has no uniform ... of the value's type`), sent
+  again with another value to follow that one, with `value` 0 to follow
+  none. A followed uniform's own `uniform` messages are kept, not drawn,
+  and drawn again when it is unlinked. A uniform an animation of the layer
+  plays is not linked (`an animation plays the uniform: stop it first`),
+  nor is a linked uniform animated on its own (`the uniform follows a
+  value`). A layer has at most 32 links.
+- **Animations:** `animate` with the value's ref, `anim`, `keys` of the
+  value's width, `loop` and `interp` as a layer's, `property` `value` or
+  none. A `float`, `vec3` or `vec4` is animated; a `vec2` is only set
+  (`a vec2 value is set, not animated`). At most 16 a value; `stop` ends
+  one, the value back to what was last set.
+- **Limits:** 32 values a client, 128 in all (`too many values`). A value
+  is the client's own: another client's layers cannot follow it (`no such
+  value`), nor a layer on another target (`the value is on another
+  target`).
+- **Dropped** with `drop`: every uniform that followed it takes its own
+  value again. Values are made again, set and animated, in each new scene
+  of their target, before the layers; the client libraries send them again
+  after a reconnect with the assets, and the links with the binds.
+- **An older service** answers `value` and `link` with `unknown op`, and
+  an `animate` of a value with `no such layer`; its uniforms keep their
+  own values.
+
+```json
+{"op":"value","ref":20,"target":"panel","type":"float","v":"0.5"}
+{"op":"link","ref":4,"name":"u_glow","value":20}
+{"op":"link","ref":7,"part":2,"name":"u_glow","value":20}
+{"op":"animate","ref":20,"anim":1,"keys":"0:0 600:1 1200:0","loop":1,"interp":"smooth"}
+```
+
 ### Canvases
 
 Send these only to a service whose hello has `canvas` 1. A canvas is a
@@ -833,7 +880,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

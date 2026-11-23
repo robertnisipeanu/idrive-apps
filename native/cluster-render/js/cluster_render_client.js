@@ -243,7 +243,8 @@ class ClusterRender extends EventEmitter {
     _replay(canvases) {
         const inCanvas = (ref) => ClusterRender._inCanvas(this.layers.get(ref));
         [true, false].forEach((assets) => this.layers.forEach((l, ref) => {
-            if (ClusterRender._inCanvas(l) !== canvases || (l.kind === 'asset' || l.kind === 'canvas') !== assets) return;
+            if (ClusterRender._inCanvas(l) !== canvases ||
+                (l.kind === 'asset' || l.kind === 'canvas' || l.kind === 'value') !== assets) return;
             this._send(this._layerMsg(ref, l));
                 if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
                 l.hosts.forEach((m) => this._send(m));
@@ -257,6 +258,9 @@ class ClusterRender extends EventEmitter {
         }));
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => {
             if ((ClusterRender._inCanvas(l) || inCanvas(l.binds[k].asset)) === canvases) this._send(l.binds[k].msg);
+        }));
+        this.layers.forEach((l) => Object.keys(l.links).forEach((k) => {
+            if (ClusterRender._inCanvas(l) === canvases) this._send(l.links[k].msg);
         }));
         this.layers.forEach((l) => { if (ClusterRender._inCanvas(l) === canvases) l.anims.forEach((m) => this._send(m)); });
     }
@@ -295,6 +299,7 @@ class ClusterRender extends EventEmitter {
             this.draw = ev.draw === 1;   /* takes a part's draw mode */
             this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
             this.cubeMaps = ev.cube === 1;   /* takes cube map assets */
+            this.values = ev.values === 1;   /* takes shared values (value(), link()) */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -391,6 +396,7 @@ class ClusterRender extends EventEmitter {
             if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
             return m;
         }
+        if (l.kind === 'value') return l.msg;
         if (l.kind === 'canvas') {
             const m = { op: 'canvas', ref: ref, target: o.target, w: o.w, h: o.h };
             if (o.depth) m.depth = 1;
@@ -445,7 +451,7 @@ class ClusterRender extends EventEmitter {
 
     _add(kind, opts) {
         const o = Object.assign({}, opts);
-        const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, anims: new Map(), nextAnim: 1,
+        const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1,
             dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map(), hosts: new Map() };
         if (kind === 'scene' && !(o.file && [].concat(o.sha256 || []).length === (o.res || []).length + 1)) return 0;
         if (kind === 'image') {
@@ -659,6 +665,52 @@ class ClusterRender extends EventEmitter {
         this._send(m);
     }
 
+    /* A shared value (PROTOCOL.md "Shared values"), to a service whose hello
+     * has values (this.values): opts target, type ('float' default, 'vec2',
+     * 'vec3', 'vec4'), v (its first value, as many numbers). Uniforms of this
+     * app's effect layers and mesh parts there follow it (link());
+     * setValue() sets it and animate(ref, { property: 'value', keys })
+     * animates it, for all of them at once. Returns its ref, 0 when v does
+     * not fit the type. */
+    value(opts) {
+        const width = { float: 1, vec2: 2, vec3: 3, vec4: 4 }[opts.type || 'float'];
+        const v = [].concat(opts.v === undefined ? new Array(width || 0).fill(0) : opts.v);
+        if (!width || v.length !== width || !v.every((x) => typeof x === 'number' && isFinite(x))) return 0;
+        const ref = this.nextRef;
+        const l = { kind: 'value', opts: { target: opts.target, type: opts.type || 'float' }, width: width,
+            uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1, edits: new Map(),
+            hosts: new Map() };
+        l.msg = { op: 'value', ref: ref, target: opts.target, type: l.opts.type, v: v.join(' ') };
+        this.nextRef++;
+        this.layers.set(ref, l);
+        this._send(l.msg);
+        return ref;
+    }
+
+    setValue(ref, v) {
+        const l = this.layers.get(ref);
+        v = [].concat(v);
+        if (!l || l.kind !== 'value' || v.length !== l.width || !v.every((x) => typeof x === 'number' && isFinite(x)))
+            return false;
+        l.msg = Object.assign({}, l.msg, { v: v.join(' ') });
+        this._send(l.msg);
+        return true;
+    }
+
+    /* The effect layer's uniform (or mesh part's) follows the value, of the
+     * uniform's type; value 0: it does not, and takes its own value again. */
+    link(ref, uniform, value, part) {
+        const l = this.layers.get(ref), v = this.layers.get(value);
+        if (!l || (l.kind !== 'effect' && l.kind !== 'mesh') || !uniform || (value && (!v || v.kind !== 'value')))
+            return false;
+        const m = { op: 'link', ref: ref, name: uniform, value: value || 0 };
+        if (part) m.part = part;
+        if (value) l.links[(part || 0) + ':' + uniform] = { value: value, msg: m };
+        else delete l.links[(part || 0) + ':' + uniform];
+        this._send(m);
+        return true;
+    }
+
     /* The effect layer's (or mesh part's) sampler samples the asset. */
     bind(ref, sampler, asset, part) {
         const l = this.layers.get(ref), a = this.layers.get(asset);
@@ -774,6 +826,8 @@ class ClusterRender extends EventEmitter {
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => { sampled = sampled || l.binds[k].asset === ref; }));
         /* a canvas with layers in it stays too */
         this.layers.forEach((l) => { sampled = sampled || l.opts.canvas === ref; });
+        /* a value dropped: the service undoes its links */
+        this.layers.forEach((l) => Object.keys(l.links).forEach((k) => { if (l.links[k].value === ref) delete l.links[k]; }));
         if (!sampled) this.layers.delete(ref);
         this.pendingFrames.delete(ref);
         if (!held) this._send({ op: 'drop', ref: ref });

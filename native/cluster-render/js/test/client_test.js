@@ -29,7 +29,8 @@
  * one sent with its chain, and a factor the service lacks refused; a
  * canvas drawn in with stencil state and sampled on screen; to a service
  * without canvases (a rollback) nothing of a canvas sent, all of it to one
- * that takes them; a pivot, a part following it and an eased animation;
+ * that takes them; a shared value a layer's uniform follows, set and
+ * animated; a pivot, a part following it and an eased animation;
  * close() and connect() in one tick making one connection. */
 'use strict';
 
@@ -474,6 +475,24 @@ async function main() {
     ovl.drop(sky);
     [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
     eo.refused.length = refusedBefore;   /* the bad one's and the drop's refusals, expected */
+
+    /* Shared values (PROTOCOL.md "Shared values"). */
+    ok('values: the hello says the service takes them', ovl.values === true);
+    const lvl = ovl.value({ target: 'panel', v: 0.5 });
+    const fxA = ovl.effect({ target: 'panel', klass: 'overlay', x: 0, y: 0, w: 16, h: 16,
+        fs: 'precision mediump float;uniform float u_level;void main(){gl_FragColor=vec4(u_level);}' });
+    ok('values: a uniform linked, a layer refused as a value, a vec3 refused as a float',
+        lvl > 0 && ovl.link(fxA, 'u_level', lvl) && !ovl.link(fxA, 'u_level', fxA) &&
+        ovl.value({ target: 'panel', type: 'vec3', v: 1 }) === 0);
+    const refusedValues = eo.refused.length;
+    ok('values: set and animated', ovl.setValue(lvl, 0.75) &&
+        ovl.animate(lvl, { property: 'value', keys: '0:0 500:1', loop: true, interp: 'smooth' }) > 0);
+    const valueRefusals = () => eo.refused.slice(refusedValues).filter((r) => /^(value|link|animate)/.test(r));
+    ok('values: the linked layer shown, no value, link or animation refused',
+        await until(() => eo.layer[fxA] === 'shown', 3000) && (await sleep(200), valueRefusals().length === 0));
+    ovl.drop(lvl);
+    ok('values: dropped, the link forgotten here', Object.keys(ovl.layers.get(fxA).links).length === 0);
+    ovl.drop(fxA);
 
     /* Rolled back to a service without canvases: none of a canvas sent to
      * it (it would draw a layer drawn in one on screen), made before its

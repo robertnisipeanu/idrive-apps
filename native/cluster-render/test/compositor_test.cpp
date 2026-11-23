@@ -3663,6 +3663,125 @@ static void compiled_samplers()
                                                                      " to u_atlas");
 }
 
+/* Shared values (PROTOCOL.md "Shared values"): one value a quad's uniform,
+ * a quad's in a canvas and a mesh part's follow; set once for all of them;
+ * one animation of it; a layer's own value of a linked uniform kept, not
+ * sent, and sent again when unlinked; made again, linked and animated, in
+ * a new scene; refusals (another client's value, another target's, a vec2
+ * animated, a uniform an animation plays, the limits); dropped: every link
+ * undone; the client gone: its values gone. */
+static void shared_values()
+{
+    Rig r;
+    std::string err, why;
+    const float half = 0.5f;
+    const uint32_t level = r.comp->add_value(1, r.panel, 1, &half, &err);
+    ok("values: made", level && r.comp->value(1, level) && !r.comp->value(2, level));
+    const uint32_t a = r.comp->add_effect(1, r.panel, params(Klass::Overlay, R(0, 0, 64, 64)), "", kSample, 0, r.now,
+                                          &err);
+    CanvasSpec cs;
+    cs.w = cs.h = 64;
+    const uint32_t cv = r.comp->add_canvas(1, r.panel, cs, &err);
+    LayerParams in = params(Klass::Content, R(0, 0, 64, 64));
+    in.canvas = cv;
+    const uint32_t b = r.comp->add_effect(1, r.panel, in, "", kSample, 0, r.now, &err);
+    r.comp->bind(1, a, 0, "u_atlas", cv, &err);
+    MeshParams mp;
+    const uint32_t m = r.comp->add_mesh(1, r.panel, params(Klass::Content, R(100, 0, 64, 64)), mp, r.now, &err);
+    r.comp->add_part(1, m, 1, kLitVs, kPartFs, PartLook(), &err);
+    r.comp->geometry(1, m, 1, fan(4, true), r.now, &err);
+    const float own = 0.25f;
+    static_cast<EffectLayer *>(r.comp->layer(1, a))->set_uniform("u_level", &own, 1);
+    ok("values: a quad's uniform, a quad's in a canvas and a part's linked",
+       r.comp->link(1, a, 0, "u_level", level, &err) && r.comp->link(1, b, 0, "u_level", level, &err) &&
+           r.comp->link(1, m, 1, "u_level", level, &err) && r.comp->linked(1, a, 0, "u_level"));
+    r.run(200);
+    r.slots.on_shown(0x01000400, r.now);
+    r.run(200);
+    auto check = [&](const char *when, float want) {
+        FakeGraph *g = r.g("panel");
+        int handle = 0, links = 0;
+        if (g)
+            for (const auto &kv : g->shown.values)
+                handle = kv.first;
+        for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+            links += kv.second.links.count("u_level") && kv.second.links.at("u_level") == handle;
+        for (const auto &kv : g ? g->shown.parts : std::map<int, FakePart>())
+            links += kv.second.links.count("u_level") && kv.second.links.at("u_level") == handle;
+        bool own_sent = false;
+        for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+            own_sent = own_sent || kv.second.uniforms.count("u_level");
+        ok((std::string("values: ") + when + ": one value, three uniforms following it, none set on its own").c_str(),
+           handle && g->shown.values.size() == 1 && g->shown.values.at(handle).v[0] == want && links == 3 &&
+               !own_sent);
+        return handle;
+    };
+    check("made", 0.5f);
+    const float more = 0.8f;
+    FakeGraph *g = r.g("panel");
+    const int sets = g ? g->shown.values.begin()->second.sets : -1;
+    r.comp->set_value(1, level, &more, &err);
+    r.run(50);
+    ok("values: set once for all of them", g && g->shown.values.begin()->second.sets == sets + 1 &&
+                                               g->shown.values.begin()->second.v[0] == 0.8f);
+    Animation pulse = keys(Animated::Value, 1, {0, 500, 1000}, {0, 1, 0});
+    ok("values: one animation of it", r.comp->animate_value(1, level, 1, pulse, &err) && (r.run(50), true) &&
+                                          g->shown.animations.size() == 1 &&
+                                          g->shown.animations.begin()->second.node == g->shown.values.begin()->first);
+    pulse.v = {0, 0.5f, 0};
+    ok("values: sent again, replaced", r.comp->animate_value(1, level, 1, pulse, &err) && (r.run(50), true) &&
+                                           g->shown.animations.size() == 1 &&
+                                           g->shown.animations.begin()->second.a.v[1] == 0.5f);
+    r.comp->unpublish(r.slots.targets()[r.panel]);
+    std::string perr;
+    r.comp->publish(r.slots.targets()[r.panel], &perr);
+    r.run(200);
+    g = r.g("panel");
+    check("in a new scene", 0.8f);
+    ok("values: its animation started again", g && g->shown.animations.size() == 1);
+
+    /* Refusals. */
+    const float two[2] = {1, 2};
+    const uint32_t pair = r.comp->add_value(1, r.panel, 2, two, &err);
+    ok("values: a vec2 is set, not animated",
+       pair && !r.comp->animate_value(1, pair, 1, keys(Animated::Value, 2, {0, 9}, {0, 0, 1, 1}), &err));
+    ok("values: keys of another width refused", !r.comp->animate_value(1, level, 2, keys(Animated::Value, 3, {0, 9},
+                                                                                         {0, 0, 0, 1, 1, 1}),
+                                                                       &err));
+    const uint32_t other = r.comp->add_effect(2, r.panel, params(Klass::Overlay, R(0, 0, 8, 8)), "", kSample, 0, r.now,
+                                              &err);
+    ok("values: another client's value is not one's own",
+       !r.comp->link(2, other, 0, "u_level", level, &err) && err == "no such value");
+    const uint32_t far = r.comp->add_value(1, r.map, 1, &half, &err);
+    ok("values: nor one on another target",
+       !r.comp->link(1, a, 0, "u_tint", far, &err) && err == "the value is on another target");
+    Layer *al = r.comp->layer(1, a);
+    al->animate(5, 0, keys(Animated::Uniform, 1, {0, 9}, {0, 1}, "u_fade"), &err);
+    ok("values: a uniform an animation plays refused", !r.comp->link(1, a, 0, "u_fade", level, &err) &&
+                                                           err == "an animation plays the uniform: stop it first");
+    uint32_t made = 0;
+    for (int i = 0; i < 40; i++)
+        made += r.comp->add_value(3, r.panel, 1, &half, &err) != 0;
+    ok("values: 32 a client", made == 32 && err == "too many values");
+
+    /* Unlinked: the uniform's own value again; dropped: every link undone. */
+    ok("values: unlinked, its own value goes again", r.comp->link(1, a, 0, "u_level", 0, &err) && (r.run(50), true) &&
+                                                         !r.comp->linked(1, a, 0, "u_level"));
+    bool own_back = false;
+    for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+        own_back = own_back || (kv.second.uniforms.count("u_level") && kv.second.uniforms.at("u_level")[0] == 0.25f &&
+                                !kv.second.links.count("u_level"));
+    ok("values: the quad's u_level its own 0.25", own_back);
+    const int vh = g && !g->shown.values.empty() ? g->shown.values.begin()->first : -1;
+    ok("values: dropped, its links undone, its animation gone",
+       r.comp->remove_asset(1, level, &err) && (r.run(50), true) && !r.comp->value(1, level) &&
+           !r.comp->linked(1, b, 0, "u_level") && !r.comp->linked(1, m, 1, "u_level") && !g->shown.values.count(vh) &&
+           std::none_of(g->shown.animations.begin(), g->shown.animations.end(),
+                        [vh](const std::pair<const int, FakeAnimation> &kv) { return kv.second.node == vh; }));
+    r.comp->remove_owner(1);
+    ok("values: the client gone, its values gone", !r.comp->value(1, pair) && !r.comp->value(1, far));
+}
+
 int main()
 {
     image_first_upload();
@@ -3715,6 +3834,7 @@ int main()
     draw_modes();
     cube_maps();
     compiled_samplers();
+    shared_values();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

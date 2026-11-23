@@ -331,7 +331,8 @@ struct Geometry {
     const uint16_t *index = nullptr;
 };
 
-enum class Animated { Rotate, Translate, Scale, Uniform };
+/* Value: a shared value's (Graph::value), its node a value's handle. */
+enum class Animated { Rotate, Translate, Scale, Uniform, Value };
 /* Keys the renderer interpolates by itself: width floats a key, at times in
  * milliseconds from the start, ascending. */
 struct Animation {
@@ -761,6 +762,18 @@ public:
     virtual int canvas(const CanvasSpec &) { return 0; }
     virtual void drop_canvas(int) {}
     virtual bool redraw(int) { return false; }
+
+    /* A shared value (PROTOCOL.md "Shared values"): width floats (1-4),
+     * set (set_value()) and animated (animate() with Animated::Value) once
+     * for every quad and part uniform that follows it (link()). 0 where the
+     * backend has none. */
+    virtual int value(uint32_t) { return 0; }
+    virtual bool set_value(int, const float *) { return false; }
+    /* The drawable's (a quad's or part's) uniform follows the value, which
+     * must be of its type; value 0: it does not any more. */
+    virtual bool link(int, const char *, int) { return false; }
+    /* Its links undone first; its animations stopped. */
+    virtual void drop_value(int) {}
     /* A part's render state as the library holds it, read back with its
      * getters through the backend's own tables (instances aside); with
      * fresh, a new appearance of the part's effect, as the library makes

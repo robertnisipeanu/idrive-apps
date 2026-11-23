@@ -25,6 +25,9 @@
  *   geometry draw modes and instances (a service whose hello has draw):
  *           16 cubes drawn as instances of one, a ring as a line loop and
  *           a field of points, all turned by the renderer;
+ *   values  eight lamps whose glow follows one shared value the renderer
+ *           animates, all in step, and whose rims follow a second value
+ *           set every two seconds (a service whose hello has values);
  *   cubemap a cube map of six coloured faces (a service whose hello has
  *           cube) on a cube the renderer turns, and on one facing the
  *           camera, which shows the +z face (blue).
@@ -35,7 +38,7 @@
  * On the unit (Node 8): copy this file and cluster_render_client.js into one
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
- *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|cubemap]
+ *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video|glow|canvas|motion|geometry|values|cubemap]
  *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
  * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
@@ -44,7 +47,8 @@
 
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
-const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'cubemap'];
+const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video', 'glow', 'canvas', 'motion', 'geometry', 'values',
+    'cubemap'];
 const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
@@ -193,6 +197,21 @@ precision mediump float;
 uniform vec4 u_color;
 void main() {
     gl_FragColor = u_color;
+}`;
+
+/* A lamp: its colour lit by u_glow, a rim of u_rim; premultiplied. */
+const LAMP_FS = `#version 100
+precision mediump float;
+uniform float u_glow;
+uniform vec3 u_color;
+uniform vec3 u_rim;
+varying vec2 v_uv;
+void main() {
+    float d = length(v_uv - 0.5) * 2.0;
+    float core = smoothstep(0.85, 0.0, d) * (0.15 + 0.85 * u_glow);
+    float ring = smoothstep(0.07, 0.0, abs(d - 0.9));
+    float a = max(core, ring);
+    gl_FragColor = vec4(u_color * core + u_rim * ring, a);
 }`;
 
 /* A cube sampling a cube map by its own direction from its centre. */
@@ -571,6 +590,27 @@ function main() {
         cr.uniform(sky, 'u_color', [1, 0.9, 0.6, 1], { part: 2 });
         cr.animate(sky, { part: 1, property: 'rotate', keys: '0:60,0,0 6000:60,0,360', loop: true });
         cr.animate(sky, { part: 2, property: 'rotate', keys: '0:0,0,0 12000:0,360,0', loop: true });
+    }
+
+    if (on('values')) {
+        /* One value the renderer animates, which every lamp's u_glow
+         * follows; another the app sets, every lamp's u_rim. */
+        const glow = name(cr.value({ target: target, v: 0 }), 'glow');
+        const rim = name(cr.value({ target: target, type: 'vec3', v: [1, 1, 1] }), 'rim');
+        const colours = [[1, 0.2, 0.2], [1, 0.55, 0.1], [1, 0.9, 0.1], [0.3, 1, 0.3], [0.1, 0.9, 0.9],
+            [0.2, 0.5, 1], [0.6, 0.3, 1], [1, 0.3, 0.8]];
+        const size = Math.round(Math.min(W / 10, H * 0.6));
+        colours.forEach((c, i) => {
+            const lamp = name(cr.effect({ target: target, x: Math.round(W * 0.05 + i * W * 0.113), y: Math.round((H - size) / 2),
+                w: size, h: size, fs: LAMP_FS, blend: 'premultiplied' }), 'lamp ' + i);
+            cr.uniform(lamp, 'u_color', c);
+            cr.link(lamp, 'u_glow', glow);
+            cr.link(lamp, 'u_rim', rim);
+        });
+        cr.animate(glow, { property: 'value', keys: '0:0 700:1 1400:0', loop: true, interp: 'smooth' });
+        const rims = [[1, 1, 1], [1, 0.8, 0.2], [0.3, 0.8, 1]];
+        let k = 0;
+        setInterval(() => cr.setValue(rim, rims[++k % rims.length]), 2000);
     }
 
     if (on('cubemap')) {
