@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The patch and recovery services run in the head unit's slice for standard
+services, and the journal keeper in its slice for background work, so none
+of them takes CPU time ahead of the HMI.
+
 ## 0.14.12
 
 The tests build with the cluster renderer's iDrive 7 log-level handling
