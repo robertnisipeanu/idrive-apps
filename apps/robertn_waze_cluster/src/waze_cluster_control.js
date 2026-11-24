@@ -663,10 +663,10 @@ class WazeClusterControl extends EventEmitter {
         return ps.state === 'original' ? t('Not patched') : t('Partly patched');
     }
 
-    /* The cluster map row: the shared render's map, while CarPlay's or
-     * Android Auto's patch is in effect: on disk with nothing pending, as
-     * the last status outside a change said (a running or failed change
-     * keeps it). */
+    /* The cluster map row: the shared render's map, while CarPlay's patch
+     * is in effect (on disk with nothing pending) or the running aapd runs
+     * Android Auto's, as the last status outside a change said (a running
+     * or failed change keeps it). */
     mapText() {
         return t('Cluster map: {0}', this._mapState());
     }

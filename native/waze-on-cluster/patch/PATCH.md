@@ -1324,8 +1324,11 @@ about 0.62 x dpi rows down, so the cut is 156 rows up to 200 dpi, then
 1088:480 (240 dpi `4,160,1270,560`, 300 `46,196,1188,524`, 400
 `116,258,1048,462`). The render reads its crop at start: `patchd` writes this
 one to `/var/opt/waze-on-cluster/aa-crop.env`, which `waze-on-cluster.service`
-passes as `-s src_crop=…`, and a change of it waits, with the copy of
-aapd.conf it goes with, for the next head-unit start. Showing the card again removes the file. A render
+passes as `-s src_crop=…`. A crop other than the one the running render
+read at its start (its `WOC_SRC_CROP`, from `/proc/<pid>/environ`) waits,
+with the copy of aapd.conf it goes with, for the next head-unit start; with
+no render running, any change of the file does. Showing the card again
+removes the file. A render
 that restarts before that start (an update of the tool, a crash) reads the
 new crop early, while the phone still draws the old geometry: the map is
 cropped wrongly until the head-unit start.

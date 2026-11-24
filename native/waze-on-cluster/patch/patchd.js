@@ -2137,22 +2137,43 @@ function aaRunning(cb) {
     }, true);
 }
 
+/* The crop override the running render read at its start: its
+ * WOC_SRC_CROP line, '' for none, or null when there is no render to read
+ * (EnvironmentFile puts the line in its environment). */
+var PROC_DIR = process.env.WOC_PROC || '/proc';
+function renderCrop(cb) {
+    cp.execFile('systemctl', ['show', 'waze-on-cluster.service', '-p', 'MainPID'], { timeout: tmo(15000) }, function (err, out) {
+        var m = /^MainPID=(\d+)/m.exec((out || '') + ''), pid = m ? parseInt(m[1], 10) : 0;
+        var env = pid > 0 ? readText(path.join(PROC_DIR, String(pid), 'environ')) : null;
+        if (env === null) { cb(null); return; }
+        var line = env.split('\0').filter(function (l) { return /^WOC_SRC_CROP=/.test(l); })[0];
+        cb(line ? line + '\n' : '');
+    });
+}
+
 /* Applies the chosen density and card in memory. The render reads its crop
- * when it starts, so a change of the crop override is left, with the copy
- * of aapd.conf it goes with, for the next head-unit start; otherwise the
- * change takes effect as any other. done(err, roErr, activation, conflict,
- * why, run): run, what aapd runs, for a marker the caller writes. */
+ * when it starts, so a crop override other than the one the running render
+ * read is left, with the copy of aapd.conf it goes with, for the next
+ * head-unit start (with no render to read, any change of the file is);
+ * otherwise the change takes effect as any other. done(err, roErr,
+ * activation, conflict, why, run): run, what aapd runs, for a marker the
+ * caller writes. */
 function aaApply(noRestart, done) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
     aaRunning(function (run) {
         inmemApply(AA, aaPlanArgs(), noRestart || cropChange, function (pErr, roErr, activation, conflict, why) {
-            if (!pErr && !conflict && !why) {
-                try {
-                    if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
-                } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
+            if (pErr || conflict || why) { done(pErr, roErr, activation, conflict, why, run); return; }
+            var changed;
+            try { changed = setCrop(crop); } catch (e) {
+                done(new Error('writing ' + AA_CROP_ENV + ': ' + e.message), roErr, activation, conflict, why, run);
+                return;
             }
-            done(pErr, roErr, activation, conflict, why, run);
+            renderCrop(function (running) {
+                var waits = running === null ? changed : running !== (crop || '');
+                if (waits && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
+                done(null, roErr, activation, conflict, why, run);
+            });
         }, run);
     });
 }

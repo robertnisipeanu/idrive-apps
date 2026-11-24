@@ -545,15 +545,18 @@ function patchdUnit(opts) {
         "}",
     ].join('\n') + '\n');
     fs.chmodSync(mount, 0o755);
-    /* systemctl: show answers from unit.json, start starts aapd in the
+    /* systemctl: show answers from unit.json (waze-on-cluster.service's
+     * main PID from render.pid, 0 without one), start starts aapd in the
      * fake /proc, every call recorded. */
     t.unitState = path.join(d, 'unit.json');
+    t.renderPid = path.join(d, 'render.pid');
     fs.writeFileSync(t.unitState, JSON.stringify({ pid: 0 }));
     fs.writeFileSync(path.join(d, 'bin', 'systemctl'), '#!' + process.execPath + '\n' + [
         "var fs = require('fs'), a = process.argv.slice(2), u = JSON.parse(fs.readFileSync(" + JSON.stringify(t.unitState) + ", 'utf8'));",
         "var proc = require(" + JSON.stringify(path.join(__dirname, 'carplay_proc.js')) + ");",
         "fs.appendFileSync(" + JSON.stringify(t.calls) + ", 'systemctl ' + a.join(' ') + '\\n');",
-        "if (a[0] === 'show') process.stdout.write('MainPID=' + u.pid + '\\nInvocationID=run-' + u.pid + '\\nExecMainStartTimestampMonotonic=1\\nActiveState=active\\nEnvironment=\\nUser=cia_13002\\n');",
+        "if (a[0] === 'show' && a[1] === 'waze-on-cluster.service') { var r = 0; try { r = parseInt(fs.readFileSync(" + JSON.stringify(t.renderPid) + ", 'utf8'), 10); } catch (e) {} process.stdout.write('MainPID=' + r + '\\n'); }",
+        "else if (a[0] === 'show') process.stdout.write('MainPID=' + u.pid + '\\nInvocationID=run-' + u.pid + '\\nExecMainStartTimestampMonotonic=1\\nActiveState=active\\nEnvironment=\\nUser=cia_13002\\n');",
         "else if (a[0] === 'start' && a[1] === 'aapd.service') proc.start(" + JSON.stringify(t.proc) + ", u.pid, " + JSON.stringify(t.bin) + ", " + JSON.stringify(t.run) + ", 'aapd');",
         "else if (a[0] === 'is-active') process.stdout.write('active\\n');",
     ].join('\n') + '\n');
@@ -603,11 +606,24 @@ function aapdStarts(t, pid) {
     fs.writeFileSync(t.unitState, JSON.stringify({ pid: pid }));
     return proc.start(t.proc, pid, t.bin, t.run, 'aapd');
 }
-/* The next head-unit start: /dev/shm emptied, the boot step arms, aapd starts. */
+/* A running render (waze-on-cluster.service) in the fake /proc, with the
+ * crop override it read at its start (null for none). */
+var RENDER_PID = 999999;
+function renderStarts(t) {
+    var crop = null;
+    try { crop = fs.readFileSync(path.join(t.d, 'var', 'aa-crop.env'), 'utf8'); } catch (e) {}
+    fs.mkdirSync(path.join(t.proc, String(RENDER_PID)), { recursive: true });
+    fs.writeFileSync(path.join(t.proc, String(RENDER_PID), 'environ'), 'PATH=/usr/bin\0' + (crop ? crop.trim() + '\0' : ''));
+    fs.writeFileSync(t.renderPid, String(RENDER_PID));
+}
+/* The next head-unit start: /dev/shm emptied, the boot step arms, aapd
+ * starts, and a running render reads the crop override again. */
 function nextStart(t, pid) {
     ['aa-pending', 'activation-pending'].forEach(function (n) { try { fs.unlinkSync(path.join(t.shm, n)); } catch (e) {} });
     cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: t.env, encoding: 'utf8', timeout: HANG_MS });
-    return aapdStarts(t, pid);
+    var started = aapdStarts(t, pid);   /* the fake /proc holds the new aapd only */
+    if (fs.existsSync(t.renderPid)) renderStarts(t);
+    return started;
 }
 
 (function hooks() {
@@ -949,9 +965,9 @@ async function socketTests() {
     await pf.next(function (m) { return m.ev === 'reboot-reply' && m.ok === false; });
     pf.proc.kill('SIGKILL');
 
-    /* With recmgr's aapd entry and the drop-in loaded, aapd is still never
-     * restarted on its own (it would get no touch input): Patch, the card and
-     * Remove patch each wait for the next head-unit start. */
+    /* With recmgr's aapd entry loaded, aapd is still never restarted on its
+     * own (it would get no touch input): Patch, Zoom, the card and Remove
+     * patch each wait for the next head-unit start. */
     var r = patchdUnit({ recmgr: ['aapd'] });
     r.env.WOC_DENSITY_SPACING_MS = '1';
     var victim = dummyAapd(r);
@@ -1038,6 +1054,26 @@ async function socketTests() {
     st = await send('aa-density', 270, function (aa) { return aa.dpi === 270; });
     st = await send('aa-density', 260, function (aa) { return aa.dpi === 260; });
     ok('Zoom and back before the restart: aapd runs it already, nothing waits', st.aa.state === 'patched' && !st.aa.pending, JSON.stringify(st.aa));
+    /* The turn card with a render running: it waits only while the render
+     * runs another crop than the one asked for. */
+    renderStarts(r);
+    st = await send('aa-card', 'hidden', function (aa) { return aa.diskCard === 'hidden'; });
+    ok('the card hidden over a render without the crop: waits', st.aa.pending === 'apply' && st.aa.runCard === 'shown' && cropEnv(r) !== null, JSON.stringify(st.aa));
+    st = await send('aa-card', 'shown', function (aa) { return aa.diskCard === 'shown'; });
+    ok('and shown again before the restart: the render and aapd run it already, nothing waits', st.aa.state === 'patched' && !st.aa.pending &&
+        cropEnv(r) === null, JSON.stringify(st.aa));
+    st = await send('aa-card', 'hidden', function (aa) { return aa.diskCard === 'hidden'; });
+    st = await send('aa-density', 270, function (aa) { return aa.dpi === 270; });
+    ok('a Zoom over a waiting card: both wait', st.aa.pending === 'apply' && st.aa.dpi === 270 && st.aa.diskCard === 'hidden' && st.aa.runDpi === 260 &&
+        st.aa.runCard === 'shown', JSON.stringify(st.aa));
+    st = await after();
+    ok('the restart runs both: patched at 270 dpi with the card hidden', st.aa.state === 'patched' && st.aa.dpi === 270 && st.aa.diskCard === 'hidden' &&
+        !st.aa.pending, JSON.stringify(st.aa));
+    st = await send('aa-revert', undefined, function (aa) { return aa.pending === 'revert'; });
+    ok('Remove patch with the card hidden: waits, the crop override gone', cropEnv(r) === null && st.aa.runCard === 'hidden', JSON.stringify(st.aa));
+    st = await send('aa-apply', undefined, function (aa) { return aa.state === 'patched' || aa.pending === 'apply'; });
+    ok('then Patch before the restart: aapd and the render run it already, nothing waits', st.aa.state === 'patched' && !st.aa.pending &&
+        cropEnv(r) !== null, JSON.stringify(st.aa));
     ok('through all of them aapd was never killed, stopped or started', alive(victim) && noAapdCall(before), calls(r).slice(before).join(';'));
     victim.kill('SIGKILL');
     pr.proc.kill('SIGKILL');
