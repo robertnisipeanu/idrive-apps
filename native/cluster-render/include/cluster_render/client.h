@@ -596,6 +596,26 @@ private:
     bool instances_ = false;        /* and instances above 1 */
     bool cube_ = false;             /* and cube maps */
     bool values_ = false;           /* and shared values */
+    bool shm_frames_ = false;       /* and video frames in shared memory (PROTOCOL.md "Shared frames") */
+    /* A video layer's shared frames on this connection: its buffer, sent
+     * with its "shm" message, taken once the service says ok. */
+    struct Shm {
+        uint8_t *map = nullptr;
+        size_t size = 0, slot_bytes = 0;
+        unsigned slots = 0;
+        enum State { Asked, Ok, Refused } state = Asked;
+    };
+    static const unsigned kShmSlots = 2;
+    std::map<uint32_t, Shm> shm_;
+    std::set<uint32_t> shm_due_;    /* video layers whose buffer is still to be made and sent */
+    int cur_fd_ = -1;               /* a buffer's descriptor, ours until it goes with cur_'s first byte */
+    /* The buffer of shm_due_'s first layer into cur_, with its descriptor;
+     * false when none is due (or one cannot be made: frames then go whole). */
+    bool next_shm();
+    /* A frame of video layer ref through its shared buffer, its message into
+     * cur_: false when the layer has none or no slot is free. */
+    bool shm_frame(uint32_t ref, const std::vector<uint8_t> &px);
+    void shm_close(Shm *m);
     uint64_t parts_made_ = 0;
 };
 

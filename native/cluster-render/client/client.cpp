@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
@@ -45,6 +46,10 @@ Client::~Client()
 {
     if (fd_ >= 0)
         close(fd_);
+    for (auto &kv : shm_)
+        shm_close(&kv.second);
+    if (cur_fd_ >= 0)
+        close(cur_fd_);
 }
 
 void Client::connect_now(int64_t now_ms)
@@ -152,7 +157,14 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = false;
+    for (auto &kv : shm_)
+        shm_close(&kv.second);
+    shm_.clear();
+    shm_due_.clear();
+    if (cur_fd_ >= 0)
+        close(cur_fd_);
+    cur_fd_ = -1;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -244,6 +256,11 @@ void Client::read_events()
             instances_ = j["instances"] == "1";
             cube_ = j["cube"] == "1";
             values_ = j["values"] == "1";
+            shm_frames_ = j["shm_frames"] == "1";
+            if (shm_frames_)
+                for (const auto &kv : layers_)
+                    if (kv.second.kind == "video" && !held(kv.first))
+                        shm_due_.insert(kv.first);
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -256,6 +273,10 @@ void Client::read_events()
                 replay(true);
             if (on_ready)
                 on_ready();
+        } else if (ev == "shm") {
+            auto m = shm_.find((uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10));
+            if (m != shm_.end())
+                m->second.state = j["ok"] == "1" ? Shm::Ok : Shm::Refused;
         } else if (ev == "layer" && on_layer) {
             on_layer((uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10), j["state"], j["reason"]);
         } else if (ev == "target") {
@@ -341,14 +362,24 @@ void Client::write_out()
                 ctl_.pop_front();
             } else if (ready_ && next_image(&cur_)) {
                 /* an image layer's changes */
+            } else if (ready_ && next_shm()) {
+                /* a video layer's shared buffer */
             } else if (!frames_.empty()) {
                 /* Round robin over the layers with a frame waiting. */
                 auto it = frames_.upper_bound(last_frame_ref_);
                 if (it == frames_.end())
                     it = frames_.begin();
                 last_frame_ref_ = it->first;
-                cur_.swap(it->second.head);
-                cur_px_.swap(it->second.px);
+                if (shm_frame(it->first, it->second.px)) {
+                    /* copied into a slot: sent as soon as its message is */
+                    auto l = layers_.find(it->first);
+                    if (l != layers_.end())
+                        l->second.sent = true;
+                    keep_last(it->first, &it->second.px);
+                } else {
+                    cur_.swap(it->second.head);
+                    cur_px_.swap(it->second.px);
+                }
                 frames_.erase(it);
             } else {
                 return;
@@ -367,11 +398,37 @@ void Client::write_out()
             iov[mh.msg_iovlen].iov_base = cur_px_.data() + px_off;
             iov[mh.msg_iovlen++].iov_len = cur_px_.size() - px_off;
         }
+        union {
+            char buf[CMSG_SPACE(sizeof(int))];
+            struct cmsghdr align;
+        } ctl;
+        const bool with_fd = cur_fd_ >= 0 && cur_off_ == 0;
+        if (with_fd) {
+            mh.msg_control = ctl.buf;
+            mh.msg_controllen = sizeof ctl.buf;
+            struct cmsghdr *c = CMSG_FIRSTHDR(&mh);
+            c->cmsg_level = SOL_SOCKET;
+            c->cmsg_type = SCM_RIGHTS;
+            c->cmsg_len = CMSG_LEN(sizeof(int));
+            std::memcpy(CMSG_DATA(c), &cur_fd_, sizeof(int));
+        }
         ssize_t w = ::sendmsg(fd_, &mh, kSendFlags);
+        if (w < 0 && with_fd && errno != EAGAIN && errno != EINTR) {
+            /* The descriptor not taken: the message goes without it, the
+             * service refuses it, and frames go whole on this connection. */
+            close(cur_fd_);
+            cur_fd_ = -1;
+            shm_frames_ = false;
+            continue;
+        }
         if (w < 0) {
             if (errno != EAGAIN && errno != EINTR)
                 disconnect(0);
             return;
+        }
+        if (with_fd && w > 0) {
+            close(cur_fd_);   /* the service has its own now; the mapping stays */
+            cur_fd_ = -1;
         }
         cur_off_ += (size_t)w;
     }
@@ -603,6 +660,8 @@ uint32_t Client::add(const Layer &l)
     const uint32_t ref = next_ref_++;
     layers_[ref] = l;
     queue_for(ref, layer_json(ref, l));
+    if (shm_frames_ && l.kind == "video" && !held(ref))
+        shm_due_.insert(ref);
     if (fd_ >= 0)
         write_out();
     return ref;
@@ -1190,6 +1249,12 @@ void Client::drop(uint32_t ref)
         layers_.erase(it);
     frames_.erase(ref);
     repeats_due_.erase(ref);
+    shm_due_.erase(ref);
+    auto sm = shm_.find(ref);
+    if (sm != shm_.end()) {
+        shm_close(&sm->second);   /* a "shm" message on its way still goes with its descriptor */
+        shm_.erase(sm);
+    }
     if (!hold)
         queue(json_object({{"op", json_quote("drop")}, {"ref", num(ref)}}));
     send_now();
@@ -1236,6 +1301,64 @@ void Client::keep_last(uint32_t ref, std::vector<uint8_t> *px)
         spare_.push_back(std::move(*px));
     }
     px->clear();
+}
+
+void Client::shm_close(Shm *m)
+{
+    if (m->map)
+        munmap(m->map, m->size);
+    m->map = nullptr;
+}
+
+bool Client::next_shm()
+{
+    while (!shm_due_.empty()) {
+        const uint32_t ref = *shm_due_.begin();
+        shm_due_.erase(shm_due_.begin());
+        const size_t slot = frame_bytes(ref);
+        if (!slot || held(ref) || shm_.count(ref))
+            continue;
+#ifdef __linux__
+        Shm m;
+        m.slots = kShmSlots;
+        m.slot_bytes = slot;
+        m.size = kShmHeader + m.slots * slot;
+        const int fd = memfd_create("cluster-render-frames", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        void *p = MAP_FAILED;
+        if (fd >= 0 && ftruncate(fd, (off_t)m.size) == 0 &&
+            fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL) == 0)
+            p = mmap(nullptr, m.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (p == MAP_FAILED) {
+            if (fd >= 0)
+                close(fd);
+            continue;   /* its frames go whole */
+        }
+        m.map = static_cast<uint8_t *>(p);
+        shm_[ref] = m;
+        cur_ = encode(kJson, json_object({{"op", json_quote("shm")}, {"ref", num(ref)}, {"slots", num(m.slots)}}));
+        cur_fd_ = fd;
+        return true;
+#endif
+    }
+    return false;
+}
+
+bool Client::shm_frame(uint32_t ref, const std::vector<uint8_t> &px)
+{
+    auto it = shm_.find(ref);
+    if (it == shm_.end() || it->second.state != Shm::Ok || px.size() != it->second.slot_bytes)
+        return false;
+    Shm &m = it->second;
+    uint32_t *busy = reinterpret_cast<uint32_t *>(m.map);
+    for (unsigned k = 0; k < m.slots; k++) {
+        if (__atomic_load_n(busy + k, __ATOMIC_ACQUIRE) != 0)
+            continue;   /* the service has not copied its frame out yet */
+        busy[k] = 1;
+        std::memcpy(m.map + kShmHeader + (size_t)k * m.slot_bytes, px.data(), px.size());
+        cur_ = encode(kJson, json_object({{"op", json_quote("slot")}, {"ref", num(ref)}, {"slot", num(k)}}));
+        return true;
+    }
+    return false;
 }
 
 bool Client::frame(uint32_t ref, const uint8_t *atlas, size_t n, uint64_t id)

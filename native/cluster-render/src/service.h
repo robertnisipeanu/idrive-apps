@@ -9,8 +9,9 @@
  *   3. each target's layers are arranged and its demand is set (compositor),
  *   4. targets are published, requested, kept or released (slot manager),
  *   5. each requested target's layers are staged and flushed once,
- *   6. changed states go to the clients, and once a second to the status
- *      file; once a second the upload is sampled (link_trace.h) and the
+ *   6. changed states go to the clients, and to the status file when its
+ *      text changed (looked at once a second); once a second the upload is
+ *      sampled (link_trace.h) and the
  *      remembered ceiling kept (ceiling_memory.h); once a minute the
  *      upload's summary and each shown target's layers' writes since its
  *      last such line, and whether it is rendered, go to the log. */
@@ -72,6 +73,11 @@ public:
     /* The server's poll entries, appended to fds; returns where they start. */
     size_t poll_fds(std::vector<pollfd> *fds) const;
     int timeout_ms(int64_t now_ms) const;
+    /* Nothing requested, loaded, pending or due (SlotManager::at_rest): the
+     * loop waits for a client, the display or a timer, and looks at the
+     * clock every kRestMs only. */
+    bool at_rest() const;
+    static const int64_t kRestMs = 1000;
     /* Steps 2-6 (README.md "The render loop"). */
     void after_poll(const std::vector<pollfd> &fds, size_t first, int64_t now_ms);
     /* Takes everything off the display and unpublishes the scenes, for a
@@ -93,6 +99,8 @@ private:
     std::unique_ptr<Compositor> comp_;
     std::unique_ptr<Server> server_;
     int64_t status_ms_ = 0;
+    std::string status_written_;   /* the status file's text, as last written */
+    void write_status(int64_t now_ms);
     static const int64_t kMinuteMs = 60000;
     int64_t minute_ms_ = 0;
     /* Per target: its layers' writes and the time at its last minute line. */

@@ -37,6 +37,12 @@ const char *const kDefaultSocket = "/dev/shm/cluster-render/render.sock";
 /* The largest message: a whole 1920x720 RGBA image and its header. */
 const size_t kMaxMessage = 1920 * 720 * 4 + 64;
 
+/* A video layer's shared frame buffer (PROTOCOL.md "Shared frames"): a
+ * sealed memfd of kShmHeader bytes, one 32-bit busy word a slot at its
+ * start, then each slot's whole atlas. */
+const size_t kShmHeader = 64;
+const unsigned kShmMaxSlots = 4;
+
 const uint8_t kJson = 'J';
 const uint8_t kFrame = 'F';
 const uint8_t kMesh = 'M';

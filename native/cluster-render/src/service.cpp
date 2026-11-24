@@ -64,6 +64,14 @@ size_t Service::poll_fds(std::vector<pollfd> *fds) const
     return first;
 }
 
+bool Service::at_rest() const
+{
+    for (size_t i = 0; i < slots_.targets().size(); i++)
+        if (comp_->pending((int)i))
+            return false;
+    return slots_.at_rest();
+}
+
 int Service::timeout_ms(int64_t now_ms) const
 {
     bool active = false;
@@ -72,8 +80,11 @@ int Service::timeout_ms(int64_t now_ms) const
     /* Idle: four times a second, so a stalled layer's state, a slot poll and
      * the status file stay current. A loaded target alone stays idle: what
      * a client sends wakes the loop, and only a change left to flush ticks
-     * it at the frame rate. */
-    int64_t t = active ? 1000 / std::max(1, cfg_.fps) : 250;
+     * it at the frame rate. At rest every change comes on a descriptor or
+     * from a timer below. */
+    int64_t t = active ? 1000 / std::max(1, cfg_.fps) : at_rest() ? kRestMs : 250;
+    if (released_ms_ >= 0)
+        t = std::min(t, std::max<int64_t>(1, released_ms_ + kTrimMs - now_ms));
     for (int64_t w : {comp_->wake_in_ms(now_ms), slots_.wake_in_ms(now_ms)})
         if (w > 0 && w < t)
             t = w;
@@ -96,21 +107,27 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
         minute_ms_ = now_ms;
         log_minute(now_ms);
     }
-    if (!cfg_.status_path.empty() && now_ms - status_ms_ >= 1000) {
-        status_ms_ = now_ms;
-        const std::string tmp = cfg_.status_path + ".tmp";
-        const std::string text = server_->status_text(now_ms);
-        int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-        if (fd >= 0) {
-            const bool whole = write(fd, text.data(), text.size()) == (ssize_t)text.size();
-            close(fd);
-            if (whole)
-                rename(tmp.c_str(), cfg_.status_path.c_str());
-            else
-                unlink(tmp.c_str());
-        }
-    }
+    if (!cfg_.status_path.empty() && now_ms - status_ms_ >= 1000)
+        write_status(now_ms);
     trim(now_ms);
+}
+
+void Service::write_status(int64_t now_ms)
+{
+    status_ms_ = now_ms;
+    const std::string text = server_->status_text(now_ms);
+    if (text == status_written_)
+        return;
+    const std::string tmp = cfg_.status_path + ".tmp";
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0)
+        return;
+    const bool whole = write(fd, text.data(), text.size()) == (ssize_t)text.size();
+    close(fd);
+    if (whole && rename(tmp.c_str(), cfg_.status_path.c_str()) == 0)
+        status_written_ = text;
+    else
+        unlink(tmp.c_str());
 }
 
 void Service::trim(int64_t now_ms)

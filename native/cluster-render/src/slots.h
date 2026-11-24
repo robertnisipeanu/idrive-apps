@@ -591,6 +591,10 @@ public:
     std::string renderer_text(int64_t now_ms) const;
     /* Milliseconds until the next timer of any target; -1: none. */
     int64_t wake_in_ms(int64_t now_ms) const;
+    /* Every target idle with nothing of it wanted, loaded, kept or waiting
+     * on the display: what changes that comes from a client or the
+     * display, and no timer of the slot manager is running. */
+    bool at_rest() const;
 
     /* Who has content in slot: us only when the target requested with that
      * scene id is the slot's (0x01000400 is the HUD's and, in 0x203, the

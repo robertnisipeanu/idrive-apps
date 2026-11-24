@@ -679,6 +679,30 @@ static void repeats()
         r.pump(1100);
         ok("and with neither frames nor repeats it stalls", ea.layer[map] == "stalled");
     }
+#ifdef __linux__
+    {
+        /* Frames through the layer's shared buffer reach the layer as
+         * frames sent whole do. */
+        Rig r;
+        cr::Client a("waze", r.path);
+        Events ea;
+        ea.wire(a);
+        r.clients = {&a};
+        r.pump(50);
+        const uint32_t map = a.video(lo, vo);
+        r.pump(100);
+        for (int i = 0; i < 6; i++) {
+            const std::vector<uint8_t> f = atlas(10 + i * 40);
+            a.frame(map, f.data(), f.size(), (uint64_t)i + 1);
+            r.pump(50);
+        }
+        const std::string st = r.svc->server().status_text(r.now);
+        const std::vector<const Layer *> v = r.svc->compositor().layers();
+        ok("shared frames: each frame through the layer's buffer, shown and written",
+           has(st, "6 frames through its shared buffer of 2 slots") && ea.layer[map] == "shown" && v.size() == 1 &&
+               v[0]->write_stats().frames >= 1);
+    }
+#endif
     {
         /* A layer the service refuses, with a still map: one error for its
          * frames and repeats, however many come. */

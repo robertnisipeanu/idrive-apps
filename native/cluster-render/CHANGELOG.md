@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+A video layer's frames go to the service through memory both share instead
+of through its socket, which takes less CPU for each frame. Clients and
+services without it keep sending and taking whole frames on the socket.
+
+With nothing shown, requested or due, the service wakes less often, and on
+iDrive 8 it dispatches the cluster's events less often while it offers
+nothing. The status file is written only when its text changes.
+
 ## 0.8.7
 
 On iDrive 7, a cluster app's finished animations no longer stay in memory

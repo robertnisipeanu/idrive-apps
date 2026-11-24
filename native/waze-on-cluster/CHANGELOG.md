@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The map's frames go to the cluster renderer through shared memory where
+the renderer takes them, which takes less CPU for each frame. The receive
+and decode threads wait without waking while no stream comes.
+
 ## 0.14.10
 
 The tests run at once: `make test` takes about a minute and a half instead
