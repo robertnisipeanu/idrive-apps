@@ -816,12 +816,14 @@ What a sequence does at play depends on its animation system:
   `scene_realtime_offset_ms` (cluster-render.conf, default 0; the time used
   is logged). The renderer takes a start only while the sequence's end is
   still ahead of its clock, so `--skip` starts it to end 250 ms after the
-  stamp: its last 250 ms play (a sequence that lasts no longer plays whole),
-  and a skip that reaches the display later than that changes nothing. A
-  display whose clock is not the head unit's, nor kept in step with it,
-  starts it that much early (its start partly skipped, or nothing of it
-  shown once its end has passed) or late (nothing moving until then). Use
-  the kind above on such a display.
+  stamp: its last 250 ms play (a sequence that lasts no longer plays whole
+  and ends as long after the stamp as it lasts). A sequence already in its
+  last 250 ms, or ended, is left as it is. A skip that reaches the display
+  after that end is not taken: a sequence playing stops where it is until
+  the next `--play`. A display whose clock is not the head unit's, nor kept
+  in step with it, starts it that much early (its start partly skipped, or
+  not taken once its end has passed) or late (nothing moving until then).
+  Use the kind above on such a display.
 
 For a rest state that is right whatever happens (a renderer that never
 plays it, a play cut short, the scene published again), save the file with

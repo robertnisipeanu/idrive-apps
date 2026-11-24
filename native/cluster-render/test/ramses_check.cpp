@@ -1684,18 +1684,22 @@ int main()
         const float ending = value();
         usleep(300 * 1000);
         const float end = value();
+        ed->add("--skip sweep");
+        run(100);
+        const float kept = value();
         ed->add("--play sweep");
         run(100);
         const float again = value();
         ed->add("--play nowhere");
         run(100);
         const std::vector<EditProblem> unknown = ed->take_problems();
-        std::printf("     swept %g 300 ms after --play, %g after --skip, %g 300 ms after it, %g after --play "
-                    "again\n",
-                    mid, ending, end, again);
-        ok("the file's animation sequence: played, skipped to its end within 250 ms, played again from its start, an "
-           "unknown one reported; the scene still described",
-           mid > 0 && mid < 10 && ending >= 7.5f && ending < 10 && end == 10 && again < mid && unknown.size() == 1 &&
+        std::printf("     swept %g 300 ms after --play, %g after --skip, %g 300 ms after it, %g after --skip "
+                    "again, %g after --play again\n",
+                    mid, ending, end, kept, again);
+        ok("the file's animation sequence: played, skipped to its end within 250 ms, left at its end by another "
+           "skip, played again from its start, an unknown one reported; the scene still described",
+           mid > 0 && mid < 10 && ending >= 7.5f && ending < 10 && end == 10 && kept == 10 && again < mid &&
+               unknown.size() == 1 &&
                unknown[0].reason.find("no animation sequence nowhere") != std::string::npos && described("gauge"));
     }
     /* A sequence of a system without a clock of its own: its time set by
