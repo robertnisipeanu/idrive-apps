@@ -39,9 +39,34 @@ void main() {
     gl_FragColor = vec4(u_color.rgb * u_color.a, u_color.a) * a;
 })";
 
+const char *const kTextVertexShader300 = R"(#version 300 es
+in vec2 a_position;
+in vec2 a_texcoord;
+uniform mat4 u_mvp;
+out vec2 v_uv;
+void main() {
+    v_uv = a_texcoord;
+    gl_Position = u_mvp * vec4(a_position, 0.0, 1.0);
+})";
+
+/* The edge where the distance sample crosses 0.5, as wide as the sample
+ * changes over a pixel on screen: whatever the size, turn or scale. */
+const char *const kTextSdfFragmentShader300 = R"(#version 300 es
+precision highp float;
+uniform sampler2D u_atlas;
+uniform vec4 u_color;
+in vec2 v_uv;
+out vec4 o_color;
+void main() {
+    float s = texture(u_atlas, v_uv).r;
+    float a = clamp((s - 0.5) / max(fwidth(s), 0.0001) + 0.5, 0.0, 1.0);
+    o_color = vec4(u_color.rgb * u_color.a, u_color.a) * a;
+})";
+
 namespace {
 
-/* The numbers of s separated by any of seps; false for anything else. */
+/* n integers at p separated by sep, into v, p past them; false for
+ * anything else or a value past 2^31. */
 bool ints(const char *&p, const char *end, int64_t *v, size_t n, char sep)
 {
     for (size_t i = 0; i < n; i++) {
@@ -176,6 +201,8 @@ bool parse_font(const std::string &glyphs, const std::string &kerning, uint32_t 
 bool decode_utf8(const std::string &s, std::vector<uint32_t> *out)
 {
     out->clear();
+    if (!cr::utf8_ok(s))
+        return false;
     for (size_t i = 0; i < s.size();) {
         const uint8_t b = (uint8_t)s[i];
         uint32_t cp, min;
@@ -288,9 +315,15 @@ std::vector<float> glyph_vertices(const std::vector<GlyphQuad> &qs, uint32_t w, 
     return v;
 }
 
+float sdf_factor(const Font &f, float size, float scale)
+{
+    return f.sdf && f.line ? 2.0f * (float)f.sdf * size * scale / (float)f.line : 0.0f;
+}
+
 TextLayer::TextLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect,
-                     std::shared_ptr<const Font> font, uint32_t capacity, int64_t now_ms)
-    : EffectLayer(id, target, seq, pacer, effect, 0, now_ms), font_(std::move(font)), capacity_(capacity)
+                     std::shared_ptr<const Font> font, uint32_t capacity, bool derivatives, int64_t now_ms)
+    : EffectLayer(id, target, seq, pacer, effect, 0, now_ms), font_(std::move(font)), capacity_(capacity),
+      derivatives_(derivatives)
 {
     PartLook look = quad_look();
     look.blend = Blend::Premultiplied;
@@ -303,9 +336,21 @@ TextLayer::TextLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pa
 void TextLayer::colour()
 {
     set_uniform("u_color", style_.color, 4);
-    const float size = style_.size > 0 ? style_.size : (float)params.rect.h;
-    const float sdf = font_->sdf ? 2.0f * (float)font_->sdf * size / (float)font_->line : 0.0f;
-    set_uniform("u_sdf", &sdf, 1);
+    sharpen();
+}
+
+void TextLayer::sharpen()
+{
+    if (derivatives_)
+        return;   /* the shader finds the edge's width itself */
+    const LayerParams &p = drawn_params();
+    const float size = style_.size > 0 ? style_.size : (float)p.rect.h;
+    const float scale = std::max(std::max(std::fabs(p.sx), std::fabs(p.sy)), animated_scale(0));
+    const float sdf = sdf_factor(*font_, size, scale);
+    if (sdf != sdf_) {
+        sdf_ = sdf;
+        set_uniform("u_sdf", &sdf, 1);
+    }
 }
 
 void TextLayer::set_text(std::vector<uint32_t> &&cps)
@@ -314,6 +359,7 @@ void TextLayer::set_text(std::vector<uint32_t> &&cps)
         return;
     cps_ = std::move(cps);
     version_++;
+    refusal_.clear();
 }
 
 void TextLayer::set_style(const TextStyle &s)
@@ -323,6 +369,7 @@ void TextLayer::set_style(const TextStyle &s)
     colour();
     if (moved)
         version_++;
+    refusal_.clear();
 }
 
 bool TextLayer::attach(Graph *g, int64_t now_ms, std::string *err)
@@ -335,6 +382,8 @@ bool TextLayer::attach(Graph *g, int64_t now_ms, std::string *err)
         return false;
     }
     written_ = 0;   /* the new scene's buffers hold nothing yet */
+    refusal_.clear();
+    sdf_ = -1;   /* the new quad has none yet */
     colour();
     return true;
 }
@@ -353,6 +402,7 @@ Stage TextLayer::stage(int64_t now_ms)
 {
     staged_bytes_ = 0;
     staged_version_ = 0;
+    sharpen();   /* a turn or a scale animation may have changed the scale */
     Stage st = EffectLayer::stage(now_ms);
     if (!g_ || !drawn_ || written_ == version_)
         return st;
@@ -368,9 +418,15 @@ Stage TextLayer::stage(int64_t now_ms)
     std::vector<GlyphQuad> q(all.begin(), all.begin() + n);
     const std::vector<float> v = glyph_vertices(q, r.w, r.h);
     if (!g_->glyphs(quad_handle(), v.data(), n)) {
+        /* Hidden at once, its buffers maybe half written; in error until
+         * something changes, so the target's other layers flush on. */
         failed_++;
-        log_error("layer %u: the renderer refused %u glyphs", id_, n);
-        return Stage::Failed;
+        refusal_ = "the renderer refused " + std::to_string(n) + " glyphs";
+        log_error("layer %u: %s", id_, refusal_.c_str());
+        g_->show(quad_handle(), false);
+        drawn_ = false;
+        written_ = version_;
+        return Stage::Wrote;
     }
     staged_bytes_ = (size_t)n * kVertexBytes;
     pacer_.spend(staged_bytes_);

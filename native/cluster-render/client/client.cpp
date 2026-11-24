@@ -82,7 +82,7 @@ bool Client::held(uint32_t ref) const
     if (it == layers_.end())
         return false;
     const Layer &l = it->second;
-    return (in_canvas(l) && !(ready_ && canvas_)) || ((l.kind == "font" || l.kind == "text") && !(ready_ && text_));
+    return (in_canvas(l) && !(ready_ && canvas_)) || (texty(l) && !(ready_ && text_));
 }
 
 void Client::queue_for(uint32_t ref, const std::string &json)
@@ -752,6 +752,33 @@ uint32_t Client::font(uint32_t asset, const FontOptions &fo)
     return add(l);
 }
 
+uint32_t Client::font(const std::string &target, unsigned w, unsigned h, const uint8_t *px, const FontOptions &fo)
+{
+    if (!fo.line || fo.glyphs.empty() || !w || !h || w > 2048 || h > 2048 || (size_t)w * h + 64 > kMaxMessage)
+        return 0;
+    Layer a;
+    a.kind = "asset";
+    a.ao.target = target;
+    a.ao.r8 = true;
+    a.ao.w = w;
+    a.ao.h = h;
+    a.ao.bilinear = true;
+    a.w = w;
+    a.h = h;
+    a.bpp = 1;
+    a.atlas = true;
+    a.image.assign(px, px + (size_t)w * h);
+    a.whole = a.have = true;
+    const uint32_t atlas = add(a);
+    const uint32_t ref = font(atlas, fo);
+    if (!ref) {
+        drop(atlas);
+        return 0;
+    }
+    layers_[ref].owns = true;
+    return ref;
+}
+
 void Client::text_fields(std::vector<std::pair<std::string, std::string>> *kv, const TextLayerOptions &to)
 {
     kv->push_back({"align", json_quote(to.align)});
@@ -762,6 +789,9 @@ void Client::text_fields(std::vector<std::pair<std::string, std::string>> *kv, c
 }
 
 namespace {
+
+/* A text layer's string as the service takes it. */
+bool text_ok(const std::string &text) { return text.size() <= kMaxTextBytes && utf8_ok(text); }
 
 bool text_options_ok(const TextLayerOptions &to)
 {
@@ -778,7 +808,7 @@ bool text_options_ok(const TextLayerOptions &to)
 uint32_t Client::text(const LayerOptions &lo, uint32_t font, const TextLayerOptions &to, const std::string &text)
 {
     auto f = layers_.find(font);
-    if (f == layers_.end() || f->second.kind != "font" || !text_options_ok(to))
+    if (f == layers_.end() || f->second.kind != "font" || !text_options_ok(to) || !text_ok(text))
         return 0;
     Layer l;
     l.kind = "text";
@@ -792,8 +822,8 @@ uint32_t Client::text(const LayerOptions &lo, uint32_t font, const TextLayerOpti
 bool Client::set_text(uint32_t ref, const std::string &text)
 {
     auto it = layers_.find(ref);
-    if (it == layers_.end() || it->second.kind != "text")
-        return false;
+    if (it == layers_.end() || it->second.kind != "text" || !text_ok(text))
+        return false;   /* the last string taken stays */
     if (it->second.text == text)
         return true;
     it->second.text = text;
@@ -1349,6 +1379,7 @@ void Client::drop(uint32_t ref)
     }
     if (it->second.kind == "video")
         spare_.clear();   /* buffers of its size may be needed no more */
+    const uint32_t atlas = it->second.kind == "font" && it->second.owns ? it->second.font : 0;
     if (!sampled)
         layers_.erase(it);
     frames_.erase(ref);
@@ -1362,6 +1393,8 @@ void Client::drop(uint32_t ref)
     if (!hold)
         queue(json_object({{"op", json_quote("drop")}, {"ref", num(ref)}}));
     send_now();
+    if (atlas && !sampled)
+        drop(atlas);   /* the atlas the font owns goes with it */
 }
 
 size_t Client::frame_bytes(uint32_t ref) const
@@ -1605,7 +1638,7 @@ bool Client::next_image(std::string *msg)
 {
     for (auto &kv : layers_) {
         Layer &l = kv.second;
-        if ((l.kind != "image" && l.kind != "asset") || (!l.whole && l.dirty.empty()))
+        if ((l.kind != "image" && l.kind != "asset") || (!l.whole && l.dirty.empty()) || held(kv.first))
             continue;
         std::vector<FrameRect> rects = l.whole ? std::vector<FrameRect>() : l.dirty;
         size_t n = 0;

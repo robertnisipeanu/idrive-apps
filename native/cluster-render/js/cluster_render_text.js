@@ -148,15 +148,11 @@ class Font {
             kerning: pairs.map((p) => p[0] + ',' + p[1] + ':' + p[2]).join(' ') };
     }
 
-    /* The atlas as an r8 asset on target, sampled bilinear, and the font
-     * over it; the font's ref, 0 when refused here. */
+    /* The font and its atlas, an r8 asset on target sampled bilinear,
+     * which goes when the font is dropped (ClusterRender.font()); the
+     * font's ref, 0 when refused here. */
     asset(cr, target) {
-        const ref = cr.asset({ target: target, format: 'r8', w: this.w, h: this.h, sampling: 'bilinear' });
-        if (!ref) return 0;
-        cr.pixels(ref, null, this.pixels);
-        const font = cr.font(ref, this.options());
-        if (!font) cr.drop(ref);
-        return font;
+        return cr.font(Object.assign({ target: target, w: this.w, h: this.h, pixels: this.pixels }, this.options()));
     }
 
     /* text in a line h pixels high, spacing pixels between characters, as
@@ -208,11 +204,12 @@ class Text {
     }
 
     /* The string shown, sent as it is; false when it has more glyphs than
-     * the layer holds or is wider than its rect (it is shown cut). */
+     * the layer holds or is wider than its rect (it is shown cut), or,
+     * nothing sent and the last string kept, when it is past 1024 bytes of
+     * UTF-8 or has a lone surrogate. */
     set(text) {
-        if (!this.ref) return false;
+        if (!this.ref || !this.cr.setText(this.ref, String(text))) return false;
         const m = this.font.measure(String(text), this.opts.h, this.opts.spacing);
-        this.cr.setText(this.ref, String(text));
         return m.glyphs <= this.max && m.width <= this.opts.w;
     }
 

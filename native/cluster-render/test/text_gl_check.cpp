@@ -32,6 +32,7 @@ void ok(const char *what, bool good)
 
 typedef void *(*GetProc)(const char *);
 GetProc get_proc = nullptr;
+bool es3 = false;   /* the context is GLES 3 */
 
 template <typename F> F gl(const char *name) { return (F)get_proc(name); }
 
@@ -63,8 +64,13 @@ bool context(std::string *why)
     void *config = nullptr;
     int n = 0;
     choose(d, config_attrs, &config, 1, &n);
-    const int context_attrs[] = {0x3098 /* EGL_CONTEXT_CLIENT_VERSION */, 2, 0x3038};
-    void *c = create(d, n ? config : nullptr, nullptr, context_attrs);
+    /* GLES 3 where the host has it (it draws GLSL ES 1.00 too), else 2 */
+    const int es3_attrs[] = {0x3098 /* EGL_CONTEXT_CLIENT_VERSION */, 3, 0x3038};
+    const int es2_attrs[] = {0x3098, 2, 0x3038};
+    void *c = create(d, n ? config : nullptr, nullptr, es3_attrs);
+    es3 = c != nullptr;
+    if (!c)
+        c = create(d, n ? config : nullptr, nullptr, es2_attrs);
     if (!c || !make_current(d, nullptr, nullptr, c)) {
         *why = "no GLES 2 context";
         return false;
@@ -96,11 +102,11 @@ unsigned shader(unsigned kind, const char *src)
     return good ? s : 0;
 }
 
-/* The service's text program, linked; 0 when it does not compile. */
-unsigned program()
+/* A text program of the service's, linked; 0 when it does not compile. */
+unsigned program(const std::string &vs_src, const std::string &fs_src)
 {
-    const unsigned vs = shader(GL_VERTEX_SHADER, crs::kTextVertexShader);
-    const unsigned fs = shader(GL_FRAGMENT_SHADER, crs::kTextFragmentShader);
+    const unsigned vs = shader(GL_VERTEX_SHADER, vs_src.c_str());
+    const unsigned fs = shader(GL_FRAGMENT_SHADER, fs_src.c_str());
     if (!vs || !fs)
         return 0;
     const unsigned prog = gl<unsigned (*)()>("glCreateProgram")();
@@ -138,16 +144,23 @@ struct Picture {
 };
 
 /* cps drawn by the service's layout and shaders in a rect w x h from the
- * font's atlas (aw x ah R8), premultiplied over transparent black. */
+ * font's atlas (aw x ah R8), premultiplied over transparent black, the rect
+ * scaled by scale on screen (a picture scale times as big); u_sdf as the
+ * layer sets it for sdf_scale (0: the scale drawn at); vs and fs the
+ * program. */
 Picture draw(const crs::Font &f, const std::vector<uint8_t> &atlas, const std::vector<uint32_t> &cps,
-             const crs::TextStyle &st, int w, int h)
+             const crs::TextStyle &st, int w, int h, int scale = 1, float sdf_scale = 0,
+             const std::string &vs = crs::kTextVertexShader, const std::string &fs = crs::kTextFragmentShader)
 {
     Picture pic;
-    const unsigned prog = program();
+    const unsigned prog = program(vs, fs);
     if (!prog)
         return pic;
     gl<void (*)(unsigned)>("glUseProgram")(prog);
     auto loc = [&](const char *name) { return gl<int (*)(unsigned, const char *)>("glGetUniformLocation")(prog, name); };
+    const int lw = w, lh = h;   /* the rect laid out in */
+    w *= scale;
+    h *= scale;
     const unsigned target = texture(w, h, GL_RGBA, nullptr);
     unsigned fbo = 0;
     gl<void (*)(int, unsigned *)>("glGenFramebuffers")(1, &fbo);
@@ -162,15 +175,16 @@ Picture draw(const crs::Font &f, const std::vector<uint8_t> &atlas, const std::v
     gl<void (*)(int, int, unsigned char, const float *)>("glUniformMatrix4fv")(loc("u_mvp"), 1, 0, mvp);
     gl<void (*)(int, int)>("glUniform1i")(loc("u_atlas"), 0);
     gl<void (*)(int, int, const float *)>("glUniform4fv")(loc("u_color"), 1, st.color);
-    const float size = st.size > 0 ? st.size : (float)h;
-    gl<void (*)(int, float)>("glUniform1f")(loc("u_sdf"), f.sdf ? 2.0f * (float)f.sdf * size / (float)f.line : 0.0f);
+    const float size = st.size > 0 ? st.size : (float)lh;
+    gl<void (*)(int, float)>("glUniform1f")(loc("u_sdf"),
+                                           crs::sdf_factor(f, size, sdf_scale > 0 ? sdf_scale : (float)scale));
     gl<void (*)(int, int, int, int)>("glViewport")(0, 0, w, h);
     gl<void (*)(float, float, float, float)>("glClearColor")(0, 0, 0, 0);
     gl<void (*)(unsigned)>("glClear")(GL_COLOR_BUFFER_BIT);
     gl<void (*)(unsigned)>("glEnable")(GL_BLEND);
     gl<void (*)(unsigned, unsigned)>("glBlendFunc")(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    const std::vector<crs::GlyphQuad> q = crs::lay_out(f, cps, st, (uint32_t)w, (uint32_t)h);
-    const std::vector<float> v = crs::glyph_vertices(q, (uint32_t)w, (uint32_t)h);
+    const std::vector<crs::GlyphQuad> q = crs::lay_out(f, cps, st, (uint32_t)lw, (uint32_t)lh);
+    const std::vector<float> v = crs::glyph_vertices(q, (uint32_t)lw, (uint32_t)lh);
     std::vector<uint16_t> idx;
     for (size_t i = 0; i < q.size(); i++) {
         const uint16_t b = (uint16_t)(i * 4);
@@ -293,6 +307,26 @@ int main()
     ok("text GL: a distance-field glyph scaled up keeps a sharp edge, a coverage one does not",
        soft.w == 128 && sharp.w == 128 && ramp(sharp) <= 4 && ramp(soft) >= 6 && sharp.at(64, 64)[3] > 250 &&
            sharp.at(2, 64)[3] == 0);
+    /* The same glyph in a 32 x 32 layer at sx = sy = 4: its edge a pixel or
+     * two on screen from u_sdf for the layer's scale, and from the GLSL ES
+     * 3.00 shader's derivatives, which take no u_sdf; u_sdf for the layer's
+     * own size would leave it 4 pixels wide. */
+    crs::TextStyle small;
+    const Picture fallback = draw(df, datlas, {'o'}, small, 32, 32, 4, 4);
+    const Picture unscaled = draw(df, datlas, {'o'}, small, 32, 32, 4, 1);
+    std::printf("     edge pixels at 4x scale: scaled u_sdf %d, unscaled u_sdf %d\n", ramp(fallback), ramp(unscaled));
+    ok("text GL: a distance-field glyph in a layer scaled 4x sharp from u_sdf for its scale",
+       fallback.w == 128 && ramp(fallback) <= 4 && ramp(unscaled) >= 6 && fallback.at(64, 64)[3] > 250);
+    if (es3) {
+        const Picture deriv =
+            draw(df, datlas, {'o'}, small, 32, 32, 4, 1, crs::kTextVertexShader300, crs::kTextSdfFragmentShader300);
+        std::printf("     edge pixels at 4x scale from derivatives (GLSL ES 3.00): %d\n", ramp(deriv));
+        ok("text GL: the same from the GLSL ES 3.00 shader's derivatives",
+           deriv.w == 128 && ramp(deriv) <= 4 && deriv.at(64, 64)[3] > 250 && deriv.at(2, 64)[3] == 0);
+    } else {
+        ok("text GL: a GLES 3 context for the GLSL ES 3.00 shader (CR_REQUIRE_GL)", !std::getenv("CR_REQUIRE_GL"));
+        std::printf("skip the GLSL ES 3.00 distance shader: no GLES 3 context\n");
+    }
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

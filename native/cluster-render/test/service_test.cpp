@@ -3392,11 +3392,116 @@ static void text_helper()
     ok("text: a string changing every 5 ms written at most 30 times a second, the newest shown",
        q && q->glyph_writes - before <= 32 && q->glyph_writes - before >= 25 && q->glyphs.size() == 16 &&
            std::fabs(q->glyphs[2] - 10.0f / 32) < 1e-6f);
+    const int settled = q ? q->glyph_writes : 0;
     const float red[4] = {1, 0, 0, 0.5f};
     label.color(red);
-    r.pump(50);
+    r.pump(100);
     ok("text: its colour a uniform, the glyphs not written again",
-       q && q->uniforms.at("u_color") == std::vector<float>({1, 0, 0, 0.5f}) && q->glyph_writes - before <= 33);
+       q && q->uniforms.at("u_color") == std::vector<float>({1, 0, 0, 0.5f}) && q->glyph_writes == settled);
+
+    /* 1: a string the service would refuse is refused here, the last one
+     * kept, and after the service restarts the layer comes back with it. */
+    const bool long_refused = !c.set_text(label.ref(), std::string(1100, '1'));
+    const bool latin1_refused = !label.set("\xB0" "C") && !c.set_text(label.ref(), "1\xED\xA0\x80");
+    const bool kept_fits = label.set("12");
+    r.pump(100);
+    r.start();
+    r.pump(3000);
+    g = r.gpu.graph("panel");
+    q = run_of(4);
+    ok("text: a string past 1024 bytes or not UTF-8 refused by the client, the last kept over a restart",
+       long_refused && latin1_refused && kept_fits && q && q->glyphs.size() == 2 * 16 &&
+           e.layer[label.ref()] == "shown" && e.errors.empty() &&
+           std::fabs(q->glyphs[0] - 168.0f / 200) < 1e-6f);
+
+    /* 5: the renderer refusing a glyph write: that layer hidden, in error,
+     * the target's other layers flushing on; a new string draws it again. */
+    cr::LayerOptions io;
+    io.target = "panel";
+    io.x = 0;
+    io.y = 0;
+    io.w = 4;
+    io.h = 4;
+    cr::ImageOptions imo;
+    const uint32_t img = c.image(io, imo);
+    std::vector<uint8_t> px(4 * 4 * 4, 10);
+    c.pixels(img, {}, px.data(), px.size());
+    r.pump(200);
+    g->refuse_glyph_writes = true;
+    label.set("21");
+    r.pump(200);
+    std::fill(px.begin(), px.end(), 77);
+    c.pixels(img, {}, px.data(), px.size());
+    r.pump(200);
+    bool image_moved = false;
+    for (const auto &kv : g->shown.buffers)
+        image_moved = image_moved || (kv.second.f == TexFormat::RGBA8 && kv.second.w == 4 && !kv.second.px.empty() &&
+                                      kv.second.px[0] == 77);
+    q = run_of(4);   /* the fake's maps are copied at each flush */
+    ok("text: a glyph write the renderer refuses: the layer hidden, in error, the target's other layers flushed",
+       e.layer[label.ref()] == "error" && q && !q->visible && image_moved);
+    g->refuse_glyph_writes = false;
+    label.set("12");
+    r.pump(200);
+    q = run_of(4);
+    ok("text: a new string after it drawn again", e.layer[label.ref()] == "shown" && q && q->visible &&
+                                                    q->glyphs.size() == 2 * 16);
+    c.drop(img);
+
+    /* 4: where the cluster draws no GLSL ES 3.00, a distance-field font's
+     * u_sdf follows the layer's scale, set and animated; where it does, its
+     * shader takes the edge from derivatives and no u_sdf. */
+    r.svc->compositor().set_instancing(false);
+    const cr::Font dist = cr::Font::from_grid(grid.data(), 16, 16, 2, 1, "12", 1, 0);
+    std::vector<cr::GlyphBitmap> dg(1);
+    dg[0].code = '1';
+    dg[0].w = dg[0].h = 8;
+    dg[0].pixels.assign(64, 128);
+    const auto sdf_font = std::make_shared<const cr::Font>(cr::Font::from_glyphs(8, dg, {}, 4));
+    const uint32_t sdf_ref = sdf_font->asset(c, "panel");
+    cr::LayerOptions so = lo;
+    so.y = 400;
+    so.w = 100;
+    so.h = 16;
+    cr::Text sharp(c, sdf_font, sdf_ref, so);
+    sharp.set("1");
+    r.pump(200);
+    auto sdf_of = [&]() {
+        for (const auto &kv : g->shown.quads)
+            if (kv.second.uniforms.count("u_sdf") && kv.second.uniforms.at("u_sdf")[0] > 0)
+                return kv.second.uniforms.at("u_sdf")[0];
+        return 0.0f;
+    };
+    const float base = sdf_of();   /* 2 x 4 x 16 / 8 */
+    so.sx = so.sy = 4;
+    c.set(sharp.ref(), so);
+    r.pump(100);
+    const float scaled = sdf_of();
+    so.sx = so.sy = 1;
+    c.set(sharp.ref(), so);
+    cr::AnimationOptions grow;
+    grow.property = "scale";
+    grow.keys = "0:1,1,1 1000:3,3,1";
+    c.animate(sharp.ref(), grow);
+    r.pump(100);
+    const float animated = sdf_of();
+    ok("text: a distance font's edge factor follows the layer's scale, set (4x) and animated (to 3x)",
+       sdf_font->ok() && std::fabs(base - 16) < 1e-4f && std::fabs(scaled - 64) < 1e-4f &&
+           std::fabs(animated - 48) < 1e-4f);
+    sharp.drop();
+    r.svc->compositor().set_instancing(true);
+    cr::Text derived(c, sdf_font, sdf_ref, so);
+    derived.set("1");
+    r.pump(200);
+    const FakeQuad *dq = nullptr;
+    for (const auto &kv : g->shown.quads)
+        if (r.gpu.effects[kv.second.effect].find("fwidth") != std::string::npos)
+            dq = &kv.second;
+    ok("text: with GLSL ES 3.00 a distance font drawn by the derivatives shader, no u_sdf, its glyphs written",
+       dq && !dq->uniforms.count("u_sdf") && dq->glyphs.size() == 16 && e.layer[derived.ref()] == "shown");
+    derived.drop();
+    c.drop(sdf_ref);
+    (void)dist;
 
     /* A typical line: 64 glyphs by default, up to 256; 257 or a rect of no
      * height refused, nothing sent for them. */
@@ -3463,6 +3568,12 @@ static void text_helper()
     raw.send("{\"op\":\"text\",\"ref\":10,\"text\":\"" + std::string(1025, 'A') + "\"}");
     raw.send("{\"op\":\"text\",\"ref\":10,\"color\":\"1 0 0 2\"}");
     raw.send("{\"op\":\"text\",\"ref\":10,\"align\":\"middle\"}");
+    raw.send("{\"op\":\"font\",\"ref\":15,\"asset\":1,\"line\":16,\"glyphs\":\"128512:0,0,16,16,0,0,16\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":16,\"target\":\"panel\",\"kind\":\"text\",\"font\":15,\"y\":40,"
+             "\"w\":100,\"h\":16,\"max\":7,\"text\":\"\\ud83d\\ude00\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":17,\"target\":\"panel\",\"kind\":\"text\",\"font\":15,\"y\":80,"
+             "\"w\":100,\"h\":16,\"max\":5,\"text\":\"" + std::string(1100, 'A') + "\"}");
+    raw.send("{\"op\":\"text\",\"ref\":16,\"text\":\"\\ude00\"}");
     raw.send("{\"op\":\"layer\",\"ref\":14,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\"}");
     raw.send("{\"op\":\"text\",\"ref\":14,\"text\":\"A\"}");
     raw.send("{\"op\":\"drop\",\"ref\":3}");
@@ -3483,11 +3594,20 @@ static void text_helper()
     ok("text: a text layer on another target than its font, of 257 glyphs, of no font, refused",
        refused("layer", 11, "the font's atlas is on another target") &&
            refused("layer", 12, "max must be a number from 1 to 256") && refused("layer", 13, "no such font"));
-    ok("text: overlong UTF-8, a lone surrogate, past 1024 bytes, a colour past 1, an unknown alignment, refused",
-       refused("text", 10, "text is not UTF-8") && ev.find("text is not UTF-8", ev.find("text is not UTF-8") + 1) !=
-                                                        std::string::npos &&
-           refused("text", 10, "text is at most 1024 bytes") && refused("text", 10, "color is 4 numbers") &&
-           refused("text", 10, "align must be"));
+    size_t not_json = 0;
+    for (size_t at = ev.find("not a flat JSON object"); at != std::string::npos;
+         at = ev.find("not a flat JSON object", at + 1))
+        not_json++;
+    ok("text: overlong UTF-8, lone surrogates (high, low), past 1024 bytes, a colour past 1, an unknown alignment, "
+       "refused",
+       refused("text", 10, "text is not UTF-8") && not_json == 2 && refused("text", 10, "text is at most 1024 bytes") &&
+           refused("text", 10, "color is 4 numbers") && refused("text", 10, "align must be"));
+    const FakeQuad *emoji = run_of(7), *empty = run_of(5);
+    ok("text: an escaped surrogate pair one character (U+1F600), drawn",
+       emoji && emoji->glyphs.size() == 16 && emoji->textures.count("u_atlas"));
+    ok("text: a layer whose first string is refused made empty, the string refused alone",
+       empty && empty->glyphs.empty() && empty->glyph_writes == 1 && refused("text", 17, "text is at most 1024 bytes") &&
+           ev.find("\"op\":\"layer\",\"ref\":17") == std::string::npos);
     ok("text: text to an effect layer, a uniform to a text layer, the font and its atlas in use, refused",
        refused("text", 14, "only a text layer takes text") && refused("drop", 3, "font in use") &&
            refused("drop", 1, "asset in use") && refused("uniform", 10, ""));
@@ -3522,12 +3642,23 @@ static void text_held()
     cr::Text t(c, font, f, lo);
     t.set("12");
     r.pump(200);
+    std::string status;
+    c.on_status = [&](const std::string &text) { status = text; };
+    auto assets = [&]() {
+        status.clear();
+        c.request_status();
+        r.pump(50);
+        size_t n = 0;
+        for (size_t at = status.find("\nasset "); at != std::string::npos; at = status.find("\nasset ", at + 1))
+            n++;
+        return n + (status.compare(0, 6, "asset ") == 0);
+    };
     FakeGraph *g = r.gpu.graph("panel");
     bool runs = false;
     for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
         runs = runs || kv.second.glyph_cap;
-    ok("text held: no text in the hello, nothing sent, no error, the layer never on screen",
-       !c.takes_text() && f && t.ref() && !runs && e.errors.empty() && !e.layer.count(t.ref()));
+    ok("text held: no text in the hello, nothing sent (the atlas neither), no error, the layer never on screen",
+       !c.takes_text() && f && t.ref() && !runs && e.errors.empty() && !e.layer.count(t.ref()) && assets() == 0);
     r.gpu.reject.clear();
     r.start();
     r.pump(3000);
@@ -3536,8 +3667,13 @@ static void text_held()
     for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
         if (kv.second.glyph_cap)
             q = &kv.second;
-    ok("text held: sent with the font once a service with text says hello, its string drawn",
-       c.takes_text() && q && q->glyphs.size() == 2 * 16 && e.layer[t.ref()] == "shown" && e.errors.empty());
+    ok("text held: sent with the font and its atlas once a service with text says hello, its string drawn",
+       c.takes_text() && q && q->glyphs.size() == 2 * 16 && e.layer[t.ref()] == "shown" && e.errors.empty() &&
+           assets() == 1);
+    t.drop();
+    c.drop(f);
+    r.pump(100);
+    ok("text held: the font dropped, its atlas with it", assets() == 0 && e.errors.empty());
 }
 
 int main()

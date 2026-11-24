@@ -661,13 +661,22 @@ public:
         }
         const float zero[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         ramses::AttributeInput pos, uv;
-        const bool good = q.glyph_pos && q.glyph_uv && q.glyph_idx &&
+        /* a binding of its own, made with the buffers, in place of the unit quad's */
+        ramses::GeometryBinding *geo = scene_->createGeometryBinding(*q.effect);
+        const bool good = geo && q.glyph_pos && q.glyph_uv && q.glyph_idx &&
                           ok(q.glyph_idx->updateData(0, capacity * 6, idx.data())) &&
                           ok(q.glyph_pos->updateData(0, 4, zero)) && ok(q.glyph_uv->updateData(0, 4, zero)) &&
                           ok(q.effect->findAttributeInput("a_position", pos)) &&
                           ok(q.effect->findAttributeInput("a_texcoord", uv)) &&
-                          ok(q.geo->setInputBuffer(pos, *q.glyph_pos)) && ok(q.geo->setInputBuffer(uv, *q.glyph_uv)) &&
-                          ok(q.geo->setIndices(*q.glyph_idx)) && ok(q.mesh->setIndexCount(6));
+                          ok(geo->setInputBuffer(pos, *q.glyph_pos)) && ok(geo->setInputBuffer(uv, *q.glyph_uv)) &&
+                          ok(geo->setIndices(*q.glyph_idx)) && ok(q.mesh->setGeometryBinding(*geo)) &&
+                          ok(q.mesh->setIndexCount(6));
+        if (good) {
+            scene_->destroy(*q.geo);
+            q.geo = geo;
+        } else if (geo) {
+            scene_->destroy(*geo);
+        }
         if (!good) {
             log_error("ramses: a glyph run of %u glyphs refused", capacity);
             return false;   /* the quad is dropped, its buffers with it */

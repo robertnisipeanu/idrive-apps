@@ -164,6 +164,9 @@ public:
     virtual Uniforms *uniforms_of(uint32_t) { return nullptr; }
     /* An animation of the part's uniform name plays (or waits). */
     bool animating(uint32_t part, const std::string &name) const;
+    /* The largest x or y scale an animation of the part's scale reaches
+     * (absolute); 1 with none. */
+    float animated_scale(uint32_t part) const;
     /* What the renderer refused of the layer's content after it was
      * attached; empty: nothing. */
     virtual std::string refusal() const { return std::string(); }

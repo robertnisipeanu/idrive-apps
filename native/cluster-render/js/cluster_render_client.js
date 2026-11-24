@@ -166,6 +166,13 @@ function textOk(o) {
         c.length === 4 && c.every((v) => n(v, 0, 1));
 }
 
+/* A text layer's string as the service takes it: at most 1024 bytes of
+ * UTF-8, no lone surrogate (which has no UTF-8). */
+function stringOk(t) {
+    return Buffer.byteLength(t, 'utf8') <= 1024 &&
+        !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(t);
+}
+
 /* The fields of a text message or layer that say how it draws its line. */
 function textFields(o) {
     return { align: o.align, spacing: o.spacing, size: o.size, color: [].concat(o.color).join(' ') };
@@ -245,7 +252,7 @@ class ClusterRender extends EventEmitter {
 
     /* A canvas, or a layer drawn in one. */
     static _inCanvas(l) { return !!l && (l.kind === 'canvas' || !!l.opts.canvas); }
-    static _texty(l) { return !!l && (l.kind === 'font' || l.kind === 'text'); }
+    static _texty(l) { return !!l && (l.kind === 'font' || l.kind === 'text' || !!l.atlas); }
     /* Sent only once the hello says the service takes it. */
     static _late(l) { return ClusterRender._inCanvas(l) || ClusterRender._texty(l); }
 
@@ -384,7 +391,8 @@ class ClusterRender extends EventEmitter {
     _pump() {
         if (!this.sock || !this.ready) return;
         this.layers.forEach((l, ref) => {
-            if (this.blocked || (l.kind !== 'image' && l.kind !== 'asset') || !(l.whole || l.dirty.length)) return;
+            if (this.blocked || (l.kind !== 'image' && l.kind !== 'asset') || !(l.whole || l.dirty.length) ||
+                this._held(ref)) return;
             const rects = l.whole ? [] : l.dirty;
             let px;
             if (l.whole) {
@@ -484,6 +492,8 @@ class ClusterRender extends EventEmitter {
         const o = Object.assign({}, opts);
         const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1,
             dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map(), hosts: new Map() };
+        l.atlas = !!o.atlas;   /* a font's own (font()): held as fonts are */
+        delete o.atlas;
         if (kind === 'scene' && !(o.file && [].concat(o.sha256 || []).length === (o.res || []).length + 1)) return 0;
         if (kind === 'image') {
             o.iw = o.iw || o.w;
@@ -573,6 +583,7 @@ class ClusterRender extends EventEmitter {
      * after a reconnect. Returns its ref, 0 when asset is not an r8 asset of
      * this app or line or glyphs are missing. */
     font(asset, opts) {
+        if (typeof asset === 'object') return this._ownedFont(asset);
         const a = this.layers.get(asset);
         if (!a || a.kind !== 'asset' || a.opts.format !== 'r8' || a.opts.cube || !(opts.line > 0) || !opts.glyphs)
             return 0;
@@ -588,6 +599,26 @@ class ClusterRender extends EventEmitter {
         return ref;
     }
 
+    /* font({ target, w, h, pixels, line, glyphs, kerning, sdf }): a font
+     * with an atlas of its own, an r8 asset of w x h pixels (sampled
+     * bilinear), held as the font is and dropped with it. */
+    _ownedFont(o) {
+        const atlas = this._add('asset', { target: o.target, format: 'r8', w: o.w, h: o.h, sampling: 'bilinear',
+            atlas: true });
+        if (!atlas) return 0;
+        if (!this.pixels(atlas, null, o.pixels)) {
+            this.drop(atlas);
+            return 0;
+        }
+        const ref = this.font(atlas, o);
+        if (!ref) {
+            this.drop(atlas);
+            return 0;
+        }
+        this.layers.get(ref).owns = true;
+        return ref;
+    }
+
     /* A text layer (PROTOCOL.md "Text"): a line of text drawn from a font
      * over its rect, held as fonts are. opts the layer's (target, x, y, w,
      * h, klass, z, ...), font (font()'s ref), max (the glyphs it holds,
@@ -600,6 +631,7 @@ class ClusterRender extends EventEmitter {
         const o = Object.assign({ max: 64, align: 'left', spacing: 0, size: 0, color: [1, 1, 1, 1] }, opts);
         if (!f || f.kind !== 'font' || !(Number.isInteger(o.max) && o.max >= 1 && o.max <= 256) || !textOk(o)) return 0;
         const text = o.text === undefined ? '' : String(o.text);
+        if (!stringOk(text)) return 0;
         delete o.text;
         const ref = this.nextRef++;
         this.layers.set(ref, { kind: 'text', opts: o, text: text, uniforms: {}, parts: new Map(), binds: {}, links: {},
@@ -614,6 +646,7 @@ class ClusterRender extends EventEmitter {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'text') return false;
         text = String(text);
+        if (!stringOk(text)) return false;   /* the last string taken stays */
         if (l.text === text) return true;
         l.text = text;
         this._send({ op: 'text', ref: ref, text: text });
@@ -936,9 +969,12 @@ class ClusterRender extends EventEmitter {
         });
         /* a value dropped: the service undoes its links */
         this.layers.forEach((l) => Object.keys(l.links).forEach((k) => { if (l.links[k].value === ref) delete l.links[k]; }));
+        const l = this.layers.get(ref);
+        const atlas = l.kind === 'font' && l.owns ? l.opts.font : 0;
         if (!sampled) this.layers.delete(ref);
         this.pendingFrames.delete(ref);
         if (!held) this._send({ op: 'drop', ref: ref });
+        if (atlas && !sampled) this.drop(atlas);   /* the atlas the font owns goes with it */
     }
 
     frameBytes(ref) {

@@ -122,6 +122,7 @@ Compositor::~Compositor()
     if (block_fx_) gpu_->drop_effect(block_fx_);
     if (image_fx_) gpu_->drop_effect(image_fx_);
     if (text_fx_) gpu_->drop_effect(text_fx_);
+    if (sdf_fx_) gpu_->drop_effect(sdf_fx_);
     for (int fx : edge_fx_)
         if (fx) gpu_->drop_effect(fx);
 }
@@ -146,6 +147,17 @@ bool Compositor::texts()
             log_warn("compositor: no text layers: %s", why.c_str());
     }
     return text_fx_ != 0;
+}
+
+bool Compositor::sdf_effect()
+{
+    if (!sdf_tried_) {
+        sdf_tried_ = true;
+        std::string why;
+        if (!(sdf_fx_ = compile(kTextVertexShader300, kTextSdfFragmentShader300, &why)))
+            log_warn("compositor: distance fonts' edges from u_sdf: %s", why.c_str());
+    }
+    return sdf_fx_ != 0;
 }
 
 /* Compiled at the first edge a host asks for; refused, the service draws
@@ -441,8 +453,6 @@ uint32_t Compositor::add_font(uint64_t owner, uint32_t asset, Font &&f, std::str
         *err = "the service's pixel memory is full";
         return 0;
     }
-    f.aw = a->params().w;
-    f.ah = a->params().h;
     const uint32_t id = next_id_++;
     FontEntry &e = fonts_[id];
     e.owner = owner;
@@ -476,8 +486,12 @@ uint32_t Compositor::add_text(uint64_t owner, int target, const LayerParams &lp,
     const uint32_t id = admit(owner, target, (int64_t)bytes, err);
     if (!id)
         return 0;
+    /* A distance font's edge from screen-space derivatives where the
+     * cluster draws GLSL ES 3.00 (as instances need), else from u_sdf. */
+    const bool derivatives = f->second.font->sdf && instancing_ && sdf_effect();
     Entry &e = layers_[id];
-    e.layer.reset(new TextLayer(id, target, ++seq_, pacer_for(target), text_fx_, f->second.font, capacity, now_ms));
+    e.layer.reset(new TextLayer(id, target, ++seq_, pacer_for(target), derivatives ? sdf_fx_ : text_fx_,
+                                f->second.font, capacity, derivatives, now_ms));
     e.layer->params = lp;
     e.owner = owner;
     e.pixel_bytes = bytes;

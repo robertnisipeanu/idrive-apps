@@ -294,6 +294,21 @@ bool numbers(const std::string &text, size_t max, std::vector<float> *out)
 /* A text layer's fields over *st and its string (UTF-8) into *cps when
  * text is there (*has); false with *err, nothing taken, for any out of
  * range. */
+/* A text field's string (UTF-8) into *cps; false with *err when it is
+ * too long or not UTF-8. */
+bool text_string(const std::string &t, std::vector<uint32_t> *cps, std::string *err)
+{
+    if (t.size() > TextLayer::kMaxTextBytes) {
+        *err = "text is at most " + std::to_string(TextLayer::kMaxTextBytes) + " bytes of UTF-8";
+        return false;
+    }
+    if (!decode_utf8(t, cps)) {
+        *err = "text is not UTF-8";
+        return false;
+    }
+    return true;
+}
+
 bool text_fields(const cr::Json &j, TextStyle *st, std::vector<uint32_t> *cps, bool *has, std::string *err)
 {
     TextStyle s = *st;
@@ -312,17 +327,8 @@ bool text_fields(const cr::Json &j, TextStyle *st, std::vector<uint32_t> *cps, b
         std::copy(c.begin(), c.end(), s.color);
     }
     *has = j.count("text") != 0;
-    if (*has) {
-        const std::string t = str(j, "text");
-        if (t.size() > TextLayer::kMaxTextBytes) {
-            *err = "text is at most " + std::to_string(TextLayer::kMaxTextBytes) + " bytes of UTF-8";
-            return false;
-        }
-        if (!decode_utf8(t, cps)) {
-            *err = "text is not UTF-8";
-            return false;
-        }
-    }
+    if (*has && !text_string(str(j, "text"), cps, err))
+        return false;
     *st = s;
     return true;
 }
@@ -856,17 +862,25 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
         TextStyle st;
         std::vector<uint32_t> cps;
         bool has = false;
+        /* the string checked on its own: refused, the layer is made empty */
+        cr::Json style = j;
+        style.erase("text");
         if (!num(j, "font", 0, 4294967295.0, &font_ref, &err) ||
-            !num(j, "max", 1, TextLayer::kMaxGlyphs, &max, &err) || !text_fields(j, &st, &cps, &has, &err)) {
+            !num(j, "max", 1, TextLayer::kMaxGlyphs, &max, &err) || !text_fields(style, &st, &cps, &has, &err)) {
             error(c, "layer", ref, err);
             return;
         }
+        std::string text_err;
+        if (j.count("text") && !text_string(str(j, "text"), &cps, &text_err))
+            cps.clear();
         auto f = c.assets.find((uint32_t)font_ref);
         id = comp_->add_text(c.id, target, lp, f == c.assets.end() ? 0 : f->second, (uint32_t)max, now_ms, &err);
         if (id) {
             TextLayer *t = static_cast<TextLayer *>(comp_->layer(c.id, id));
             t->set_style(st);
             t->set_text(std::move(cps));
+            if (!text_err.empty())
+                error(c, "text", ref, text_err);
         }
     } else {
         error(c, "layer", ref, "kind must be video, image, effect, mesh or text");

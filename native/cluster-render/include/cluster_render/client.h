@@ -327,13 +327,18 @@ public:
      * from it. 0 when asset is not an r8 asset of this client or the font
      * has no line or glyphs. */
     uint32_t font(uint32_t asset, const FontOptions &fo);
+    /* A font with an atlas of its own: an r8 asset on target of w x h
+     * pixels px (sampled bilinear), sent with the font, held as it is, and
+     * dropped with it. 0 when out of range. */
+    uint32_t font(const std::string &target, unsigned w, unsigned h, const uint8_t *px, const FontOptions &fo);
     /* A text layer (PROTOCOL.md "Text"): a line of text drawn from font
-     * over lo's rect, held as fonts are. 0 when font is not one or to is
-     * out of range. */
+     * over lo's rect, held as fonts are. 0 when font is not one, to is out
+     * of range, or text is past kMaxTextBytes or not UTF-8. */
     uint32_t text(const LayerOptions &lo, uint32_t font, const TextLayerOptions &to, const std::string &text = "");
-    /* The text layer's string (UTF-8; the service refuses anything else)
-     * and how it is drawn (its max as made); false, nothing sent, for a
-     * layer that is not a text layer. */
+    /* The text layer's string and how it is drawn (its max as made);
+     * false, nothing sent, the last string taken kept, for a layer that is
+     * not a text layer, a string past kMaxTextBytes or one that is not
+     * UTF-8. */
     bool set_text(uint32_t ref, const std::string &text);
     bool set_text_style(uint32_t ref, const TextLayerOptions &to);
     /* A shared value (PROTOCOL.md "Shared values") on target, to a service
@@ -545,6 +550,8 @@ private:
         std::map<std::pair<uint32_t, std::string>, std::pair<uint32_t, std::string>> links;  /* -> value */
         std::string value;               /* a value's message, its last v; a font's message */
         uint32_t font = 0;               /* a text layer's font, a font's asset */
+        bool owns = false;               /* a font: its asset goes with it */
+        bool atlas = false;              /* an asset a font owns: held as fonts are */
         TextLayerOptions to;             /* a text layer's */
         std::string text;                /* its string */
         std::map<uint32_t, Part> parts;
@@ -577,9 +584,10 @@ private:
     static bool in_canvas(const Layer &l);
     /* Sent only once the hello says the service takes it: in_canvas(), a
      * font or a text layer. */
-    static bool late(const Layer &l) { return in_canvas(l) || l.kind == "font" || l.kind == "text"; }
+    static bool texty(const Layer &l) { return l.kind == "font" || l.kind == "text" || l.atlas; }
+    static bool late(const Layer &l) { return in_canvas(l) || texty(l); }
     /* Held here, not sent: one in_canvas() until a hello with canvas, a
-     * font or a text layer until a hello with text. */
+     * texty() one until a hello with text. */
     bool held(uint32_t ref) const;
     /* A part or pivot of a mesh layer, its fields after op, ref and part:
      * false, nothing sent, when the layer, the part or the parent is not as

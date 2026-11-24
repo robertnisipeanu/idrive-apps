@@ -201,20 +201,7 @@ uint32_t Font::asset(Client &c, const std::string &target) const
 {
     if (!ok())
         return 0;
-    AssetOptions ao;
-    ao.target = target;
-    ao.w = w_;
-    ao.h = h_;
-    ao.r8 = true;
-    ao.bilinear = true;
-    const uint32_t ref = c.asset(ao);
-    if (!ref)
-        return 0;
-    c.pixels(ref, {}, px_.data(), px_.size());
-    const uint32_t font = c.font(ref, options());
-    if (!font)
-        c.drop(ref);
-    return font;
+    return c.font(target, w_, h_, px_.data(), options());
 }
 
 float Font::measure(const std::string &text, float h, float spacing, unsigned *glyphs) const
@@ -262,9 +249,10 @@ bool Text::set(const std::string &text)
 {
     if (!ref_)
         return false;
+    if (!c_.set_text(ref_, text))
+        return false;   /* past kMaxTextBytes or not UTF-8: the last string stays */
     unsigned n = 0;
     const float width = font_->measure(text, (float)lo_.h, to_.spacing, &n);
-    c_.set_text(ref_, text);
     return n <= to_.max_glyphs && width <= (float)lo_.w;
 }
 

@@ -872,6 +872,9 @@ private:
     int atlas_fx_ = 0, block_fx_ = 0, image_fx_ = 0;
     int text_fx_ = 0;   /* the text layers' (text_layer.h); 0: none */
     bool text_tried_ = false;
+    int sdf_fx_ = 0;    /* distance fonts' in GLSL ES 3.00, compiled at the first; 0: none */
+    bool sdf_tried_ = false;
+    bool sdf_effect();
     std::map<uint32_t, FontEntry> fonts_;
     int edge_fx_[2] = {0, 0};   /* kEdgeAtlasFragmentShader, kEdgeBlockFragmentShader; 0: no edges */
     bool edge_tried_ = false;

@@ -20,16 +20,23 @@
 #include <string>
 #include <vector>
 
+#include "cluster_render/protocol.h"
 #include "layer.h"
 
 namespace crs {
 
-/* The text layers' shaders: a_position in the quad's unit square, as the
- * unit quad's; a_texcoord in the atlas; u_color straight alpha, drawn
- * premultiplied; u_sdf 0 for a coverage atlas, else the factor that turns a
- * distance atlas's sample into the drawn pixels' coverage. */
+/* The text layers' shaders (GLSL ES 1.00): a_position in the quad's unit
+ * square, as the unit quad's; a_texcoord in the atlas; u_color straight
+ * alpha, drawn premultiplied; u_sdf 0 for a coverage atlas, else the
+ * factor sdf_factor() gives for the layer's size and largest scale, which
+ * makes a distance atlas's edge a pixel wide on screen. */
 extern const char *const kTextVertexShader;
 extern const char *const kTextFragmentShader;
+/* A distance atlas's in GLSL ES 3.00, for a cluster that draws it: the
+ * edge a pixel wide on screen from the sample's screen-space derivatives,
+ * whatever the layer's scale or its animations; no u_sdf. */
+extern const char *const kTextVertexShader300;
+extern const char *const kTextSdfFragmentShader300;
 
 struct FontGlyph {
     uint16_t x = 0, y = 0, w = 0, h = 0;   /* its box in the atlas */
@@ -97,20 +104,27 @@ std::vector<GlyphQuad> lay_out(const Font &f, const std::vector<uint32_t> &cps, 
  * bottom-right, top-left and top-right corners. */
 std::vector<float> glyph_vertices(const std::vector<GlyphQuad> &q, uint32_t w, uint32_t h);
 
+/* u_sdf for font drawn with lines size pixels high at scale times that on
+ * screen: the factor that turns a distance sample into coverage with a
+ * one-pixel edge; 0 for a coverage font. */
+float sdf_factor(const Font &f, float size, float scale);
+
 /* A line of text: an effect layer whose quad draws a glyph run from its
  * font's atlas (bound as u_atlas by the compositor). */
 class TextLayer : public EffectLayer {
 public:
     static const uint32_t kMaxGlyphs = 256;    /* a layer's glyph capacity at most */
     static const uint32_t kDefaultGlyphs = 64;
-    static const size_t kMaxTextBytes = 1024;  /* a string's UTF-8 */
+    static const size_t kMaxTextBytes = cr::kMaxTextBytes;  /* a string's UTF-8 */
     static const uint32_t kFps = 30;           /* glyph writes a second at most */
     /* Bytes a glyph takes in the scene's buffers: four vertices of x, y,
      * u, v floats, and six 16-bit indices. */
     static const size_t kVertexBytes = 64, kIndexBytes = 12;
 
+    /* derivatives: effect is the GLSL ES 3.00 distance shader, which needs
+     * no u_sdf. */
     TextLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect,
-              std::shared_ptr<const Font> font, uint32_t capacity, int64_t now_ms);
+              std::shared_ptr<const Font> font, uint32_t capacity, bool derivatives, int64_t now_ms);
     const char *kind() const override { return "text"; }
 
     uint32_t capacity() const { return capacity_; }
@@ -131,13 +145,20 @@ public:
     int64_t wake_in_ms(int64_t now_ms) const override;
     std::string stats() const override;
     WriteStats write_stats() const override;
+    /* The renderer refused a glyph write: the layer is hidden, in error,
+     * until its string, its style or its scene changes. */
+    std::string refusal() const override { return refusal_; }
     size_t buffer_bytes() const override { return attached() ? capacity_ * (kVertexBytes + kIndexBytes) : 0; }
 
 private:
     void colour();
+    /* u_sdf for the layer's size and its largest scale, set when it
+     * changed. */
+    void sharpen();
 
     std::shared_ptr<const Font> font_;
     uint32_t capacity_;
+    bool derivatives_;
     std::vector<uint32_t> cps_;
     TextStyle style_;
     crk::FrameClock clock_;
@@ -145,6 +166,8 @@ private:
     Rect laid_;   /* the rect the scene's glyphs were laid out in */
     uint32_t glyphs_drawn_ = 0, pending_drawn_ = 0;
     size_t staged_bytes_ = 0;
+    float sdf_ = -1;   /* the u_sdf set */
+    std::string refusal_;
     uint64_t writes_ = 0, bytes_ = 0, failed_ = 0, holds_ = 0;
 };
 

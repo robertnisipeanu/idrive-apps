@@ -564,12 +564,20 @@ async function main() {
         !ovl.setText(fontRef, 'x'));
     ok('text: drawn, nothing refused', await until(() => eo.layer[full.ref] === 'shown', 3000) &&
         (await sleep(200), eo.refused.slice(textRefused).filter((r) => /^(text|font|layer|asset)/.test(r)).length === 0));
+    const atlasRef = ovl.layers.get(fontRef).opts.font;
+    ok('text: a string past 1024 bytes or with a lone surrogate refused here, the last one kept for a reconnect',
+        !full.set('1'.repeat(1100)) && !ovl.setText(full.ref, '1\uD800') && !ovl.setText(full.ref, '\uDC001') &&
+        full.set('12\u00b0') && !full.set('\uD83D') &&
+        ovl._layerMsg(full.ref, ovl.layers.get(full.ref)).text === '12\u00b0' &&
+        ovl.text({ target: 'panel', font: fontRef, text: 'x'.repeat(1025) }) === 0);
     ovl.drop(fontRef);
-    ok('text: the font a layer draws from kept here', ovl.layers.has(fontRef));
+    ok('text: the font a layer draws from kept here, its atlas with it',
+        ovl.layers.has(fontRef) && ovl.layers.has(atlasRef) && ovl.layers.get(atlasRef).kind === 'asset');
     full.drop();
     label.drop();
     ovl.drop(fontRef);
-    ok('text: dropped once no layer draws from it', !ovl.layers.has(fontRef));
+    ok('text: dropped once no layer draws from it, its atlas with it',
+        !ovl.layers.has(fontRef) && !ovl.layers.has(atlasRef));
     }
 
     {   /* The showcase's label page: each line's texts within its line on the
@@ -630,6 +638,13 @@ async function main() {
     const rin = rc.effect({ target: 'panel', canvas: rcv, w: 32, h: 32, fs: 'void main(){}' });
     const rout = rc.effect({ target: 'panel', w: 32, h: 32, fs: 'void main(){}' });
     rc.bind(rout, 'u_cv', rcv);
+    const rgrid = Buffer.alloc(16 * 16, 255);
+    const rfont = Font.fromGrid({ pixels: rgrid, w: 16, h: 16, cols: 2, rows: 1, chars: '12' });
+    const rfontRef = rfont.asset(rc, 'panel');
+    const ratlas = rc.layers.get(rfontRef).opts.font;
+    const rtext = new Text(rc, rfont, rfontRef, { target: 'panel', w: 64, h: 16 });
+    rtext.set('21');
+    rtext.set('2'.repeat(2000));   /* refused here: the replay keeps '21' */
     await until(() => peer !== null, 2000);
     await sleep(100);
     hello({});
@@ -644,17 +659,26 @@ async function main() {
         rc.canvases === false && got.some((m) => m.op === 'layer' && m.ref === rout) &&
         got.every((m) => !m.binary && m.op !== 'canvas' && m.canvas === undefined && m.op !== 'bind' &&
             m.ref !== rin && m.ref !== rmesh));
+    ok('older service: no font, no text layer and no atlas sent, its pixels neither',
+        rc.texts === false && got.every((m) => m.op !== 'font' && m.op !== 'text' && m.ref !== ratlas &&
+            m.ref !== rfontRef && m.ref !== rtext.ref));
     got.length = 0;
     peer.destroy();
     peer = null;
     await until(() => peer !== null, 3000);
     await sleep(100);
-    hello({ canvas: 1 });
+    hello({ canvas: 1, text: 1 });
     ok('a service that takes canvases: the canvas, the layers in it, a part, its geometry and the bind sent ' +
         'after its hello', await until(() => got.some((m) => m.op === 'bind' && m.ref === rout), 2000) &&
         got.some((m) => m.op === 'canvas' && m.ref === rcv) && got.some((m) => m.op === 'layer' && m.ref === rin &&
         m.canvas === rcv && m.x === 4) && got.some((m) => m.op === 'part' && m.ref === rmesh) &&
         got.some((m) => m.binary) && got.some((m) => m.op === 'uniform' && m.ref === rin));
+    const at = (pred) => got.findIndex(pred);
+    ok('a service that takes text: the atlas, then the font, then the text layer with its last string taken',
+        at((m) => m.op === 'asset' && m.ref === ratlas) >= 0 &&
+        at((m) => m.op === 'asset' && m.ref === ratlas) < at((m) => m.op === 'font' && m.ref === rfontRef) &&
+        at((m) => m.op === 'font' && m.ref === rfontRef) < at((m) => m.op === 'layer' && m.ref === rtext.ref) &&
+        got.some((m) => m.op === 'layer' && m.ref === rtext.ref && m.text === '21'));
     rc.close();
     old.close();
 

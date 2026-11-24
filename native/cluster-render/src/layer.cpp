@@ -3,6 +3,7 @@
 #include "layer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -199,6 +200,23 @@ bool Layer::animating(uint32_t part, const std::string &name) const
         if (kv.second.part == part && kv.second.a.property == Animated::Uniform && kv.second.a.uniform == name)
             return true;
     return false;
+}
+
+float Layer::animated_scale(uint32_t part) const
+{
+    float s = 1;
+    bool any = false;
+    for (const auto &kv : played_) {
+        const Animation &a = kv.second.a;
+        if (kv.second.part != part || a.property != Animated::Scale || a.width < 2)
+            continue;
+        if (!any)
+            s = 0;
+        any = true;
+        for (size_t k = 0; k + 1 < a.v.size(); k += a.width)
+            s = std::max(s, std::max(std::fabs(a.v[k]), std::fabs(a.v[k + 1])));
+    }
+    return s;
 }
 
 bool Layer::animations_started() const

@@ -1269,6 +1269,16 @@ static void backend(Gpu &gpu)
 #ifndef CRS_RAMSES27
     ok("text: the scene described whole", described("check"));
 #endif
+    /* A distance font's GLSL ES 3.00 shader (derivatives) compiled, and a
+     * run drawn with it from the same atlas. */
+    const int sfx = gpu.effect(kTextVertexShader300, kTextSdfFragmentShader300, &err);
+    const int sq = sfx ? g->quad(sfx, tr) : 0;
+    ok("text: the distance shader (GLSL ES 3.00) compiled, a run of it written and drawn",
+       sq && g->glyph_buffer(sq, 64) && g->texture(sq, "u_atlas", tbuf) && g->uniform(sq, "u_color", white, 4) &&
+           g->glyphs(sq, lv.data(), 64) && g->show(sq, true) && g->flush(17));
+    g->drop_quad(sq);
+    if (sfx)
+        gpu.drop_effect(sfx);
     g->drop_quad(tq);
     g->drop_buffer(tbuf);
     if (tfx)

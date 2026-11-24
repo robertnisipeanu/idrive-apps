@@ -60,8 +60,9 @@ public:
     const std::vector<uint8_t> &pixels() const { return px_; }
     /* The table Client::font() takes. */
     FontOptions options() const;
-    /* The atlas as an r8 asset on target, sampled bilinear, and the font
-     * over it; the font's ref, 0 when refused here. */
+    /* The font and its atlas, an r8 asset on target sampled bilinear,
+     * which goes when the font is dropped (Client::font()); the font's ref,
+     * 0 when refused here. */
     uint32_t asset(Client &c, const std::string &target) const;
     /* text (UTF-8) in a line h pixels high, spacing pixels between
      * characters: its advance, as the service lays it out; *glyphs the
@@ -97,7 +98,8 @@ public:
     uint32_t ref() const { return ref_; }
     /* The string shown (UTF-8), sent as it is; false when it has more
      * glyphs than the layer holds or is wider than its rect (it is shown
-     * cut). */
+     * cut), or, nothing sent and the last string kept, when it is past
+     * kMaxTextBytes or not UTF-8. */
     bool set(const std::string &text);
     void color(const float rgba[4]);
     void drop();

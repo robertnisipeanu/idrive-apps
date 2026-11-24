@@ -13,7 +13,7 @@ u32 length (little-endian: the bytes after it) | u8 type | body
 
 | Type | Body |
 |---|---|
-| `J` (0x4A) | a flat JSON object: string and number values (true/false count as 1/0) |
+| `J` (0x4A) | a flat JSON object: string and number values (true/false count as 1/0); in a string, a `\u` escape of a high surrogate and the low one after it are one character, and a surrogate alone makes the message malformed |
 | `F` (0x46) | `u32 ref, u64 frame id, u16 rect count, rect count x {u16 x, y, w, h}, pixels` (little-endian) |
 | `M` (0x4D) | a mesh part's geometry ([below](#mesh-geometry-m)) |
 
@@ -409,9 +409,15 @@ A string change is one `text` message carrying the string.
   `max`; a `set` changes its layer fields. It is turned, scaled and stacked
   as an effect layer, and its `u_color` animated with `animate` (`property`
   `uniform`). It takes no `uniform`, `bind` or `link`, and draws on its
-  target, not in a canvas. Text that is not well-formed UTF-8 (overlong,
-  surrogates, past U+10FFFF, cut short) is refused (`text is not UTF-8`)
-  and the layer keeps its string.
+  target, not in a canvas. Text past 1024 bytes or not well-formed UTF-8
+  (overlong, surrogates, past U+10FFFF, cut short) is refused (`text is
+  at most 1024 bytes of UTF-8`, `text is not UTF-8`) and the layer keeps
+  its string; in a `layer` message the layer is made with no string, and
+  the string is refused with an `error` event of `op` `text`.
+- **A glyph write the renderer refuses:** the layer is hidden and in
+  `error` with the reason (`the renderer refused N glyphs`) until its
+  string, its style or its target's scene changes; the target's other
+  layers flush on.
 - **Layout:** the font scaled to `size`; each glyph's top-left on whole
   pixels, so a font drawn at the size it was made maps each texel to a
   pixel; kerning and `spacing` between characters, none after the last;
@@ -426,7 +432,12 @@ A string change is one `text` message carrying the string.
   samples the atlas once for each pixel a glyph covers. A layer's buffers
   (76 bytes a glyph of its `max`, twice) count in the service's memory.
 - **Sharp at any size:** make the font at the size it is drawn, or send a
-  distance field (`sdf`), whose edge stays sharp scaled up.
+  distance field (`sdf`), whose edge stays about a pixel wide on screen at
+  any size and scale. Where the cluster draws GLSL ES 3.00 (the hello's
+  `instances` 1) the service draws it with a shader that takes the edge's
+  width from screen-space derivatives, whatever the layer's turn, scale or
+  animations; elsewhere from the layer's size and its largest scale (`sx`,
+  `sy`, and the largest a `scale` animation of it reaches).
 
 Both clients come with a helper that packs glyphs into an atlas and sends
 it with its table (`js/cluster_render_text.js`; `include/cluster_render/text.h`,
@@ -435,10 +446,12 @@ app has, at build time or on the unit), a monospace grid image, or an
 AngelCode BMFont (`.fnt` text and its page's pixels, R8 or the alpha of
 RGBA; one page, glyphs not packed in channels, inside the page, no negative
 `xadvance`). Its `set()` says whether the string fits (no more glyphs than
-the layer holds, no wider than its rect). An app that draws text requires
-the `cluster-render` release that has it; a client holds its fonts and text
-layers until a service's hello has `text` 1, and never sends them to an
-older one.
+the layer holds, no wider than its rect); a string the service would
+refuse is refused there, nothing sent, the last one kept. A helper's font
+owns its atlas: dropping the font drops the atlas. An app that draws text
+requires the `cluster-render` release that has it; a client holds its
+fonts, their atlases and its text layers until a service's hello has
+`text` 1, and never sends them to an older one.
 
 ```js
 const { Font, Text } = require('./cluster_render_text.js');
