@@ -134,6 +134,7 @@ public:
     bool refuse_canvases = false;  /* canvas() refused */
     bool refuse_glyphs = false;    /* glyph_buffer() refused, as a backend without glyph runs */
     bool refuse_glyph_writes = false;   /* glyphs() refused */
+    int glyph_refusals = 0;             /* glyphs() calls refused for it */
     std::string name;
     std::map<std::string, FakeGraph *> *registry = nullptr;
     const std::map<int, unsigned> *effect_attributes = nullptr;   /* the Gpu's */
@@ -328,7 +329,11 @@ public:
     }
     bool glyphs(int quad, const float *v, uint32_t n) override
     {
-        if (refuse_glyph_writes || !has(quad) || n > pending.quads[quad].glyph_cap)
+        if (refuse_glyph_writes) {
+            glyph_refusals++;
+            return false;
+        }
+        if (!has(quad) || n > pending.quads[quad].glyph_cap)
             return false;
         if (write_budget >= 0 && (long)(written + (size_t)n * 64) > write_budget)
             return false;

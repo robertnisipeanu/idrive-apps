@@ -413,13 +413,16 @@ Stage TextLayer::stage(int64_t now_ms)
     std::vector<GlyphQuad> q(all.begin(), all.begin() + n);
     const std::vector<float> v = glyph_vertices(q, r.w, r.h);
     if (!g_->glyphs(quad_handle(), v.data(), n)) {
-        /* Hidden at once, its buffers maybe half written; in error until
-         * something changes, so the target's other layers flush on. */
+        /* Its quad hidden at once (stale_), its buffers maybe half
+         * written; in error until the client changes it, so the target's
+         * other layers flush on. drawn_ stays as the compositor arranged
+         * it: the compositor hides the layer for the refusal at its next
+         * arrange, and should the client's change clear the refusal
+         * before that, the layer is still drawn and stages the rewrite. */
         failed_++;
         refusal_ = "the renderer refused " + std::to_string(n) + " glyphs";
         log_error("layer %u: %s", id_, refusal_.c_str());
         g_->show(quad_handle(), false);
-        drawn_ = false;
         stale_ = true;
         return Stage::Wrote;
     }

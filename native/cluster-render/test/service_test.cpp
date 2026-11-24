@@ -3468,6 +3468,34 @@ static void text_helper()
        hidden_while_refused && q && q->visible && e.layer[label.ref()] == "shown" &&
            q->glyph_writes == before_rewrite + 1 && q->glyphs.size() == 2 * 16 &&
            std::fabs(q->glyphs[2] - 10.0f / 32) < 1e-6f);
+    /* The same with the client's change handled in the very next loop of
+     * the service, before it arranges its layers again: the refusal is
+     * cleared before the compositor ever hid the layer for it. The service
+     * runs one loop at a time (handle, arrange, render) until a loop
+     * refuses the write; the change is on the socket before the next. */
+    auto service_once = [&]() {
+        r.now += 5;
+        std::vector<pollfd> fds;
+        const size_t first = r.svc->poll_fds(&fds);
+        ::poll(fds.data(), fds.size(), 0);
+        r.port.tick(r.now);
+        r.svc->after_poll(fds, first, r.now);
+    };
+    g->refuse_glyph_writes = true;
+    const int refusals = g->glyph_refusals;
+    label.set("12");
+    for (int k = 0; k < 200 && g->glyph_refusals == refusals; k++)
+        service_once();
+    g->refuse_glyph_writes = false;
+    const float white[4] = {1, 1, 1, 1};
+    label.color(white);   /* written to the socket at once */
+    service_once();
+    r.pump(200);
+    q = run_of(4);
+    ok("text: a change handled right after a refused write, before the next arrange: the glyphs rewritten and "
+       "shown, the layer shown",
+       g->glyph_refusals == refusals + 1 && q && q->visible && e.layer[label.ref()] == "shown" &&
+           q->glyphs.size() == 2 * 16 && std::fabs(q->glyphs[2] - 1.0f / 32) < 1e-6f);
     c.drop(img);
 
     /* Where the cluster draws no GLSL ES 3.00, a distance-field font's
