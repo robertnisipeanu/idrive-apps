@@ -583,10 +583,10 @@ class ClusterRender extends EventEmitter {
      * after a reconnect. Returns its ref, 0 when asset is not an r8 asset of
      * this app or line or glyphs are missing. */
     font(asset, opts) {
-        if (typeof asset === 'object') return this._ownedFont(asset);
+        if (asset !== null && typeof asset === 'object') return this._ownedFont(asset);
         const a = this.layers.get(asset);
-        if (!a || a.kind !== 'asset' || a.opts.format !== 'r8' || a.opts.cube || !(opts.line > 0) || !opts.glyphs)
-            return 0;
+        if (!a || !opts || a.kind !== 'asset' || a.opts.format !== 'r8' || a.opts.cube || !(opts.line > 0) ||
+            !opts.glyphs) return 0;
         const ref = this.nextRef;
         const l = { kind: 'font', opts: { target: a.opts.target, font: asset }, uniforms: {}, parts: new Map(),
             binds: {}, links: {}, anims: new Map(), nextAnim: 1, edits: new Map(), hosts: new Map() };
@@ -603,6 +603,7 @@ class ClusterRender extends EventEmitter {
      * with an atlas of its own, an r8 asset of w x h pixels (sampled
      * bilinear), held as the font is and dropped with it. */
     _ownedFont(o) {
+        if (!(o.line > 0) || !o.glyphs || !Buffer.isBuffer(o.pixels)) return 0;
         const atlas = this._add('asset', { target: o.target, format: 'r8', w: o.w, h: o.h, sampling: 'bilinear',
             atlas: true });
         if (!atlas) return 0;

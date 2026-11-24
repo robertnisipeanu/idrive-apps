@@ -203,31 +203,13 @@ bool decode_utf8(const std::string &s, std::vector<uint32_t> *out)
     out->clear();
     if (!cr::utf8_ok(s))
         return false;
+    /* well-formed: each lead byte says how many continuation bytes follow */
     for (size_t i = 0; i < s.size();) {
         const uint8_t b = (uint8_t)s[i];
-        uint32_t cp, min;
-        int n;
-        if (b < 0x80) {
-            cp = b, n = 1, min = 0;
-        } else if ((b & 0xe0) == 0xc0) {
-            cp = b & 0x1f, n = 2, min = 0x80;
-        } else if ((b & 0xf0) == 0xe0) {
-            cp = b & 0x0f, n = 3, min = 0x800;
-        } else if ((b & 0xf8) == 0xf0) {
-            cp = b & 0x07, n = 4, min = 0x10000;
-        } else {
-            return false;
-        }
-        if (i + n > s.size())
-            return false;
-        for (int k = 1; k < n; k++) {
-            const uint8_t c = (uint8_t)s[i + k];
-            if ((c & 0xc0) != 0x80)
-                return false;
-            cp = (cp << 6) | (c & 0x3f);
-        }
-        if (cp < min || !scalar(cp))
-            return false;
+        const int n = b < 0x80 ? 1 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+        uint32_t cp = n == 1 ? b : b & (0x7f >> n);
+        for (int k = 1; k < n; k++)
+            cp = (cp << 6) | ((uint8_t)s[i + k] & 0x3f);
         out->push_back(cp);
         i += n;
     }
@@ -359,7 +341,6 @@ void TextLayer::set_text(std::vector<uint32_t> &&cps)
         return;
     cps_ = std::move(cps);
     version_++;
-    refusal_.clear();
 }
 
 void TextLayer::set_style(const TextStyle &s)
@@ -369,7 +350,20 @@ void TextLayer::set_style(const TextStyle &s)
     colour();
     if (moved)
         version_++;
-    refusal_.clear();
+    /* After a refused write: drawn again, its glyphs rewritten first (the
+     * buffers may be half written), hidden until that write goes. */
+    if (!refusal_.empty()) {
+        refusal_.clear();
+        stale_ = true;
+        version_++;
+    }
+}
+
+void TextLayer::arrange(bool drawn, int32_t order)
+{
+    EffectLayer::arrange(drawn, order);
+    if (g_ && stale_)
+        g_->show(quad_handle(), false);
 }
 
 bool TextLayer::attach(Graph *g, int64_t now_ms, std::string *err)
@@ -383,6 +377,7 @@ bool TextLayer::attach(Graph *g, int64_t now_ms, std::string *err)
     }
     written_ = 0;   /* the new scene's buffers hold nothing yet */
     refusal_.clear();
+    stale_ = false;
     sdf_ = -1;   /* the new quad has none yet */
     colour();
     return true;
@@ -425,8 +420,12 @@ Stage TextLayer::stage(int64_t now_ms)
         log_error("layer %u: %s", id_, refusal_.c_str());
         g_->show(quad_handle(), false);
         drawn_ = false;
-        written_ = version_;
+        stale_ = true;
         return Stage::Wrote;
+    }
+    if (stale_) {
+        stale_ = false;   /* shown with the glyphs written now */
+        g_->show(quad_handle(), true);
     }
     staged_bytes_ = (size_t)n * kVertexBytes;
     pacer_.spend(staged_bytes_);

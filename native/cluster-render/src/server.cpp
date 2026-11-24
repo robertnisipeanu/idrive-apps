@@ -291,9 +291,6 @@ bool numbers(const std::string &text, size_t max, std::vector<float> *out)
     }
 }
 
-/* A text layer's fields over *st and its string (UTF-8) into *cps when
- * text is there (*has); false with *err, nothing taken, for any out of
- * range. */
 /* A text field's string (UTF-8) into *cps; false with *err when it is
  * too long or not UTF-8. */
 bool text_string(const std::string &t, std::vector<uint32_t> *cps, std::string *err)
@@ -309,6 +306,9 @@ bool text_string(const std::string &t, std::vector<uint32_t> *cps, std::string *
     return true;
 }
 
+/* A text layer's fields over *st and its string (UTF-8) into *cps when
+ * text is there (*has); false with *err, nothing taken, for any out of
+ * range. */
 bool text_fields(const cr::Json &j, TextStyle *st, std::vector<uint32_t> *cps, bool *has, std::string *err)
 {
     TextStyle s = *st;

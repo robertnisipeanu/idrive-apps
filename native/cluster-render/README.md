@@ -291,8 +291,9 @@ Beside the layers:
   one draw by `gl_InstanceID` (PROTOCOL.md "Draw modes and instances").
   Instances are on as shipped on iDrive 7, whose cluster draws GLSL ES 3.00
   and instanced draws; `instancing = 0` in `cluster-render.conf` turns them
-  off. On iDrive 8 they are off (`id8_instancing = 0`): whether its cluster
-  draws them is not known.
+  off, and with them the GLSL ES 3.00 shader for distance-field text. On
+  iDrive 8 they are off (`id8_instancing = 0`): whether its cluster draws
+  them is not known.
 - **Part hierarchies:** a mesh part can follow another part or a pivot that
   draws nothing, so one animation turns a whole assembly (PROTOCOL.md "Part
   hierarchies").

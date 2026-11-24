@@ -342,7 +342,8 @@ Instances above 1 are taken only by a service whose hello has `instances`
 1; otherwise the part is refused (`instances are off on this cluster`).
 On iDrive 7 they are on as shipped: the cluster's renderer draws GLSL ES
 3.00 and instanced draws. `instancing = 0` in `cluster-render.conf` turns
-them off. On iDrive 8 they are off as shipped (`id8_instancing = 0`):
+them off, and with them the GLSL ES 3.00 shader for distance-field
+[text](#text). On iDrive 8 they are off as shipped (`id8_instancing = 0`):
 whether its cluster draws them is not known, and if it could not, its
 renderer would hold up the whole target's scene, every app's content on
 it, until it gave up on the effect.
@@ -434,7 +435,8 @@ A string change is one `text` message carrying the string.
 - **Sharp at any size:** make the font at the size it is drawn, or send a
   distance field (`sdf`), whose edge stays about a pixel wide on screen at
   any size and scale. Where the cluster draws GLSL ES 3.00 (the hello's
-  `instances` 1) the service draws it with a shader that takes the edge's
+  `instances` 1, set by `instancing` and `id8_instancing` in
+  `cluster-render.conf`) the service draws it with a shader that takes the edge's
   width from screen-space derivatives, whatever the layer's turn, scale or
   animations; elsewhere from the layer's size and its largest scale (`sx`,
   `sy`, and the largest a `scale` animation of it reaches).

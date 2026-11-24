@@ -146,8 +146,10 @@ public:
     std::string stats() const override;
     WriteStats write_stats() const override;
     /* The renderer refused a glyph write: the layer is hidden, in error,
-     * until its string, its style or its scene changes. */
+     * until the client changes it (a text message, which set_style() takes)
+     * or its scene goes; then hidden until its glyphs are written whole. */
     std::string refusal() const override { return refusal_; }
+    void arrange(bool drawn, int32_t order) override;
     size_t buffer_bytes() const override { return attached() ? capacity_ * (kVertexBytes + kIndexBytes) : 0; }
 
 private:
@@ -168,6 +170,7 @@ private:
     size_t staged_bytes_ = 0;
     float sdf_ = -1;   /* the u_sdf set */
     std::string refusal_;
+    bool stale_ = false;   /* the buffers may hold a refused write's glyphs: hidden */
     uint64_t writes_ = 0, bytes_ = 0, failed_ = 0, holds_ = 0;
 };
 

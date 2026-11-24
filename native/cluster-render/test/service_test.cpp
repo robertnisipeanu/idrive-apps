@@ -3399,7 +3399,7 @@ static void text_helper()
     ok("text: its colour a uniform, the glyphs not written again",
        q && q->uniforms.at("u_color") == std::vector<float>({1, 0, 0, 0.5f}) && q->glyph_writes == settled);
 
-    /* 1: a string the service would refuse is refused here, the last one
+    /* A string the service would refuse is refused here, the last one
      * kept, and after the service restarts the layer comes back with it. */
     const bool long_refused = !c.set_text(label.ref(), std::string(1100, '1'));
     const bool latin1_refused = !label.set("\xB0" "C") && !c.set_text(label.ref(), "1\xED\xA0\x80");
@@ -3414,7 +3414,7 @@ static void text_helper()
            e.layer[label.ref()] == "shown" && e.errors.empty() &&
            std::fabs(q->glyphs[0] - 168.0f / 200) < 1e-6f);
 
-    /* 5: the renderer refusing a glyph write: that layer hidden, in error,
+    /* The renderer refusing a glyph write: that layer hidden, in error,
      * the target's other layers flushing on; a new string draws it again. */
     cr::LayerOptions io;
     io.target = "panel";
@@ -3446,13 +3446,34 @@ static void text_helper()
     q = run_of(4);
     ok("text: a new string after it drawn again", e.layer[label.ref()] == "shown" && q && q->visible &&
                                                     q->glyphs.size() == 2 * 16);
+    /* After a refused write only a colour change comes: the layer is
+     * drawn again only with its glyphs rewritten (the buffers may hold the
+     * refused write's half), and stays hidden while the renderer refuses. */
+    g->refuse_glyph_writes = true;
+    label.set("21");
+    r.pump(200);
+    const float green[4] = {0, 1, 0, 1};
+    label.color(green);
+    r.pump(200);
+    q = run_of(4);
+    const bool hidden_while_refused = e.layer[label.ref()] == "error" && q && !q->visible;
+    g->refuse_glyph_writes = false;
+    const int before_rewrite = q ? q->glyph_writes : 0;
+    const float blue[4] = {0, 0, 1, 1};
+    label.color(blue);
+    r.pump(200);
+    q = run_of(4);
+    ok("text: after a refused write a colour change alone rewrites the glyphs before the layer is shown, "
+       "and keeps it hidden while the renderer refuses",
+       hidden_while_refused && q && q->visible && e.layer[label.ref()] == "shown" &&
+           q->glyph_writes == before_rewrite + 1 && q->glyphs.size() == 2 * 16 &&
+           std::fabs(q->glyphs[2] - 10.0f / 32) < 1e-6f);
     c.drop(img);
 
-    /* 4: where the cluster draws no GLSL ES 3.00, a distance-field font's
+    /* Where the cluster draws no GLSL ES 3.00, a distance-field font's
      * u_sdf follows the layer's scale, set and animated; where it does, its
      * shader takes the edge from derivatives and no u_sdf. */
     r.svc->compositor().set_instancing(false);
-    const cr::Font dist = cr::Font::from_grid(grid.data(), 16, 16, 2, 1, "12", 1, 0);
     std::vector<cr::GlyphBitmap> dg(1);
     dg[0].code = '1';
     dg[0].w = dg[0].h = 8;
@@ -3501,7 +3522,6 @@ static void text_helper()
        dq && !dq->uniforms.count("u_sdf") && dq->glyphs.size() == 16 && e.layer[derived.ref()] == "shown");
     derived.drop();
     c.drop(sdf_ref);
-    (void)dist;
 
     /* A typical line: 64 glyphs by default, up to 256; 257 or a rect of no
      * height refused, nothing sent for them. */

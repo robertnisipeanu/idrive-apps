@@ -487,7 +487,9 @@ uint32_t Compositor::add_text(uint64_t owner, int target, const LayerParams &lp,
     if (!id)
         return 0;
     /* A distance font's edge from screen-space derivatives where the
-     * cluster draws GLSL ES 3.00 (as instances need), else from u_sdf. */
+     * cluster draws GLSL ES 3.00 (instancing_: the conf's instancing and
+     * id8_instancing say it draws 3.00 and instanced draws), else from
+     * u_sdf. */
     const bool derivatives = f->second.font->sdf && instancing_ && sdf_effect();
     Entry &e = layers_[id];
     e.layer.reset(new TextLayer(id, target, ++seq_, pacer_for(target), derivatives ? sdf_fx_ : text_fx_,

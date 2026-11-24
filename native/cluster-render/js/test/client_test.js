@@ -570,6 +570,12 @@ async function main() {
         full.set('12\u00b0') && !full.set('\uD83D') &&
         ovl._layerMsg(full.ref, ovl.layers.get(full.ref)).text === '12\u00b0' &&
         ovl.text({ target: 'panel', font: fontRef, text: 'x'.repeat(1025) }) === 0);
+    const sizeBefore = ovl.layers.size;
+    ok('text: a font of no line or glyphs, or none at all, refused here, no atlas made for it',
+        ovl.font(null) === 0 && ovl.font(atlasRef, null) === 0 &&
+        ovl.font({ target: 'panel', w: 4, h: 4, pixels: Buffer.alloc(16) }) === 0 &&
+        ovl.font({ target: 'panel', w: 4, h: 4, pixels: Buffer.alloc(16), line: 4 }) === 0 &&
+        ovl.layers.size === sizeBefore);
     ovl.drop(fontRef);
     ok('text: the font a layer draws from kept here, its atlas with it',
         ovl.layers.has(fontRef) && ovl.layers.has(atlasRef) && ovl.layers.get(atlasRef).kind === 'asset');
