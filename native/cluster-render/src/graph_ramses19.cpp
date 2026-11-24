@@ -2392,8 +2392,13 @@ private:
             return false;
         }
         const uint64_t now = rt->getTime();
-        /* The end: started as long ago as it lasts, its stop passed. */
-        const uint64_t from = end ? now - std::min(now, lasts + 1) : now;
+        /* The end: started so that it ends lead_ms from now (one that lasts
+         * no longer plays whole). The renderer takes a start only while the
+         * sequence's end is still ahead of its clock (ABI.md), so the skip
+         * must reach it within lead_ms. */
+        const uint64_t lead_ms = 250;
+        const uint64_t back = end ? lasts - std::min(lasts, lead_ms) : 0;
+        const uint64_t from = now - std::min(now, back);
         if (!ok(seq->startAt(from))) {
             *why = "the renderer refused it";
             return false;
