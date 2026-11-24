@@ -426,6 +426,7 @@ Stage TextLayer::stage(int64_t now_ms)
         stale_ = true;
         return Stage::Wrote;
     }
+    refusal_.clear();   /* written whole: a held layer retries before the compositor arranges it */
     if (stale_) {
         stale_ = false;   /* shown with the glyphs written now */
         g_->show(quad_handle(), true);
