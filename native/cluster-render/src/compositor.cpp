@@ -54,6 +54,13 @@ void main() {
     gl_FragColor = vec4(c.rgb, c.a * u_opacity);
 })";
 
+/* A layer's draw order at its place in the stack; an overlay or alert
+ * layer's in the over band on a target whose graph has one (Graph::band). */
+int32_t draw_order(bool over, const Layer &l, size_t pos)
+{
+    return (int32_t)pos * 4 + (over && l.params.klass >= Klass::Overlay ? kOverBand : 0);
+}
+
 }  // namespace
 
 const char *layer_state_name(LayerState s)
@@ -1670,7 +1677,8 @@ std::string Compositor::scene_text(uint32_t id) const
                        std::to_string(s.src.res.size()) + " resource files, " + std::to_string(s.src.bytes / 1024) +
                        " KB; " + std::to_string(s.edits.kept()) + " edit lines kept";
     if (s.layers.on)
-        text += "; layers over it" + (s.layers.order_set ? " from render order " + std::to_string(s.layers.order) : "");
+        text += "; layers over it" + (s.layers.order_set ? " from render order " + std::to_string(s.layers.order) : "") +
+                (s.layers.over_set ? ", overlay and alert from " + std::to_string(s.layers.over) : "");
     for (const auto &kv : s.hosts) {
         const Host &h = kv.second;
         char b[160];
@@ -1919,7 +1927,7 @@ void Compositor::arrange(int64_t now_ms)
             const bool drawn =
                 std::find(t.arr.drawn.begin(), t.arr.drawn.end(), t.arr.order[pos]) != t.arr.drawn.end() &&
                 assets_clean(e);
-            const int32_t order = (int32_t)pos * 4;
+            const int32_t order = draw_order(t.over, *e.layer, pos);
             /* A composite not attached draws none of its sources. */
             if (e.composited ? cv : !std::strcmp(e.layer->kind(), "video")) {
                 t.videos++;
@@ -3099,6 +3107,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
 {
     const int ti = slots_->index(spec.name);
     Target &t = targets_[ti];
+    t.over = false;
     if (const uint32_t id = content(ti)) {
         SceneEntry &s = scenes_[id];
         t.file = gpu_->load(spec, s.src.file, s.src.res, err);
@@ -3129,6 +3138,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
          * wait, the file shown all the same, and it hosts nothing. */
         host_serial_++;
         t.graph = t.file->layers(s.layers.order_set ? &s.layers.order : nullptr, err);
+        t.over = t.graph && s.layers.over_set && t.graph->band(s.layers.over);
         if (!t.graph) {
             log_warn("target %s: no layers over scene file %s: %s", spec.name.c_str(), s.src.file.c_str(),
                      err->c_str());
@@ -3195,12 +3205,13 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         const bool drawn =
             std::find(t.arr.drawn.begin(), t.arr.drawn.end(), t.arr.order[pos]) != t.arr.drawn.end() &&
             assets_clean(e);
+        const int32_t order = draw_order(t.over, *e.layer, pos);
         if (e.composited && t.composite)
-            t.composite->arrange_source(t.arr.order[pos], drawn, (int32_t)pos * 4);
+            t.composite->arrange_source(t.arr.order[pos], drawn, order);
         else
-            e.layer->arrange(drawn, (int32_t)pos * 4);
+            e.layer->arrange(drawn, order);
         e.drawn = drawn;
-        e.order = (int32_t)pos * 4;
+        e.order = order;
     }
     if (t.composite)
         t.composite->arranged();

@@ -1315,6 +1315,61 @@ static void scene_files()
     (void)removed;
 }
 
+/* over_order (PROTOCOL.md "Layers over a scene file"): the overlay layer in
+ * the graph's over band from that order, the content layer under it from
+ * layers_order; without over_order, no band and both from layers_order. */
+static void over_band()
+{
+    char tmpl[] = "/tmp/crs-service-band-XXXXXX";
+    const std::string root = mkdtemp(tmpl) ? tmpl : "/nonexistent";
+    const std::string gauge = written(root + "/gauge.scene", kGaugeScene);
+    Rig r;
+    r.sc.targets[1].scene_files = true;
+    r.sc.scene_files.root = root;
+    r.sc.scene_files.owner = getuid();
+    r.start();
+    cr::Client a("design", r.path);
+    Events ea;
+    ea.wire(a);
+    r.clients = {&a};
+    r.pump(50);
+    for (int with = 1; with >= 0; with--) {
+        cr::SceneOptions so;
+        so.target = "panel";
+        so.file = gauge;
+        so.sha256 = {sha256_file(gauge)};
+        so.layers = true;
+        so.layers_order_set = true;
+        so.layers_order = -100;
+        so.over_order_set = with != 0;
+        so.over_order = 100000;
+        const uint32_t sc = a.scene(so);
+        const cr::EffectOptions fill{"#version 100\nvoid main(){gl_FragColor=vec4(1.0);}", "", 0};
+        cr::LayerOptions cl, ol;
+        cl.target = ol.target = "panel";
+        cl.x = ol.x = 100; cl.y = ol.y = 100; cl.w = ol.w = 200; cl.h = ol.h = 100;
+        ol.klass = "overlay";
+        const uint32_t content = a.effect(cl, fill), overlay = a.effect(ol, fill);
+        r.pump(1500);
+        FakeGraph *g = r.gpu.graph("panel");
+        int under = 0, over = 0;
+        if (g)
+            for (const auto &kv : g->pending.quads)
+                (kv.second.order >= kOverBand ? over : under)++;
+        ok(with ? "over_order: the band from it, the overlay layer in it, the content layer under it"
+                : "no over_order: no band, both layers from layers_order",
+           ea.layer[sc] == "shown" && ea.layer[content] == "shown" && ea.layer[overlay] == "shown" && g && g->over_file &&
+               g->over_order == -100 && g->band_on == (with != 0) && (!with || g->band_base == 100000) &&
+               under == (with ? 1 : 2) && over == (with ? 1 : 0));
+        if (with)
+            ok("the status names the band", has(r.svc->server().status_text(r.now), "overlay and alert from 100000"));
+        a.drop(content);
+        a.drop(overlay);
+        a.drop(sc);
+        r.pump(1500);
+    }
+}
+
 /* A scene with layers 1 (PROTOCOL.md "Layers over a scene file", "host"):
  * the target's layers drawn over the file in a graph of its own past the
  * file's passes, edits flushed with them; a host of the map told to every
@@ -4007,6 +4062,7 @@ int main()
     values_over_socket();
     text_helper();
     text_held();
+    over_band();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

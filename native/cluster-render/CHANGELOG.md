@@ -11,6 +11,15 @@ glyph covers. Fonts may be distance fields, sharp at any size. The text
 helpers of both clients use them; the hello's `text` 1 says the service
 takes them.
 
+## 0.8.10
+
+A scene file's layers can have a band of their own above the file: the
+`scene` field `over_order` draws the `overlay` and `alert` layers in passes
+from that render order up, while `ambient` and `content` layers stay at
+`layers_order`. A file can then draw its own artwork between hosted content
+and an overlay. Without the field nothing changes; the hello's `over_order` 1
+says the service takes it.
+
 ## 0.8.9
 
 On iDrive 7, the service keeps seeing which of its scenes the cluster draws

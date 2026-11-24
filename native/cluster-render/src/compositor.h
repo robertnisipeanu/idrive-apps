@@ -211,11 +211,12 @@ struct CompositorLimits {
 
 /* A scene content's layers drawn over its file (PROTOCOL.md "Layers over a
  * scene file"): their passes from render order `order` up, or past the
- * file's own without it. */
+ * file's own without it; with over_set, the overlay and alert layers' from
+ * `over` up (Graph::band). */
 struct SceneLayers {
     bool on = false;
-    bool order_set = false;
-    int32_t order = 0;
+    bool order_set = false, over_set = false;
+    int32_t order = 0, over = 0;
 };
 
 /* A scene content showing another target's content (PROTOCOL.md "host"): at
@@ -623,6 +624,7 @@ private:
         uint32_t file_of = 0, file_serial = 0;
         uint64_t file_bytes = 0;
         int64_t file_flush_ms = -1;   /* its edits' last flush */
+        bool over = false;            /* its graph has the file's over band (SceneLayers over) */
         Arrangement arr;
         bool dirty = false;    /* changed outside a layer's stage(): flush */
         bool held_back = false;   /* the last render held a layer's write for the budget */

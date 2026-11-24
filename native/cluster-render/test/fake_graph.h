@@ -141,6 +141,17 @@ public:
     bool over_file = false;
     int32_t over_order = 0;
     std::function<void(uint64_t)> also_flush;
+    /* band(): the over band's first render order (over a file only). */
+    bool band_on = false;
+    int32_t band_base = 0;
+    bool band(int32_t base) override
+    {
+        if (!over_file)
+            return false;
+        band_on = true;
+        band_base = base;
+        return true;
+    }
 
     ~FakeGraph() override
     {

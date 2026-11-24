@@ -804,7 +804,21 @@ public:
     {
         return canvas ? 0 : view(r, p, camera);
     }
+
+    /* A graph over a scene file (FileScene::layers): quads and views ordered
+     * at kOverBand or past it are drawn in passes of their own from render
+     * order base up, one a pass, so a file's pass between the two bands
+     * draws over the first and under this one. False where the backend has
+     * no such band (the orders then hold as one band). */
+    virtual bool band(int32_t base)
+    {
+        (void)base;
+        return false;
+    }
 };
+
+/* order() at or past this: the graph's over band (Graph::band). */
+const int32_t kOverBand = 1 << 28;
 
 /* A target's scene loaded from a scene file (Gpu::load): drawn as the file
  * has it, with its own cameras and passes, its objects changed by name

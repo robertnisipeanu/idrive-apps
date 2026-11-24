@@ -1286,6 +1286,15 @@ public:
         return ok(s);
     }
 
+    bool band(int32_t base) override
+    {
+        if (!borrowed_)
+            return false;
+        over_base_ = std::min<int32_t>(base, INT32_MAX - 1024);
+        band_ = layout_dirty_ = true;
+        return true;
+    }
+
 private:
     struct Buffer {
         ramses::Texture2DBuffer *buffer;   /* null for an immutable texture */
@@ -1851,7 +1860,19 @@ private:
         std::vector<bool> kinds;
         for (const Item &it : items)
             kinds.push_back(it.view);
-        const std::vector<int> pass = plan_passes(kinds);
+        std::vector<int> pass = plan_passes(kinds);
+        /* The over band (band()), the target's own surface only: from its
+         * first item on, passes of its own at render orders from over_base_ up. */
+        int over = -1;
+        for (size_t i = 0; band_ && canvas == 0 && i < items.size() && over < 0; i++) {
+            if (items[i].order < kOverBand)
+                continue;
+            if (i && pass[i] == pass[i - 1])   /* a quad sharing the band below's pass: a new one */
+                for (size_t k = i; k < items.size(); k++)
+                    pass[k]++;
+            over = pass[i];
+        }
+        auto at = [&](int p) { return over >= 0 && p >= over ? over_base_ + (p - over) : sf.base + p; };
         /* 2D passes in order of appearance; pass 0 is always the first
          * segment. */
         std::map<int, size_t> segment_of;
@@ -1875,14 +1896,14 @@ private:
         }
         for (const auto &kv : segment_of) {
             Segment &s = sf.segments[kv.second];
-            if (s.render_order != sf.base + kv.first && ok(s.pass->setRenderOrder(sf.base + kv.first)))
-                s.render_order = sf.base + kv.first;
+            if (s.render_order != at(kv.first) && ok(s.pass->setRenderOrder(at(kv.first))))
+                s.render_order = at(kv.first);
         }
         for (size_t i = 0; i < items.size(); i++) {
             if (items[i].view) {
                 View &v = views_[items[i].handle];
-                if (v.render_order != sf.base + pass[i] && ok(v.pass->setRenderOrder(sf.base + pass[i])))
-                    v.render_order = sf.base + pass[i];
+                if (v.render_order != at(pass[i]) && ok(v.pass->setRenderOrder(at(pass[i]))))
+                    v.render_order = at(pass[i]);
                 continue;
             }
             Quad &q = quads_[items[i].handle];
@@ -1939,8 +1960,10 @@ private:
     std::map<int, Surface> canvases_;
     int32_t canvas_seq_ = 0;
     /* In a scene file's scene (over()): not ours to publish or destroy; the
-     * passes' render orders start at base_. */
-    bool borrowed_ = false;
+     * passes' render orders start at main_.base, the over band's (band())
+     * at over_base_. */
+    bool borrowed_ = false, band_ = false;
+    int32_t over_base_ = 0;
     bool write_failing_ = false, flush_failing_ = false;   /* log the first of a run */
     bool layout_dirty_ = false;
     std::map<int, Buffer> buffers_;

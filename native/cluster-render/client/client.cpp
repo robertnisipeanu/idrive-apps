@@ -161,7 +161,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = scene_anim_ = text_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = scene_anim_ = over_order_ = text_ = false;
     for (auto &kv : shm_)
         shm_close(&kv.second);
     shm_.clear();
@@ -267,6 +267,7 @@ void Client::read_events()
                         shm_due_.insert(kv.first);
             scene_anim_ = j["scene_anim"] == "1";
             text_ = j["text"] == "1";
+            over_order_ = j["over_order"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -571,6 +572,8 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
             kv.push_back({"layers", "1"});
         if (l.so.layers && l.so.layers_order_set)
             kv.push_back({"layers_order", num(l.so.layers_order)});
+        if (l.so.layers && l.so.over_order_set)
+            kv.push_back({"over_order", num(l.so.over_order)});
         return json_object(kv);
     }
     if (l.kind == "asset") {

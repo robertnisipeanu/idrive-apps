@@ -324,6 +324,7 @@ class ClusterRender extends EventEmitter {
             this.values = ev.values === 1;   /* takes shared values (value(), link()) */
             this.sceneAnim = ev.scene_anim === 1;   /* takes --play and --skip edit lines */
             this.texts = ev.text === 1;   /* takes fonts and text layers (font(), text()) */
+            this.overOrder = ev.over_order === 1;   /* takes a scene's over_order */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -418,6 +419,7 @@ class ClusterRender extends EventEmitter {
                 sha256: [].concat(o.sha256).join(' '), contend: flag(o.contend) };
             if (o.layers) m.layers = 1;
             if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
+            if (o.layers && o.over_order !== undefined) m.over_order = o.over_order;
             return m;
         }
         if (l.kind === 'value' || l.kind === 'font') return l.msg;
@@ -636,7 +638,9 @@ class ClusterRender extends EventEmitter {
      * target, file (an absolute path), res (its resource files' paths),
      * sha256 (an array of hex SHA-256s: the file's, then each resource
      * file's), contend; layers: true draws the target's layers over the
-     * file, layers_order the render order their passes start at. */
+     * file, layers_order the render order their passes start at,
+     * over_order the overlay and alert layers' (a service whose hello has
+     * over_order 1). */
     scene(opts) { return this._add('scene', opts); }
 
     /* The scene (made with layers) hosts another target (PROTOCOL.md

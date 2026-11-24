@@ -917,6 +917,7 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"values", "1"},
                                  {"text", comp_->texts() ? "1" : "0"},
                                  {"scene_anim", comp_->sequences() ? "1" : "0"},
+                                 {"over_order", "1"},
 #ifdef __linux__
                                  {"shm_frames", "1"},
 #endif
@@ -1376,9 +1377,10 @@ void Server::op_scene(Client &c, const cr::Json &j)
     }
     SceneSource src;
     SceneLayers layers;
-    double on = 0, order = 0;
+    double on = 0, order = 0, over = 0;
     if (!num(j, "contend", 0, 1, &contend, &err) || !num(j, "layers", 0, 1, &on, &err) ||
         !num(j, "layers_order", kLowestLayersOrder, INT32_MAX - 1024, &order, &err) ||
+        !num(j, "over_order", kLowestLayersOrder, INT32_MAX - 1024, &over, &err) ||
         !check_scene_source(scene_files_, str(j, "file"), str(j, "res"), str(j, "sha256"), &src, &err)) {
         log_warn("client %llu (%s): scene file refused: %s", (unsigned long long)c.id, c.app.c_str(), err.c_str());
         error(c, "scene", ref, err);
@@ -1394,6 +1396,8 @@ void Server::op_scene(Client &c, const cr::Json &j)
     layers.on = on != 0;
     layers.order_set = j.count("layers_order") != 0;
     layers.order = (int32_t)order;
+    layers.over_set = j.count("over_order") != 0;
+    layers.over = (int32_t)over;
     comp_->set_layers(id, layers);
     c.refs[ref] = id;
     c.layer_sent.erase(ref);   /* its state again, even unchanged: send the values again then */
