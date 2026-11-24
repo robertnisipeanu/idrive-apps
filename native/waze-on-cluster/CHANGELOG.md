@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Android Auto: Patch, Remove patch, Zoom and the turn card take effect at
+the next head-unit start (**Restart head unit**), so Android Auto's
+touchscreen and iDrive controller keep working after them.
+
 ## 0.14.12
 
 The tests build with the cluster renderer's iDrive 7 log-level handling

@@ -957,43 +957,59 @@ async function socketTests() {
     await pf.next(function (m) { return m.ev === 'reboot-reply' && m.ok === false; });
     pf.proc.kill('SIGKILL');
 
-    /* With recmgr's aapd entry and the drop-in loaded: SIGKILL, start, the
-     * killed run recorded; the started aapd runs the plan. */
+    /* With recmgr's aapd entry and the drop-in loaded, aapd is still never
+     * restarted on its own (it would get no touch input): Patch, the card and
+     * Remove patch each wait for the next head-unit start. */
     var r = patchdUnit({ recmgr: ['aapd'] });
+    r.env.WOC_DENSITY_SPACING_MS = '1';
     var victim = dummyAapd(r);
+    function alive(c) { return c.exitCode === null && c.signalCode === null; }
+    function noAapdCall(from) { return !calls(r).slice(from).some(function (l) { return /aapd/.test(l) && !/^systemctl show/.test(l); }); }
     var pr = await daemon(r);
     await pr.next(function (m) { return m.ev === 'status'; });
     pr.send({ cmd: 'aa-apply' });
     st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
-    var sig = await within(victim.died);
-    ok('aa-apply with recmgr\'s aapd entry: aapd SIGKILLed and started armed, nothing pending, the files as they ship', st.aa.aapd === 'restarted' && sig === 'SIGKILL' &&
-        calls(r).indexOf('systemctl start aapd.service') >= 0 && !marker(r, 'aa-pending') && ro(r) && untouched(r), JSON.stringify(st.aa) + calls(r).join(';'));
-    pr.send({ cmd: 'status' });
-    st = await pr.next(function (m) { return aaDone(m); });
-    ok('status: Patched, 180 dpi, card shown', st.aa.state === 'patched' && st.aa.dpi === 180 && st.aa.diskCard === 'shown' && !st.aa.pending, JSON.stringify(st.aa));
-    ok('aa-apply: the killed run is recorded for the watcher', fs.readFileSync(path.join(r.shm, 'aapd-killed'), 'utf8').trim() === 'run-' + victim.pid);
+    ok('aa-apply with recmgr\'s aapd entry: armed, deferred, pending marker, aapd neither killed nor started, the files as they ship', st.aa.aapd === 'deferred' &&
+        st.aa.pending === 'apply' && marker(r, 'aa-pending').action === 'apply' && armedAa(r) && alive(victim) && noAapdCall(0) &&
+        !fs.existsSync(path.join(r.shm, 'aapd-killed')) && ro(r) && untouched(r), JSON.stringify(st.aa) + calls(r).join(';'));
     ok('aa-apply: never a systemctl stop, restart or reboot', !calls(r).some(function (l) { return /systemctl (stop|restart)|reboot/.test(l); }), calls(r).join(';'));
     ok('aa-apply: carplay untouched', !calls(r).some(function (l) { return /carplay/.test(l) && !/^systemctl show carplay/.test(l); }) && (HAVE_CP ? sha(r.carplay) === sha(CARPLAY) : true));
+    nextStart(r, victim.pid);
+    pr.send({ cmd: 'status' });
+    st = await pr.next(function (m) { return aaDone(m); });
+    ok('after the head-unit start: Patched, 180 dpi, card shown, nothing pending', st.aa.state === 'patched' && st.aa.dpi === 180 && st.aa.diskCard === 'shown' && !st.aa.pending,
+        JSON.stringify(st.aa));
+    /* Zoom plans a new copy of aapd.conf, which also waits. */
+    var before = calls(r).length;
+    pr.send({ cmd: 'aa-density', value: 240 });
+    st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    ok('aa-density 240: planned again, deferred, aapd not restarted; aapd runs 180 dpi until then', st.aa.aapd === 'deferred' && st.aa.pending === 'apply' &&
+        st.aa.dpi === 240 && st.aa.runDpi === 180 && alive(victim) && noAapdCall(before), JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
+    nextStart(r, victim.pid);
     /* Hiding the card changes the render's crop, which it reads at start:
      * the copy and the crop wait for the next head-unit start. */
-    var before = calls(r).length;
+    before = calls(r).length;
     pr.send({ cmd: 'aa-card', value: 'hidden' });
     st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
     ok('aa-card hidden: planned again, the crop override written, deferred, aapd not restarted', st.aa.aapd === 'deferred' && st.aa.card === 'hidden' &&
-        cropEnv(r) === 'WOC_SRC_CROP=-s src_crop=1280x720:0,156,1280,564\n' && marker(r, 'aa-pending').action === 'apply' && aaRecord(r).writes.card === 'hidden' &&
-        !calls(r).slice(before).some(function (l) { return /aapd/.test(l) && !/^systemctl show/.test(l); }), JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
-    ok('aa-card hidden: what aapd runs until then is the card shown', st.aa.runDpi === 180 && st.aa.runCard === 'shown' && st.aa.diskCard === 'hidden', JSON.stringify(st.aa));
-    dummyAapd(r);
-    nextStart(r, JSON.parse(fs.readFileSync(r.unitState, 'utf8')).pid);
+        cropEnv(r) === 'WOC_SRC_CROP=-s src_crop=1280x720:4,160,1270,560\n' && marker(r, 'aa-pending').action === 'apply' && aaRecord(r).writes.card === 'hidden' &&
+        alive(victim) && noAapdCall(before), JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
+    ok('aa-card hidden: what aapd runs until then is the card shown', st.aa.runDpi === 240 && st.aa.runCard === 'shown' && st.aa.diskCard === 'hidden', JSON.stringify(st.aa));
+    nextStart(r, victim.pid);
     pr.send({ cmd: 'status' });
     st = await pr.next(function (m) { return aaDone(m); });
     ok('after the head-unit start: aapd runs the hidden card\'s plan, nothing pending', st.aa.state === 'patched' && st.aa.diskCard === 'hidden' && !st.aa.pending, JSON.stringify(st.aa));
-    var v2 = dummyAapd(r);
+    before = calls(r).length;
     pr.send({ cmd: 'aa-revert' });
-    st = await pr.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert'); });
-    var sig2 = await within(v2.died);
-    ok('aa-revert: aapd restarted stock, the files as they ship, the crop override gone', st.aa.state === 'original' && st.aa.aapd === 'restarted' && sig2 === 'SIGKILL' &&
-        untouched(r) && cropEnv(r) === null && !armedAa(r), JSON.stringify(st.aa));
+    st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    ok('aa-revert: disarmed, deferred, aapd not restarted, the files as they ship, the crop override gone', st.aa.aapd === 'deferred' && st.aa.pending === 'revert' &&
+        marker(r, 'aa-pending').action === 'revert' && !armedAa(r) && alive(victim) && noAapdCall(before) && untouched(r) && cropEnv(r) === null,
+        JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
+    nextStart(r, victim.pid);
+    pr.send({ cmd: 'status' });
+    st = await pr.next(function (m) { return aaDone(m); });
+    ok('after the head-unit start: Android Auto original, nothing pending', st.aa.state === 'original' && !st.aa.pending, JSON.stringify(st.aa));
+    victim.kill('SIGKILL');
     pr.proc.kill('SIGKILL');
 
     /* A build no list names: an install arms it as any other, on trial,
