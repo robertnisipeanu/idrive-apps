@@ -7,6 +7,7 @@ the next head-unit start (**Restart head unit**), so Android Auto's
 touchscreen and iDrive controller keep working after them. Several can be
 changed before that restart; changing one back to what already runs leaves
 nothing waiting.
+
 ## 0.14.13
 
 The patch and recovery services run in the head unit's slice for standard
