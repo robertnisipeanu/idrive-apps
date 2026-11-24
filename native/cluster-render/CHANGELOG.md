@@ -5,7 +5,7 @@
 `--skip` shows a scene file's animation sequence at its end on iDrive 7: at
 once in an animation system without a clock of its own, also when nothing
 plays in it, and within 250 ms in a real-time one (its last 250 ms play; one
-already that near its end is left as it is).
+already in its last 250 ms, or ended, is left as it is).
 
 ## 0.8.11
 

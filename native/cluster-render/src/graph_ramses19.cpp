@@ -2400,7 +2400,7 @@ private:
         const uint64_t from = now - std::min(now, back);
         auto started = realtime_starts_.find(seq);
         if (end && started != realtime_starts_.end() && started->second <= from) {
-            log_info("ramses: sequence %s of a real-time system already at its end", name.c_str());
+            log_info("ramses: sequence %s of a real-time system left as it is: in its last 250 ms or ended", name.c_str());
             return true;
         }
         if (!ok(seq->startAt(from))) {
