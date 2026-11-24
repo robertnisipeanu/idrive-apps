@@ -38,7 +38,10 @@
  *
  * CarPlay's Patch button is enabled for an unpatched or unknown state and Remove
  * patch for a patch, both only with no change pending (waze_cluster_control.js
- * canEnable/canDisable); capture is enabled while the patch daemon is
+ * canEnable/canDisable). Android Auto's Patch, Remove patch, Zoom and turn
+ * card stay offered while one of its changes waits for that start, which
+ * applies the last (canEnableAa, canDisableAa, canZoom, canToggleCard);
+ * capture is enabled while the patch daemon is
  * reachable. The app connects both sockets while one of its pages is visible
  * and closes them when it is hidden or the app shuts down; the tools keep
  * running. Moving between its pages hides one before the other shows, so a

@@ -1169,11 +1169,11 @@ var AA = { name: 'aapd', unit: 'aapd.service', target: AAPD, patcher: AA_PATCHER
 
 /* Restart t's service: SIGKILL its main process, wait until systemd has
  * reaped it, `systemctl start` it, and confirm the unit is active. A systemd
- * stop or restart power-cycles the head unit (carplay dumps core on SIGTERM;
- * aapd is BMW's like it), so neither is used, not even as a fallback: no
+ * stop or restart power-cycles the head unit (carplay dumps core on
+ * SIGTERM), so neither is used, not even as a fallback: no
  * main PID, a failed start or a unit that never becomes active is an error.
  * Each wait is bounded (RESTART_TRIES x RESTART_POLL_MS). Only called when
- * restartBlocked found nothing. */
+ * restartBlocked found nothing, so never for aapd. */
 var RESTART_POLL_MS = parseInt(process.env.WOC_RESTART_POLL_MS, 10) || 250;
 var RESTART_TRIES = 40;
 function restartUnit(t, cb) {
