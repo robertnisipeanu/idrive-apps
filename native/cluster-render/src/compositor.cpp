@@ -114,6 +114,7 @@ Compositor::~Compositor()
     if (atlas_fx_) gpu_->drop_effect(atlas_fx_);
     if (block_fx_) gpu_->drop_effect(block_fx_);
     if (image_fx_) gpu_->drop_effect(image_fx_);
+    if (text_fx_) gpu_->drop_effect(text_fx_);
     for (int fx : edge_fx_)
         if (fx) gpu_->drop_effect(fx);
 }
@@ -127,6 +128,17 @@ bool Compositor::init(std::string *err)
     if (block_fx_)
         image_fx_ = gpu_->effect(kQuadVertexShader, kImageFragmentShader, err);
     return image_fx_ != 0;
+}
+
+bool Compositor::texts()
+{
+    if (!text_tried_) {
+        text_tried_ = true;
+        std::string why;
+        if (!(text_fx_ = compile(kTextVertexShader, kTextFragmentShader, &why)))
+            log_warn("compositor: no text layers: %s", why.c_str());
+    }
+    return text_fx_ != 0;
 }
 
 /* Compiled at the first edge a host asks for; refused, the service draws
@@ -181,6 +193,8 @@ uint64_t Compositor::memory() const
         for (const auto &kv : ck.second.layers)
             bytes += kv.second.pixel_bytes;
     }
+    for (const auto &kv : fonts_)
+        bytes += kv.second.font->bytes();
     for (const Target &t : targets_)
         bytes += t.composite_bytes;
     return bytes;
@@ -395,6 +409,77 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
         attach_in(e, *in);
     else if (targets_[target].graph)
         attach(e, targets_[target]);
+    return id;
+}
+
+uint32_t Compositor::add_font(uint64_t owner, uint32_t asset, Font &&f, std::string *err)
+{
+    Asset *a = this->asset(owner, asset);
+    if (!a) {
+        *err = "no such asset";
+        return 0;
+    }
+    if (a->params().format != TexFormat::R8 || a->params().cube) {
+        *err = "a font's atlas is an r8 asset";
+        return 0;
+    }
+    uint32_t mine = 0;
+    for (const auto &kv : fonts_)
+        mine += kv.second.owner == owner;
+    if (mine >= kClientFonts) {
+        *err = "at most " + std::to_string(kClientFonts) + " fonts a client";
+        return 0;
+    }
+    if (memory() + f.bytes() > limits_.pixel_bytes) {
+        *err = "the service's pixel memory is full";
+        return 0;
+    }
+    f.aw = a->params().w;
+    f.ah = a->params().h;
+    const uint32_t id = next_id_++;
+    FontEntry &e = fonts_[id];
+    e.owner = owner;
+    e.asset = asset;
+    e.font = std::make_shared<const Font>(std::move(f));
+    return id;
+}
+
+uint32_t Compositor::add_text(uint64_t owner, int target, const LayerParams &lp, uint32_t font, uint32_t capacity,
+                              int64_t now_ms, std::string *err)
+{
+    auto f = fonts_.find(font);
+    if (f == fonts_.end() || f->second.owner != owner) {
+        *err = "no such font";
+        return 0;
+    }
+    if (!texts()) {
+        *err = "text is off: the renderer refused its shaders";
+        return 0;
+    }
+    if (!capacity || capacity > TextLayer::kMaxGlyphs) {
+        *err = "a text layer holds 1 to " + std::to_string(TextLayer::kMaxGlyphs) + " glyphs";
+        return 0;
+    }
+    Asset *a = this->asset(owner, f->second.asset);
+    if (!a || a->target() != target) {
+        *err = "the font's atlas is on another target";
+        return 0;
+    }
+    const size_t bytes = (size_t)capacity * (TextLayer::kVertexBytes + TextLayer::kIndexBytes) * 2;
+    const uint32_t id = admit(owner, target, (int64_t)bytes, err);
+    if (!id)
+        return 0;
+    Entry &e = layers_[id];
+    e.layer.reset(new TextLayer(id, target, ++seq_, pacer_for(target), text_fx_, f->second.font, capacity, now_ms));
+    e.layer->params = lp;
+    e.owner = owner;
+    e.pixel_bytes = bytes;
+    e.font = font;
+    e.binds[std::make_pair(0u, std::string("u_atlas"))] = f->second.asset;
+    if (targets_[target].graph) {
+        attach(e, targets_[target]);
+        apply_binds(e);   /* the client sends no bind: the atlas is the font's */
+    }
     return id;
 }
 
@@ -1047,6 +1132,23 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
         canvases_.erase(cv);
         return true;
     }
+    auto fo = fonts_.find(id);
+    if (fo != fonts_.end() && fo->second.owner == owner) {
+        bool used = false;
+        auto uses = [&](const std::map<uint32_t, Entry> &m) {
+            for (const auto &kv : m)
+                used = used || kv.second.font == id;
+        };
+        uses(layers_);
+        for (const auto &ck : canvases_)
+            uses(ck.second.layers);
+        if (used) {
+            *err = "font in use";
+            return false;
+        }
+        fonts_.erase(fo);
+        return true;
+    }
     auto it = assets_.find(id);
     if (it == assets_.end() || it->second.owner != owner) {
         *err = "no such asset";
@@ -1056,6 +1158,11 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
         *err = "asset in use";
         return false;
     }
+    for (const auto &kv : fonts_)
+        if (kv.second.asset == id) {
+            *err = "asset in use: a font draws from it";
+            return false;
+        }
     Target &t = targets_[it->second.asset->target()];
     it->second.asset->detach(true);
     if (t.graph)
@@ -1713,6 +1820,9 @@ void Compositor::remove_owner(uint64_t owner)
     for (uint32_t id : ids)
         remove(owner, id);
     ids.clear();
+    for (const auto &kv : fonts_)
+        if (kv.second.owner == owner)
+            ids.push_back(kv.first);
     for (const auto &kv : assets_)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);

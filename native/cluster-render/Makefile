@@ -62,7 +62,7 @@ H = $(BUILD)/host
 KIT_SRC  = kit/dirty_tiles.cpp kit/yuv_atlas.cpp kit/block_pack.cpp
 CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/recv_buffer.cpp src/layer.cpp src/video_layer.cpp \
            src/video_composite.cpp src/mesh_layer.cpp src/occlusion.cpp src/asset.cpp src/canvas.cpp src/curves.cpp src/compositor.cpp src/scene_file.cpp \
-           src/scene_edit.cpp \
+           src/scene_edit.cpp src/text_layer.cpp \
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            src/ceiling_memory.cpp src/link_trace.cpp client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
@@ -222,9 +222,10 @@ $(H)/scene_test: $(O)/test/scene_test.o $(CORE_OBJ)
 $(H)/settings_test: $(O)/test/settings_test.o $(O)/src/settings.o $(O)/src/config.o $(O)/src/holds.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-# The text shader drawn on the host, EGL loaded at run time (skipped without it).
-$(H)/text_gl_check: $(O)/test/text_gl_check.o $(O)/client/text.o $(O)/client/client.o $(O)/client/protocol.o
-	$(CXX) $(CXXFLAGS) -o $@ $^ -ldl
+# The text layers' glyph runs drawn on the host, EGL loaded at run time
+# (skipped without it).
+$(H)/text_gl_check: $(O)/test/text_gl_check.o $(CORE_OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^ -ldl -lpthread
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o $(O)/client/text.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
@@ -332,9 +333,9 @@ test-ramses:
 
 $(T)/ramses_check: test/ramses_check.cpp test/fake_port.h src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
 		$(wildcard abi/include/ramses19/*.h) \
-		client/client.cpp client/text.cpp include/cluster_render/text.h $(T)/stub/$(RAMSES_SONAME)
+		$(T)/stub/$(RAMSES_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ test/ramses_check.cpp \
-		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) client/client.cpp client/text.cpp $(T)/stub/$(RAMSES_SONAME)
+		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) $(T)/stub/$(RAMSES_SONAME)
 
 # RAMSES's console and DLT under the unit's own dlt-daemon (test/dlt_check.py).
 # ROOTFS has the unit's libramses and its libraries, /usr/bin/dlt-daemon,
@@ -370,9 +371,9 @@ test-ramses27:
 
 $(T)/ramses_check27: test/ramses_check.cpp test/fake_port.h src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) $(CORE_H) \
 		$(wildcard abi/include/ramses27/ramses-client-api/*.h) \
-		client/client.cpp client/text.cpp include/cluster_render/text.h $(T)/stub/$(RAMSES27_SONAME)
+		$(T)/stub/$(RAMSES27_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS27) -DCRS_RAMSES27 -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ \
-		test/ramses_check.cpp src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) client/client.cpp client/text.cpp \
+		test/ramses_check.cpp src/graph_ramses27.cpp $(CORE_SRC) $(KIT_SRC) \
 		$(T)/stub/$(RAMSES27_SONAME)
 
 # The C++ client for native producers on the unit, as a static library.

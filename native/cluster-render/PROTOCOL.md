@@ -38,12 +38,14 @@ lacks.
 | op | Fields |
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
-| `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
+| `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`, `text`), the layer fields, and the kind's fields |
 | `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`; with mipmaps `nearest_mips`, `bilinear_mips`, `trilinear`, and `min_linear_mag_nearest`, `min_nearest_mag_linear`: [below](#mipmaps-and-samplers)), `wrap` (`clamp` default, `repeat`, `mirror`), `wrap_u`, `wrap_v` (each axis in place of `wrap`), `anisotropy` (1 default, to 16), `cube` (1: a [cube map](#cube-maps)) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
+| `font` | `ref`, `asset`, `line`, `glyphs`, `kerning`, `sdf` ([below](#text)); to a service whose hello has `text` 1 |
+| `text` | `ref` (a text layer), any of `text`, `align`, `spacing`, `size`, `color` ([below](#text)) |
 | `value` | `ref`, `target`, `type` (`float` default, `vec2`, `vec3`, `vec4`), `v` ([below](#shared-values)); sent again with its ref, `v` alone: set |
 | `link` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `name` (the shader's uniform), `value` (a value's ref on the same target; 0: unlinked) ([below](#shared-values)) |
 | `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)); `draw` and `instances` ([below](#draw-modes-and-instances)) |
@@ -54,7 +56,7 @@ lacks.
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
 | `host` | `ref` (a scene with `layers` 1) or `into` (a target this client's layers are on, [below](#hosting-from-layers)), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
 | `unhost` | `ref` or `into`, `target`: that host of `target` ends; to a service whose hello has `host_layers` 1 |
-| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
+| `drop` | `ref`: a layer, a scene, an asset no layer samples and no font is over (else refused: `asset in use`), a font no text layer draws from (else refused: `font in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `shm` | `ref` (a video layer), `slots` (1-4), with a descriptor passed on the message (SCM_RIGHTS): the layer's [shared frame buffer](#shared-frames); answered by a `shm` event; to a service whose hello has `shm_frames` 1 |
 | `slot` | `ref`, `slot`: the frame in that slot of the layer's shared buffer is its next frame, as an `F` frame would be |
@@ -137,6 +139,7 @@ Kind fields:
 | | `time_fps` | 0 | `u_time` (seconds since the layer was made) updated this often |
 | | `time` | 0 | 1: `u_time` from the renderer's own clock, seconds from 0 to 3600 and again, nothing sent per frame (declare it `highp`); excludes `time_fps` |
 | | `blend`, `blend_*`, `color_mask` | `alpha`, `rgba` | how its quad blends and which channels it writes ([below](#render-state)); a `set` changes them |
+| text | `font`, `max`, `text`, `align`, `spacing`, `size`, `color` | | [below](#text) |
 | mesh | `projection` | `perspective` | or `ortho`; set when the layer is made |
 | | `fov` | 30 | perspective: the vertical field of view, degrees (1-179) |
 | | `ortho_h` | 2 | ortho: the height seen, in scene units |
@@ -212,8 +215,8 @@ full size in upload.
 - **Artwork sent once, then animated** by moving, scaling, fading or
   switching sprite-sheet frames: a compressed asset, preloaded
   ([Animating preloaded assets](#animating-preloaded-assets)).
-- **Pixels that change often** (drawn per frame, changing text, partial
-  updates): `rgba8` or `r8`, updated by rectangle, or an effect shader that
+- **Text:** a text layer ([below](#text)).
+- **Pixels that change often** (drawn per frame, partial updates): `rgba8` or `r8`, updated by rectangle, or an effect shader that
   draws them.
 - **Live video:** a video layer.
 
@@ -373,39 +376,75 @@ after a reconnect in the order they were made.
 
 ### Text
 
-The service draws no text of its own: an app sends a font once, as an
-`r8` asset, and draws strings from it in effect layers. Both clients come
-with a helper that does this with the layer kinds above, with no service
-change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
-`libcluster_render_client.a`), and any client can do the same:
+Send these only to a service whose hello has `text` 1. A client sends a
+font once: an `r8` asset of its glyphs and a table of where each glyph is
+and how it advances. A text layer draws one line of a string from it: the
+service lays the string out and draws each glyph as two triangles of its
+own, sampling the atlas once a pixel, from vertex buffers its scene keeps.
+A string change is one `text` message carrying the string.
 
-- **The font's atlas** is one row of its glyphs, each a whole line high
-  with a column of 0 between them, at most 2048 pixels wide: an `r8`
-  asset sampled `bilinear`, sent once. The helper makes it from glyph
-  bitmaps (any rasteriser the app has, at build time or on the unit), a
-  monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
-  pixels, R8 or the alpha of RGBA; one page, glyphs not packed in
-  channels, inside the page, no negative `xadvance`).
-- **A string** is an effect layer, its rect one line high, whose fragment
-  shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
-  u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in
-  the atlas (0-1), `u_count` glyphs used, a pixel two boxes cover (kerning
-  or a bearing pulls glyphs together) drawn with the brighter sample, in
-  `u_color` (premultiplied out, `blend` `premultiplied`). The app lays the
-  string out (advances, kerning, `spacing` between characters, UTF-8,
-  alignment) and sends two `uniform` messages a change, `u_glyphs` and
-  `u_count`: under 700 bytes for a full line of 14 glyphs, numbers to 6
-  significant digits, whatever the font's size; the atlas is never sent
-  again. A glyph the font lacks takes a space's advance.
-- **Cost:** each pixel of the rect tests at most `n` glyphs, and the
-  shader holds `n` + 2 uniform vectors. GLSL ES 1.00 guarantees a fragment
-  shader 16, so `n` is 1 to 14 (14 by default); the helpers refuse more.
+- **A font** (`font`): `ref` (the client's own, as a layer's or an
+  asset's), `asset` (an `r8` asset of the client's, up to 2048x2048),
+  `line` (the line's height in atlas pixels, 1-2048), `glyphs`
+  (`code:x,y,w,h,left,top,advance ...`: a Unicode scalar value, its box in
+  the atlas, its offset from the pen and from the line's top, and its
+  advance, in atlas pixels; at most 1024 glyphs, each once; offsets -2048 to
+  2048, advances 0 to 2048), `kerning` (`first,second:amount ...`: pairs of
+  glyphs the font has, -2048 to 2048, at most 4096), `sdf` (0 by default: the
+  atlas holds coverage; 1-64: it holds a distance field, 0.5 on the edge,
+  this many atlas pixels each side). Anything else is refused with nothing
+  made (`a font's atlas is an r8 asset`, `glyph 65: its box is outside the
+  atlas`, `glyph 65 comes twice`, `kerning 65,67: a glyph the font lacks`,
+  ...). A client has at most 8 fonts; a font's table counts in the
+  service's memory. `drop` drops one, refused while a text layer draws from
+  it (`font in use`); its asset is refused while the font is there (`asset
+  in use: a font draws from it`).
+- **A text layer** (`layer` with `kind` `text`): `font` (a font whose asset
+  is on the layer's target), `max` (the glyphs it holds, 1-256, 64 by
+  default), and its `text` (UTF-8, at most 1024 bytes), `align` (`left` by
+  default, `center`, `right`), `spacing` (pixels between characters, -1024
+  to 1024), `size` (the line's height in the target's pixels; 0, the
+  default: the layer's height) and `color` (`r g b a`, straight alpha 0-1,
+  drawn premultiplied). A `text` message sets any of these but `font` and
+  `max`; a `set` changes its layer fields. It is turned, scaled and stacked
+  as an effect layer, and its `u_color` animated with `animate` (`property`
+  `uniform`). It takes no `uniform`, `bind` or `link`, and draws on its
+  target, not in a canvas. Text that is not well-formed UTF-8 (overlong,
+  surrogates, past U+10FFFF, cut short) is refused (`text is not UTF-8`)
+  and the layer keeps its string.
+- **Layout:** the font scaled to `size`; each glyph's top-left on whole
+  pixels, so a font drawn at the size it was made maps each texel to a
+  pixel; kerning and `spacing` between characters, none after the last;
+  aligned in the rect by whole pixels; a character the font lacks advances
+  by the font's space, or not at all; glyphs cut at the rect's edges, the
+  atlas box with them; past `max` glyphs the rest are not drawn. Glyphs
+  that overlap (kerning, a bearing) are drawn over each other.
+- **Cost:** a string change sends its JSON message alone (a line of 64
+  glyphs: about 100 bytes); the service writes 64 bytes a glyph into the
+  scene, at most 30 times a second a layer, the newest string each time,
+  within the upload budget. Each frame draws two triangles a glyph and
+  samples the atlas once for each pixel a glyph covers. A layer's buffers
+  (76 bytes a glyph of its `max`, twice) count in the service's memory.
+- **Sharp at any size:** make the font at the size it is drawn, or send a
+  distance field (`sdf`), whose edge stays sharp scaled up.
+
+Both clients come with a helper that packs glyphs into an atlas and sends
+it with its table (`js/cluster_render_text.js`; `include/cluster_render/text.h`,
+in `libcluster_render_client.a`): from glyph bitmaps (any rasteriser the
+app has, at build time or on the unit), a monospace grid image, or an
+AngelCode BMFont (`.fnt` text and its page's pixels, R8 or the alpha of
+RGBA; one page, glyphs not packed in channels, inside the page, no negative
+`xadvance`). Its `set()` says whether the string fits (no more glyphs than
+the layer holds, no wider than its rect). An app that draws text requires
+the `cluster-render` release that has it; a client holds its fonts and text
+layers until a service's hello has `text` 1, and never sends them to an
+older one.
 
 ```js
 const { Font, Text } = require('./cluster_render_text.js');
 const font = Font.fromBMFont(fntText, { pixels: pageAlpha, w: 512, h: 256 });
-const atlas = font.asset(cr, 'panel');
-const speed = new Text(cr, font, atlas, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
+const fontRef = font.asset(cr, 'panel');
+const speed = new Text(cr, font, fontRef, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
     align: 'right', color: [1, 1, 1, 1] });
 speed.set('123 km/h');
 ```
@@ -986,7 +1025,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux), `scene_anim` (1: takes the [edit lines](#scene-edits) `--play` and `--skip`, the display able to play a file's animation sequences; 0 where it cannot; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `text` (1: takes [fonts and text layers](#text); 0 where the renderer refused their shaders; absent from older services), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux), `scene_anim` (1: takes the [edit lines](#scene-edits) `--play` and `--skip`, the display able to play a file's animation sequences; 0 where it cannot; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

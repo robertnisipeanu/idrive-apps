@@ -61,6 +61,9 @@ struct FakeQuad {
     std::map<std::string, int> links;   /* uniform -> value (link()) */
     int styles = 0;   /* style() calls */
     int canvas = 0;   /* the canvas it is drawn in; 0: the target */
+    uint32_t glyph_cap = 0;        /* a glyph run's capacity (glyph_buffer()); 0: none */
+    std::vector<float> glyphs;     /* its glyphs as glyphs() wrote them, 16 floats each */
+    int glyph_writes = 0;
 };
 
 struct FakeView {
@@ -129,6 +132,7 @@ public:
     bool fail_flush = false;
     bool refuse_textures = false;  /* immutable_texture() refused, as a backend without the format */
     bool refuse_canvases = false;  /* canvas() refused */
+    bool refuse_glyphs = false;    /* glyph_buffer() refused, as a backend without glyph runs */
     std::string name;
     std::map<std::string, FakeGraph *> *registry = nullptr;
     const std::map<int, unsigned> *effect_attributes = nullptr;   /* the Gpu's */
@@ -302,6 +306,25 @@ public:
         if (pending.views.count(quad))
             return pending.views[quad].order = o, true;
         return has(quad) && (pending.quads[quad].order = o, true);
+    }
+    bool glyph_buffer(int quad, uint32_t capacity) override
+    {
+        if (refuse_glyphs || !has(quad) || !capacity || pending.quads[quad].glyph_cap)
+            return false;
+        pending.quads[quad].glyph_cap = capacity;
+        return true;
+    }
+    bool glyphs(int quad, const float *v, uint32_t n) override
+    {
+        if (!has(quad) || n > pending.quads[quad].glyph_cap)
+            return false;
+        if (write_budget >= 0 && (long)(written + (size_t)n * 64) > write_budget)
+            return false;
+        written += (size_t)n * 64;
+        writes++;
+        pending.quads[quad].glyphs.assign(v, v + n * 16);
+        pending.quads[quad].glyph_writes++;
+        return true;
     }
     void drop_quad(int quad) override
     {

@@ -406,6 +406,8 @@ protected:
         return quad_animation_error(part, a);
     }
     void restore(uint32_t part, const Animation &a) override;
+    /* Its quad in the attached scene; 0: none. */
+    int quad_handle() const { return quad_; }
 
 private:
     int effect_;

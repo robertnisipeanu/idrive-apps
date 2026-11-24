@@ -3186,10 +3186,11 @@ static void values_over_socket()
 }
 
 /* The text helper (include/cluster_render/text.h, PROTOCOL.md "Text"): a
- * font's one-row atlas from a grid, glyph bitmaps or a BMFont; a line laid
- * out with advances, kerning and UTF-8; a Text over the socket: its atlas an
- * r8 asset, its string two uniforms (its glyph boxes and their count),
- * aligned, changed by those two alone. */
+ * font's atlas packed from a grid, glyph bitmaps or a BMFont, its table and
+ * what a line measures; a Text over the socket: its atlas an r8 asset with
+ * a font over it, its string drawn by the service as a glyph run, laid out
+ * (advances, kerning, alignment, cut to the rect) and written again when it
+ * changes, at most 30 times a second; everything an app sends checked. */
 static void text_helper()
 {
     /* Two 8x16 cells: "1" all 255, "2" all 128. */
@@ -3198,18 +3199,18 @@ static void text_helper()
         for (int x = 0; x < 16; x++)
             grid[y * 16 + x] = x < 8 ? 255 : 128;
     const cr::Font font = cr::Font::from_grid(grid.data(), 16, 16, 2, 1, "12");
-    ok("text: a grid font's atlas: one row, a column of 0 around each glyph",
-       font.ok() && font.width() == 19 && font.line_height() == 16 && font.pixels()[0] == 0 &&
-           font.pixels()[1] == 255 && font.pixels()[9] == 0 && font.pixels()[10] == 128 &&
-           font.pixels()[18] == 0);
-    float width = 0;
-    std::vector<cr::GlyphBox> b = font.layout("12", 32, 0, &width);
-    ok("text: a line laid out at twice the font's height",
-       b.size() == 2 && b[0].x0 == 0 && b[0].x1 == 16 && b[0].u0 == 1 && b[0].u1 == 9 && b[1].x0 == 16 &&
-           b[1].u0 == 10 && width == 32);
-    b = font.layout("1\xC3\xA9" "2", 16, 0, &width);
+    const cr::FontOptions fo = font.options();
+    ok("text: a grid font's atlas: glyphs packed with a column and a row of 0 around each",
+       font.ok() && font.width() == 32 && font.height() == 18 && font.line_height() == 16 &&
+           font.pixels()[0] == 0 && font.pixels()[32 + 1] == 255 && font.pixels()[32 + 9] == 0 &&
+           font.pixels()[32 + 10] == 128 && font.pixels()[17 * 32 + 1] == 0);
+    ok("text: its table, glyph by glyph", fo.line == 16 && fo.sdf == 0 && fo.kerning.empty() &&
+                                              fo.glyphs == "49:1,1,8,16,0,0,8 50:10,1,8,16,0,0,8");
+    unsigned n = 0;
+    ok("text: a line measured at twice the font's height", font.measure("12", 32, 0, &n) == 32 && n == 2);
     ok("text: a character the font lacks (UTF-8 e-acute) takes nothing without a space",
-       b.size() == 2 && b[1].x0 == 8 && width == 16);
+       font.measure("1\xC3\xA9" "2", 16, 0, &n) == 16 && n == 2);
+    ok("text: spacing between characters only, none after the last", font.measure("12", 16, 2) == 18);
     std::vector<cr::GlyphBitmap> gs(2);
     gs[0].code = 'A';
     gs[0].w = 4;
@@ -3219,11 +3220,12 @@ static void text_helper()
     gs[0].pixels.assign(8, 200);
     gs[1].code = ' ';
     gs[1].advance = 3;
-    const cr::Font kerned = cr::Font::from_glyphs(8, gs, {{{'A', 'A'}, -2}});
-    b = kerned.layout("A A\xE2\x82\xAC" "AA", 8, 0, &width);
-    ok("text: glyph bitmaps placed below the line's top; kerning; a missing euro takes a space's advance",
-       kerned.ok() && kerned.pixels()[3 * kerned.width() + 1] == 200 && kerned.pixels()[2 * kerned.width() + 1] == 0 &&
-           b.size() == 4 && b[1].x0 == 8 && b[2].x0 == 16 && b[3].x0 == 19 && width == 24);
+    const cr::Font kerned = cr::Font::from_glyphs(8, gs, {{{'A', 'A'}, -2}, {{'A', 'B'}, 1}});
+    ok("text: glyph bitmaps, their offsets in the table; kerning of glyphs it lacks left out",
+       kerned.ok() && kerned.options().glyphs == "32:6,1,0,0,0,0,3 65:1,1,4,2,0,3,5" &&
+           kerned.options().kerning == "65,65:-2");
+    ok("text: kerning; a missing euro takes a space's advance; a space draws nothing",
+       kerned.measure("A A\xE2\x82\xAC" "AA", 8, 0, &n) == 24 && n == 4);
     const std::string fnt = "info face=\"t\" size=8\ncommon lineHeight=8 base=6\npage id=0 file=\"t.png\"\n"
                             "char id=65 x=0 y=0 width=4 height=6 xoffset=1 yoffset=2 xadvance=6 page=0\n"
                             "char id=66 x=4 y=0 width=4 height=6 xoffset=0 yoffset=2 xadvance=5 page=0\n"
@@ -3231,23 +3233,20 @@ static void text_helper()
     std::vector<uint8_t> page(8 * 6 * 4, 0);
     for (size_t i = 3; i < page.size(); i += 4)
         page[i] = 90;   /* alpha */
-    const cr::Font bm = cr::Font::from_bmfont(fnt, page.data(), 8, 6, 4);
-    b = bm.layout("AB", 8, 0, &width);
-    ok("text: a BMFont, its alpha, offsets, advances and kerning",
-       bm.ok() && bm.line_height() == 8 && bm.pixels()[2 * bm.width() + 1] == 90 && b.size() == 2 && b[0].x0 == 1 &&
-           b[1].x0 == 5 && width == 10);
-    float spaced = 0;
-    const std::vector<cr::GlyphBox> sb = font.layout("12", 16, 2, &spaced);
-    ok("text: spacing between characters only, none after the last",
-       sb.size() == 2 && sb[1].x0 == 10 && spaced == 18);
+    const cr::Font bm = cr::Font::from_bmfont(fnt, page.data(), 8, 6, 4, 4);
+    ok("text: a BMFont, its alpha, offsets, advances, kerning and distance range",
+       bm.ok() && bm.line_height() == 8 && bm.pixels()[1 * bm.width() + 1] == 90 &&
+           bm.options().glyphs == "65:1,1,4,6,1,2,6 66:6,1,4,6,0,2,5" && bm.options().kerning == "65,66:-1" &&
+           bm.options().sdf == 4 && bm.measure("AB", 8, 0) == 10);
     std::vector<cr::GlyphBitmap> plain(1);
     plain[0].code = 'x';
     plain[0].w = 4;
     plain[0].h = 8;
     plain[0].pixels.assign(32, 9);
-    float plain_w = 0;
-    cr::Font::from_glyphs(8, plain).layout("xx", 8, 0, &plain_w);
-    ok("text: a glyph bitmap's advance its width when not given", plain_w == 8);
+    ok("text: a glyph bitmap's advance its width when not given", cr::Font::from_glyphs(8, plain).measure("xx", 8, 0) == 8);
+    plain[0].advance = -5;
+    ok("text: a glyph bitmap's negative advance its width, as in Node",
+       cr::Font::from_glyphs(8, plain).measure("xx", 8, 0) == 8);
     const std::string one_char = "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=5";
     auto bmfont = [&](const std::string &common, const std::string &chr) {
         return cr::Font::from_bmfont("common lineHeight=8 " + common + "\n" + chr + "\n", page.data(), 8, 6, 4).ok();
@@ -3262,22 +3261,21 @@ static void text_helper()
            !bmfont("", "char id=65 x=0 y=0 width=4 height=6 xoffset=0 yoffset=0 xadvance=-3") &&
            !bmfont("", "char id=65 x=0 y=0 width=-4 height=6 xoffset=0 yoffset=0 xadvance=5") &&
            !bmfont("", "char id=65 x=0 y=0 width=4 height=-6 xoffset=0 yoffset=0 xadvance=5"));
-    std::vector<cr::GlyphBitmap> back(1);
-    back[0].code = 'x';
-    back[0].w = 4;
-    back[0].h = 8;
-    back[0].advance = -5;
-    back[0].pixels.assign(32, 9);
-    float back_w = 0;
-    cr::Font::from_glyphs(8, back).layout("xx", 8, 0, &back_w);
-    ok("text: a glyph bitmap's negative advance its width, as in Node", back_w == 8);
-    std::vector<cr::GlyphBitmap> wide(300);
-    for (size_t i = 0; i < wide.size(); i++) {
-        wide[i].code = (uint32_t)i;
-        wide[i].w = wide[i].h = 8;
-        wide[i].pixels.assign(64, 1);
+    std::vector<cr::GlyphBitmap> many(300);
+    for (size_t i = 0; i < many.size(); i++) {
+        many[i].code = (uint32_t)i;
+        many[i].w = many[i].h = 8;
+        many[i].pixels.assign(64, 1);
     }
-    ok("text: an atlas past 2048 pixels refused", !cr::Font::from_glyphs(8, wide).ok());
+    const cr::Font packed = cr::Font::from_glyphs(8, many);
+    ok("text: 300 glyphs packed in rows of a square atlas", packed.ok() && packed.width() == 256 && packed.height() <= 256);
+    std::vector<cr::GlyphBitmap> huge(70);
+    for (size_t i = 0; i < huge.size(); i++) {
+        huge[i].code = (uint32_t)i;
+        huge[i].w = huge[i].h = 300;
+        huge[i].pixels.assign(300 * 300, 1);
+    }
+    ok("text: glyphs past a 2048 x 2048 atlas refused", !cr::Font::from_glyphs(300, huge).ok());
 
     Rig r;
     cr::Client c("theme", r.path);
@@ -3285,7 +3283,7 @@ static void text_helper()
     e.wire(c);
     r.clients = {&c};
     r.pump(50);
-    const uint32_t atlas = font.asset(c, "panel");
+    const uint32_t font_ref = font.asset(c, "panel");
     cr::LayerOptions lo;
     lo.target = "panel";
     lo.klass = "overlay";
@@ -3298,65 +3296,193 @@ static void text_helper()
     to.max_glyphs = 4;
     /* the Text holds the font: it goes on once the app's own is gone */
     std::shared_ptr<const cr::Font> held = std::make_shared<const cr::Font>(font);
-    cr::Text label(c, held, atlas, lo, to);
+    cr::Text label(c, held, font_ref, lo, to);
     held.reset();
     const bool fits = label.set("12");
     r.pump(300);
     FakeGraph *g = r.gpu.graph("panel");
-    const FakeQuad *q = nullptr;
-    if (g)
-        for (const auto &kv : g->shown.quads)   /* the graph's own map: q points into it */
-            if (kv.second.uniforms.count("u_glyphs"))
-                q = &kv.second;
+    auto run_of = [&](uint32_t cap) -> const FakeQuad * {
+        if (g)
+            for (const auto &kv : g->shown.quads)   /* the graph's own map: points into it */
+                if (kv.second.glyph_cap == cap)
+                    return &kv.second;
+        return nullptr;
+    };
+    const FakeQuad *q = run_of(4);
     bool r8 = false;
     for (const auto &kv : g ? g->shown.buffers : std::map<int, FakeBuffer>())
-        r8 = r8 || (kv.second.f == TexFormat::R8 && kv.second.w == 19 && kv.second.h == 16);
-    ok("text: the atlas an r8 asset, the string one array of 4 glyph boxes, aligned right",
-       fits && label.ref() && r8 && q && q->uniforms.at("u_glyphs").size() == 16 && q->uniforms.at("u_count")[0] == 2 &&
-           std::fabs(q->uniforms.at("u_glyphs")[0] - 168.0f / 200) < 1e-6f &&
-           std::fabs(q->uniforms.at("u_glyphs")[5] - 1.0f) < 1e-6f &&
-           std::fabs(q->uniforms.at("u_glyphs")[2] - 1.0f / 19) < 1e-6f && e.layer[label.ref()] == "shown");
+        r8 = r8 || (kv.second.f == TexFormat::R8 && kv.second.w == 32 && kv.second.h == 18);
+    /* "12" at twice the font's size, right-aligned in 200: x 168 to 200;
+     * the second glyph's top-right corner (x, y, u, v) at the rect's
+     * top-right and its atlas box's */
+    ok("text: the atlas an r8 asset, the string a glyph run of 4 drawn premultiplied, aligned right",
+       fits && font_ref && label.ref() && r8 && q && q->glyphs.size() == 2 * 16 && q->look.blend == Blend::Premultiplied &&
+           std::fabs(q->glyphs[0] - 168.0f / 200) < 1e-6f && std::fabs(q->glyphs[16 + 12] - 1.0f) < 1e-6f &&
+           std::fabs(q->glyphs[16 + 13] - 1.0f) < 1e-6f && std::fabs(q->glyphs[16 + 14] - 18.0f / 32) < 1e-6f &&
+           std::fabs(q->glyphs[16 + 15] - 1.0f / 18) < 1e-6f && q->textures.count("u_atlas") &&
+           q->uniforms.count("u_color") && q->visible && e.layer[label.ref()] == "shown");
+    const int writes = q ? q->glyph_writes : 0;
     ok("text: more glyphs than the layer holds: false, the first ones shown",
-       !label.set("12121") && (r.pump(100), q && q->uniforms.at("u_count")[0] == 4) && e.errors.empty());
+       !label.set("12121") && (r.pump(100), q && q->glyphs.size() == 4 * 16 && q->glyph_writes == writes + 1) &&
+           e.errors.empty());
+    /* a readout changing every 5 ms: written at most 30 times a second,
+     * the newest always shown */
+    const int before = q ? q->glyph_writes : 0;
+    for (int i = 0; i < 200; i++) {
+        label.set(i % 2 ? "1" : "22");
+        r.pump(5);
+    }
+    label.set("2");
+    r.pump(100);
+    ok("text: a string changing every 5 ms written at most 30 times a second, the newest shown",
+       q && q->glyph_writes - before <= 32 && q->glyph_writes - before >= 25 && q->glyphs.size() == 16 &&
+           std::fabs(q->glyphs[2] - 10.0f / 32) < 1e-6f);
+    const float red[4] = {1, 0, 0, 0.5f};
+    label.color(red);
+    r.pump(50);
+    ok("text: its colour a uniform, the glyphs not written again",
+       q && q->uniforms.at("u_color") == std::vector<float>({1, 0, 0, 0.5f}) && q->glyph_writes - before <= 33);
 
-    /* The most glyphs: 14 by default, more refused (n + 2 vectors within
-     * GLSL ES 1.00's 16); a rect with no width or height refused. */
+    /* A typical line: 64 glyphs by default, up to 256; 257 or a rect of no
+     * height refused, nothing sent for them. */
     auto shared = std::make_shared<const cr::Font>(font);
     lo.y = 200;
-    cr::Text full(c, shared, atlas, lo);
-    r.pump(100);
-    const FakeQuad *fq = nullptr;
-    if (g)
-        for (const auto &kv : g->shown.quads)   /* the graph's own map: fq points into it */
-            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 14 * 4)
-                fq = &kv.second;
-    cr::TextOptions many;
-    many.max_glyphs = 15;
+    lo.w = 1600;
+    lo.h = 16;
+    to.align = "left";
+    to.max_glyphs = cr::kDefaultTextGlyphs;
+    cr::Text line(c, shared, font_ref, lo, to);
+    const std::string sixty_four(64, '1');
+    const bool line_fits = line.set(sixty_four);
+    to.max_glyphs = cr::kMaxTextGlyphs;
+    cr::Text longest(c, shared, font_ref, lo, to);
+    to.max_glyphs = cr::kMaxTextGlyphs + 1;
     cr::LayerOptions flat = lo;
     flat.h = 0;
-    ok("text: 14 glyphs by default, 15 refused, a rect of no height refused, nothing sent for them",
-       full.ref() && fq && !cr::Text(c, shared, atlas, lo, many).ref() && !cr::Text(c, shared, atlas, flat).ref());
-    /* spaced right-aligned text as wide as the rect fits, its last glyph
-     * at the rect's right edge */
+    r.pump(100);
+    const FakeQuad *lq = run_of(64);
+    ok("text: a line of 64 glyphs in one layer, made in the shown scene with its atlas bound; a layer of 256, 257 "
+       "and a rect of no height refused",
+       line_fits && lq && lq->glyphs.size() == 64 * 16 && lq->textures.count("u_atlas") && run_of(256) && !cr::Text(c, shared, font_ref, lo, to).ref() &&
+           !cr::Text(c, shared, font_ref, flat).ref() && e.errors.empty());
+    /* centred, spaced and cut: "121" with 2 between in a rect of 20 is 28
+     * wide, from x -4: its first glyph cut at the rect's left, the atlas
+     * box with it */
     cr::TextOptions sp;
-    sp.align = "right";
+    sp.align = "center";
     sp.spacing = 2;
-    sp.max_glyphs = 2;
+    sp.max_glyphs = 3;
     cr::LayerOptions narrow = lo;
     narrow.y = 300;
-    narrow.w = 18;
+    narrow.w = 20;
     narrow.h = 16;
-    cr::Text tight(c, shared, atlas, narrow, sp);
-    const bool tight_fits = tight.set("12");
-    r.pump(300);
-    const FakeQuad *tq = nullptr;
-    if (g)
-        for (const auto &kv : g->shown.quads)   /* the graph's own map: tq points into it */
-            if (kv.second.uniforms.count("u_glyphs") && kv.second.uniforms.at("u_glyphs").size() == 2 * 4)
-                tq = &kv.second;
-    ok("text: spaced text as wide as its rect fits, its last glyph at the right edge",
-       tight_fits && tq && std::fabs(tq->uniforms.at("u_glyphs")[5] - 1.0f) < 1e-6f &&
-           std::fabs(tq->uniforms.at("u_glyphs")[0]) < 1e-6f);
+    cr::Text tight(c, shared, font_ref, narrow, sp);
+    const bool tight_fits = tight.set("121");
+    r.pump(100);
+    const FakeQuad *tq = run_of(3);
+    ok("text: centred and spaced, wider than its rect: false, cut at both edges, the atlas box with it",
+       !tight_fits && tq && tq->glyphs.size() == 3 * 16 && tq->glyphs[0] == 0 &&
+           std::fabs(tq->glyphs[2] - 5.0f / 32) < 1e-6f && std::fabs(tq->glyphs[32 + 4] - 1.0f) < 1e-6f);
+
+    /* What the service checks, sent as no helper would. */
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"asset\",\"ref\":1,\"target\":\"panel\",\"format\":\"r8\",\"w\":16,\"h\":16}");
+    raw.send_message(cr::frame_head(1, 1, {}, 256) + std::string(256, '\xff'));
+    raw.send("{\"op\":\"asset\",\"ref\":2,\"target\":\"panel\",\"w\":16,\"h\":16}");
+    raw.send("{\"op\":\"font\",\"ref\":3,\"asset\":1,\"line\":16,\"glyphs\":\"65:0,0,8,16,0,0,8 66:8,0,8,16,0,0,8\","
+             "\"kerning\":\"65,66:-1\"}");
+    raw.send("{\"op\":\"font\",\"ref\":4,\"asset\":2,\"line\":16,\"glyphs\":\"65:0,0,8,16,0,0,8\"}");
+    raw.send("{\"op\":\"font\",\"ref\":5,\"asset\":1,\"line\":16,\"glyphs\":\"65:9,0,8,16,0,0,8\"}");
+    raw.send("{\"op\":\"font\",\"ref\":6,\"asset\":1,\"line\":16,\"glyphs\":\"65:0,0,8,16,0,0,8 65:0,0,8,16,0,0,8\"}");
+    raw.send("{\"op\":\"font\",\"ref\":7,\"asset\":1,\"line\":16,\"glyphs\":\"65:0,0,8,16,0,0,8\",\"kerning\":\"65,67:1\"}");
+    raw.send("{\"op\":\"font\",\"ref\":8,\"asset\":1,\"line\":16,\"glyphs\":\"55296:0,0,8,16,0,0,8\"}");
+    raw.send("{\"op\":\"font\",\"ref\":9,\"asset\":1,\"line\":16,\"glyphs\":\"65:0,0,8\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":10,\"target\":\"panel\",\"kind\":\"text\",\"font\":3,\"w\":100,\"h\":16,"
+             "\"text\":\"AB\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":11,\"target\":\"map\",\"kind\":\"text\",\"font\":3}");
+    raw.send("{\"op\":\"layer\",\"ref\":12,\"target\":\"panel\",\"kind\":\"text\",\"font\":3,\"max\":257}");
+    raw.send("{\"op\":\"layer\",\"ref\":13,\"target\":\"panel\",\"kind\":\"text\",\"font\":2}");
+    raw.send("{\"op\":\"text\",\"ref\":10,\"text\":\"A\xC0\xAF\"}");
+    raw.send("{\"op\":\"text\",\"ref\":10,\"text\":\"A\\ud800B\"}");
+    raw.send("{\"op\":\"text\",\"ref\":10,\"text\":\"" + std::string(1025, 'A') + "\"}");
+    raw.send("{\"op\":\"text\",\"ref\":10,\"color\":\"1 0 0 2\"}");
+    raw.send("{\"op\":\"text\",\"ref\":10,\"align\":\"middle\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":14,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\"}");
+    raw.send("{\"op\":\"text\",\"ref\":14,\"text\":\"A\"}");
+    raw.send("{\"op\":\"drop\",\"ref\":3}");
+    raw.send("{\"op\":\"drop\",\"ref\":1}");
+    raw.send("{\"op\":\"uniform\",\"ref\":10,\"name\":\"u_color\",\"v\":\"1 1 1 1\"}");
+    r.pump(100);
+    const std::string ev = raw.events();
+    auto refused = [&](const std::string &op, uint32_t ref, const std::string &why) {
+        return ev.find("\"op\":\"" + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("text: a font over an rgba asset, a glyph outside the atlas or twice, a pair of a glyph it lacks, a "
+       "surrogate, a short glyph, refused",
+       refused("font", 4, "a font's atlas is an r8 asset") && refused("font", 5, "glyph 65: its box is outside") &&
+           refused("font", 6, "glyph 65 comes twice") && refused("font", 7, "kerning 65,67: a glyph the font lacks") &&
+           refused("font", 8, "glyph 55296: not a Unicode scalar value") &&
+           refused("font", 9, "a font's glyphs are code:x,y,w,h,left,top,advance"));
+    ok("text: a text layer on another target than its font, of 257 glyphs, of no font, refused",
+       refused("layer", 11, "the font's atlas is on another target") &&
+           refused("layer", 12, "max must be a number from 1 to 256") && refused("layer", 13, "no such font"));
+    ok("text: overlong UTF-8, a lone surrogate, past 1024 bytes, a colour past 1, an unknown alignment, refused",
+       refused("text", 10, "text is not UTF-8") && ev.find("text is not UTF-8", ev.find("text is not UTF-8") + 1) !=
+                                                        std::string::npos &&
+           refused("text", 10, "text is at most 1024 bytes") && refused("text", 10, "color is 4 numbers") &&
+           refused("text", 10, "align must be"));
+    ok("text: text to an effect layer, a uniform to a text layer, the font and its atlas in use, refused",
+       refused("text", 14, "only a text layer takes text") && refused("drop", 3, "font in use") &&
+           refused("drop", 1, "asset in use") && refused("uniform", 10, ""));
+    const FakeQuad *rq = run_of(64);
+    for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+        if (kv.second.glyph_cap == 64 && &kv.second != lq)
+            rq = &kv.second;
+    ok("text: the raw layer drew AB, kerned, through all that",
+       rq && rq->glyphs.size() == 2 * 16 && std::fabs(rq->glyphs[16] - 7.0f / 100) < 1e-6f);
+}
+
+/* A service whose hello has no text: the client holds fonts and text
+ * layers, sends nothing of them, and sends them once a service that takes
+ * them says hello. */
+static void text_held()
+{
+    Rig r;
+    r.gpu.reject = "u_sdf";   /* the text shader refused: no text */
+    r.start();
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    std::vector<uint8_t> grid(16 * 16, 255);
+    const auto font = std::make_shared<const cr::Font>(cr::Font::from_grid(grid.data(), 16, 16, 2, 1, "12"));
+    const uint32_t f = font->asset(c, "panel");
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.w = 100;
+    lo.h = 16;
+    cr::Text t(c, font, f, lo);
+    t.set("12");
+    r.pump(200);
+    FakeGraph *g = r.gpu.graph("panel");
+    bool runs = false;
+    for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+        runs = runs || kv.second.glyph_cap;
+    ok("text held: no text in the hello, nothing sent, no error, the layer never on screen",
+       !c.takes_text() && f && t.ref() && !runs && e.errors.empty() && !e.layer.count(t.ref()));
+    r.gpu.reject.clear();
+    r.start();
+    r.pump(3000);
+    g = r.gpu.graph("panel");
+    const FakeQuad *q = nullptr;
+    for (const auto &kv : g ? g->shown.quads : std::map<int, FakeQuad>())
+        if (kv.second.glyph_cap)
+            q = &kv.second;
+    ok("text held: sent with the font once a service with text says hello, its string drawn",
+       c.takes_text() && q && q->glyphs.size() == 2 * 16 && e.layer[t.ref()] == "shown" && e.errors.empty());
 }
 
 int main()
@@ -3880,6 +4006,7 @@ int main()
     animations_after_a_reconnect();
     values_over_socket();
     text_helper();
+    text_held();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

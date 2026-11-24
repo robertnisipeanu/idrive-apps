@@ -25,17 +25,18 @@
  *   geometry draw modes and instances (a service whose hello has draw):
  *           16 cubes drawn as instances of one, a ring as a line loop and
  *           a field of points, all turned by the renderer;
- *   label   text from the text helper (cluster_render_text.js): a clock,
- *           a speed and a status line in a proportional 5x7 font made here,
- *           each changed by two uniforms (its glyph boxes and their count);
+ *   label   text from the text helper (cluster_render_text.js, a service
+ *           whose hello has text): a clock, a speed changing ten times a
+ *           second, a status line and a line of 82 characters in a
+ *           proportional 5x7 font made here, each changed by its string;
  *   values  eight lamps whose glow follows one shared value the renderer
  *           animates, all in step, and whose rims follow a second value
  *           set every two seconds (a service whose hello has values);
  *   cubemap a cube map of six coloured faces (a service whose hello has
  *           cube) on a cube the renderer turns, and on one facing the
  *           camera, which shows the +z face (blue).
- * Every animation runs in the renderer; the client sends only the text once
- * a second and the video's frames. Every layer, target, budget and refused
+ * Every animation runs in the renderer; the client sends only the text and
+ * the video's frames. Every layer, target, budget and refused
  * event is printed with its time.
  *
  * On the unit (Node 8): copy this file, cluster_render_client.js and
@@ -261,10 +262,14 @@ function dotFont(Font, s) {
 
 /* The label page's lines, [x, y, h, w] as fractions of the target: each
  * wide enough for its longest text in dotFont() on the panel. */
-const LABEL_LINES = { clock: [0.05, 0.12, 0.18, 0.31], speed: [0.37, 0.38, 0.3, 0.58],
-    status: [0.05, 0.78, 0.1, 0.9] };
-/* The status line's states: 14 glyphs at most, of the font's letters. */
+const LABEL_LINES = { clock: [0.05, 0.08, 0.18, 0.31], speed: [0.37, 0.3, 0.3, 0.58],
+    status: [0.05, 0.66, 0.1, 0.9], ticker: [0.02, 0.86, 0.05, 0.96] };
+/* The status line's states, and the long line: of the font's letters. */
 const LABEL_STATES = ['READY', 'ECO MODE', 'RANGE 412 KM', 'SPORT'];
+const LABEL_TICKER = 'RANGE 412 KM - ETA 14:35 - ECO MODE ON - STOP: MUNICH 28 KM - SPEED LIMIT 120 KM/H';
+/* Every text each line shows, to check they fit. */
+const LABEL_TEXTS = { clock: ['00:00:00', '23:59:59', '08:08:08'], status: LABEL_STATES, ticker: [LABEL_TICKER],
+    speed: Array.from({ length: 180 }, (_, i) => i + ' KM/H') };
 
 /* A lamp: its colour lit by u_glow, a rim of u_rim; premultiplied. */
 const LAMP_FS = `#version 100
@@ -660,16 +665,17 @@ function main() {
     }
 
     if (on('label')) {
-        /* Three Text layers from one atlas sent once; each change sends two
-         * uniforms, its glyph boxes and their count. */
+        /* Four text layers from one font sent once; each change sends its
+         * string. */
         const { Font, Text } = require('./cluster_render_text.js');
         const font = dotFont(Font, 8);
-        const atlas = name(font.asset(cr, target), 'dot font atlas');
+        const atlas = name(font.asset(cr, target), 'dot font');
         const line = (at, opts) => new Text(cr, font, atlas, Object.assign({ target: target, x: Math.round(W * at[0]),
             y: Math.round(H * at[1]), w: Math.round(W * at[3]), h: Math.round(H * at[2]) }, opts));
         const clock = line(LABEL_LINES.clock, { color: [1, 1, 1, 1], maxGlyphs: 8 });
         const speed = line(LABEL_LINES.speed, { color: [0.3, 0.85, 1, 1], align: 'right', maxGlyphs: 8 });
         const status = line(LABEL_LINES.status, { color: [1, 0.75, 0.2, 1], align: 'center' });
+        const ticker = line(LABEL_LINES.ticker, { color: [0.85, 0.85, 0.85, 1], maxGlyphs: 96 });
         /* a target narrower than the panel may cut a line: said once */
         let cut = false;
         const show = (t, text, what) => {
@@ -680,19 +686,27 @@ function main() {
         name(clock.ref, 'clock');
         name(speed.ref, 'speed');
         name(status.ref, 'status');
+        name(ticker.ref, 'ticker');
         const states = LABEL_STATES;
-        let v = 0, k = 0;
-        const tick = () => {
+        let v = 0, k = 0, fast = false;
+        const clockTick = () => {
             const d = new Date();
             show(clock, ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
                 ('0' + d.getSeconds()).slice(-2), 'the clock');
-            v = (v + 7) % 180;
-            show(speed, v + ' KM/H', 'the speed');
-            speed.color(v > 130 ? [1, 0.3, 0.25, 1] : [0.3, 0.85, 1, 1]);
         };
-        tick();
+        /* the speed ten times a second, red past 130 */
+        const speedTick = () => {
+            v = (v + 1) % 180;
+            show(speed, v + ' KM/H', 'the speed');
+            if (fast !== v > 130) speed.color(v > 130 ? [1, 0.3, 0.25, 1] : [0.3, 0.85, 1, 1]);
+            fast = v > 130;
+        };
+        clockTick();
+        speedTick();
         show(status, states[0], 'the status');
-        setInterval(tick, 500);
+        show(ticker, LABEL_TICKER, 'the long line');
+        setInterval(clockTick, 1000);
+        setInterval(speedTick, 100);
         setInterval(() => show(status, states[++k % states.length], 'the status'), 2000);
     }
 
@@ -749,4 +763,4 @@ function main() {
 
 /* Run, or required (the test): the label page's font and lines. */
 if (require.main === module) main();
-else module.exports = { dotFont, LABEL_LINES, LABEL_STATES };
+else module.exports = { dotFont, LABEL_LINES, LABEL_TEXTS };

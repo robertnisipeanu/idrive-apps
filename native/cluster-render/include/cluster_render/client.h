@@ -171,6 +171,27 @@ struct CanvasOptions {
     SamplerOptions sampler;  /* no mipmaps */
 };
 
+/* A font's table over an r8 asset (PROTOCOL.md "Text"): glyphs
+ * "code:x,y,w,h,left,top,advance ..." (its box in the atlas, its offset
+ * from the pen and the line's top, in atlas pixels), kerning
+ * "first,second:amount ...", the line's height, and for a distance atlas
+ * its range in atlas pixels each side of the edge (sdf; 0: coverage).
+ * text.h's Font makes them. */
+struct FontOptions {
+    unsigned line = 0;
+    unsigned sdf = 0;
+    std::string glyphs, kerning;
+};
+
+/* How a text layer draws its line. */
+struct TextLayerOptions {
+    unsigned max = 64;               /* glyphs it holds: 1 to 256 */
+    std::string align = "left";      /* left, center or right */
+    float spacing = 0;               /* pixels between characters */
+    float size = 0;                  /* the line's height in pixels; 0: the layer's height */
+    float color[4] = {1, 1, 1, 1};   /* straight alpha, 0-1 */
+};
+
 enum class UniformType { Float, Vec2, Vec3, Vec4, Mat4 };
 
 /* A mesh layer's projection (its aspect the layer's) and camera. */
@@ -299,6 +320,21 @@ public:
      * faces one after another (+x, -x, +y, -y, +z, -z), sent whole and
      * once; no mipmapped sampling. 0 when out of range. */
     uint32_t cube(const AssetOptions &ao, const SamplerOptions &so = SamplerOptions());
+    /* A font over the client's r8 asset, to a service whose hello has text
+     * (takes_text()): held until then, never sent to an older one, and made
+     * again after a reconnect. Dropped with drop() once no text layer draws
+     * from it. 0 when asset is not an r8 asset of this client or the font
+     * has no line or glyphs. */
+    uint32_t font(uint32_t asset, const FontOptions &fo);
+    /* A text layer (PROTOCOL.md "Text"): a line of text drawn from font
+     * over lo's rect, held as fonts are. 0 when font is not one or to is
+     * out of range. */
+    uint32_t text(const LayerOptions &lo, uint32_t font, const TextLayerOptions &to, const std::string &text = "");
+    /* The text layer's string (UTF-8; the service refuses anything else)
+     * and how it is drawn (its max as made); false, nothing sent, for a
+     * layer that is not a text layer. */
+    bool set_text(uint32_t ref, const std::string &text);
+    bool set_text_style(uint32_t ref, const TextLayerOptions &to);
     /* A shared value (PROTOCOL.md "Shared values") on target, to a service
      * whose hello has values (takes_values()): type Float, Vec2, Vec3 or
      * Vec4, v its first value (as many numbers). Uniforms of the client's
@@ -473,6 +509,8 @@ public:
     bool takes_values() const { return values_; }
     /* The service's hello takes --play and --skip edit lines (edit()). */
     bool takes_scene_anim() const { return scene_anim_; }
+    /* The service's hello takes fonts and text layers (font(), text()). */
+    bool takes_text() const { return text_; }
 
 private:
     struct Part {
@@ -503,7 +541,10 @@ private:
         std::map<std::pair<uint32_t, std::string>, std::string> uniforms;            /* (part, name) */
         std::map<std::pair<uint32_t, std::string>, std::pair<uint32_t, std::string>> binds;  /* -> asset */
         std::map<std::pair<uint32_t, std::string>, std::pair<uint32_t, std::string>> links;  /* -> value */
-        std::string value;               /* a value's message, its last v */
+        std::string value;               /* a value's message, its last v; a font's message */
+        uint32_t font = 0;               /* a text layer's font, a font's asset */
+        TextLayerOptions to;             /* a text layer's */
+        std::string text;                /* its string */
         std::map<uint32_t, Part> parts;
         std::map<uint32_t, std::string> animations;
         uint32_t next_anim = 1;
@@ -528,10 +569,15 @@ private:
                                                             const LayerOptions &lo) const;
     void turn_fields(std::vector<std::pair<std::string, std::string>> *kv, const LayerOptions &lo) const;
     void mesh_fields(std::vector<std::pair<std::string, std::string>> *kv, const MeshOptions &mo) const;
+    static void text_fields(std::vector<std::pair<std::string, std::string>> *kv, const TextLayerOptions &to);
     std::string layer_json(uint32_t ref, const Layer &l) const;
     /* A canvas, or a layer drawn in one. */
     static bool in_canvas(const Layer &l);
-    /* Held here, not sent: one in_canvas() until a hello with canvas. */
+    /* Sent only once the hello says the service takes it: in_canvas(), a
+     * font or a text layer. */
+    static bool late(const Layer &l) { return in_canvas(l) || l.kind == "font" || l.kind == "text"; }
+    /* Held here, not sent: one in_canvas() until a hello with canvas, a
+     * font or a text layer until a hello with text. */
     bool held(uint32_t ref) const;
     /* A part or pivot of a mesh layer, its fields after op, ref and part:
      * false, nothing sent, when the layer, the part or the parent is not as
@@ -540,9 +586,9 @@ private:
                   std::vector<std::pair<std::string, std::string>> fields);
     /* json, about ref, queued unless ref is held. */
     void queue_for(uint32_t ref, const std::string &json);
-    /* Every layer, part, bind and animation made so far: those of canvases
-     * or the rest. */
-    void replay(bool canvases);
+    /* Every layer, part, bind and animation made so far: the late() ones
+     * not held, or the rest. */
+    void replay(bool late);
     std::string host_json(const std::pair<std::string, std::string> &by, const Host &h) const;
     /* A scene's kept edit lines as one edit message, oldest first. */
     std::string edits_json(uint32_t ref, const Layer &l) const;
@@ -620,6 +666,7 @@ private:
     bool shm_frame(uint32_t ref, const std::vector<uint8_t> &px);
     void shm_close(Shm *m);
     bool scene_anim_ = false;       /* and a scene file's animation sequences played */
+    bool text_ = false;             /* and fonts and text layers */
     uint64_t parts_made_ = 0;
 };
 

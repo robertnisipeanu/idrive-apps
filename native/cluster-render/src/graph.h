@@ -663,6 +663,17 @@ public:
      * culling are not used: a quad tests no depth and culls nothing). False
      * where the backend has no such state. */
     virtual bool style(int, const PartLook &) { return false; }
+    /* A glyph run (text_layer.h): the quad draws up to capacity glyphs, two
+     * triangles each, from vertex buffers the scene keeps, in place of its
+     * unit quad. Its effect reads a_position (vec2, the quad's unit square,
+     * as the unit quad's) and a_texcoord (vec2). The buffers are made once,
+     * at their whole size, and written in place by glyphs(). False where the
+     * backend has none. */
+    virtual bool glyph_buffer(int, uint32_t) { return false; }
+    /* The quad's run draws n glyphs (n at most its capacity; 0: nothing):
+     * v holds 16 floats a glyph, x, y, u, v at its bottom-left,
+     * bottom-right, top-left and top-right corners. */
+    virtual bool glyphs(int, const float *, uint32_t) { return false; }
     /* texture(), uniform() and uniform_array() take a quad or a part. */
     virtual bool texture(int quad, const char *uniform, int buf) = 0;
     /* A float, vec2, vec3 or vec4 uniform (n 1-4). */

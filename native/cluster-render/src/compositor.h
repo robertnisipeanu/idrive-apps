@@ -181,6 +181,7 @@
 #include "scene_file.h"
 #include "slots.h"
 #include "stack.h"
+#include "text_layer.h"
 #include "video_composite.h"
 #include "video_layer.h"
 
@@ -283,6 +284,21 @@ public:
     /* A part's geometry, within the service's memory; false with *err. */
     bool geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                   std::string *err);
+
+    /* A font (text_layer.h) over the client's r8 asset, its table in the
+     * service's memory, at most kClientFonts a client; dropped as an asset
+     * (remove_asset()), refused while a text layer draws from it, as its
+     * asset is while it is there. 0 with *err when refused. */
+    uint32_t add_font(uint64_t owner, uint32_t asset, Font &&f, std::string *err);
+    static const uint32_t kClientFonts = 8;
+    /* A text layer drawing a line from the client's font, whose atlas is on
+     * target; capacity glyphs (1 to TextLayer::kMaxGlyphs), their buffers in
+     * the service's memory. 0 with *err when refused. */
+    uint32_t add_text(uint64_t owner, int target, const LayerParams &lp, uint32_t font, uint32_t capacity,
+                      int64_t now_ms, std::string *err);
+    /* Text layers can be made: the renderer compiled their shaders, at the
+     * first call. */
+    bool texts();
 
     /* A new asset, owned by a client; 0 with *err when refused. */
     uint32_t add_asset(uint64_t owner, int target, const AssetParams &ap, std::string *err);
@@ -567,6 +583,12 @@ private:
         bool touched = false;
         std::map<std::pair<uint32_t, std::string>, uint32_t> binds;   /* (part, sampler) -> asset */
         std::map<std::pair<uint32_t, std::string>, uint32_t> links;   /* (part, uniform) -> value */
+        uint32_t font = 0;     /* a text layer's font */
+    };
+    struct FontEntry {
+        uint64_t owner = 0;
+        uint32_t asset = 0;
+        std::shared_ptr<const Font> font;
     };
     struct AssetEntry {
         std::unique_ptr<Asset> asset;
@@ -846,6 +868,9 @@ private:
     int64_t second_ms_ = 0;
     int64_t (*clock_us_)() = nullptr;
     int atlas_fx_ = 0, block_fx_ = 0, image_fx_ = 0;
+    int text_fx_ = 0;   /* the text layers' (text_layer.h); 0: none */
+    bool text_tried_ = false;
+    std::map<uint32_t, FontEntry> fonts_;
     int edge_fx_[2] = {0, 0};   /* kEdgeAtlasFragmentShader, kEdgeBlockFragmentShader; 0: no edges */
     bool edge_tried_ = false;
     bool edge_effects();

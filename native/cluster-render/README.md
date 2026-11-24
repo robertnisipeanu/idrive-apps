@@ -41,9 +41,10 @@ takes them, a whole scene file a root install put in place ("Layers").
   only the `net` and `events` builtins). The installed copy is
   `/var/opt/cluster-render/current/cluster_render_client.js`.
 - **Text:** `js/cluster_render_text.js` (installed beside the client) and
-  `include/cluster_render/text.h` (in `libcluster_render_client.a`) make a
-  font's atlas once and draw strings from it in effect layers, a change of
-  string two uniforms, under 700 bytes (PROTOCOL.md "Text").
+  `include/cluster_render/text.h` (in `libcluster_render_client.a`) send a
+  font's atlas and table once and draw strings from it in text layers,
+  laid out by the service; a change of string is one message of the
+  string (PROTOCOL.md "Text").
 - Any other language speaks [PROTOCOL.md](PROTOCOL.md) over the socket.
 
 A client needs only the socket's group, `tm_oap_app`, which every OAP app
@@ -53,7 +54,8 @@ draws through the service requires `cluster-render` in its catalog entry
 
 `js/showcase.js` puts content of every layer kind on a target through the
 service and prints every event: a 3D cube in a mesh layer the renderer
-turns, plasma in an effect, labels in effects over a glyph-atlas asset, a
+turns, plasma in an effect, labels in text layers (one of them a line of
+82 characters, one changing ten times a second), a
 needle, an alert and a video:
 
 ```sh
@@ -233,6 +235,7 @@ why it is what it is, and the remembered ceiling.
 | video | 4:2:0 atlases (`w*h*3/2` bytes) | one persistent buffer; only 64x64 tiles that changed past a noise filter are written, settled after `settle_ms`; packed 4x4 blocks for motion the budget cannot cover; newest frame only |
 | image | RGBA rectangles that changed | one persistent RGBA8 buffer, written in those rectangles at most `fps` a second |
 | effect | a fragment shader (GLSL ES 1.00, or 3.00 with a vertex shader of its own), uniforms (arrays too), binds to assets, its blending and colour mask | a quad drawn by it; `u_time` at `time_fps`, or from the renderer's own clock |
+| text | a font once (an `r8` atlas and its glyph table), then strings | the line laid out (advances, kerning, alignment, UTF-8), two triangles a glyph in vertex buffers the scene keeps, rewritten in place when the string changes, at most 30 times a second within the budget; up to 256 glyphs a layer |
 | mesh | parts: shaders, geometry (`M`), transforms, uniforms, binds to assets, each part's depth test, blending and colour mask | a render pass of its own over its rect, with its own perspective or orthographic camera; geometry replaced at most once a second within the budget; depth cleared, never colour |
 
 Beside the layers:

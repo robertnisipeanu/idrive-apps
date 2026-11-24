@@ -121,6 +121,18 @@ namespace ramses
         // 22..49: ASTC RGBA / SRGBA block formats (see ABI.md).
     };
 
+    // Element types of a scene's data buffers (Scene::createVertexDataBuffer,
+    // createIndexDataBuffer): checked on the unit's library by make test-ramses.
+    enum EDataType
+    {
+        EDataType_UInt16 = 0,
+        EDataType_UInt32,
+        EDataType_Float,
+        EDataType_Vector2F,
+        EDataType_Vector3F,
+        EDataType_Vector4F
+    };
+
     enum ETextureAddressMode
     {
         ETextureAddressMode_Clamp = 0,

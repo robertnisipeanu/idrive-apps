@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Text layers: an app sends a font once (an `r8` atlas and its glyph table)
+and then only its strings; the service lays each line out (advances,
+kerning, alignment, UTF-8) and draws each glyph as two triangles, so a
+line holds up to 256 glyphs (64 by default) instead of 14, a change sends
+the string alone, and a frame samples the atlas once for each pixel a
+glyph covers. Fonts may be distance fields, sharp at any size. The text
+helpers of both clients use them; the hello's `text` 1 says the service
+takes them.
+
 ## 0.8.9
 
 On iDrive 7, the service keeps seeing which of its scenes the cluster draws

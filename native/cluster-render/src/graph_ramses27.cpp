@@ -16,6 +16,7 @@
 #include "ramses-client-api/DataVector2f.h"
 #include "ramses-client-api/DataVector3f.h"
 #include "ramses-client-api/DataVector4f.h"
+#include "ramses-client-api/ArrayBuffer.h"
 #include "ramses-client-api/ArrayResource.h"
 #include "ramses-client-api/AttributeInput.h"
 #include "ramses-client-api/Effect.h"
@@ -637,8 +638,61 @@ public:
         scene_->destroy(*q->second.turned);
         scene_->destroy(*q->second.placed);
         scene_->destroy(*q->second.geo);
+        drop_glyph_buffers(q->second);
         scene_->destroy(*q->second.app);
         quads_.erase(q);
+    }
+
+    bool glyph_buffer(int quad, uint32_t capacity) override
+    {
+        auto it = quads_.find(quad);
+        if (it == quads_.end() || it->second.glyph_cap || !capacity || capacity > 16383)
+            return false;
+        Quad &q = it->second;
+        q.glyph_pos = scene_->createArrayBuffer(ramses::EDataType::Vector2F, capacity * 4);
+        q.glyph_uv = scene_->createArrayBuffer(ramses::EDataType::Vector2F, capacity * 4);
+        q.glyph_idx = scene_->createArrayBuffer(ramses::EDataType::UInt16, capacity * 6);
+        std::vector<uint16_t> idx(capacity * 6);
+        for (uint32_t i = 0; i < capacity; i++) {
+            const uint16_t b = (uint16_t)(i * 4);
+            const uint16_t six[6] = {b, (uint16_t)(b + 1), (uint16_t)(b + 2), (uint16_t)(b + 2), (uint16_t)(b + 1),
+                                     (uint16_t)(b + 3)};
+            std::copy(six, six + 6, idx.begin() + i * 6);
+        }
+        const float zero[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        ramses::AttributeInput pos, uv;
+        const bool good = q.glyph_pos && q.glyph_uv && q.glyph_idx &&
+                          ok(q.glyph_idx->updateData(0, capacity * 6, idx.data())) &&
+                          ok(q.glyph_pos->updateData(0, 4, zero)) && ok(q.glyph_uv->updateData(0, 4, zero)) &&
+                          ok(q.effect->findAttributeInput("a_position", pos)) &&
+                          ok(q.effect->findAttributeInput("a_texcoord", uv)) &&
+                          ok(q.geo->setInputBuffer(pos, *q.glyph_pos)) && ok(q.geo->setInputBuffer(uv, *q.glyph_uv)) &&
+                          ok(q.geo->setIndices(*q.glyph_idx)) && ok(q.mesh->setIndexCount(6));
+        if (!good) {
+            log_error("ramses: a glyph run of %u glyphs refused", capacity);
+            return false;   /* the quad is dropped, its buffers with it */
+        }
+        q.glyph_cap = capacity;
+        return true;
+    }
+
+    bool glyphs(int quad, const float *v, uint32_t n) override
+    {
+        auto it = quads_.find(quad);
+        if (it == quads_.end() || !it->second.glyph_cap || n > it->second.glyph_cap)
+            return false;
+        Quad &q = it->second;
+        /* nothing to draw: one glyph of no area */
+        const uint32_t drawn = std::max<uint32_t>(n, 1);
+        std::vector<float> pos(drawn * 8, 0.0f), uv(pos.size(), 0.0f);
+        for (uint32_t i = 0; i < n * 4; i++) {
+            pos[i * 2] = v[i * 4];
+            pos[i * 2 + 1] = v[i * 4 + 1];
+            uv[i * 2] = v[i * 4 + 2];
+            uv[i * 2 + 1] = v[i * 4 + 3];
+        }
+        return ok(q.glyph_pos->updateData(0, drawn * 4, pos.data())) &&
+               ok(q.glyph_uv->updateData(0, drawn * 4, uv.data())) && ok(q.mesh->setIndexCount(drawn * 6));
     }
 
     void drop_buffer(int buf) override
@@ -1184,6 +1238,9 @@ private:
         ramses::Appearance *app = nullptr;
         ramses::GeometryBinding *geo = nullptr;
         ramses::Effect *effect = nullptr;
+        /* A glyph run's buffers (glyph_buffer()), its capacity in glyphs. */
+        ramses::ArrayBuffer *glyph_pos = nullptr, *glyph_uv = nullptr, *glyph_idx = nullptr;
+        uint32_t glyph_cap = 0;
         int32_t order = 0;
         int32_t grouped_order = 0;   /* its order within its segment's group */
         size_t segment = 0;
@@ -1191,6 +1248,15 @@ private:
         Rect r;
         Turn t;
     };
+    /* A glyph run's buffers go with its quad. */
+    void drop_glyph_buffers(Quad &q)
+    {
+        if (q.glyph_pos) scene_->destroy(*q.glyph_pos);
+        if (q.glyph_uv) scene_->destroy(*q.glyph_uv);
+        if (q.glyph_idx) scene_->destroy(*q.glyph_idx);
+        q.glyph_pos = q.glyph_uv = q.glyph_idx = nullptr;
+        q.glyph_cap = 0;
+    }
     /* A 2D pass: the quads between two views. */
     struct Segment {
         ramses::RenderPass *pass = nullptr;

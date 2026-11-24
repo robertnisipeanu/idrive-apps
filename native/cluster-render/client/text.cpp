@@ -3,6 +3,7 @@
 #include "cluster_render/text.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
@@ -43,61 +44,63 @@ int field(const std::string &line, const char *key)
 
 }  // namespace
 
-std::string text_fragment_shader(unsigned n)
-{
-    const std::string count = std::to_string(n);
-    return "#version 100\n"
-           "precision mediump float;\n"
-           "uniform sampler2D u_atlas;\n"
-           "uniform vec4 u_glyphs[" + count + "];\n"
-           "uniform float u_count;\n"
-           "uniform vec4 u_color;\n"
-           "varying vec2 v_uv;\n"
-           "void main() {\n"
-           "    float a = 0.0;\n"
-           "    for (int i = 0; i < " + count + "; i++) {\n"
-           "        if (float(i) >= u_count) break;\n"
-           "        vec4 g = u_glyphs[i];\n"
-           "        if (v_uv.x >= g.x && v_uv.x < g.y) {\n"
-           "            float t = (v_uv.x - g.x) / (g.y - g.x);\n"
-           "            a = max(a, texture2D(u_atlas, vec2(mix(g.z, g.w, t), v_uv.y)).r);\n"
-           "        }\n"
-           "    }\n"
-           "    gl_FragColor = vec4(u_color.rgb * u_color.a, u_color.a) * a;\n"
-           "}\n";
-}
-
 Font Font::from_glyphs(unsigned line_height, const std::vector<GlyphBitmap> &glyphs,
-                       const std::map<std::pair<uint32_t, uint32_t>, int> &kerning)
+                       const std::map<std::pair<uint32_t, uint32_t>, int> &kerning, unsigned sdf)
 {
     Font f;
-    if (line_height < 1 || line_height > kMaxAtlas)
+    if (line_height < 1 || line_height > kMaxAtlas || sdf > 64)
         return f;
-    unsigned w = 1;   /* a column of 0 between glyphs: nothing bleeds when sampled bilinear */
+    /* Shelves of glyphs, a column and a row of 0 around each: nothing
+     * bleeds in when sampled bilinear. As wide as a square of their area,
+     * a power of two. */
+    size_t area = 0;
+    unsigned widest = 0;
     for (const GlyphBitmap &g : glyphs) {
-        if (g.pixels.size() < (size_t)g.w * g.h)
+        if (g.pixels.size() < (size_t)g.w * g.h || std::abs(g.top) > 2048 || std::abs(g.left) > 2048 ||
+            g.advance > 2048)
             return f;
-        w += g.w + 1;
+        area += (size_t)(g.w + 1) * (g.h + 1);
+        widest = std::max(widest, g.w + 2);
     }
-    if (w > kMaxAtlas)
+    unsigned w = 16;
+    while (w < kMaxAtlas && ((size_t)w * w < area || w < widest))
+        w *= 2;
+    if (widest > w)
+        return f;
+    std::vector<std::pair<unsigned, unsigned>> at(glyphs.size());
+    unsigned x = 1, y = 1, shelf = 0;
+    for (size_t i = 0; i < glyphs.size(); i++) {
+        const GlyphBitmap &g = glyphs[i];
+        if (x + g.w + 1 > w) {
+            x = 1;
+            y += shelf + 1;
+            shelf = 0;
+        }
+        at[i] = std::make_pair(x, y);
+        x += g.w + 1;
+        shelf = std::max(shelf, g.h);
+    }
+    const unsigned h = y + shelf + 1;
+    if (h > kMaxAtlas)
         return f;
     f.w_ = w;
+    f.h_ = h;
     f.line_ = line_height;
-    f.px_.assign((size_t)w * line_height, 0);
+    f.sdf_ = sdf;
+    f.px_.assign((size_t)w * h, 0);
     f.kerning_ = kerning;
-    unsigned x = 1;
-    for (const GlyphBitmap &g : glyphs) {
-        for (unsigned y = 0; y < g.h; y++) {
-            const int row = g.top + (int)y;
-            if (row >= 0 && row < (int)line_height)
-                std::memcpy(&f.px_[(size_t)row * w + x], &g.pixels[(size_t)y * g.w], g.w);
-        }
+    for (size_t i = 0; i < glyphs.size(); i++) {
+        const GlyphBitmap &g = glyphs[i];
+        for (unsigned row = 0; row < g.h; row++)
+            std::memcpy(&f.px_[(size_t)(at[i].second + row) * w + at[i].first], &g.pixels[(size_t)row * g.w], g.w);
         Glyph &gl = f.glyphs_[g.code];
-        gl.x = x;
+        gl.x = at[i].first;
+        gl.y = at[i].second;
         gl.w = g.w;
-        gl.advance = g.advance < 0 ? (int)g.w : g.advance;
+        gl.h = g.h;
         gl.left = g.left;
-        x += g.w + 1;
+        gl.top = g.top;
+        gl.advance = g.advance < 0 ? (int)g.w : g.advance;
     }
     return f;
 }
@@ -126,7 +129,8 @@ Font Font::from_grid(const uint8_t *pixels, unsigned w, unsigned h, unsigned col
     return from_glyphs(ch, glyphs);
 }
 
-Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned page_w, unsigned page_h, unsigned bpp)
+Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned page_w, unsigned page_h, unsigned bpp,
+                       unsigned sdf)
 {
     if (bpp != 1 && bpp != 4)
         return Font();
@@ -170,7 +174,27 @@ Font Font::from_bmfont(const std::string &fnt, const uint8_t *page, unsigned pag
                 field(line, "amount");
         }
     }
-    return from_glyphs(line_height, glyphs, kerning);
+    return from_glyphs(line_height, glyphs, kerning, sdf);
+}
+
+FontOptions Font::options() const
+{
+    FontOptions fo;
+    fo.line = line_;
+    fo.sdf = sdf_;
+    std::ostringstream g, k;
+    for (const auto &kv : glyphs_) {
+        const Glyph &gl = kv.second;
+        g << (g.tellp() > 0 ? " " : "") << kv.first << ':' << gl.x << ',' << gl.y << ',' << gl.w << ',' << gl.h << ','
+          << gl.left << ',' << gl.top << ',' << gl.advance;
+    }
+    /* only pairs of glyphs the font has: the service refuses others */
+    for (const auto &kv : kerning_)
+        if (glyphs_.count(kv.first.first) && glyphs_.count(kv.first.second) && kv.second)
+            k << (k.tellp() > 0 ? " " : "") << kv.first.first << ',' << kv.first.second << ':' << kv.second;
+    fo.glyphs = g.str();
+    fo.kerning = k.str();
+    return fo;
 }
 
 uint32_t Font::asset(Client &c, const std::string &target) const
@@ -180,96 +204,81 @@ uint32_t Font::asset(Client &c, const std::string &target) const
     AssetOptions ao;
     ao.target = target;
     ao.w = w_;
-    ao.h = line_;
+    ao.h = h_;
     ao.r8 = true;
-    SamplerOptions so;
-    so.sampling = "bilinear";
-    const uint32_t ref = c.asset(ao, so);
-    if (ref)
-        c.pixels(ref, {}, px_.data(), px_.size());
-    return ref;
+    ao.bilinear = true;
+    const uint32_t ref = c.asset(ao);
+    if (!ref)
+        return 0;
+    c.pixels(ref, {}, px_.data(), px_.size());
+    const uint32_t font = c.font(ref, options());
+    if (!font)
+        c.drop(ref);
+    return font;
 }
 
-std::vector<GlyphBox> Font::layout(const std::string &text, float h, float spacing, float *width) const
+float Font::measure(const std::string &text, float h, float spacing, unsigned *glyphs) const
 {
-    std::vector<GlyphBox> boxes;
     const float s = line_ ? h / (float)line_ : 0;
     float x = 0;
-    uint32_t prev = 0;
-    bool first = true;
-    for (uint32_t cp : code_points(text)) {
-        if (!first) {
-            auto k = kerning_.find(std::make_pair(prev, cp));
-            if (k != kerning_.end())
+    unsigned n = 0;
+    auto space = glyphs_.find(32);
+    const std::vector<uint32_t> cps = code_points(text);
+    for (size_t i = 0; i < cps.size(); i++) {
+        if (i) {
+            auto k = kerning_.find(std::make_pair(cps[i - 1], cps[i]));
+            if (k != kerning_.end() && glyphs_.count(cps[i - 1]) && glyphs_.count(cps[i]))
                 x += (float)k->second * s;
             x += spacing;
         }
-        auto g = glyphs_.find(cp);
+        auto g = glyphs_.find(cps[i]);
         if (g != glyphs_.end()) {
-            if (g->second.w) {
-                GlyphBox b;
-                b.x0 = x + (float)g->second.left * s;
-                b.x1 = b.x0 + (float)g->second.w * s;
-                b.u0 = (float)g->second.x;
-                b.u1 = (float)(g->second.x + g->second.w);
-                boxes.push_back(b);
-            }
+            n += g->second.w && g->second.h;
             x += (float)g->second.advance * s;
-        } else {
-            auto space = glyphs_.find(32);
-            if (space != glyphs_.end())
-                x += (float)space->second.advance * s;
+        } else if (space != glyphs_.end()) {
+            x += (float)space->second.advance * s;
         }
-        prev = cp;
-        first = false;
     }
-    if (width)
-        *width = x;
-    return boxes;
+    if (glyphs)
+        *glyphs = n;
+    return x;
 }
 
-Text::Text(Client &c, std::shared_ptr<const Font> font, uint32_t atlas, const LayerOptions &lo,
+Text::Text(Client &c, std::shared_ptr<const Font> font, uint32_t font_ref, const LayerOptions &lo,
            const TextOptions &to)
     : c_(c), font_(std::move(font)), lo_(lo), to_(to)
 {
     if (!font_ || !font_->ok() || !lo_.w || !lo_.h || !to_.max_glyphs || to_.max_glyphs > kMaxTextGlyphs)
         return;
-    RenderState look;
-    look.blend = "premultiplied";
-    ref_ = c_.effect(lo_, EffectOptions{text_fragment_shader(to_.max_glyphs), "", 0}, false, look);
-    if (!ref_)
-        return;
-    c_.bind(ref_, "u_atlas", atlas);
-    color(to_.color);
-    set("");
+    TextLayerOptions tl;
+    tl.max = to_.max_glyphs;
+    tl.align = to_.align;
+    tl.spacing = to_.spacing;
+    std::copy(to_.color, to_.color + 4, tl.color);
+    ref_ = c_.text(lo_, font_ref, tl);
 }
 
 bool Text::set(const std::string &text)
 {
     if (!ref_)
         return false;
-    const unsigned max = to_.max_glyphs;
-    float width = 0;
-    const std::vector<GlyphBox> boxes = font_->layout(text, (float)lo_.h, to_.spacing, &width);
-    const float w = (float)lo_.w, aw = (float)font_->width();
-    const float shift = to_.align == "right" ? w - width : to_.align == "center" ? (w - width) / 2 : 0;
-    std::vector<float> v(max * 4, 0.0f);
-    const size_t n = std::min<size_t>(boxes.size(), max);
-    for (size_t i = 0; i < n; i++) {
-        v[i * 4] = (boxes[i].x0 + shift) / w;
-        v[i * 4 + 1] = (boxes[i].x1 + shift) / w;
-        v[i * 4 + 2] = boxes[i].u0 / aw;
-        v[i * 4 + 3] = boxes[i].u1 / aw;
-    }
-    c_.uniform(ref_, "u_glyphs", UniformType::Vec4, v);
-    c_.uniform(ref_, "u_count", std::vector<float>{(float)n});
-    return boxes.size() <= max && width <= w;
+    unsigned n = 0;
+    const float width = font_->measure(text, (float)lo_.h, to_.spacing, &n);
+    c_.set_text(ref_, text);
+    return n <= to_.max_glyphs && width <= (float)lo_.w;
 }
 
 void Text::color(const float rgba[4])
 {
-    if (ref_)
-        c_.uniform(ref_, "u_color", std::vector<float>(rgba, rgba + 4));
+    if (!ref_)
+        return;
+    std::copy(rgba, rgba + 4, to_.color);
+    TextLayerOptions tl;
+    tl.max = to_.max_glyphs;
+    tl.align = to_.align;
+    tl.spacing = to_.spacing;
+    std::copy(to_.color, to_.color + 4, tl.color);
+    c_.set_text_style(ref_, tl);
 }
 
 void Text::drop()

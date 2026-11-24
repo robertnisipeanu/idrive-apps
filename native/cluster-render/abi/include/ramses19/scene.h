@@ -258,9 +258,26 @@ namespace ramses
         RAMSES19_LIBRARY_OWNED(Appearance);
     };
 
+    // Mutable geometry a scene keeps: setData writes numberOfBytes at
+    // offsetInBytes, within the size made.
+    class VertexDataBuffer : public SceneObject
+    {
+    public:
+        status_t setData(const char* data, uint32_t numberOfBytes, uint32_t offsetInBytes = 0u);
+        RAMSES19_LIBRARY_OWNED(VertexDataBuffer);
+    };
+    class IndexDataBuffer : public SceneObject
+    {
+    public:
+        status_t setData(const char* data, uint32_t numberOfBytes, uint32_t offsetInBytes = 0u);
+        RAMSES19_LIBRARY_OWNED(IndexDataBuffer);
+    };
+
     class GeometryBinding : public SceneObject
     {
     public:
+        status_t setIndices(const IndexDataBuffer& indicesDataBuffer);
+        status_t setInputBuffer(const AttributeInput& attributeInput, const VertexDataBuffer& dataBuffer, uint32_t instancingDivisor = 0);
         status_t setIndices(const UInt16Array& indicesResource);
         status_t setIndices(const UInt32Array& indicesResource);
         status_t setInputBuffer(const AttributeInput& attributeInput, const FloatArray& resource, uint32_t instancingDivisor = 0);
@@ -317,6 +334,8 @@ namespace ramses
         RenderGroup* createRenderGroup(const char* name = nullptr);
         Appearance* createAppearance(const Effect& effect, const char* name = nullptr);
         GeometryBinding* createGeometryBinding(const Effect& effect, const char* name = nullptr);
+        VertexDataBuffer* createVertexDataBuffer(uint32_t maximumSizeInBytes, EDataType dataType, const char* name = nullptr);
+        IndexDataBuffer* createIndexDataBuffer(uint32_t maximumSizeInBytes, EDataType dataType, const char* name = nullptr);
 
         TextureSampler* createTextureSampler(ETextureAddressMode wrapUMode, ETextureAddressMode wrapVMode,
                                              ETextureSamplingMethod samplingMethod, const Texture2D& texture,

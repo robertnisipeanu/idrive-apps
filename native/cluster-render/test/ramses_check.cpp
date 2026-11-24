@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "../src/compositor.h"
-#include "cluster_render/text.h"
+#include "text_layer.h"
 #include "../src/curves.h"
 #include "fake_port.h"
 #include "log.h"
@@ -303,6 +303,43 @@ static size_t resource_count(ramses::RamsesClient &client, uint32_t type)
     while (it.getNext())
         n++;
     return n;
+}
+
+/* The data buffers' element types as abi/include/ramses19/types.h
+ * declares them: each attribute takes a buffer of its own type (the library
+ * refuses a buffer of another type with "vertex data buffer type does not
+ * match input data type"), an index buffer is 16-bit. */
+static bool data_types(ramses::RamsesClient &client)
+{
+    ramses::SceneConfig sc;
+    ramses::Scene *s = client.createScene(0x010004fe, sc, "data_types");
+    ramses::EffectDescription d;
+    d.setVertexShader("#version 100\nattribute float a_f;\nattribute vec2 a_2;\nattribute vec3 a_3;\n"
+                      "attribute vec4 a_4;\nuniform mat4 u_mvp;\n"
+                      "void main() { gl_Position = u_mvp * vec4(a_f + a_2.x + a_3.x, a_4.yz, 1.0); }\n");
+    d.setFragmentShader("#version 100\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+    d.setUniformSemantic("u_mvp", ramses::EEffectUniformSemantic_ModelViewProjectionMatrix);
+    ramses::Effect *fx = client.createEffect(d, ramses::ResourceCacheFlag_DoNotCache, "data_types_fx");
+    if (!s || !fx)
+        return false;
+    ramses::GeometryBinding *geo = s->createGeometryBinding(*fx);
+    const char *names[] = {"a_f", "a_2", "a_3", "a_4"};
+    const ramses::EDataType types[] = {ramses::EDataType_Float, ramses::EDataType_Vector2F,
+                                       ramses::EDataType_Vector3F, ramses::EDataType_Vector4F};
+    bool good = geo != nullptr;
+    for (int a = 0; good && a < 4; a++) {
+        ramses::AttributeInput in;
+        good = ok_status(fx->findAttributeInput(names[a], in));
+        ramses::VertexDataBuffer *b = good ? s->createVertexDataBuffer(64, types[a]) : nullptr;
+        good = b && ok_status(geo->setInputBuffer(in, *b));
+    }
+    ramses::IndexDataBuffer *idx = s->createIndexDataBuffer(12, ramses::EDataType_UInt16);
+    const uint16_t six[6] = {0, 1, 2, 2, 1, 3};
+    good = good && idx && ok_status(idx->setData(reinterpret_cast<const char *>(six), 12, 0)) &&
+           ok_status(geo->setIndices(*idx));
+    client.destroy(*s);
+    client.destroy(*fx);
+    return good;
 }
 
 /* The scene called name described whole, as the library describes it to a
@@ -1186,27 +1223,57 @@ static void backend(Gpu &gpu)
 #endif
     gpu.drop_effect(lvl_fx);
 
-    /* The text helper's shader (cluster_render/text.h), at 1 glyph and the
-     * most: a loop over a uniform array, compiled and drawn. */
-    bool texts = true;
-    for (unsigned n : {1u, cr::kMaxTextGlyphs}) {
-        const int tfx = gpu.effect(kQuadVertexShader, cr::text_fragment_shader(n).c_str(), &err);
-        Rect tr;
-        tr.w = 200;
-        tr.h = 32;
-        const int tq = tfx ? g->quad(tfx, tr) : 0;
-        std::vector<float> boxes(n * 4, 0.0f);
-        boxes[1] = 0.5f;
-        boxes[3] = 1.0f;
-        const float count = 1, white[4] = {1, 1, 1, 1};
-        texts = texts && tq && g->uniform_array(tq, "u_glyphs", UniformType::Vec4, boxes.data(), n) &&
-                g->uniform(tq, "u_count", &count, 1) && g->uniform(tq, "u_color", white, 4) && g->show(tq, true) &&
-                g->flush(17);
-        g->drop_quad(tq);
-        if (tfx)
-            gpu.drop_effect(tfx);
+    /* Text layers' glyph runs (src/text_layer.h): the service's text
+     * shaders compiled; a quad drawing a run of 256 glyphs from vertex and
+     * index buffers the scene keeps, a 64-glyph line written into them and
+     * flushed, rewritten as a readout changes, emptied; a second buffer or
+     * more glyphs than it holds refused; dropped with its buffers. */
+    const int tfx = gpu.effect(kTextVertexShader, kTextFragmentShader, &err);
+    Rect tr;
+    tr.x = 100;
+    tr.y = 600;
+    tr.w = 1600;
+    tr.h = 32;
+    const int tq = tfx ? g->quad(tfx, tr) : 0;
+    const int tbuf = g->buffer(TexFormat::R8, 64, 32, Sampling::Bilinear);
+    std::vector<uint8_t> tpx(64 * 32, 200);
+    crs::Font tf;
+    std::string terr;
+    const bool font_ok = crs::parse_font("49:0,0,8,16,0,0,8 50:8,0,8,16,0,8,9", "49,50:-1", 64, 32, 16, 0, &tf, &terr);
+    std::vector<uint32_t> cps;
+    for (int i = 0; i < 64; i++)
+        cps.push_back(i % 2 ? '2' : '1');
+    crs::TextStyle ts;
+    const std::vector<crs::GlyphQuad> line = crs::lay_out(tf, cps, ts, tr.w, tr.h);
+    const std::vector<float> lv = crs::glyph_vertices(line, tr.w, tr.h);
+    const float white[4] = {1, 1, 1, 1}, nosdf = 0;
+    const bool run = font_ok && line.size() == 64 && tq && tbuf && g->write(tbuf, 0, 0, 64, 32, tpx.data()) &&
+                     g->glyph_buffer(tq, 256) && g->texture(tq, "u_atlas", tbuf) && g->uniform(tq, "u_color", white, 4) &&
+                     g->uniform(tq, "u_sdf", &nosdf, 1) && g->style(tq, [] {
+                         PartLook l = quad_look();
+                         l.blend = Blend::Premultiplied;
+                         return l;
+                     }()) && g->glyphs(tq, lv.data(), 64) && g->show(tq, true) && g->flush(17);
+    ok("text: its shaders compiled, a run of 256 glyphs made, a line of 64 written and drawn", run);
+    bool readout = run;
+    for (int i = 0; readout && i < 20; i++) {
+        const std::vector<uint32_t> v = {(uint32_t)('1' + i % 2), '2', '1'};
+        const std::vector<float> rv = crs::glyph_vertices(crs::lay_out(tf, v, ts, tr.w, tr.h), tr.w, tr.h);
+        readout = g->glyphs(tq, rv.data(), (uint32_t)(rv.size() / 16)) && g->flush(17);
     }
-    ok("text: its shader at 1 and 14 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
+    ok("text: a readout rewritten 20 times, a flush each, the run emptied",
+       readout && g->glyphs(tq, nullptr, 0) && g->flush(17));
+    std::vector<float> past(257 * 16, 0.0f);
+    ok("text: a second glyph buffer, or more glyphs than it holds, refused",
+       run && !g->glyph_buffer(tq, 16) && !g->glyphs(tq, past.data(), 257) && g->flush(17));
+#ifndef CRS_RAMSES27
+    ok("text: the scene described whole", described("check"));
+#endif
+    g->drop_quad(tq);
+    g->drop_buffer(tbuf);
+    if (tfx)
+        gpu.drop_effect(tfx);
+    ok("text: dropped with its buffers", g->flush(17));
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
@@ -1328,6 +1395,8 @@ int main()
     }
     Ramses19Gpu gpu(client);
     describing = &client;
+    ok("text: the data buffers' element types as declared: each attribute takes its own",
+       data_types(client));
     /* Saved before any target has the panel's scene id. */
     const std::string dir = "/tmp/crs-ramses-check-" + std::to_string(getpid());
     mkdir(dir.c_str(), 0755);

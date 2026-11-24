@@ -79,7 +79,10 @@ bool Client::in_canvas(const Layer &l) { return l.kind == "canvas" || l.canvas; 
 bool Client::held(uint32_t ref) const
 {
     auto it = layers_.find(ref);
-    return it != layers_.end() && in_canvas(it->second) && !(ready_ && canvas_);
+    if (it == layers_.end())
+        return false;
+    const Layer &l = it->second;
+    return (in_canvas(l) && !(ready_ && canvas_)) || ((l.kind == "font" || l.kind == "text") && !(ready_ && text_));
 }
 
 void Client::queue_for(uint32_t ref, const std::string &json)
@@ -92,15 +95,15 @@ void Client::replay(bool canvases)
 {
     auto drawn_in = [this](uint32_t ref) {
         auto it = layers_.find(ref);
-        return it != layers_.end() && in_canvas(it->second);
+        return it != layers_.end() && late(it->second);
     };
     /* Assets and canvases first, so binds and the layers drawn in a canvas
      * find them; binds and animations once every layer and part is made. */
     for (int pass = 0; pass < 2; pass++)
         for (auto &kv : layers_) {
             Layer &l = kv.second;
-            if (in_canvas(l) != canvases ||
-                (l.kind == "asset" || l.kind == "canvas" || l.kind == "value") != (pass == 0))
+            if (late(l) != canvases || (canvases && held(kv.first)) ||
+                (l.kind == "asset" || l.kind == "canvas" || l.kind == "value" || l.kind == "font") != (pass == 0))
                 continue;
             queue(layer_json(kv.first, l));
             if (!l.edits.empty())
@@ -129,14 +132,15 @@ void Client::replay(bool canvases)
         }
     for (const auto &kv : layers_) {
         for (const auto &b : kv.second.binds)
-            if ((in_canvas(kv.second) || drawn_in(b.second.first)) == canvases)
+            if ((late(kv.second) || drawn_in(b.second.first)) == canvases && !held(kv.first) &&
+                !held(b.second.first))
                 queue(b.second.second);
         for (const auto &b : kv.second.links)
-            if (in_canvas(kv.second) == canvases)
+            if (late(kv.second) == canvases && !held(kv.first))
                 queue(b.second.second);
     }
     for (const auto &kv : layers_)
-        if (in_canvas(kv.second) == canvases)
+        if (late(kv.second) == canvases && !held(kv.first))
             for (const auto &a : kv.second.animations)
                 queue(a.second);
 }
@@ -157,7 +161,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = scene_anim_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = scene_anim_ = text_ = false;
     for (auto &kv : shm_)
         shm_close(&kv.second);
     shm_.clear();
@@ -262,6 +266,7 @@ void Client::read_events()
                     if (kv.second.kind == "video" && !held(kv.first))
                         shm_due_.insert(kv.first);
             scene_anim_ = j["scene_anim"] == "1";
+            text_ = j["text"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -269,8 +274,9 @@ void Client::read_events()
                 for (const auto &kv : layer_hosts_)
                     queue(kv.second.second);
             /* Canvases and the layers drawn in them only to a service that
-             * takes them: an older one would draw such a layer on screen. */
-            if (canvas_)
+             * takes them: an older one would draw such a layer on screen;
+             * fonts and text layers likewise. */
+            if (canvas_ || text_)
                 replay(true);
             if (on_ready)
                 on_ready();
@@ -546,7 +552,7 @@ void look_fields(std::vector<std::pair<std::string, std::string>> *kv, const Ren
 
 std::string Client::layer_json(uint32_t ref, const Layer &l) const
 {
-    if (l.kind == "value")
+    if (l.kind == "value" || l.kind == "font")
         return l.value;
     if (l.kind == "scene") {
         std::string res, sha;
@@ -634,6 +640,12 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
         turn_fields(&kv, l.lo);
     } else if (l.kind == "mesh") {
         mesh_fields(&kv, l.mo);
+    } else if (l.kind == "text") {
+        kv.push_back({"font", num(l.font)});
+        kv.push_back({"max", num(l.to.max)});
+        text_fields(&kv, l.to);
+        kv.push_back({"text", json_quote(l.text)});
+        turn_fields(&kv, l.lo);
     } else {
         kv.push_back({"fs", json_quote(l.eo.fs)});
         if (!l.eo.vs.empty())
@@ -714,6 +726,92 @@ uint32_t Client::effect(const LayerOptions &lo, const EffectOptions &eo, bool cl
     l.cluster_time = cluster_time;
     l.look = look;
     return add(l);
+}
+
+uint32_t Client::font(uint32_t asset, const FontOptions &fo)
+{
+    auto a = layers_.find(asset);
+    if (a == layers_.end() || a->second.kind != "asset" || !a->second.ao.r8 || a->second.cube || !fo.line ||
+        fo.glyphs.empty())
+        return 0;
+    Layer l;
+    l.kind = "font";
+    l.lo.target = a->second.ao.target;
+    l.font = asset;
+    std::vector<std::pair<std::string, std::string>> kv = {
+        {"op", json_quote("font")}, {"ref", num(next_ref_)},           {"asset", num(asset)},
+        {"line", num(fo.line)},     {"glyphs", json_quote(fo.glyphs)}};
+    if (fo.sdf)
+        kv.push_back({"sdf", num(fo.sdf)});
+    if (!fo.kerning.empty())
+        kv.push_back({"kerning", json_quote(fo.kerning)});
+    l.value = json_object(kv);
+    return add(l);
+}
+
+void Client::text_fields(std::vector<std::pair<std::string, std::string>> *kv, const TextLayerOptions &to)
+{
+    kv->push_back({"align", json_quote(to.align)});
+    kv->push_back({"spacing", num(to.spacing)});
+    kv->push_back({"size", num(to.size)});
+    kv->push_back({"color", json_quote(num(to.color[0]) + " " + num(to.color[1]) + " " + num(to.color[2]) + " " +
+                                       num(to.color[3]))});
+}
+
+namespace {
+
+bool text_options_ok(const TextLayerOptions &to)
+{
+    bool ok = to.max >= 1 && to.max <= 256 && (to.align == "left" || to.align == "center" || to.align == "right") &&
+              std::isfinite(to.spacing) && to.spacing >= -1024 && to.spacing <= 1024 && std::isfinite(to.size) &&
+              to.size >= 0 && to.size <= 2048;
+    for (float c : to.color)
+        ok = ok && c >= 0 && c <= 1;
+    return ok;
+}
+
+}  // namespace
+
+uint32_t Client::text(const LayerOptions &lo, uint32_t font, const TextLayerOptions &to, const std::string &text)
+{
+    auto f = layers_.find(font);
+    if (f == layers_.end() || f->second.kind != "font" || !text_options_ok(to))
+        return 0;
+    Layer l;
+    l.kind = "text";
+    l.lo = lo;
+    l.font = font;
+    l.to = to;
+    l.text = text;
+    return add(l);
+}
+
+bool Client::set_text(uint32_t ref, const std::string &text)
+{
+    auto it = layers_.find(ref);
+    if (it == layers_.end() || it->second.kind != "text")
+        return false;
+    if (it->second.text == text)
+        return true;
+    it->second.text = text;
+    queue_for(ref, json_object({{"op", json_quote("text")}, {"ref", num(ref)}, {"text", json_quote(text)}}));
+    send_now();
+    return true;
+}
+
+bool Client::set_text_style(uint32_t ref, const TextLayerOptions &to)
+{
+    auto it = layers_.find(ref);
+    if (it == layers_.end() || it->second.kind != "text" || !text_options_ok(to))
+        return false;
+    const unsigned max = it->second.to.max;   /* set when it is made */
+    it->second.to = to;
+    it->second.to.max = max;
+    std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("text")}, {"ref", num(ref)}};
+    text_fields(&kv, to);
+    queue_for(ref, json_object(kv));
+    send_now();
+    return true;
 }
 
 uint32_t Client::canvas(const CanvasOptions &co)
@@ -1240,6 +1338,8 @@ void Client::drop(uint32_t ref)
         for (const auto &b : kv.second.binds)
             sampled = sampled || b.second.first == ref;
         sampled = sampled || kv.second.canvas == ref;   /* a canvas with layers in it */
+        /* a font a text layer draws from, an asset a font is over */
+        sampled = sampled || ((kv.second.kind == "text" || kv.second.kind == "font") && kv.second.font == ref);
         /* a value dropped: the service undoes its links */
         for (auto b = kv.second.links.begin(); b != kv.second.links.end();)
             b = b->second.first == ref ? kv.second.links.erase(b) : std::next(b);
