@@ -1533,7 +1533,8 @@ std::map<int, const Compositor::LayerHost *> Compositor::host_winners(const std:
         if (!lh.eligible || by_scene[kv.first.first])
             continue;
         const LayerHost *&b = best[std::make_pair(kv.first.first, lh.into)];
-        if (!b || lh.top_pos > b->top_pos)
+        /* a shown host over a hidden one (hide), else the one drawn higher */
+        if (!b || (lh.host.shown && !b->host.shown) || (lh.host.shown == b->host.shown && lh.top_pos > b->top_pos))
             b = &lh;
     }
     std::map<int, const LayerHost *> win;

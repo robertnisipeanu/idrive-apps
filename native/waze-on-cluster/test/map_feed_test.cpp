@@ -873,11 +873,25 @@ static void vpp_hosting()
     }
     ok("vpp: the panel taken: unseen, the part's frames held, the loop not woken for them",
        r.feed->unseen() && r.drawing("panel", p3, &with) && with && spins <= 3);
+    /* back with the producer's newest picture on its way: the part at hand
+     * waits for it and is never written */
+    r.feed->set_picture_coming(true);
     r.port.stock_unmap(0x203, 0x01000201);
     for (int step = 0; step < 600 && r.st().state != "showing"; step++)
         r.pump(5);
-    r.pump(100);
-    ok("vpp: the panel back: seen, the newest part first", !r.feed->unseen() && r.drawing("panel", p4, &with) && with);
+    r.feed->set_picture_coming(false);
+    r.pump(50);
+    const bool waited = r.drawing("panel", p3, &with) && with;
+    const std::vector<uint8_t> p5 = crop_of(f, 200, 40, 560, 400);
+    bool older = false;
+    r.pump(5, &p5, 5);
+    for (int step = 0; step < 40; step++) {
+        r.pump(5);
+        r.drawing("panel", p4, &with);
+        older = older || with;
+    }
+    ok("vpp: the panel back, the producer's picture on its way: the part at hand waits, the newest written first",
+       !r.feed->unseen() && waited && !older && r.drawing("panel", p5, &with) && with);
 
     design.drop(sc);
     r.part = OutputPart();
@@ -1280,13 +1294,30 @@ static void unseen_map()
         stale = stale || drawn(f_pend) || drawn(f_mid);
     }
     bool fresh = false;
-    for (int step = 0; step < 20 && !fresh; step++) {   /* 100 ms */
+    for (int step = 0; step < 20 && !fresh; step++) {
         r.pump(5);
         stale = stale || drawn(f_pend) || drawn(f_mid);
         fresh = drawn(f_new);
     }
     ok("seen again: the first picture written is the newest, within 100 ms, never an older one",
        steps < 400 && fresh && !stale && !r.feed->unseen());
+    /* Seen again with the producer's picture on its way that never comes:
+     * the picture at hand after kAwaitMs. */
+    const std::vector<uint8_t> f_hand = atlas(26);
+    r.port.steal(r.sc.targets[0], kStock);
+    r.pump(1000, &f1);
+    r.spare.assign(f_hand.begin(), f_hand.end());
+    r.feed->offer(&r.spare, (uint64_t)r.now, r.now);
+    r.feed->set_picture_coming(true);
+    r.port.stock_unmap(0x100, kStock);
+    for (int step = 0; step < 400 && r.st().state != "showing"; step++)
+        r.pump(5);
+    r.pump(100);
+    const bool held_back = !drawn(f_hand);
+    r.pump(200);
+    r.feed->set_picture_coming(false);
+    ok("seen again, the producer's picture on its way never comes: the picture at hand after kAwaitMs",
+       held_back && drawn(f_hand));
     const unsigned long long again = r.received();
     r.pump(2000, &f1);
     ok("seen again: every frame reaches the renderer", r.received() - again >= 28 && r.st().state == "showing");

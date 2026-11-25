@@ -68,11 +68,13 @@
  * layer from stalling (at least every quarter of stall_ms, at most every
  * kUnseenMs), and the newest picture is held. The moment it is seen again
  * (the renderer reports it shown, or the host shows it), the newest picture
- * goes first, as a frame: the producer's when one is on its way
- * (set_picture_coming), else the one at hand. The layer's fresh_ms, where
- * the renderer takes it, keeps a frame of its own from before (one sent as
- * the slot was taken) from being written ahead of it. A layer the stream
- * hides is not unseen: its frames go nowhere, as above. */
+ * goes first, as a frame, scaled where the layer scales: the producer's
+ * when one is on its way (set_picture_coming; the one at hand waits up to
+ * kAwaitMs for it), else the one at hand. The layer's fresh_ms keeps a
+ * frame of its own from before (one sent as the slot was taken) from being
+ * written ahead of it; with a renderer that does not take fresh_ms, a layer
+ * is never unseen. A layer the stream hides is not unseen: its frames go
+ * nowhere, as above. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 
@@ -182,6 +184,9 @@ public:
     static const int64_t kUnseenMs = 1000;
     /* The layer's fresh_ms (cluster-render PROTOCOL.md). */
     static const unsigned kFreshMs = 250;
+    /* Seen again: how long the picture at hand waits for the producer's
+     * newest, within kFreshMs. */
+    static const int64_t kAwaitMs = 200;
 
     explicit MapFeed(const FeedConfig &cfg);
 
@@ -295,6 +300,12 @@ private:
     /* Makes the layer visible once the newest frame has gone. */
     void show_when_sent();
     void follow_seen(int64_t now_ms);
+    /* The newest picture at hand to the layer, as a frame. */
+    void send_at_hand();
+    /* Seen again with the producer's picture on its way: the one at hand
+     * held for it (follow_await sends it when it does not come). */
+    bool awaiting(int64_t now_ms) const;
+    void follow_await(int64_t now_ms);
     /* Unseen: a repeat when one is due, so the layer never stalls. */
     void keep_layer(int64_t now_ms);
     int64_t keep_every_ms() const;
@@ -352,6 +363,8 @@ private:
     bool unseen_ = false;                  /* unseen() at the last poll */
     int64_t kept_ms_ = 0;                  /* unseen: when it went unseen or the last repeat went */
     bool picture_coming_ = false;
+    uint64_t await_id_ = 0;                /* awaiting: the picture at hand's id */
+    int64_t await_until_ms_ = -1;
 };
 
 }  // namespace woc

@@ -152,7 +152,8 @@ void VideoLayer::offer(const uint8_t *atlas, int64_t now_ms)
 
 void VideoLayer::on_screen_again(int64_t now_ms)
 {
-    if (p_.fresh_ms > 0 && front_pending_ && !repeated_ && !source_ && shown_ms_ >= 0 && picture_ms_ < now_ms) {
+    if (p_.fresh_ms > 0 && front_pending_ && !repeated_ && !source_ && (shown_ms_ >= 0 || wrote_) &&
+        picture_ms_ < now_ms) {
         hold_from_ms_ = picture_ms_;
         hold_until_ms_ = now_ms + p_.fresh_ms;
     }
@@ -325,6 +326,7 @@ bool VideoLayer::attach(Graph *g, int64_t now_ms, std::string *err)
     repeated_ = front_stale_ = false;
     front_pending_ = front_.size() == atlas_bytes_ && front_ms_ >= 0;
     shown_.assign(atlas_bytes_, 0);
+    wrote_ = wrote_ || shown_ms_ >= 0;
     shown_ms_ = -1;
     planner_.reset();
     held_.assign(planner_.tiles(), 0);

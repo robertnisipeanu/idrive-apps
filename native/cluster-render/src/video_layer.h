@@ -283,6 +283,7 @@ private:
     bool repeated_ = false, front_stale_ = false;
     int64_t front_ms_ = -1, shown_ms_ = -1, last_frame_ms_ = -1;
     int64_t picture_ms_ = -1;   /* when front_'s picture came (offer, canvas_changed; not repeat) */
+    bool wrote_ = false;        /* written in a scene before the one it is attached to */
     /* on_screen_again: the picture of picture_ms_ hold_from_ms_ waits until hold_until_ms_ (-1: none) */
     int64_t hold_from_ms_ = -1, hold_until_ms_ = -1;
     bool have_ = false;

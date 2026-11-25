@@ -3823,7 +3823,7 @@ static void fresh_frames()
                 c.frame(vid, f1.data(), f1.size(), 4);
                 r.pump(500);
             } else if (fresh) {
-                for (int i = 0; i < 30; i++) {   /* 150 ms */
+                for (int i = 0; i < 30; i++) {
                     r.pump(5);
                     older = older || holds(r.gpu.graph("panel"), f2);
                 }

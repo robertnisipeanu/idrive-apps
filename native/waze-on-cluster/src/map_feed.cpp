@@ -351,6 +351,7 @@ void MapFeed::poll(int64_t now_ms)
         remake_layer();
     }
     follow_seen(now_ms);
+    follow_await(now_ms);
     keep_layer(now_ms);
     send_pending(now_ms);
     if (connected_ && !client_.connected()) {
@@ -446,12 +447,12 @@ void MapFeed::send_pending(int64_t now_ms)
     }
     /* a VPP-made picture goes as it is, after the worker's */
     if (held_part_.set()) {
-        if (held_new_ && sending() && worker_.idle() && !unseen())
+        if (held_new_ && sending() && worker_.idle() && !unseen() && !awaiting(now_ms))
             held_new_ = !client_.frame(layer_, &held_, id_);
         return;
     }
     if (!scaling_ || !held_new_ || elsewhere_ || in_worker_ || !sending() || now_ms < next_send_ms_ ||
-        !worker_.idle() || unseen())
+        !worker_.idle() || unseen() || awaiting(now_ms))
         return;
     if (worker_.submit(&held_, id_, shape_)) {
         held_new_ = false;
@@ -481,7 +482,8 @@ void MapFeed::changed(uint64_t id)
 
 bool MapFeed::wants_picture(int64_t now_ms) const
 {
-    return elsewhere_ && held_new_ && sending() && now_ms >= next_send_ms_ && worker_.idle() && !unseen();
+    return elsewhere_ && held_new_ && sending() && now_ms >= next_send_ms_ && worker_.idle() && !unseen() &&
+           !awaiting(now_ms);
 }
 
 bool MapFeed::latest(std::vector<uint8_t> *out) const
@@ -504,8 +506,10 @@ bool MapFeed::unseen() const
 {
     if (hosted() && !host_.shown)
         return true;
-    /* the states in which the renderer writes nothing of the target */
-    if (!layer_ || !client_.connected() || !lo_.visible || layer_state_ != "waiting")
+    /* The target in a state in which the renderer writes nothing of it; and
+     * only with fresh_ms, without which it would write a frame from before
+     * first when the map is seen again. */
+    if (!layer_ || !client_.connected() || !lo_.visible || layer_state_ != "waiting" || !client_.takes_fresh_ms())
         return false;
     const auto t = target_states_.find(drawn_target());
     return t != target_states_.end() && (t->second == "parked" || t->second == "waiting" || t->second == "unavailable");
@@ -521,19 +525,47 @@ void MapFeed::follow_seen(int64_t now_ms)
              unseen ? "is not seen: no frames, the layer kept with repeats" : "is seen: its frames at their rate");
     if (unseen) {
         kept_ms_ = now_ms;
+        await_until_ms_ = -1;
         return;
     }
     next_send_ms_ = 0;   /* a layer that scales: the newest picture to the worker now */
-    /* The producer's newest picture on its way goes first, as the next
-     * frame; else the newest at hand, as a frame (fresh_ms holds the
-     * renderer's older one for it). */
-    if (picture_coming_ || !sending())
+    /* The producer's newest picture on its way goes first: the one at hand
+     * waits for it, kAwaitMs at most (fresh_ms holds the renderer's older
+     * frame meanwhile). */
+    if (picture_coming_) {
+        await_id_ = id_;
+        await_until_ms_ = now_ms + kAwaitMs;
+        return;
+    }
+    send_at_hand();
+}
+
+void MapFeed::send_at_hand()
+{
+    if (!sending())
         return;
     std::vector<uint8_t> copy;
     if (held_new_)
         send_newest();
     else if (client_.latest(layer_, &copy))
         client_.frame(layer_, &copy, id_);
+}
+
+bool MapFeed::awaiting(int64_t now_ms) const
+{
+    return await_until_ms_ >= 0 && id_ == await_id_ && now_ms < await_until_ms_;
+}
+
+void MapFeed::follow_await(int64_t now_ms)
+{
+    if (await_until_ms_ < 0)
+        return;
+    if (id_ != await_id_) {
+        await_until_ms_ = -1;
+    } else if (now_ms >= await_until_ms_) {
+        await_until_ms_ = -1;
+        send_at_hand();
+    }
 }
 
 int64_t MapFeed::keep_every_ms() const
@@ -556,6 +588,8 @@ int64_t MapFeed::wake_in_ms(int64_t now_ms) const
         return kScaleWaitMs;
     if (unseen_ && layer_)
         return std::max<int64_t>(1, kept_ms_ + keep_every_ms() - now_ms);
+    if (await_until_ms_ >= 0)
+        return std::max<int64_t>(1, await_until_ms_ - now_ms);
     if (!scaling_ || !layer_)
         return -1;
     return held_new_ && sending() && !disabled() ? std::max<int64_t>(1, next_send_ms_ - now_ms) : -1;
