@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-Show on and the HUD settings are greyed until the app knows which driver
-profile is in use, and each change is saved only for that driver: with Own
-settings for this driver, a change can no longer end up in another
-driver's settings and come back a few seconds later as that driver's. When
-the page opens, it shows the settings stored for the driver in use.
-Requires the next waze-on-cluster.
+With Own settings for this driver in use, a Show on or HUD change is saved
+only for the driver it was made for. It can no longer end up in another
+driver's settings and come back a few seconds later as that driver's. The
+app checks which driver is in use when the page opens and right before
+each change is saved. After a driver change, Show on and the HUD settings
+are greyed until the new driver counts; if the driver profile can't be
+read, they stay greyed and the page says so. The page shows the settings
+stored for the driver in use. Without own settings for any driver, nothing
+changes. Requires the next waze-on-cluster.
 
 ## 0.6.16
 

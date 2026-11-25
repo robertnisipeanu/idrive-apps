@@ -11,9 +11,10 @@
  * carries the settings in effect. The guest profile is a profile like any
  * other. A write taken before a switch is saved into the settings it was
  * made for, also when the switch comes before the delayed write, in either
- * order on one connection. A write without "profile" (an earlier app) goes
- * into the settings in effect. profiles.json and map.state.conf written by
- * an earlier release are kept as they are. */
+ * order on one connection. A write without "profile" (an earlier app) is
+ * saved only while no driver has own settings, which the status and the
+ * replies say. profiles.json and map.state.conf written by an earlier
+ * release are kept as they are. */
 'use strict';
 var cp = require('child_process');
 var fs = require('fs');
@@ -88,6 +89,26 @@ function askAll(list) {
     });
 }
 function ask(obj) { return askAll([obj]).then(function (r) { return r[0]; }); }
+/* The status a new connection gets; statusNext: the next status after it. */
+function statusNow(next) {
+    return new Promise(function (resolve, reject) {
+        var s = net.connect(SOCK), buf = '', seen = 0;
+        s.setEncoding('utf8');
+        s.on('data', function (d) {
+            buf += d;
+            var i;
+            while ((i = buf.indexOf('\n')) >= 0) {
+                var m = null;
+                try { m = JSON.parse(buf.slice(0, i)); } catch (e) {}
+                buf = buf.slice(i + 1);
+                if (m && m.ev === 'status' && seen++ === (next ? 1 : 0)) { s.end(); resolve(m); return; }
+            }
+        });
+        s.on('error', reject);
+        setTimeout(function () { reject(new Error('no status')); }, 5000);
+    });
+}
+function statusNext() { return statusNow(true); }
 function state() {
     var s = {};
     fs.readFileSync(STATE, 'utf8').split('\n').forEach(function (l) {
@@ -240,11 +261,30 @@ function threeSets(active) {
     ok('own settings unticked: a write the page made on them refused, the shared settings unchanged', r.ok === false &&
         /uses the shared/.test(r.reason) && files() === before && profiles().shared.hud === 1);
 
-    /* An earlier app: no "profile", the settings in effect. */
+    /* An earlier app: no "profile". Drivers with own settings: refused. */
+    var st = await statusNow();
+    before = files();
     r = await ask({ cmd: 'hud-size', hud_width_pct: 30 });
-    ok('a write without "profile" (an earlier app): saved into the settings in effect', r.ok && await when(function () {
-        return profiles().shared.hud_width_pct === 30 && state().hud_width_pct === 30;
-    }));
+    await saved();
+    ok('drivers with own settings: said in the status; a write without "profile" (an earlier app) refused, nothing saved',
+        st.own_settings === true && r.ok === false && r.refused === 'profile' && /update Maps on cluster/.test(r.reason) &&
+        r.own_settings === true && files() === before, JSON.stringify(r));
+    await stop();
+
+    /* No driver with own settings: the shared settings are the only ones, a
+     * write without "profile" is saved; the first own settings ticked are said. */
+    fs.unlinkSync(PROFILES);
+    fs.writeFileSync(STATE, stateText(SHARED));
+    await start();
+    st = await statusNow();
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 30 });
+    ok('no driver with own settings: said in the status; a write without "profile" saved', st.own_settings === false && r.ok &&
+        r.settings.hud_width_pct === 30 && await when(function () { return state().hud_width_pct === 30; }), JSON.stringify(r));
+    await ask({ cmd: 'profile', id: A });
+    var told = statusNext();
+    r = await ask({ cmd: 'profile-own', id: A, on: 1 });
+    st = await told;
+    ok('own settings ticked: the reply and a status say so', r.ok && r.own_settings === true && st.own_settings === true);
     await stop();
 
     /* profiles.json and map.state.conf of an earlier release: kept as they are. */

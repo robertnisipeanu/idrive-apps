@@ -11,9 +11,10 @@
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
- * flip it), Logs. Show on and the HUD's checkbox, slider and position
- * buttons are greyed until the driver profile is settled (profile_sync.js),
- * so each change is saved into that profile's settings. HUD: HUD map (the map
+ * flip it), Logs. While any driver has own settings, Show on and the HUD's
+ * checkbox, slider and position buttons are greyed until the driver profile
+ * is settled (profile_sync.js), and the line under Own settings says when
+ * it cannot be read. HUD: HUD map (the map
  * on the HUD), the Keep HUD map over BMW's pop-ups checkbox, the Size
  * slider, Position with Move left, Move right, Move up, Move down and
  * Centre; the checkbox, the slider and the position buttons are greyed
@@ -23,8 +24,9 @@
  * Android Auto adds Zoom with Zoom out and Zoom in, and the Hide phone's
  * turn card checkbox. Info rows read "Name: Value"; every on/off setting is
  * a checkbox. One that cannot act now is greyed, and while patchd runs any
- * operation every operation is. Every row stays on the page but four, the
- * only rows shown and hidden: CarPlay Wi-Fi while CarPlay runs over Wi-Fi
+ * operation every operation is. Every row stays on the page but five, the
+ * only rows shown and hidden: the line under Own settings while the driver
+ * profile cannot be read; CarPlay Wi-Fi while CarPlay runs over Wi-Fi
  * and patchd knows the band, and its line on 2.4 GHz, CarPlay's last two
  * (only Android Auto's rows move); Restart head unit while a written change
  * waits for the next head-unit start, and the Restart row while it has
@@ -96,6 +98,7 @@ const HUD_NAME = 'wocHud';
 const HUD_KEEP_NAME = 'wocHudKeep';
 const SHOW_ON_NAME = 'wocShowOn';
 const PROFILE_NAME = 'wocProfile';
+const PROFILE_STATUS_NAME = 'wocProfileStatus';
 const HUD_SIZE_NAME = 'wocHudSize';
 const HUD_POS_NAME = 'wocHudPos';
 const HUD_MOVE_NAMES = { left: 'wocHudLeft', right: 'wocHudRight', up: 'wocHudUp', down: 'wocHudDown' };
@@ -150,11 +153,7 @@ class WazeClusterApp extends OnlineApp {
         /* the map settings per driver profile, page shown or not */
         this._profiles = new ProfileSync({ control: this._control, log: logger, readProfile: sessionReader(someipBuilders, logger) });
         this._profiles.on('change', () => this._render());
-        /* Show on and the HUD's settings are written for the driver
-         * profile's settings in effect: greyed until it is settled; a write
-         * patchd refused puts the stored ones back and tells the profile
-         * again, as does each new connection to patchd */
-        this._control.setWriteTarget(() => this._profiles.writeTarget());
+        this._control.setWriteTarget(() => this._profiles.writeTarget(), (w) => this._profiles.confirmWrite(w));
         this._control.on('refused', () => this._profiles.refresh());
         this._control.patch.on('connect', () => this._profiles.refresh());
 
@@ -220,7 +219,7 @@ class WazeClusterApp extends OnlineApp {
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
             AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
-            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, HUD_NAME, HUD_KEEP_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
+            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, PROFILE_STATUS_NAME, HUD_NAME, HUD_KEEP_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
                 LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL], LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
@@ -578,6 +577,10 @@ class WazeClusterApp extends OnlineApp {
         this._write(PROFILE_NAME, t('Own settings for this driver'));
         this._setSelected(PROFILE_NAME, profiles.ownShown());
         this._setEnabled(PROFILE_NAME, profiles.canChooseOwn());
+        /* with own settings in use, a profile that cannot be read keeps Show on and the HUD greyed */
+        const unreadable = c.ownSettings === true && profiles.unreadable();
+        this._write(PROFILE_STATUS_NAME, unreadable ? t("Driver profile can't be read") : '');
+        this._setVisibleComp(PROFILE_STATUS_NAME, unreadable);
         /* the turn box's hold follows the map on the cluster */
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable && c.clusterOn() !== false);
         this._write(GUIDE_NAME, t("Hide BMW's turn box"));

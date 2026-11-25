@@ -30,9 +30,12 @@
  * while that is the profile that counts (settled()); patchd refuses a write
  * that names any other. Until then, from the app's start until two reads
  * agree, while a read names another profile, or while a tick of the
- * checkbox waits for patchd, nothing names one. Each answer of patchd's
- * moves the page's render to the settings stored for that profile when it
- * shows others (control.showStored).
+ * checkbox waits for patchd, nothing names one. The profile is read again
+ * when the page opens (refresh) and right before each write
+ * (confirmWrite). While patchd says no driver has own settings, the shared
+ * settings are the only ones and a write names none. Each answer of
+ * patchd's moves the page's render to the settings stored for that
+ * profile when it shows others (control.showStored).
  */
 'use strict';
 
@@ -47,6 +50,9 @@ const SETUP_RETRY_MS = 10000;
 const SETUP_RETRY_MAX_MS = 300000;
 const REPLY_MS = 3000;
 const RETRY_MS = 60000;
+/* reads that fail or give no profile id in a row before, with no profile
+ * that counts, the profile counts as unreadable */
+const UNREADABLE_READS = 3;
 /* how long a short render connection stays for its commands */
 const RENDER_HOLD_MS = 800;
 const IFACE = 'de.bmw.infotainment.personalization.SessionManager';
@@ -208,9 +214,12 @@ class ProfileSync extends EventEmitter {
         this._seen = undefined;     /* the last read's id */
         this._confirmed = undefined; /* the profile that counts: two reads agreed, or NONE for good */
         this._differs = false;      /* the last read was another profile than the one that counts */
+        this._failed = 0;           /* reads in a row that gave nothing to go by */
         this._retryAt = 0;
         this._chain = Promise.resolve();
         this._timer = null;
+        this._polling = false;
+        this._again = null;         /* a read asked for while one runs: whether to tell patchd */
         this._stopped = true;
     }
 
@@ -227,22 +236,48 @@ class ProfileSync extends EventEmitter {
         this._timer = null;
     }
 
-    /* The checkbox acts while patchd has the profile that counts in effect
-     * and no read names another. */
-    canChooseOwn() {
-        return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null && !this._differs;
+    /* patchd has the profile that counts in effect (NONE too: no profile
+     * detected), its set known, and no read names another. */
+    _inEffect() {
+        return this._confirmed !== undefined && this.profile === this._confirmed && this.own !== null && !this._differs;
     }
 
-    /* NONE (no profile detected) settles too. */
+    canChooseOwn() {
+        return typeof this.profile === 'string' && this._inEffect();
+    }
+
     settled() {
-        return this._confirmed !== undefined && this.profile === this._confirmed && this.own !== null && !this._differs &&
-            this._askedOwn === null;
+        return this._inEffect() && this._askedOwn === null;
     }
 
     /* What a map setting written now is for: {profile, own} as patchd has
-     * them in effect, or null while not settled. */
+     * them in effect, null while not settled; {} (none named) while patchd
+     * says no driver has own settings, when the shared settings are the
+     * only ones. */
     writeTarget() {
+        if (this._control && this._control.ownSettings === false) {
+            return {};
+        }
         return this.settled() ? { profile: this.profile, own: this.own ? 1 : 0 } : null;
+    }
+
+    /* No profile counts and the reads keep giving nothing to go by. */
+    unreadable() {
+        return this._confirmed === undefined && this._failed >= UNREADABLE_READS;
+    }
+
+    /* Right before a write for w (a writeTarget()): the profile read again;
+     * true while w is still what a write is for. A read naming another
+     * profile is taken as a poll's, so the page greys until it counts. */
+    confirmWrite(w) {
+        if (!('profile' in w)) {
+            return Promise.resolve(true);
+        }
+        return Promise.resolve().then(() => this._read()).then((id) => {
+            this._take(id, false);
+            const now = this.writeTarget();
+            return !!now && now.profile === w.profile && now.own === w.own;
+        }, () => false);
     }
 
     /* The checkbox's tick: as pressed until patchd answers, then patchd's. */
@@ -259,39 +294,67 @@ class ProfileSync extends EventEmitter {
         return this._ask({ cmd: 'profile-own', id: this.profile, on: on ? 1 : 0 });
     }
 
-    /* Tells patchd the profile that counts again (the page opened): the
-     * checkbox shows what patchd has. */
+    /* The page opened or patchd connected: the profile read at once, and
+     * when it counts, told to patchd again, so the page shows what patchd
+     * has for it. */
     refresh() {
-        if (!this._stopped && this._confirmed !== undefined && Date.now() >= this._retryAt) {
-            this._ask({ cmd: 'profile', id: this._confirmed });
+        if (!this._stopped) {
+            this._poll(true);
         }
     }
 
-    _poll() {
-        Promise.resolve().then(() => this._read()).then((id) => {
-            const agreed = id === NONE || id === this._seen;
-            this._seen = id === NONE ? undefined : id;
-            const differs = !agreed && id !== this._confirmed;
-            const confirmed = agreed ? id : this._confirmed;
-            /* both before the page redraws: a profile that counts and is
-             * not yet patchd's keeps the settings greyed */
-            if (differs !== this._differs || confirmed !== this._confirmed) {
-                this._differs = differs;
-                this._confirmed = confirmed;
+    /* One read; with tell, the profile that counts is told to patchd even
+     * when patchd has it. */
+    _poll(tell) {
+        if (this._polling) {
+            this._again = !!(this._again || tell);
+            return;
+        }
+        clearTimeout(this._timer);
+        this._polling = true;
+        Promise.resolve().then(() => this._read()).then((id) => this._take(id, tell), () => {
+            /* nothing to go by: the profile that counts stays */
+            const was = this.unreadable();
+            this._seen = undefined;
+            this._failed++;
+            if (this.unreadable() !== was) {
                 this.emit('change');
             }
-            if (agreed && id !== this.profile && Date.now() >= this._retryAt) {
-                return this._ask({ cmd: 'profile', id });
-            }
-            return undefined;
-        }, () => {
-            /* nothing to go by: the profile that counts stays */
-            this._seen = undefined;
         }).then(() => {
-            if (!this._stopped) {
+            this._polling = false;
+            const again = this._again;
+            this._again = null;
+            if (this._stopped) {
+                return;
+            }
+            if (again !== null) {
+                this._poll(again);
+            } else {
                 this._timer = setTimeout(() => this._poll(), this._pollMs);
             }
         });
+    }
+
+    /* A read's id: a profile counts once two reads in a row agree (NONE at
+     * once); one that counts and is not patchd's is told. */
+    _take(id, tell) {
+        const agreed = id === NONE || id === this._seen;
+        this._seen = id === NONE ? undefined : id;
+        const differs = !agreed && id !== this._confirmed;
+        const confirmed = agreed ? id : this._confirmed;
+        const was = this.unreadable();
+        this._failed = 0;
+        /* both before the page redraws: a profile that counts and is not
+         * yet patchd's keeps the settings greyed */
+        if (differs !== this._differs || confirmed !== this._confirmed || was) {
+            this._differs = differs;
+            this._confirmed = confirmed;
+            this.emit('change');
+        }
+        if (agreed && (tell || id !== this.profile) && Date.now() >= this._retryAt) {
+            return this._ask({ cmd: 'profile', id });
+        }
+        return undefined;
     }
 
     /* One command at a time; the reply sets profile and own and, when the
@@ -368,4 +431,4 @@ class ProfileSync extends EventEmitter {
     }
 }
 
-module.exports = { ProfileSync, sessionReader, IFACE, INSTANCE, FIELD, POLL_MS };
+module.exports = { ProfileSync, sessionReader, IFACE, INSTANCE, FIELD, POLL_MS, UNREADABLE_READS };

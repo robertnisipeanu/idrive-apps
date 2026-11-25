@@ -29,10 +29,13 @@
  * `own` (by id) the rest, `current` the profile last told; profile and
  * profile-own answer as patchd does (profile-own refused for another id),
  * `profileDelayMs` late, or not at all with `profileMute` set (a patchd
- * before profiles); cluster,
+ * before profiles); its status says whether any profile has own settings;
+ * cluster,
  * hud, hud-size, hud-pos and hud-keep-shown change `map`, and one that names
  * a profile and set ("profile", "own") other than the ones in effect is
- * refused as patchd refuses it, with the settings in effect.
+ * refused as patchd refuses it (one naming none while a profile has own
+ * settings too), with the settings in effect; one saved is answered
+ * `saveMs` later with the settings in effect.
  *
  * FakeLogs speaks the logs socket: on connect its state; save -> saving,
  * then the new archive first in the list (or `failWith` as the error).
@@ -292,7 +295,11 @@ class FakePatch extends LineServer {
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
             removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
-            restart: this.restart, wifi: this.wifi };
+            restart: this.restart, wifi: this.wifi, own_settings: this._ownSettings() };
+    }
+
+    _ownSettings() {
+        return Object.keys(this.own).length > 0;
     }
 
     /* patchd's profileCmd: the settings in effect saved into the entry they
@@ -311,12 +318,14 @@ class FakePatch extends LineServer {
         }
         const target = id && this.own[id] ? id : null;
         const want = target ? this.own[target] : this.shared;
+        const ownBefore = msg.cmd === 'profile-own' ? !msg.on || this._ownSettings() : null;
         const changed = JSON.stringify(want) !== JSON.stringify(this.map);
         this.active = target;
         this.map = want;
-        const r = { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want };
+        const r = { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want, own_settings: this._ownSettings() };
         if (this.profileDelayMs) setTimeout(() => this._send(socket, r), this.profileDelayMs);
         else this._send(socket, r);
+        if (ownBefore !== null && ownBefore !== this._ownSettings()) this._broadcast(this._status());
     }
 
     /* CarPlay's Wi-Fi band changes, as patchd sends it: a status. */
@@ -351,15 +360,17 @@ class FakePatch extends LineServer {
         const MAP = { cluster: ['cluster'], hud: ['hud'], 'hud-size': ['hud_width_pct'], 'hud-pos': ['hud_offset_x', 'hud_offset_y'],
             'hud-keep-shown': ['hud_keep_shown'] };
         if (MAP[msg.cmd]) {
-            if ('profile' in msg && (this.current === undefined || msg.profile !== this.current ||
-                    (msg.own === 1) !== !!(msg.profile && this.own[msg.profile]))) {
+            if (!('profile' in msg) ? this._ownSettings() : this.current === undefined || msg.profile !== this.current ||
+                    (msg.own === 1) !== !!(msg.profile && this.own[msg.profile])) {
                 this._send(socket, { ev: `${msg.cmd}-reply`, ok: false, refused: 'profile', reason: 'not the driver profile in effect',
-                    settings: this.map });
+                    settings: this.map, own_settings: this._ownSettings() });
                 return;
             }
             const v = msg.cmd === 'hud-pos' ? [msg.hud_x, msg.hud_y] : [msg.cmd === 'hud-size' ? msg.hud_width_pct : msg.on];
             this.map = Object.assign({}, this.map);
             MAP[msg.cmd].forEach((k, i) => { this.map[k] = v[i]; });
+            /* answered once saved, with the settings in effect */
+            setTimeout(() => this._send(socket, { ev: `${msg.cmd}-reply`, ok: true, settings: this.map }), this.saveMs || 0);
             return;
         }
         if (msg.cmd === 'reboot') {

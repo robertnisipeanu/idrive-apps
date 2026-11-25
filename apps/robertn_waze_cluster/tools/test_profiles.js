@@ -321,7 +321,14 @@ async function main() {
         await until('none', () => sync2.profile === null);
         assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile').slice(-1), [{ cmd: 'profile', id: null }]);
         assert.strictEqual(sync2.canChooseOwn(), false);
-        assert.deepStrictEqual(sync2.writeTarget(), { profile: null, own: 0 }, 'a write names no profile, the shared settings');
+        assert.deepStrictEqual(sync2.writeTarget(), {}, 'no driver with own settings: a write names none');
+        patch.own.driverX = Object.assign({}, patch.map);
+        patch._broadcast(patch._status());
+        await until('own settings said', () => c.ownSettings === true);
+        assert.deepStrictEqual(sync2.writeTarget(), { profile: null, own: 0 }, 'own settings in use: a write names no profile, the shared settings');
+        delete patch.own.driverX;
+        patch._broadcast(patch._status());
+        await until('none said', () => c.ownSettings === false);
         const asked = patch.count('profile-own');
         await sync2.setOwn(true);
         assert.strictEqual(patch.count('profile-own'), asked, 'a greyed tick asks nothing');
@@ -354,6 +361,111 @@ async function main() {
     });
     sync2.stop();
     c.close();
+
+    /* ---- the page and the profile sync wired as the app wires them, reads
+     * only when the test asks (no poll in between) ---- */
+    const BOTH = settings(1, 1, 0, 0, 0, 0), CLUSTER = settings(1, 0, 0, 0, 0, 0);
+    let who = 'driverG';
+    let readFails = false;
+    const page = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, retryMs: 50 });
+    const sync5 = new ProfileSync({ control: page, readProfile: () => (readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(who)),
+        patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
+    page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w));
+    const mapWrites = () => patch.received.filter((m) => ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'].includes(m.cmd));
+    /* G with its own settings (both), the shared ones both; G in effect */
+    const setUp = async () => {
+        patch.profileDelayMs = 0;
+        patch.saveMs = 0;
+        patch.own = { driverG: Object.assign({}, BOTH) };
+        patch.shared = Object.assign({}, BOTH);
+        patch.active = 'driverG';
+        patch.current = 'driverG';
+        patch.map = patch.own.driverG;
+        Object.assign(render, { cluster: 1, hud: 1, hudWidth: 0, hudX: 0, hudY: 0, hudKeep: 0 });
+        who = 'driverG';
+        readFails = false;
+        page.open();
+        await until('page connected', () => page.render.connected() && page.connectedPatch() && page.ownSettings === true);
+        sync5.start();
+        await until('one read', () => sync5._seen === 'driverG' && !sync5._polling);
+        sync5._poll();
+        await until('G settled', () => sync5.settled() && sync5.profile === 'driverG' && page.canChooseShownOn() && page.shownOn() === 'both');
+    };
+    await setUp();
+    await check('a driver switch, then a pick before the next poll: the read before the write finds the new driver; nothing sent, greyed', async () => {
+        const writes = mapWrites().length;
+        render.received.length = 0;
+        who = 'driverB';
+        page.showOn('cluster');
+        await until('greyed', () => sync5.writeTarget() === null && !page.canChooseShownOn());
+        await sleep(100);
+        assert.strictEqual(mapWrites().length, writes, 'nothing written for G');
+        assert.deepStrictEqual(render.received, [], 'nothing to the render');
+        assert.strictEqual(page.shownOn(), 'both', 'the pick gone');
+        assert.deepStrictEqual([patch.own.driverG, patch.shared], [BOTH, BOTH], 'G\'s and the shared settings unchanged');
+        sync5._poll();
+        await until('B settled on the shared settings', () => sync5.settled() && sync5.profile === 'driverB' && page.canChooseShownOn());
+        page.showOn('cluster');
+        await until('saved for B, on the shared settings', () => patch.active === null && patch.map.hud === 0 && render.hud === 0);
+        assert.deepStrictEqual(mapWrites().slice(-1), [{ cmd: 'hud', on: 0, profile: 'driverB', own: 0 }]);
+        assert.deepStrictEqual(patch.own.driverG, BOTH, 'G\'s own settings unchanged');
+    });
+    await check('a driver switch, then the page opened: the profile read at once, greyed until the new one counts', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        who = 'driverB';
+        sync5.refresh();
+        await until('greyed at once', () => !page.canChooseShownOn() && sync5.writeTarget() === null);
+        assert.strictEqual(sync5.profile, 'driverG', 'B not yet told');
+    });
+    await check('a profile that cannot be read: greyed with own settings in use, the line\'s state set; not without', async () => {
+        sync5.stop();
+        page.close();
+        patch.own = { driverG: Object.assign({}, BOTH) };
+        patch.current = undefined;
+        readFails = true;
+        const fresh = new ProfileSync({ control: page, readProfile: () => Promise.reject(new Error('timeout')), patchPath: PSOCK,
+            renderPath: RSOCK, pollMs: POLL, log: quiet() });
+        page.setWriteTarget(() => fresh.writeTarget(), (w) => fresh.confirmWrite(w));
+        page.open();
+        fresh.start();
+        await until('unreadable', () => fresh.unreadable() && page.ownSettings === true);
+        assert.strictEqual(fresh.writeTarget(), null, 'own settings in use: greyed');
+        assert(!page.canChooseShownOn(), 'Show on greyed');
+        patch.own = {};
+        patch._broadcast(patch._status());
+        await until('no own settings', () => page.ownSettings === false);
+        assert.deepStrictEqual(fresh.writeTarget(), {}, 'no own settings: a write names none');
+        await until('Show on acts', () => page.canChooseShownOn());
+        fresh.stop();
+        page.close();
+    });
+    await check('a late profile answer while a write is on its way, the render showing another key too: it ends on patchd\'s stored set', async () => {
+        page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w));
+        await setUp();
+        patch.own = {};
+        patch.active = null;
+        patch._broadcast(patch._status());
+        await until('no own settings', () => page.ownSettings === false);
+        page.showOn('cluster');
+        await until('the cluster alone, stored', () => render.hud === 0 && patch.map.hud === 0 && page.shownOn() === 'cluster');
+        await sleep(100);
+        render.hudWidth = 70;   /* a key the render shows and patchd does not have */
+        render.announce(render.state, render.reason);
+        patch.profileDelayMs = 150;
+        patch.saveMs = 400;
+        sync5.refresh();
+        await sleep(30);
+        page.showOn('both');
+        await until('both on the render', () => render.hud === 1 && page.shownOn() === 'both');
+        await until('the stored set on the render', () => render.hudWidth === 0 && render.hud === 1 && render.cluster === 1, 3000);
+        assert.deepStrictEqual(patch.map, settings(1, 1, 0, 0, 0, 0));
+        patch.profileDelayMs = 0;
+        patch.saveMs = 0;
+    });
+    sync5.stop();
+    page.close();
 
     /* ---- a patchd before profiles; none running ---- */
     patch.profileMute = true;

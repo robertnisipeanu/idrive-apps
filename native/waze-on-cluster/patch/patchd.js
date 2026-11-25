@@ -69,13 +69,15 @@
  *                                   hud-reply, hud-size-reply, hud-pos-reply,
  *                                   hud-keep-shown-reply)
  *                                   follows the write and carries ok, the values
- *                                   saved and reason. With "profile":"<id>"|null
- *                                   and "own":0|1 (the driver profile and set
- *                                   the app's page showed), each is saved only
- *                                   while that profile and set are in effect;
- *                                   otherwise nothing is saved and the reply
- *                                   carries ok false, refused "profile", reason
- *                                   and the settings in effect.
+ *                                   saved, reason and the settings in effect.
+ *                                   With "profile":"<id>"|null and "own":0|1
+ *                                   (the driver profile and set the app's page
+ *                                   showed), each is saved only while that
+ *                                   profile and set are in effect; without, only
+ *                                   while no driver has own settings. Otherwise
+ *                                   nothing is saved and the reply carries ok
+ *                                   false, refused "profile", reason, the
+ *                                   settings in effect and own_settings.
  *                  {"cmd":"profile","id":"<id>"|null}
  *                  {"cmd":"profile-own","id":"<id>","on":0|1}
  *                                   the driver profile now (the head unit's user
@@ -85,8 +87,10 @@
  *                                   saved in MAP_STATE; profile-own only for the
  *                                   profile last told. The reply (profile-reply,
  *                                   profile-own-reply) carries ok, id, own, the
- *                                   settings in effect and changed (the render
- *                                   is to be moved to them) or reason.
+ *                                   settings in effect, changed (the render
+ *                                   is to be moved to them) and own_settings, or
+ *                                   reason. own_settings (also in each status):
+ *                                   whether any driver has own map settings.
  *                  {"cmd":"capture-start"|"capture-stop"|"capture-status"}
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
@@ -395,9 +399,10 @@ function flushMapSettings() {
         saveRetryMs = 0;
         dropShared();
     }
+    var inEffect = settingsInEffect();
     m.asked.forEach(function (a) {
         if (!a.sock) return;
-        var r = { ev: a.ev, ok: !err, reason: err ? err.message : undefined };
+        var r = { ev: a.ev, ok: !err, reason: err ? err.message : undefined, settings: inEffect };
         a.keys.forEach(function (k) { r[k] = m.settings[k]; });
         reply(a.sock, r);
     });
@@ -551,7 +556,7 @@ function profileCmd(msg, sock) {
         reply(sock, { ev: ev, ok: false, reason: 'at most ' + MAX_OWN + ' profiles have their own settings' });
         return;
     }
-    var inUse = profilesInUse(p), now = (profilesKept(p) && profileEntry(p)) || mapSettingsNow();
+    var inUse = profilesInUse(p), now = settingsInEffect();
     if (msg.cmd === 'profile') currentProfile = id;
     if (msg.cmd === 'profile-own') {
         if (msg.on && !p.own[id]) {
@@ -575,8 +580,9 @@ function profileCmd(msg, sock) {
         m.profiles = true;
         if (!m.timer) m.timer = setTimeout(flushMapSettings, MAP_SAVE_MS);
     }
-    reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed || restored, settings: want });
+    reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed || restored, settings: want, own_settings: ownSettings() });
     restored = false;
+    if (profilesInUse(p) !== inUse) status();
 }
 
 /* The map settings the app writes. A write names the driver profile its
@@ -584,11 +590,13 @@ function profileCmd(msg, sock) {
  * profile's own settings were the ones in effect ("own": 0 or 1). It is
  * saved only while patchd has that profile and that set in effect, so it
  * goes into those settings and no others: the reason it is refused, else
- * null. A write without "profile" (an app before it) goes into the
- * settings in effect. */
+ * null. A write without "profile" (an app before it, or one while no
+ * driver has own settings) is saved only while no driver has own settings:
+ * the shared settings are then the only ones. */
 var MAP_CMDS = ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'];
+function ownSettings() { return !!profiles && profilesInUse(profiles); }
 function mapWriteRefusal(msg) {
-    if (!('profile' in msg)) return null;
+    if (!('profile' in msg)) return ownSettings() ? 'drivers have their own map settings: update Maps on cluster' : null;
     var id = msg.profile === '' ? null : msg.profile;
     if (id !== null && !profileIdOk(id)) return 'not a profile id';
     if (msg.own !== 0 && msg.own !== 1) return 'own must be 0 or 1';
@@ -1111,6 +1119,7 @@ function status(extra, aaExtra) {
             msg.aa = aaMsg(aa);
             if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
             msg.wifi = wifi ? wifi.current() : null;
+            msg.own_settings = ownSettings();
             send(msg);
         });
     });
@@ -2408,10 +2417,11 @@ function handle(line, sock) {
     if (MAP_CMDS.indexOf(msg.cmd) >= 0) {
         var refusal = mapWriteRefusal(msg);
         if (refusal) {
-            log('not saved: ' + msg.cmd + ' for ' + (msg.own ? 'the own map settings of ' : 'the map settings in effect for ') +
-                'driver profile ' + (profileIdOk(msg.profile) ? profileTag(msg.profile) : msg.profile == null ? 'none' : '(not an id)') +
-                ': ' + refusal);
-            reply(sock, { ev: msg.cmd + '-reply', ok: false, refused: 'profile', reason: refusal, settings: settingsInEffect() });
+            log('not saved: ' + msg.cmd + (!('profile' in msg) ? ' without a driver profile' :
+                ' for ' + (msg.own ? 'the own map settings of ' : 'the map settings in effect for ') + 'driver profile ' +
+                (profileIdOk(msg.profile) ? profileTag(msg.profile) : msg.profile == null ? 'none' : '(not an id)')) + ': ' + refusal);
+            reply(sock, { ev: msg.cmd + '-reply', ok: false, refused: 'profile', reason: refusal, settings: settingsInEffect(),
+                own_settings: ownSettings() });
             return;
         }
     }

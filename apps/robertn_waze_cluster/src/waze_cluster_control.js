@@ -325,6 +325,8 @@ class WazeClusterControl extends EventEmitter {
         /* what a map setting written now is for ({profile, own}), null while
          * none may be written; {} names none (a page without driver profiles) */
         this._writeTarget = () => ({});
+        this._confirmWrite = () => Promise.resolve(true);
+        this._writeChain = Promise.resolve();
         this._stored = null;        /* map settings to show once the render has said what it shows */
         this.writes = 0;            /* map settings written to patchd */
 
@@ -354,19 +356,43 @@ class WazeClusterControl extends EventEmitter {
         this.patch.on('close', () => { this._forget(); this._restartRequested = false; this.emit('change'); });
     }
 
-    /* fn() -> {profile, own} for the driver profile's settings a map
-     * setting is written for, or null while none may be (greyed). */
-    setWriteTarget(fn) {
-        this._writeTarget = fn;
+    /* target() -> {profile, own} for the driver profile's settings a map
+     * setting is written for, {} for none named, or null while none may be
+     * (greyed); confirm(w) -> Promise<bool>: w still holds, checked right
+     * before the write is sent. */
+    setWriteTarget(target, confirm) {
+        this._writeTarget = target;
+        this._confirmWrite = confirm || (() => Promise.resolve(true));
     }
 
-    /* A map setting to patchd, naming the settings it is for. */
-    _saveMap(msg) {
+    /* Map settings as [render command, patchd command] pairs, sent in the
+     * order asked once confirm holds for their target; otherwise none is
+     * sent and what was asked goes. */
+    _write(pairs) {
         const w = this._writeTarget();
-        if (w) {
-            this.writes++;
-            this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
+        if (!w) {
+            return;
         }
+        this._writeChain = this._writeChain.then(() => this._confirmWrite(w)).then((ok) => {
+            if (!ok || !this.render.connected() || !this.connectedPatch()) {
+                this._dropAsked();
+                this.emit('change');
+                return;
+            }
+            pairs.forEach(([r, msg]) => {
+                this.render.send(r);
+                this.writes++;
+                this._inFlight++;
+                this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
+            });
+        }).catch((e) => this._log.warn(`map setting not written: ${e && e.message}`));
+    }
+
+    _dropAsked() {
+        this._askedShownOn = null;
+        this._clearAskedHud();
+        clearTimeout(this._askedPosTimer);
+        this._askedPos = null;
     }
 
     /* The render to the map settings stored for the driver profile in
@@ -390,10 +416,7 @@ class WazeClusterControl extends EventEmitter {
         if (renderShows(rs, s) || (asked && !st.moved)) {
             return;
         }
-        this._askedShownOn = null;
-        this._clearAskedHud();
-        clearTimeout(this._askedPosTimer);
-        this._askedPos = null;
+        this._dropAsked();
         renderCommands(s).forEach((m) => this.render.send(m));
         this.emit('change');
     }
@@ -493,10 +516,7 @@ class WazeClusterControl extends EventEmitter {
         const want = { cluster: choice === 'cluster' || choice === 'both', hud: choice === 'hud' || choice === 'both' };
         const changes = ['cluster', 'hud'].filter((d) => this._shows(d) !== want[d]).sort((a, b) => want[b] - want[a]);
         this._askedShownOn = choice;
-        changes.forEach((d) => {
-            this.render.send({ cmd: d, on: want[d] ? '1' : '0' });
-            this._saveMap({ cmd: d, on: want[d] ? 1 : 0 });
-        });
+        this._write(changes.map((d) => [{ cmd: d, on: want[d] ? '1' : '0' }, { cmd: d, on: want[d] ? 1 : 0 }]));
         this.emit('change');
     }
 
@@ -580,8 +600,7 @@ class WazeClusterControl extends EventEmitter {
             this._askedHud = null;
             this.emit('change');
         }, HUD_ASKED_MS);
-        this.render.send({ cmd: 'hud', hud_width_pct: String(pct) });
-        this._saveMap({ cmd: 'hud-size', hud_width_pct: pct });
+        this._write([[{ cmd: 'hud', hud_width_pct: String(pct) }, { cmd: 'hud-size', hud_width_pct: pct }]]);
         this.emit('change');
     }
 
@@ -624,8 +643,7 @@ class WazeClusterControl extends EventEmitter {
             this._askedPos = null;
             this.emit('change');
         }, HUD_ASKED_MS);
-        this.render.send({ cmd: 'hud', hud_x: String(x), hud_y: String(y) });
-        this._saveMap({ cmd: 'hud-pos', hud_x: x, hud_y: y });
+        this._write([[{ cmd: 'hud', hud_x: String(x), hud_y: String(y) }, { cmd: 'hud-pos', hud_x: x, hud_y: y }]]);
         this.emit('change');
     }
     /* ---- the HUD map over BMW's pop-ups ---- */
@@ -643,8 +661,7 @@ class WazeClusterControl extends EventEmitter {
     toggleHudKeep() {
         if (this.canKeepHud()) {
             const keep = !this.hudKeepShown();
-            this.render.send({ cmd: 'hud', hud_keep_shown: keep ? '1' : '0' });
-            this._saveMap({ cmd: 'hud-keep-shown', on: keep ? 1 : 0 });
+            this._write([[{ cmd: 'hud', hud_keep_shown: keep ? '1' : '0' }, { cmd: 'hud-keep-shown', on: keep ? 1 : 0 }]]);
         }
     }
 
@@ -1101,8 +1118,17 @@ class WazeClusterControl extends EventEmitter {
         return msg;
     }
 
+    /* patchd's own_settings: whether any driver has own map settings. */
+    _noteOwnSettings(msg) {
+        if (msg.own_settings === true || msg.own_settings === false) {
+            this.ownSettings = msg.own_settings;
+        }
+    }
+
     /* No status from patchd: no patch known in effect, no turn card asked for. */
     _forget() {
+        this.ownSettings = null;    /* unknown */
+        this._inFlight = 0;         /* map settings sent and not yet answered */
         this.patchStatus = null;     /* the patch daemon's last status while connected */
         this._inEffect = { carplay: false, androidAuto: false };
         this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
@@ -1155,6 +1181,7 @@ class WazeClusterControl extends EventEmitter {
             this.captureState = msg.capture;
             this.emit('change');
         } else if (msg.ev === 'status') {
+            this._noteOwnSettings(msg);
             /* A map-only event (no aa) keeps the last Android Auto status. */
             const prev = this.patchStatus;
             const status = this._fromOlder(msg, prev);
@@ -1167,12 +1194,18 @@ class WazeClusterControl extends EventEmitter {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
             }
-            /* written for other settings than the driver profile's in
-             * effect: nothing saved; the render back to the ones stored */
-            if (!msg.ok && msg.refused === 'profile' && msg.settings) {
-                this.showStored(msg.settings, true);
+            this._noteOwnSettings(msg);
+            this._inFlight = Math.max(0, this._inFlight - 1);
+            /* the render ends on the settings patchd has stored: after the
+             * last write, or at once for one not saved */
+            const refused = !msg.ok && msg.refused === 'profile';
+            if (msg.settings && (refused || this._inFlight === 0)) {
+                this.showStored(msg.settings, !msg.ok);
+            }
+            if (refused) {
                 this.emit('refused');
             }
+            this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
             /* A refused or failed request clears the asked flag; the status
              * that follows says why. A taken one leaves it set until the unit
