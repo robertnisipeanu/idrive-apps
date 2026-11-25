@@ -328,9 +328,7 @@ class ProfileSync extends EventEmitter {
         }
         const switches = this._switches;
         return Promise.resolve().then(() => this._read()).then((id) => {
-            if (switches === this._switches) {
-                this._take(id, false);
-            }
+            this._take(id, false, switches);
             const now = this.writeTarget();
             return !!now && now.profile === w.profile && now.own === w.own;
         }, () => {
