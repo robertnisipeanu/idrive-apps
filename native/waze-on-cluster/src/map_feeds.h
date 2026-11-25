@@ -60,7 +60,6 @@ public:
     /* Of those, none is seen (MapFeed::unseen): the pictures go down to
      * kUnseenFps a second (picture_pace.h) until one is. */
     bool unseen() const;
-    /* MapFeed::set_picture_coming, for each feed. */
     void set_picture_coming(bool coming);
     /* The HUD map's size and place as asked, kept for a HUD feed made
      * later; the status has the place as far as the HUD's feed puts it. */

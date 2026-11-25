@@ -1486,12 +1486,23 @@ void Compositor::host_eligibility(LayerHost &lh) const
         lh.wait = into + " is not on screen (" + target_state_name(st) + ")";
         return;
     }
-    /* Hidden (hide): no picture to stack, so no layer over the rect needed;
-     * lowest in the stack, any shown host on into wins over it. */
+    /* Hidden (hide): no picture to stack, so no layer over the rect is
+     * needed, but one of the client's drawn and seen on into, as an app in
+     * the foreground has: a background app's hidden host counts for
+     * nothing. Its topmost such layer orders it among hidden hosts; a shown
+     * host on any into wins over it (host_winners). */
     if (!lh.host.shown) {
-        lh.eligible = true;
+        const Arrangement &a = t.arr;
+        for (size_t p = 0; p < a.order.size(); p++) {
+            const Entry &e = layers_.at(a.order[p]);
+            if (e.owner == lh.owner && listed(a.drawn, a.order[p]) && seen(*e.layer)) {
+                lh.eligible = true;
+                lh.top_pos = p;
+            }
+        }
         lh.anchor = 0;
-        lh.top_pos = 0;
+        if (!lh.eligible)
+            lh.wait = "no layer of the client is drawn on " + into;
         return;
     }
     /* The client's layers drawn and seen over the rect, from its topmost
@@ -1526,7 +1537,8 @@ std::map<int, const Compositor::LayerHost *> Compositor::host_winners(const std:
      * several intos, the one holding the target (held_into_: the last live
      * host's, also after it ended) keeps it while it has an eligible host;
      * else the one whose host was sent first (sent again after unhost, a
-     * host is sent later). */
+     * host is sent later). A shown host anywhere wins over a hidden one
+     * (hide): a hidden host is live only while no shown host is eligible. */
     std::map<std::pair<int, int>, const LayerHost *> best;   /* by (target, into) */
     for (const auto &kv : layer_hosts_) {
         const LayerHost &lh = kv.second;
@@ -1537,11 +1549,18 @@ std::map<int, const Compositor::LayerHost *> Compositor::host_winners(const std:
         if (!b || (lh.host.shown && !b->host.shown) || (lh.host.shown == b->host.shown && lh.top_pos > b->top_pos))
             b = &lh;
     }
+    std::map<int, bool> shown;   /* by target: a shown host is eligible on some into */
+    for (const auto &kv : best)
+        shown[kv.first.first] = shown[kv.first.first] || kv.second->host.shown;
     std::map<int, const LayerHost *> win;
     for (const auto &kv : best) {
         const int target = kv.first.first;
+        if (!kv.second->host.shown && shown[target])
+            continue;
         auto h = held_into_.find(target);
         auto keep = h == held_into_.end() ? best.end() : best.find(std::make_pair(target, h->second));
+        if (keep != best.end() && !keep->second->host.shown && shown[target])
+            keep = best.end();
         if (keep != best.end()) {
             win[target] = keep->second;
             continue;

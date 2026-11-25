@@ -549,9 +549,12 @@ Stage VideoLayer::stage(int64_t now_ms)
     staged_ = Staged();
     if (!g_ || !drawn_)
         return Stage::Idle;
-    /* On screen again: the frame from before waits for a newer one. */
+    /* On screen again: the frame from before waits for a newer one, unless
+     * the target waits on this layer (tiles a change uncovers, a buffer left
+     * half written): then it goes, so only this frame is ever held. */
     if (hold_until_ms_ >= 0) {
-        if (front_pending_ && picture_ms_ == hold_from_ms_ && now_ms < hold_until_ms_)
+        if (front_pending_ && picture_ms_ == hold_from_ms_ && now_ms < hold_until_ms_ && !uncovering() &&
+            !holds_flush())
             return Stage::Idle;
         hold_until_ms_ = -1;
     }

@@ -2242,8 +2242,9 @@ static void hosting_from_layers()
        !b.hosts.count("map") && hosting["map"] == "waiting: it shows the target nowhere (shown 0)");
 
     /* shown 0 with hide: hosted and shown nowhere while the panel is on
-     * screen, no theme layer needed over the rect; the panel taken, back on
-     * its own target; the panel back, hidden again. */
+     * screen with a theme layer drawn there (none needed over the rect);
+     * every theme layer hidden, back on its own target; the panel taken,
+     * back on its own target; the panel back, hidden again. */
     ok("layer hosts: the hello says the service takes hide", a.takes_host_hide());
     cr::Host hidden_map = nowhere;
     hidden_map.hide = true;
@@ -2257,11 +2258,13 @@ static void hosting_from_layers()
         a.set(bg, off_bg);
         a.set(frame, off_frame);
         r.pump(100);
-        ok("layer hosts: hidden with hide, every theme layer hidden: still hosted, shown 0",
-           b.hosts.count("map") && b.hosts["map"].into == "panel" && !b.hosts["map"].shown);
+        ok("layer hosts: hidden with hide, every theme layer hidden (a background theme): not hosted, the theme why",
+           !b.hosts.count("map") && hosting["map"] == "waiting: no layer of the client is drawn on panel");
         a.set(bg, bg_lo);
         a.set(frame, frame_lo);
         r.pump(100);
+        ok("layer hosts: a theme layer shown again: hosted and hidden again",
+           b.hosts.count("map") && b.hosts["map"].into == "panel" && !b.hosts["map"].shown);
     }
     r.port.steal(r.sc.targets[1]);
     r.pump(200);
@@ -3756,11 +3759,77 @@ static void text_held()
     ok("text held: the font dropped, its atlas with it", assets() == 0 && e.errors.empty());
 }
 
+/* A hidden host (hide) and a shown one on another target: the shown wins,
+ * whichever came first and whichever holds the target; the shown one's
+ * layers hidden, the hidden host is live again. */
+static void hidden_host_across_targets()
+{
+    Rig r;
+    TargetSpec u;
+    u.name = "hud"; u.slot = 0x323; u.scene_id = 0x01000401; u.width = 800; u.height = 480; u.linger_ms = 3000;
+    r.sc.targets.push_back(u);
+    r.start();
+    cr::Client theme("theme", r.path), app("hud_app", r.path), producer("producer", r.path);
+    Events ep;
+    ep.wire(producer);
+    std::map<std::string, std::string> hosting_theme;
+    theme.on_hosting = [&hosting_theme](const std::string &t, const std::string &, const std::string &state,
+                                        const std::string &why) { hosting_theme[t] = state + (why.empty() ? "" : ": " + why); };
+    r.clients = {&theme, &app, &producer};
+    r.pump(50);
+    cr::LayerOptions ml;
+    ml.target = "map";
+    ml.contend = true;
+    const uint32_t video = producer.video(ml, cr::VideoOptions());
+    const std::vector<uint8_t> f1 = atlas(41);
+    producer.frame(video, f1.data(), f1.size(), 1);
+    const cr::EffectOptions fx{"#version 100\nvoid main(){gl_FragColor=vec4(0.0);}", "", 0};
+    cr::LayerOptions tl;
+    tl.target = "panel";
+    theme.effect(tl, fx);
+    cr::LayerOptions al;
+    al.target = "hud";
+    al.x = 100; al.y = 100; al.w = 400; al.h = 200;
+    const uint32_t hud_layer = app.effect(al, fx);
+    r.pump(1500);
+    cr::Host hidden;
+    hidden.into = "panel";
+    hidden.target = "map";
+    hidden.x = 700; hidden.y = 160; hidden.w = 560; hidden.h = 400;
+    hidden.shown = false;
+    hidden.hide = true;
+    theme.host(hidden);
+    r.pump(300);
+    ok("hide across targets: the theme's hidden host live, the map hidden in the panel",
+       producer.hosts.count("map") && producer.hosts["map"].into == "panel" && !producer.hosts["map"].shown);
+    cr::Host shown;
+    shown.into = "hud";
+    shown.target = "map";
+    shown.x = 100; shown.y = 100; shown.w = 400; shown.h = 200;
+    app.host(shown);
+    r.pump(300);
+    ok("hide across targets: another app's shown host on the HUD wins over it, though sent later",
+       producer.hosts.count("map") && producer.hosts["map"].into == "hud" && producer.hosts["map"].shown &&
+           hosting_theme["map"].find("waiting:") == 0);
+    cr::LayerOptions off = al;
+    off.visible = false;
+    app.set(hud_layer, off);
+    r.pump(300);
+    ok("hide across targets: the HUD app's layer hidden: the hidden host live again",
+       producer.hosts.count("map") && producer.hosts["map"].into == "panel" && !producer.hosts["map"].shown &&
+           hosting_theme["map"] == "live");
+    app.set(hud_layer, al);
+    r.pump(300);
+    ok("hide across targets: shown again: the shown host wins again, also over the hidden host holding the target",
+       producer.hosts.count("map") && producer.hosts["map"].into == "hud" && producer.hosts["map"].shown);
+}
+
 /* fresh_ms (PROTOCOL.md): a video's frame that came while its target was
  * not written (parked behind the stock HMI) waits, once the target is shown
  * again, up to fresh_ms for a newer frame: one that comes is written first,
  * the older never; with none, the older is written once fresh_ms have
- * passed. Without fresh_ms the older is written at once. */
+ * passed, and another client's layer on the target is written meanwhile.
+ * Without fresh_ms the older is written at once. */
 static void fresh_frames()
 {
     const uint64_t kStock = 0x01000201;
@@ -3774,11 +3843,20 @@ static void fresh_frames()
     };
     for (int fresh = 1; fresh >= 0; fresh--) {
         Rig r;
-        cr::Client c("fresh", r.path);
+        cr::Client c("fresh", r.path), img_client("image", r.path);
         Events e;
         e.wire(c);
-        r.clients = {&c};
+        r.clients = {&c, &img_client};
         r.pump(50);
+        cr::LayerOptions il;
+        il.target = "panel";
+        il.klass = "overlay";
+        il.x = 1500; il.y = 20; il.w = 4; il.h = 4;
+        cr::ImageOptions io;
+        io.w = io.h = 4;
+        const uint32_t img = img_client.image(il, io);
+        const std::vector<uint8_t> px0(4 * 4 * 4, 200);
+        img_client.pixels(img, {}, px0.data(), px0.size());
         if (fresh)
             ok("fresh_ms: the hello says the service takes it", c.takes_fresh_ms());
         cr::LayerOptions lo;
@@ -3823,10 +3901,19 @@ static void fresh_frames()
                 c.frame(vid, f1.data(), f1.size(), 4);
                 r.pump(500);
             } else if (fresh) {
+                /* another client's image on the panel, changed during the hold:
+                 * written at once, only the video's frame waits */
+                const std::vector<uint8_t> px(4 * 4 * 4, 77);
+                img_client.pixels(img, {}, px.data(), px.size());
+                bool image_written = false;
                 for (int i = 0; i < 30; i++) {
                     r.pump(5);
                     older = older || holds(r.gpu.graph("panel"), f2);
+                    if (FakeGraph *g = r.gpu.graph("panel"))
+                        for (const auto &kv : g->shown.buffers)
+                            image_written = image_written || (kv.second.f == TexFormat::RGBA8 && kv.second.px == px);
                 }
+                ok("fresh_ms: during the hold another layer on the target is written at once", image_written);
                 r.pump(300);
                 ok("fresh_ms: shown again with no newer frame: the older waits, then is written after fresh_ms",
                    parked && !older && holds(r.gpu.graph("panel"), f2));
@@ -4341,6 +4428,7 @@ int main()
     display_drops();
     repeats();
     fresh_frames();
+    hidden_host_across_targets();
     framing();
     scene_files();
     scene_sequence_ticks();

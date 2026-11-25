@@ -148,10 +148,14 @@ part of the picture, under the theme's layers (the map's layer is marked
 as the hosted map, so cluster-render knows it). With
 `hosted_vpp_scale = 1` the GPU does that scaling instead ("Experimental:
 hosted_vpp_scale and always_packed" below). The app hiding its layers,
-ending the host or exiting puts the map back on its own slot, unless it
-hides the map with `hide` (PROTOCOL.md "Hosting from layers"), and so does
+ending the host or exiting puts the map back on its own slot, and so does
 any host whose place the map cannot be drawn in (its part misses the map,
-or lands smaller than 64x32), a scene's host included.
+or lands smaller than 64x32), a scene's host included. An app that
+shows the map nowhere on one of its pages sends its host with `shown` 0
+and `hide` (PROTOCOL.md "Hosting from layers"): the map is then hidden,
+nothing of it sent, while the app's layers are drawn on that target and
+no other app shows the map; without `hide`, `shown` 0 puts it back on its
+own slot.
 
 ### Settings
 

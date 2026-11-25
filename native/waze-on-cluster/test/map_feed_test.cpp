@@ -88,7 +88,8 @@
  *   map exact; 1, every update packed, a still map's too, never exact; with
  *   hosted_vpp_scale the VPP-made part packed; a host's part not a multiple
  *   of 4 high as with 0, shown; cluster-render upgraded or downgraded under
- *   the feed, the layer made again for it (renderer_changed). */
+ *   the feed, the layer made again for it (renderer_changed), and for fresh_ms
+ *   (renderer_fresh_changed). */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -1057,7 +1058,7 @@ struct OldRenderer {
     int lfd = -1, cfd = -1;
     std::string in;
     std::vector<std::string> ops;
-    bool packed = false;
+    bool packed = false, fresh = false;
 
     OldRenderer()
     {
@@ -1105,6 +1106,8 @@ struct OldRenderer {
                     {"targets", cr::json_quote("map:1088x480,panel:1920x720")}, {"repeat", "1"}};
                 if (packed)
                     kv.push_back({"always_packed", "1"});
+                if (fresh)
+                    kv.push_back({"fresh_ms", "1"});
                 const std::string h = cr::encode(cr::kJson, cr::json_object(kv));
                 if (write(cfd, h.data(), h.size()) != (ssize_t)h.size())
                     std::printf("old renderer: hello not written\n");
@@ -1202,6 +1205,42 @@ static void renderer_changed()
             ok("always_packed: cluster-render downgraded under the feed: the layer without always_packed after the "
                "reconnect, logged once",
                before && !op.empty() && op.find("always_packed") == std::string::npos && logged == 1);
+    }
+}
+
+/* cluster-render upgraded or downgraded under the feed (fresh_ms): after
+ * the reconnect the layer made again with fresh_ms, or without it. */
+static void renderer_fresh_changed()
+{
+    for (int up = 0; up < 2; up++) {
+        OldRenderer r;
+        r.fresh = !up;
+        FeedConfig fc;
+        fc.socket = r.path;
+        MapFeed feed(fc);
+        feed.set_stream(true, false, Picture::Shown);
+        int64_t now = 100000;
+        auto run = [&] {
+            for (int i = 0; i < 400; i++) {
+                now += 5;
+                r.poll();
+                feed.poll(now);
+                r.poll();
+            }
+        };
+        run();
+        const bool before = r.layer_op().find("\"fresh_ms\"") != std::string::npos;
+        r.fresh = up;
+        r.hang_up();
+        run();
+        const std::string op = r.layer_op();
+        const bool after = op.find("\"fresh_ms\"") != std::string::npos;
+        if (up)
+            ok("fresh_ms: an older cluster-render upgraded under the feed: the layer with fresh_ms after the reconnect",
+               !before && after);
+        else
+            ok("fresh_ms: cluster-render downgraded under the feed: the layer without fresh_ms after the reconnect",
+               before && !op.empty() && !after);
     }
 }
 
@@ -1447,6 +1486,7 @@ int main()
     always_packed_map();
     old_renderer();
     renderer_changed();
+    renderer_fresh_changed();
     unseen_map();
     Rig r;
     r.pump(100);

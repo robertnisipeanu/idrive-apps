@@ -363,6 +363,7 @@ private:
     bool unseen_ = false;                  /* unseen() at the last poll */
     int64_t kept_ms_ = 0;                  /* unseen: when it went unseen or the last repeat went */
     bool picture_coming_ = false;
+    bool layer_fresh_ = false;             /* the layer was made with fresh_ms (made again when that changes) */
     uint64_t await_id_ = 0;                /* awaiting: the picture at hand's id */
     int64_t await_until_ms_ = -1;
 };

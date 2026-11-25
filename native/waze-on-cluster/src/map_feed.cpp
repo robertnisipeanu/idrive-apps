@@ -50,10 +50,11 @@ MapFeed::MapFeed(const FeedConfig &cfg)
         log_info("render: connected to the cluster renderer (%s; %s)", client_.backend.c_str(), client_.targets.c_str());
         if (!layer_) {
             make_layer();
-        } else if (cfg_.always_packed && unpacked_why_ != kOddSize &&
-                   (unpacked_why_ == nullptr) != client_.takes_always_packed()) {
-            /* a cluster-render that takes always_packed now, or no longer:
-             * the layer made again for it, its next write whole */
+        } else if ((cfg_.always_packed && unpacked_why_ != kOddSize &&
+                    (unpacked_why_ == nullptr) != client_.takes_always_packed()) ||
+                   layer_fresh_ != client_.takes_fresh_ms()) {
+            /* a cluster-render that takes always_packed or fresh_ms now, or
+             * no longer: the layer made again for it, its next write whole */
             remake_layer();
         }
     };
@@ -201,6 +202,7 @@ void MapFeed::make_layer()
         vo.pan_blocks = vo.pan_blocks || vo.always_packed;
     }
     vo.fresh_ms = client_.takes_fresh_ms() ? kFreshMs : 0;
+    layer_fresh_ = vo.fresh_ms != 0;
     lo_ = cr::LayerOptions();
     lo_.target = drawn_target();
     lo_.klass = "content";
@@ -507,9 +509,9 @@ bool MapFeed::unseen() const
     if (hosted() && !host_.shown)
         return true;
     /* The target in a state in which the renderer writes nothing of it; and
-     * only with fresh_ms, without which it would write a frame from before
-     * first when the map is seen again. */
-    if (!layer_ || !client_.connected() || !lo_.visible || layer_state_ != "waiting" || !client_.takes_fresh_ms())
+     * only for a layer made with fresh_ms, without which the renderer would
+     * write a frame from before first when the map is seen again. */
+    if (!layer_ || !client_.connected() || !lo_.visible || layer_state_ != "waiting" || !layer_fresh_)
         return false;
     const auto t = target_states_.find(drawn_target());
     return t != target_states_.end() && (t->second == "parked" || t->second == "waiting" || t->second == "unavailable");

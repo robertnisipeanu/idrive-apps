@@ -952,18 +952,25 @@ target's name, so the service knows it.
   coming takes the picture back to its own target; when that ends, it is
   hosted again.
 - **Hidden (`hide`).** A host with `hide` 1 and `shown` 0 is eligible
-  while `into` is on screen and its layers do not wait for a scene file,
-  with no layer of its client needed over the rect: the picture is then
-  hosted and shown nowhere. The `host` event carries `into` with `shown` 0,
-  as for a scene's host, so a producer that follows it draws nothing and
-  its own target's slot is let go (waze-on-cluster then makes about one
-  picture a second). It is the lowest of the hosts on `into`: any shown
-  host there wins over it. When `into` goes off screen, the stock HMI
-  takes it or the host ends, the picture goes back to its own target as
-  without `hide`, so it is never shown nowhere while nothing of `into` is
-  on screen either. With `shown` 1, `hide` changes nothing. Send it only
-  to a service whose hello has `host_hide` 1; an older one ignores it, and
-  its `shown` 0 puts the picture back on its own target.
+  while `into` is on screen, its layers do not wait for a scene file, and
+  the client has a layer drawn and seen anywhere on `into` (as an app in
+  the foreground has; not one over the rect, since nothing is drawn
+  there): the picture is then hosted and shown nowhere. A background app
+  whose layers are all hidden, or that has none on `into`, has no hidden
+  host that counts, as a shown host from a background app loses. The
+  `host` event carries `into` with `shown` 0, as for a scene's host, so a
+  producer that follows it draws nothing and its own target's slot is let
+  go (waze-on-cluster then makes about one picture a second).
+  A shown host wins over every hidden one, on its `into` or any other: a
+  hidden host is live only while no shown host of the target is eligible
+  (among hidden hosts, the rules above, with the client's topmost layer on
+  `into` in place of its topmost over the rect). When `into` goes off
+  screen, the stock HMI takes it, the client's layers there all hide, or
+  the host ends (`unhost`, the client gone), the picture goes back to its
+  own target as without `hide`; so does a hidden host refused. With
+  `shown` 1, `hide` changes nothing. Send it only to a service whose hello
+  has `host_hide` 1; an older one ignores it, and its `shown` 0 puts the
+  picture back on its own target.
 - **Stacking.** The live host's producer's videos (another client's on
   `into` with `hosted` the hosted target) are drawn just under the anchor,
   or just over it when the anchor is `exclusive`, so no exclusive layer of
