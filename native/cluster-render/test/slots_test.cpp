@@ -2259,6 +2259,69 @@ static void guide_gives_up()
     ok("a fourth: given up", held == 4 && logged().find("hold given up") != std::string::npos);
 }
 
+/* Issue 281, as on the car (24 Nov): the box and the seat-belt panel
+ * mapped in the same moment while the hold is asked for, the panel coming
+ * and going every 10 s. Yielded to each time, no loss: never given up. */
+static void guide_yields_not_losses()
+{
+    GuideRig r;
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    logged();
+    int asked = 0;
+    for (int k = 0; k < 5; k++) {
+        r.pass();
+        if (joined().find("request guide") == std::string::npos)
+            break;
+        asked++;
+        r.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 1}});
+        r.pass();
+        joined();
+        r.pass(10000);
+        r.rows(kGuideSlot, 2, {{kBox, 1}});   /* the panel goes */
+    }
+    r.pass();
+    ok("five yields to the seat-belt panel within 60 s while acquiring: asked for again each time, not given up",
+       asked == 5 && joined().find("request guide") != std::string::npos &&
+           logged().find("given up") == std::string::npos);
+}
+
+/* Given up after real losses; the user turns Hide off and on (guide_hold
+ * false, then true): asked for again. */
+static void guide_given_up_held_again()
+{
+    GuideRig r;
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    logged();
+    int requests = 0;
+    for (int k = 0; k < 6; k++) {
+        bool asked = false;
+        for (int64_t w = 0; w < 30000 && !asked; w += 100) {
+            r.pass(100);
+            asked = joined().find("request guide") != std::string::npos;
+        }
+        if (!asked)
+            break;
+        requests++;
+        r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        r.m.on_shown(kGuideScene, r.now);
+        r.rows(kGuideSlot, 2, {{kBox, 1}});
+        r.m.on_lost(kGuideScene, "fetch removed", r.now);
+    }
+    r.pass(5000);
+    ok("four losses: given up", requests == 4 && joined().find("request guide") == std::string::npos &&
+                                    logged().find("hold given up") != std::string::npos);
+    r.m.want(0, true, true, false);
+    r.pass(1000);
+    ok("Hide off: still not asked for", joined().find("request guide") == std::string::npos);
+    r.m.want(0, true, true, true);
+    r.pass();
+    ok("Hide on again: asked for again, logged",
+       joined().find("request guide") != std::string::npos &&
+           logged().find("target guide: the hold may be asked for again") != std::string::npos);
+}
+
 /* Losses until the hold gives up: yields, the seat-belt panel shown over
  * the hold (BMW's own content), or else faults, our scene unmapped with
  * only the box (on the take-over list) in the slot, Dcsm2 staying up (the
@@ -4567,6 +4630,8 @@ int main()
     guide_never_verified_out();
     guide_live_route();
     guide_yields();
+    guide_yields_not_losses();
+    guide_given_up_held_again();
     guide_not_mapped();
     guide_door_lock();
     guide_take_over_settle();

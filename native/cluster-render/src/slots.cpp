@@ -295,6 +295,14 @@ void SlotManager::follow(int64_t now_ms)
             log_info("target %s: %s", specs_[i].name.c_str(),
                      declined ? "not held: a layer of the target it follows has guide_hold 0"
                               : "held again while the target it follows is shown");
+        /* Let hold again (the user turned it off and on): a give-up ends. */
+        if (t.declined && !declined && (t.given_up || !t.losses.empty())) {
+            if (t.given_up)
+                log_info("target %s: the hold may be asked for again: the target it follows lets it hold again",
+                         specs_[i].name.c_str());
+            t.given_up = false;
+            t.losses.clear();
+        }
         t.declined = declined;
         /* The box mapped in the slot, or, while held, within kNotMappedMs of
          * the last pass it was: a take-over's unmap and the HMI's map again
@@ -333,8 +341,6 @@ void SlotManager::follow(int64_t now_ms)
                          specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
             t.yielding = y;
         }
-        if (y && t.requested && !t.lost_parked)
-            note_loss(i, "yielded to other content", now_ms);
         if ((y || t.given_up) && (t.requested || t.kept))
             release(i, now_ms);
         want(i, shown && !y && !t.given_up, true);
@@ -384,7 +390,7 @@ void SlotManager::note_loss(int i, const char *how, int64_t now_ms, bool move)
         return;
     t.given_up = true;
     log_warn("target %s: hold given up: its scene %s, %zu losses within %lld s; not asked for again until "
-             "cluster-render restarts; slot 0x%llx %s",
+             "cluster-render restarts or the target it follows lets it hold again; slot 0x%llx %s",
              specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
 }

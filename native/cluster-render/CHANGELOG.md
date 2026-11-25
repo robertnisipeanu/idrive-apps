@@ -19,6 +19,11 @@ not, a frame that came before waits up to that long for a newer one, so a
 map shown again is drawn with its newest picture first; the target's
 other layers are written meanwhile. The hello's
 `fresh_ms` 1 says the service takes it.
+A hold that yields to BMW's own content in its slot (the rear seat-belt
+panel, which comes and goes on its own) no longer counts that as a loss,
+so it no longer gives up over it. A hold that has given up is asked for
+again when the target it follows lets it hold again (Hide BMW's turn box
+off and on), without a restart.
 
 ## 0.8.13
 

@@ -527,11 +527,12 @@ public:
      * target (lock_holds). A hold that yields or gives up is released at
      * once. A take-over of a hold unmaps only take_over_contents: the one
      * shown in its slot and those that can be parked ahead of ours
-     * (Target::ahead). A hold gives up for the rest of the process when its
-     * scene is lost (removed, unmapped, parked again behind other content,
-     * or released to yield) with the slot not locked, or moves to another
-     * slot (TargetSpec::table_slots), more than kHoldLosses times within
-     * kHoldLossMs. */
+     * (Target::ahead). A hold gives up when its scene is lost (removed,
+     * unmapped, parked again behind other content) with the slot not locked,
+     * or moves to another slot (TargetSpec::table_slots), more than
+     * kHoldLosses times within kHoldLossMs; a yield is no loss. The give-up
+     * lasts until cluster-render restarts or until the target it follows
+     * lets it hold again (guide_hold false, then true). */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kNoMapping = INT64_MIN / 2;
