@@ -347,6 +347,7 @@ void MapFeed::poll(int64_t now_ms)
         log_warn("render: the hosted layer refused: the map on %s instead, until the host changes", cfg_.target.c_str());
         remake_layer();
     }
+    follow_seen(now_ms);
     send_pending(now_ms);
     if (connected_ && !client_.connected()) {
         connected_ = false;
@@ -389,11 +390,12 @@ void MapFeed::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
 {
     if (layer_ && client_.connected())
         frames_++;
-    if (scaling_ || !sending() || !client_.frame(layer_, atlas, id)) {
+    if (scaling_ || !sending() || unseen_held(now_ms) || !client_.frame(layer_, atlas, id)) {
         hold(atlas, id);
     } else {
         id_ = id;
         held_new_ = elsewhere_ = in_worker_ = false;
+        unseen_sent_ms_ = now_ms;
     }
     send_pending(now_ms);
     count_second(now_ms);
@@ -416,7 +418,8 @@ void MapFeed::repeat(uint64_t id, int64_t now_ms)
     id_ = id;
     if (layer_ && client_.connected())
         frames_++;
-    if (sending())
+    /* a held picture is a frame: unseen, it waits its turn */
+    if (sending() && !(held_new_ && unseen_held(now_ms)))
         send_newest();
     count_second(now_ms);
 }
@@ -439,8 +442,11 @@ void MapFeed::send_pending(int64_t now_ms)
     }
     /* a VPP-made picture goes as it is, after the worker's */
     if (held_part_.set()) {
-        if (held_new_ && sending() && worker_.idle())
+        if (held_new_ && sending() && worker_.idle() && !unseen_held(now_ms)) {
             held_new_ = !client_.frame(layer_, &held_, id_);
+            if (!held_new_)
+                unseen_sent_ms_ = now_ms;
+        }
         return;
     }
     if (!scaling_ || !held_new_ || elsewhere_ || in_worker_ || !sending() || now_ms < next_send_ms_ ||
@@ -452,7 +458,7 @@ void MapFeed::send_pending(int64_t now_ms)
         unsigned fps = cfg_.video.fps;
         if (fps_cap() && (!fps || fps_cap() < fps))
             fps = fps_cap();
-        next_send_ms_ = now_ms + (fps ? 1000 / (int64_t)fps : 0);
+        next_send_ms_ = now_ms + std::max<int64_t>(fps ? 1000 / (int64_t)fps : 0, unseen() ? kUnseenMs : 0);
     }
 }
 
@@ -491,6 +497,34 @@ bool MapFeed::disabled() const
 {
     auto d = client_.disabled.find(cfg_.target);
     return client_.connected() && d != client_.disabled.end() && d->second;
+}
+
+bool MapFeed::unseen() const
+{
+    if (hosted() && !host_.shown)
+        return true;
+    return layer_ && client_.connected() && lo_.visible && (layer_state_ == "waiting" || layer_state_ == "suspended");
+}
+
+bool MapFeed::unseen_held(int64_t now_ms) const
+{
+    return now_ms - unseen_sent_ms_ < kUnseenMs && unseen();
+}
+
+void MapFeed::follow_seen(int64_t now_ms)
+{
+    const bool unseen = this->unseen();
+    if (unseen == unseen_)
+        return;
+    unseen_ = unseen;
+    log_info("render: the map on %s %s", drawn_target().c_str(),
+             unseen ? "is not seen: a frame a second at most" : "is seen: its frames at their rate");
+    if (unseen)
+        return;
+    next_send_ms_ = 0;   /* a layer that scales: the newest picture to the worker now */
+    unseen_sent_ms_ = now_ms - kUnseenMs;
+    if (sending())
+        send_newest();
 }
 
 int64_t MapFeed::wake_in_ms(int64_t now_ms) const

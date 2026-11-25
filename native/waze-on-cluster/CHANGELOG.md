@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+While the map is not seen (its slot not on the cluster, the cluster on
+other content or asleep, the HUD giving way to BMW's lists, or the app
+hosting it hiding it), the head unit makes and sends one map picture a
+second instead of every frame, and the HUD map is scaled no more often.
+The phone's stream is still decoded, so the map is back with its newest
+picture the moment it is seen again.
+
 ## 0.14.16
 
 A map setting the app saves for one driver profile goes into that

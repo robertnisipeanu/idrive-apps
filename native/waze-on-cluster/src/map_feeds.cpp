@@ -77,6 +77,12 @@ bool MapFeeds::wants_frames() const
     return cluster_ || (hud_ && hud_->takes_frames());
 }
 
+bool MapFeeds::unseen() const
+{
+    const bool hud = hud_ && hud_->takes_frames();
+    return (cluster_ || hud) && (!cluster_ || cluster_->unseen()) && (!hud || hud_->unseen());
+}
+
 void MapFeeds::set_hud_width(unsigned pct)
 {
     if (pct > kHudMaxPct)

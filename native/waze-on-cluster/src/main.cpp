@@ -366,8 +366,11 @@ int serve(Config cfg)
                          feed.fps_cap_app().c_str(), target_fps ? std::min(fps_cap, target_fps) : fps_cap, pictures);
             else
                 log_info("render: the map back at %u updates a second, pictures as configured", target_fps);
-            producer.set_picture_fps(rate);
         }
+        /* Nothing of the map seen: kUnseenFps pictures a second, the newest
+         * frame's at once when it is seen again (picture_pace.h). */
+        producer.set_picture_fps(feed.unseen() ? kUnseenFps
+                                               : picture_rate(vc.picture_fps, fps_cap, target_fps, picture_floor));
         if (fc.vpp_scale)
             producer.set_part(feed.part());
         producer.retry_sources(now);

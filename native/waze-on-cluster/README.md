@@ -115,7 +115,12 @@ cluster stream is live. When the stream ends, stays blank for `blank_ms`
 cluster's own content until the next picture. The render runs from boot and
 decodes whether or not the map is shown, since the phone sends a keyframe
 only when its stream starts: a render that missed the start shows nothing
-until the phone reconnects.
+until the phone reconnects. While cluster-render reports the map not seen
+(its target not on screen: the cluster shows other content in the slot,
+the slot is locked, the cluster is asleep, the HUD gives way; under another
+app's exclusive layer; or hidden by its host), a picture is made and sent
+at most once a second; the newest one goes the moment the map is seen
+again.
 
 **BMW's turn box.** While the map shows, BMW's CarPlay turn-by-turn box on
 the cluster is hidden (cluster-render README, "Guide hold"). The app's

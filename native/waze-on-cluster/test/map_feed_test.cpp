@@ -62,6 +62,11 @@
  *   gone, back on its own target; no part asked of the decoder (by default);
  *   a host whose place cannot be drawn (its part misses the map, its rect
  *   too small): on its own target instead;
+ * - unseen (unseen_map): under another app's exclusive alert the map's
+ *   frames reach the renderer at most once a second, never stalling it;
+ *   seen again, the newest picture first and every frame again; hidden by
+ *   a scene host, unseen; MapFeeds unseen only while every feed is, each
+ *   unseen feed sending and scaling once a second beside a seen one;
  * - hosted by a theme's layers, no scene (layers_hosting): in the panel at
  *   the host's rect, its layer marked as the hosted map and so under the
  *   theme's layers; back on its own target while
@@ -547,9 +552,11 @@ static void hosting()
     ok("hidden by the host: no layer, nothing sent, idle with the reason",
        r.svc->compositor().layers().empty() && r.st().state == "idle" && r.st().reason == MapFeed::kHostHidden &&
            r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+    ok("hidden by the host: unseen (map_feed.h)", r.feed->unseen());
     h.shown = true;
     design.host(sc, h);
     r.pump(1500);
+    ok("shown again by the host: seen", !r.feed->unseen());
     ok("shown again: the newest picture's part first", r.st().state == "showing" &&
                                                          r.drawing("panel", crop_of(f2, 264, 40, 560, 400), &with) && with);
 
@@ -1130,6 +1137,160 @@ static void renderer_changed()
     }
 }
 
+/* An exclusive alert of another app over a target: every layer under it
+ * suspended (what a map whose slot is not on the cluster also gives the
+ * feed: its layer waiting). */
+static uint32_t alert_over(cr::Client *c, const char *target)
+{
+    cr::LayerOptions lo;
+    lo.target = target;
+    lo.klass = "alert";
+    lo.exclusive = true;
+    lo.w = lo.h = 64;
+    cr::ImageOptions io;
+    io.w = io.h = 64;
+    const uint32_t a = c->image(lo, io);
+    const std::vector<uint8_t> px(64 * 64 * 4, 255);
+    c->pixels(a, {}, px.data(), px.size());
+    return a;
+}
+
+/* Unseen (map_feed.h): the map suspended under another app's exclusive
+ * alert is not seen; its frames reach the renderer at most once a second,
+ * enough that it never stalls, the app told it waits under an alert; the
+ * alert gone, the map seen again draws the newest picture first, at once,
+ * and takes every frame again. Hidden by a scene host: unseen too (hosting
+ * above). MapFeeds: unseen only while every feed that takes frames is: the
+ * cluster's under an alert with the HUD's shown is seen; both under alerts,
+ * or the cluster's alone, unseen; and each feed, unseen, scales and sends at
+ * most once a second while the other takes its frames at its rate. */
+static void unseen_map()
+{
+    const std::vector<uint8_t> f1 = atlas(21), f2 = atlas(22);
+    Rig r(false, 6000);
+    r.pump(1500, &f1);
+    ok("unseen: shown, seen", r.st().state == "showing" && !r.feed->unseen());
+    cr::Client app("alerting", r.path);
+    r.other = &app;
+    const uint32_t a = alert_over(&app, "map");
+    r.pump(1000, &f1);
+    ok("unseen: under another app's exclusive alert, not seen, the app told why",
+       r.feed->unseen() && r.st().state == "starting" && r.st().reason == "under an alert on the cluster");
+    const unsigned long long before = r.received();
+    r.pump(8000, &f1);   /* 123 frames, at a frame each 65 ms */
+    const unsigned long long sent = r.received() - before;
+    ok("unseen: a frame a second at most reaches the renderer", sent >= 4 && sent <= 9);
+    ok("unseen: past stall_ms, still fed: under the alert, not stalled",
+       r.st().state == "starting" && r.st().reason == "under an alert on the cluster");
+    /* the newest picture, held: offered right after a frame went */
+    bool held = false;
+    for (int step = 0; step < 40; step++) {
+        const unsigned long long n = r.received();
+        r.pump(65, &f1);   /* one frame, offered at its start */
+        if (r.received() != n) {
+            r.spare.assign(f2.begin(), f2.end());
+            r.feed->offer(&r.spare, (uint64_t)r.now, r.now);
+            r.pump(5);
+            held = r.received() == n + 1;
+            break;
+        }
+    }
+    ok("unseen: a picture offered within the second after a frame went is held", held);
+    app.drop(a);
+    for (int step = 0; step < 300 && r.st().state != "showing"; step++)
+        r.pump(5);
+    r.pump(100);   /* no frame offered since */
+    bool with = false;
+    ok("seen again: at once the newest picture, held while unseen",
+       r.st().state == "showing" && !r.feed->unseen() && r.drawing("map", f2, &with) && with);
+    const unsigned long long again = r.received();
+    r.pump(2000, &f1);
+    ok("seen again: every frame reaches the renderer", r.received() - again >= 28 && r.st().state == "showing");
+    r.other = nullptr;
+
+    /* MapFeeds, the cluster's and the HUD's */
+    Rig b(false, 6000, false, true, true);
+    b.feed.reset();
+    FeedConfig fc;
+    fc.socket = b.path;
+    fc.video.level_bits = 0;
+    MapFeeds feeds(fc, true, true, 10);
+    feeds.set_stream(true, false, Picture::Shown);
+    cr::Client other("alerting", b.path);
+    std::vector<uint8_t> spare;
+    unsigned seq = 0;
+    const auto pump = [&](int64_t ms) {
+        for (int64_t t = 0; t < ms; t += 5) {
+            b.now += 5;
+            if (t % 65 == 0) {
+                spare.assign(f1.begin(), f1.end());
+                spare[(seq++) % 1088] ^= 0x80;   /* a moving map: each frame another picture */
+                feeds.offer(&spare, (uint64_t)b.now, b.now);
+            }
+            for (int round = 0; round < 400; round++) {
+                std::vector<pollfd> fds;
+                const size_t first = b.svc->poll_fds(&fds);
+                const int n = ::poll(fds.data(), fds.size(), 0);
+                b.port.tick(b.now);
+                b.svc->after_poll(fds, first, b.now);
+                const bool pending = (feeds.cluster() && feeds.cluster()->wants_write()) ||
+                                     (feeds.hud_feed() && feeds.hud_feed()->wants_write()) || other.wants_write();
+                const bool busy = scaling(feeds, b.now);
+                if (busy)
+                    usleep(1000);
+                feeds.poll(b.now);
+                other.poll(b.now);
+                if (round > 0 && n <= 0 && !pending && !busy)
+                    break;
+            }
+        }
+    };
+    const auto frames_on = [&](const char *target) {
+        unsigned long long sum = 0;
+        for (const crs::Layer *l : b.svc->compositor().layers()) {
+            if (b.svc->slots().targets()[l->target()].name != target || std::string(l->kind()) != "video")
+                continue;
+            unsigned long long n[4] = {};
+            std::sscanf(l->stats().c_str(), "%llu sent, %llu unchanged, %llu within threshold, %llu superseded",
+                        &n[0], &n[1], &n[2], &n[3]);
+            sum += n[0] + n[1] + n[2] + n[3];
+        }
+        return sum;
+    };
+    pump(2000);
+    ok("MapFeeds: both shown, seen", !feeds.unseen() && feeds.status("d").state == "showing" &&
+                                         feeds.status("d").hud_state == "showing");
+    const uint32_t over_map = alert_over(&other, "map");
+    pump(1000);
+    unsigned long long m0 = frames_on("map"), h0 = frames_on("hud");
+    pump(4000);
+    const unsigned long long map_sent = frames_on("map") - m0, hud_sent = frames_on("hud") - h0;
+    ok("MapFeeds: the cluster's under an alert, the HUD's shown: seen", !feeds.unseen() &&
+                                                                          feeds.cluster()->unseen() &&
+                                                                          !feeds.hud_feed()->unseen());
+    ok("MapFeeds: the unseen cluster's frames once a second, the HUD's at hud_fps",
+       map_sent >= 2 && map_sent <= 6 && hud_sent >= 30);
+    const uint32_t over_hud = alert_over(&other, "hud");
+    pump(1000);
+    m0 = frames_on("map");
+    h0 = frames_on("hud");
+    pump(4000);
+    ok("MapFeeds: both under alerts: unseen", feeds.unseen());
+    const unsigned long long hud_unseen = frames_on("hud") - h0;
+    ok("MapFeeds: the unseen HUD scales and sends once a second", hud_unseen >= 2 && hud_unseen <= 6);
+    other.drop(over_hud);
+    pump(1000);
+    ok("MapFeeds: the HUD shown again: seen", !feeds.unseen() && !feeds.hud_feed()->unseen());
+    feeds.set_hud(false);
+    pump(500);
+    ok("MapFeeds: the cluster's alone, under the alert: unseen", feeds.unseen());
+    other.drop(over_map);
+    pump(1000);
+    ok("MapFeeds: the alert gone: seen, showing", !feeds.unseen() && feeds.status("d").state == "showing");
+    feeds.set_cluster(false);
+    ok("MapFeeds: neither: not unseen (no pictures at all)", !feeds.unseen() && !feeds.wants_frames());
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -1141,6 +1302,7 @@ int main()
     always_packed_map();
     old_renderer();
     renderer_changed();
+    unseen_map();
     Rig r;
     r.pump(100);
     const crs::Layer *l = r.map_layer();

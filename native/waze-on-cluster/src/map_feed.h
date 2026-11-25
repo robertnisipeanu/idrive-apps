@@ -57,7 +57,17 @@
  * part the layer no longer shows (the host moved or went) is dropped. Only
  * a whole frame (before VPP has the part, or when it cannot make it) goes
  * through the worker. A layer made for another part, or for none, starts
- * from the next frame, not a part of the old one. */
+ * from the next frame, not a part of the old one.
+ *
+ * Unseen: while the renderer reports the visible layer waiting (its target
+ * not on screen: the cluster shows other content in the slot, the slot is
+ * locked, the cluster is asleep, the slot not given yet) or suspended under
+ * another app's exclusive layer, and while its host hides it, nothing of
+ * the map is seen. Its frames then go at most once every kUnseenMs, and a
+ * layer that scales scales no more often, so the layer stays fed (never
+ * stalled); the rest are held. The moment it is seen again (the renderer reports it shown, or the
+ * host shows it), the newest picture goes at once. A layer the stream hides
+ * is not unseen: its frames go nowhere, as above. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 
@@ -162,6 +172,8 @@ public:
     static const char *const kHostHidden;
     /* How often poll() looks for the worker's frame while it scales. */
     static const int64_t kScaleWaitMs = 5;
+    /* Unseen (the header's "Unseen"): a frame at most this often. */
+    static const int64_t kUnseenMs = 1000;
 
     explicit MapFeed(const FeedConfig &cfg);
 
@@ -221,6 +233,8 @@ public:
     bool latest(std::vector<uint8_t> *out) const;
     /* cluster-render reports the target disabled. */
     bool disabled() const;
+    /* Nothing of the map is seen (the header's "Unseen"). */
+    bool unseen() const;
     /* Frames scaled for this feed. */
     uint64_t scaled_frames() const { return worker_.frames(); }
 
@@ -269,6 +283,10 @@ private:
     void send_newest();
     /* Makes the layer visible once the newest frame has gone. */
     void show_when_sent();
+    /* Unseen, and a frame went within kUnseenMs: the next one waits. */
+    bool unseen_held(int64_t now_ms) const;
+    /* Seen again after unseen: the newest picture at once. */
+    void follow_seen(int64_t now_ms);
 
     FeedConfig cfg_;
     cr::Client client_;
@@ -317,6 +335,8 @@ private:
      * held_new_ (else the layer's last), never a whole picture. */
     OutputPart held_part_;
     const char *unpacked_why_ = nullptr;   /* why always_packed did not apply, as last logged */
+    bool unseen_ = false;                  /* unseen() at the last poll */
+    int64_t unseen_sent_ms_ = -kUnseenMs;  /* when the last frame went */
 };
 
 }  // namespace woc
