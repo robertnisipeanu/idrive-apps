@@ -62,9 +62,11 @@
  *   gone, back on its own target; no part asked of the decoder (by default);
  *   a host whose place cannot be drawn (its part misses the map, its rect
  *   too small): on its own target instead;
- * - unseen (unseen_map): parked behind the stock map the map's frames
- *   reach the renderer at most once a second, never stalling it; seen
- *   again, the newest picture first and every frame again; under an
+ * - unseen (unseen_map): parked behind the stock map no frame reaches the
+ *   renderer, a repeat a second keeps the layer (every quarter of stall_ms
+ *   at the smallest), never stalling it; seen again, the newest picture is
+ *   the first written, never one sent as the slot was taken or held, then
+ *   every frame; under an
  *   exclusive alert, still written, seen; hidden by a scene host, unseen;
  *   MapFeeds unseen only while every feed is (the HUD giving way to BMW's
  *   lists, also once resized), each unseen feed sending and scaling once a second beside a
@@ -72,13 +74,16 @@
  * - hosted by a theme's layers, no scene (layers_hosting): in the panel at
  *   the host's rect, its layer marked as the hosted map and so under the
  *   theme's layers; back on its own target while
- *   they are hidden and once the theme is gone;
+ *   they are hidden, with shown 0 and once the theme is gone; with shown 0
+ *   and hide, hidden: no layer, unseen;
  * - the cluster's map hosted (hosted_wake): a frame with the scaling worker
  *   wakes the service's loop to take it, and its part is drawn;
  * - hosted with hosted_vpp_scale (vpp_hosting): the host's part asked of the
  *   decoder at the size it is shown at, a whole frame meanwhile scaled by
  *   the worker, a VPP-made one sent as it is, one of another part dropped,
- *   the host's move asking for its new part, the host gone, none;
+ *   the host's move asking for its new part, the panel taken (unseen:
+ *   parts held, the loop not woken for them) and back (the newest part),
+ *   the host gone, none;
  * - always_packed (always_packed_map): 0, the layer without always_packed and a still
  *   map exact; 1, every update packed, a still map's too, never exact; with
  *   hosted_vpp_scale the VPP-made part packed; a host's part not a multiple
@@ -669,6 +674,35 @@ static void layers_hosting()
     r.pump(2500, &f);
     ok("layer host: shown again: hosted again", r.st().target == "panel" && r.st().hosted);
 
+    /* The theme on a page without the map: shown 0. Without hide, the map
+     * on its own target, under the panel; with hide, hidden: no layer at
+     * all, unseen. */
+    const auto videos = [&r]() {
+        int n = 0;
+        for (const crs::Layer *l : r.svc->compositor().layers())
+            n += std::string(l->kind()) == "video";
+        return n;
+    };
+    cr::Host nowhere = h;
+    nowhere.shown = false;
+    theme->host(nowhere);
+    r.pump(2500, &f);
+    ok("layer host: shown 0 without hide: the map on its own target, seen",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && !r.feed->unseen());
+    nowhere.hide = true;
+    theme->host(nowhere);
+    r.pump(2500, &f);
+    ok("layer host: shown 0 with hide: hidden, no layer anywhere, the map's slot released, unseen",
+       r.st().state == "idle" && r.st().reason == MapFeed::kHostHidden && r.feed->unseen() && videos() == 0 &&
+           r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+    const std::vector<uint8_t> f2 = atlas(6);
+    r.pump(500, &f2);
+    theme->host(h);
+    r.pump(2500);
+    ok("layer host: shown 1 again: hosted, the newest picture's part, seen",
+       r.st().state == "showing" && r.st().target == "panel" && !r.feed->unseen() &&
+           r.drawing("panel", crop_of(f2, 264, 40, 560, 400), &with) && with);
+
     r.other = nullptr;
     theme.reset();
     r.pump(2500, &f);
@@ -826,6 +860,24 @@ static void vpp_hosting()
     ok("vpp: the host moved, its new part asked for", r.feed->part() == other);
     r.pump(1000, &p3);
     ok("vpp: the new part's frames shown", r.drawing("panel", p3, &with) && with && r.feed->scaled_frames() == scaled);
+
+    /* The stock HMI takes the panel: unseen; the part's frames held, none
+     * sent, the loop not woken for them; the panel back, the newest part. */
+    const std::vector<uint8_t> p4 = crop_of(f2, 200, 40, 560, 400);
+    r.port.steal(r.sc.targets[1], 0x01000201);
+    r.pump(1000, &p3);
+    int spins = 0;
+    for (int step = 0; step < 200; step++) {
+        r.pump(5, &p4, 5);
+        spins += r.feed->wake_in_ms(r.now) <= 5;
+    }
+    ok("vpp: the panel taken: unseen, the part's frames held, the loop not woken for them",
+       r.feed->unseen() && r.drawing("panel", p3, &with) && with && spins <= 3);
+    r.port.stock_unmap(0x203, 0x01000201);
+    for (int step = 0; step < 600 && r.st().state != "showing"; step++)
+        r.pump(5);
+    r.pump(100);
+    ok("vpp: the panel back: seen, the newest part first", !r.feed->unseen() && r.drawing("panel", p4, &with) && with);
 
     design.drop(sc);
     r.part = OutputPart();
@@ -1195,33 +1247,74 @@ static void unseen_map()
     const unsigned long long before = r.received();
     r.pump(8000, &f1);   /* 123 frames, at a frame each 65 ms */
     const unsigned long long sent = r.received() - before;
-    ok("unseen: a frame a second at most reaches the renderer", sent >= 4 && sent <= 9);
+    ok("unseen: no frame, a repeat a second reaches the renderer", sent >= 4 && sent <= 9);
     ok("unseen: past stall_ms, still fed: parked, not stalled",
        r.feed->unseen() && r.st().reason == "the stock map holds the slot");
-    /* the newest picture, held: offered right after a frame went */
-    bool held = false;
-    for (int step = 0; step < 40; step++) {
-        const unsigned long long n = r.received();
-        r.pump(65, &f1);   /* one frame, offered at its start */
-        if (r.received() != n) {
-            r.spare.assign(f2.begin(), f2.end());
-            r.feed->offer(&r.spare, (uint64_t)r.now, r.now);
-            r.pump(5);
-            held = r.received() == n + 1;
-            break;
-        }
-    }
-    ok("unseen: a picture offered within the second after a frame went is held", held);
     r.port.stock_unmap(0x100, kStock);
-    for (int step = 0; step < 300 && r.st().state != "showing"; step++)
+    for (int step = 0; step < 400 && r.st().state != "showing"; step++)
         r.pump(5);
-    r.pump(100);   /* no frame offered since */
-    bool with = false;
-    ok("seen again: at once the newest picture, held while unseen",
-       r.st().state == "showing" && !r.feed->unseen() && r.drawing("map", f2, &with) && with);
+    r.pump(500, &f1);
+
+    /* The first write when it is seen again: a frame sent as the slot is
+     * taken (before the feed knows) is never written, nor the pictures held
+     * meanwhile; the newest is, at once. */
+    const std::vector<uint8_t> f_pend = atlas(23), f_mid = atlas(24), f_new = atlas(25);
+    r.port.steal(r.sc.targets[0], kStock);
+    r.spare.assign(f_pend.begin(), f_pend.end());
+    r.feed->offer(&r.spare, (uint64_t)r.now, r.now);
+    r.pump(1000, &f_mid);
+    r.spare.assign(f_new.begin(), f_new.end());
+    r.feed->offer(&r.spare, (uint64_t)r.now, r.now);
+    bool stale = false;
+    const auto drawn = [&r](const std::vector<uint8_t> &f) {
+        bool w = false;
+        r.drawing("map", f, &w);
+        return w;
+    };
+    ok("unseen: the frames sent and held while parked never written",
+       r.feed->unseen() && !drawn(f_pend) && !drawn(f_mid));
+    r.port.stock_unmap(0x100, kStock);
+    int steps = 0;
+    for (; steps < 400 && r.st().state != "showing"; steps++) {
+        r.pump(5);
+        stale = stale || drawn(f_pend) || drawn(f_mid);
+    }
+    bool fresh = false;
+    for (int step = 0; step < 20 && !fresh; step++) {   /* 100 ms */
+        r.pump(5);
+        stale = stale || drawn(f_pend) || drawn(f_mid);
+        fresh = drawn(f_new);
+    }
+    ok("seen again: the first picture written is the newest, within 100 ms, never an older one",
+       steps < 400 && fresh && !stale && !r.feed->unseen());
     const unsigned long long again = r.received();
     r.pump(2000, &f1);
     ok("seen again: every frame reaches the renderer", r.received() - again >= 28 && r.st().state == "showing");
+
+    /* The smallest stall_ms (idle_ms 1000): parked for 5 s (asking for the
+     * slot again now and then), kept by repeats, never stalled. */
+    {
+        Rig q(false, 1000);
+        q.sc.targets[0].take_over_stock = false;
+        q.start();
+        q.pump(1500, &f1);
+        q.port.steal(q.sc.targets[0], kStock);
+        q.pump(500, &f1);
+        bool kept = true;
+        int unseen_steps = 0, repeated = 0;
+        for (int step = 0; step < 50; step++) {
+            const bool was = q.feed->unseen();
+            const unsigned long long n = q.received();
+            q.pump(100, &f1);
+            kept = kept && q.st().state == "starting";
+            if (was && q.feed->unseen()) {
+                unseen_steps++;
+                repeated += q.received() != n;
+            }
+        }
+        ok("unseen, stall_ms 1000: parked 5 s, never stalled, unseen most of it, a repeat every quarter of stall_ms",
+           kept && unseen_steps >= 30 && repeated * 100 >= unseen_steps * 30);
+    }
 
     /* MapFeeds, the cluster's and the HUD's */
     Rig b(false, 6000, false, true, true);
@@ -1282,7 +1375,7 @@ static void unseen_map()
     const unsigned long long map_sent = frames_on("map") - m0, hud_sent = frames_on("hud") - h0;
     ok("MapFeeds: the cluster's parked, the HUD's shown: seen",
        !feeds.unseen() && feeds.cluster()->unseen() && !feeds.hud_feed()->unseen());
-    ok("MapFeeds: the unseen cluster's frames once a second, the HUD's at hud_fps",
+    ok("MapFeeds: the unseen cluster's a repeat a second, the HUD's frames at hud_fps",
        map_sent >= 2 && map_sent <= 6 && hud_sent >= 30);
     b.port.stock_map(0x322, 0x01000322);   /* BMW's list on the HUD: it gives way */
     pump(1000);
@@ -1291,13 +1384,13 @@ static void unseen_map()
     pump(4000);
     ok("MapFeeds: the HUD giving way to BMW's list too: unseen", feeds.unseen() && feeds.hud_feed()->unseen());
     const unsigned long long hud_unseen = frames_on("hud") - h0;
-    ok("MapFeeds: the unseen HUD scales and sends once a second", hud_unseen >= 2 && hud_unseen <= 6);
+    ok("MapFeeds: the unseen HUD scales nothing, a repeat a second", hud_unseen >= 2 && hud_unseen <= 6);
     feeds.set_hud_width(60);   /* a new layer at the new size, its target's state unchanged */
     pump(1000);
     h0 = frames_on("hud");
     pump(3000);
     ok("MapFeeds: the HUD resized while giving way: its new layer unseen, once a second",
-       feeds.hud_feed()->unseen() && frames_on("hud") - h0 <= 5);
+       feeds.hud_feed()->unseen() && frames_on("hud") - h0 >= 2 && frames_on("hud") - h0 <= 5);
     b.port.stock_unmap(0x322, 0x01000322);
     pump(3000);
     ok("MapFeeds: the list gone, the HUD back: seen", !feeds.unseen() && !feeds.hud_feed()->unseen() &&

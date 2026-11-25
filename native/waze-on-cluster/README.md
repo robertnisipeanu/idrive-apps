@@ -118,8 +118,9 @@ only when its stream starts: a render that missed the start shows nothing
 until the phone reconnects. While cluster-render reports the map's target
 parked, waiting or unavailable (the cluster shows other content in the
 slot, the slot is locked, the HUD gives way to BMW's lists), or its host
-hides it, a picture is made and sent at most once a second; the newest one
-goes the moment the map is seen again.
+hides it, one picture a second is made and none is sent; the newest goes
+the moment the map is seen again, and is the first one the cluster writes
+(cluster-render's `fresh_ms`).
 
 **BMW's turn box.** While the map shows, BMW's CarPlay turn-by-turn box on
 the cluster is hidden (cluster-render README, "Guide hold"). The app's
@@ -146,7 +147,8 @@ part of the picture, under the theme's layers (the map's layer is marked
 as the hosted map, so cluster-render knows it). With
 `hosted_vpp_scale = 1` the GPU does that scaling instead ("Experimental:
 hosted_vpp_scale and always_packed" below). The app hiding its layers,
-ending the host or exiting puts the map back on its own slot, and so does
+ending the host or exiting puts the map back on its own slot, unless it
+hides the map with `hide` (PROTOCOL.md "Hosting from layers"), and so does
 any host whose place the map cannot be drawn in (its part misses the map,
 or lands smaller than 64x32), a scene's host included.
 

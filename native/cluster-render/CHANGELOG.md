@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+A host from layers sent with `hide` and `shown` 0 hides the hosted picture
+while its target is on screen, rather than putting it back on its own slot
+under the app's layers: a cluster theme on a page without the map widget
+then has the map shown nowhere, and Maps on cluster sends no frames for it.
+It goes back to its own slot, as without `hide`, when that target leaves the screen.
+The hello's `host_hide` 1 says the service takes it.
+
+A video layer's `fresh_ms`: when its target is written again after it was
+not, a frame that came before waits up to that long for a newer one, so a
+map shown again is drawn with its newest picture first. The hello's
+`fresh_ms` 1 says the service takes it.
+
 ## 0.8.13
 
 The service runs in the head unit's slice for standard services, level

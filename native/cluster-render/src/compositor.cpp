@@ -1474,7 +1474,7 @@ void Compositor::host_eligibility(LayerHost &lh) const
     const TargetState st = slots_->status(lh.into).state;
     lh.eligible = lh.over = false;
     lh.wait.clear();
-    if (!lh.host.shown) {
+    if (!lh.host.shown && !lh.host.hide) {
         lh.wait = "it shows the target nowhere (shown 0)";
         return;
     }
@@ -1484,6 +1484,14 @@ void Compositor::host_eligibility(LayerHost &lh) const
     }
     if (!t.graph || !(st == TargetState::Shown || st == TargetState::Lingering || slots_->kept(lh.into))) {
         lh.wait = into + " is not on screen (" + target_state_name(st) + ")";
+        return;
+    }
+    /* Hidden (hide): no picture to stack, so no layer over the rect needed;
+     * lowest in the stack, any shown host on into wins over it. */
+    if (!lh.host.shown) {
+        lh.eligible = true;
+        lh.anchor = 0;
+        lh.top_pos = 0;
         return;
     }
     /* The client's layers drawn and seen over the rect, from its topmost
@@ -1634,7 +1642,8 @@ void Compositor::arrange_layer_hosts()
         host_decided(kv.first.first, kv.second, w == win.end() ? nullptr : w->second, by_scene[kv.first.first]);
     }
     for (const auto &kv : win)
-        host_restack(kv.first, *kv.second);
+        if (kv.second->host.shown)
+            host_restack(kv.first, *kv.second);
 }
 
 const Compositor::LayerHost *Compositor::layer_host_of(int ti, const Entry &e) const
@@ -2162,10 +2171,16 @@ void Compositor::render(int64_t now_ms)
          * drawn once is drawn again, as the display may have dropped its
          * buffers while the scene was not mapped. */
         const bool flushing = slots_->flushing((int)ti);
-        if (flushing && !t.flushing)
+        if (flushing && !t.flushing) {
             for (auto &ck : canvases_)
                 if (ck.second.canvas->target() == (int)ti)
                     ck.second.canvas->touch();
+            /* and a video's frame from before may wait for a newer one (fresh_ms) */
+            for (auto &kv : layers_)
+                if (kv.second.layer->target() == (int)ti && !kv.second.composited &&
+                    !std::strcmp(kv.second.layer->kind(), "video"))
+                    static_cast<VideoLayer *>(kv.second.layer.get())->on_screen_again(now_ms);
+        }
         t.flushing = flushing;
         if ((!t.graph && !t.file) || !flushing)
             continue;

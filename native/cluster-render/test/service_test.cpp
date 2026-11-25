@@ -2240,8 +2240,40 @@ static void hosting_from_layers()
     r.pump(100);
     ok("layer hosts: shown 0: not live, the producer told the map is not hosted, the theme why",
        !b.hosts.count("map") && hosting["map"] == "waiting: it shows the target nowhere (shown 0)");
+
+    /* shown 0 with hide: hosted and shown nowhere while the panel is on
+     * screen, no theme layer needed over the rect; the panel taken, back on
+     * its own target; the panel back, hidden again. */
+    ok("layer hosts: the hello says the service takes hide", a.takes_host_hide());
+    cr::Host hidden_map = nowhere;
+    hidden_map.hide = true;
+    a.host(hidden_map);
+    r.pump(100);
+    ok("layer hosts: shown 0 with hide: live, the producer told the map is in the panel, shown 0",
+       b.hosts.count("map") && b.hosts["map"].into == "panel" && !b.hosts["map"].shown && hosting["map"] == "live");
+    {
+        cr::LayerOptions off_bg = bg_lo, off_frame = frame_lo;
+        off_bg.visible = off_frame.visible = false;
+        a.set(bg, off_bg);
+        a.set(frame, off_frame);
+        r.pump(100);
+        ok("layer hosts: hidden with hide, every theme layer hidden: still hosted, shown 0",
+           b.hosts.count("map") && b.hosts["map"].into == "panel" && !b.hosts["map"].shown);
+        a.set(bg, bg_lo);
+        a.set(frame, frame_lo);
+        r.pump(100);
+    }
+    r.port.steal(r.sc.targets[1]);
+    r.pump(200);
+    ok("layer hosts: hidden with hide, the stock HMI takes the panel: the map back on its own target",
+       !b.hosts.count("map") && told.back().into.empty() && hosting["map"].find("waiting: panel is not on screen") == 0);
+    r.port.free_slot(r.sc.targets[1]);
+    r.pump(2000);
+    ok("layer hosts: the panel back: hosted and hidden again",
+       b.hosts.count("map") && b.hosts["map"].into == "panel" && !b.hosts["map"].shown && hosting["map"] == "live");
     a.host(h);
     r.pump(100);
+    ok("layer hosts: shown 1 again: hosted and shown", b.hosts.count("map") && b.hosts["map"].shown);
 
     /* Another client's video inside the rect, not marked: its own place. */
     cr::VideoOptions small;
@@ -3724,6 +3756,85 @@ static void text_held()
     ok("text held: the font dropped, its atlas with it", assets() == 0 && e.errors.empty());
 }
 
+/* fresh_ms (PROTOCOL.md): a video's frame that came while its target was
+ * not written (parked behind the stock HMI) waits, once the target is shown
+ * again, up to fresh_ms for a newer frame: one that comes is written first,
+ * the older never; with none, the older is written once fresh_ms have
+ * passed. Without fresh_ms the older is written at once. */
+static void fresh_frames()
+{
+    const uint64_t kStock = 0x01000201;
+    const std::vector<uint8_t> f1 = atlas(31), f2 = atlas(32), f3 = atlas(33);
+    const auto holds = [](FakeGraph *g, const std::vector<uint8_t> &f) {
+        bool on = false;
+        if (g)
+            for (const auto &kv : g->shown.buffers)
+                on = on || (kv.second.f == TexFormat::R8 && kv.second.px == f);
+        return on;
+    };
+    for (int fresh = 1; fresh >= 0; fresh--) {
+        Rig r;
+        cr::Client c("fresh", r.path);
+        Events e;
+        e.wire(c);
+        r.clients = {&c};
+        r.pump(50);
+        if (fresh)
+            ok("fresh_ms: the hello says the service takes it", c.takes_fresh_ms());
+        cr::LayerOptions lo;
+        lo.target = "panel";
+        lo.contend = true;
+        lo.w = 1088;
+        lo.h = 480;
+        cr::VideoOptions vo;
+        vo.stall_ms = 600000;
+        vo.level_bits = 0;      /* written as sent */
+        vo.pan_blocks = false;  /* exact */
+        vo.fresh_ms = fresh ? 250 : 0;
+        const uint32_t vid = c.video(lo, vo);
+        c.frame(vid, f1.data(), f1.size(), 1);
+        r.pump(1500);
+        ok(fresh ? "fresh_ms: the first frame shown" : "no fresh_ms: the first frame shown",
+           e.target["panel"] == "shown" && holds(r.gpu.graph("panel"), f1));
+        for (int round = 0; round < 2; round++) {
+            /* a frame right as the stock HMI takes the slot: never written there */
+            r.port.steal(r.sc.targets[1], kStock);
+            c.frame(vid, f2.data(), f2.size(), 2);
+            r.pump(1000);
+            const bool parked = e.target["panel"] != "shown" && holds(r.gpu.graph("panel"), f1);
+            r.port.stock_unmap(0x203, kStock);
+            int steps = 0;
+            for (; steps < 400 && e.target["panel"] != "shown"; steps++)
+                r.pump(5);
+            bool older = holds(r.gpu.graph("panel"), f2);
+            if (round == 0) {
+                /* a newer frame as the client hears it is shown again */
+                c.frame(vid, f3.data(), f3.size(), 3);
+                for (int i = 0; i < 20; i++) {
+                    r.pump(5);
+                    older = older || holds(r.gpu.graph("panel"), f2);
+                }
+                const bool newer = holds(r.gpu.graph("panel"), f3);
+                if (fresh)
+                    ok("fresh_ms: shown again with a newer frame: that written first, the older never",
+                       parked && steps < 400 && newer && !older);
+                else
+                    ok("no fresh_ms: shown again: the older frame written at once", parked && steps < 400 && older);
+                c.frame(vid, f1.data(), f1.size(), 4);
+                r.pump(500);
+            } else if (fresh) {
+                for (int i = 0; i < 30; i++) {   /* 150 ms */
+                    r.pump(5);
+                    older = older || holds(r.gpu.graph("panel"), f2);
+                }
+                r.pump(300);
+                ok("fresh_ms: shown again with no newer frame: the older waits, then is written after fresh_ms",
+                   parked && !older && holds(r.gpu.graph("panel"), f2));
+            }
+        }
+    }
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -4229,6 +4340,7 @@ int main()
     hud_yield_choice();
     display_drops();
     repeats();
+    fresh_frames();
     framing();
     scene_files();
     scene_sequence_ticks();

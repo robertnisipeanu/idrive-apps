@@ -353,6 +353,7 @@ int serve(Config cfg)
         producer.set_live(live, now);
         producer.set_pictures(feed.wants_frames());
         feed.set_stream(live, producer.frozen(now), producer.picture(now));
+        feed.set_picture_coming(producer.picture_pending());
         feed.poll(now);
         if (feed.fps_cap() != fps_cap) {
             fps_cap = feed.fps_cap();
@@ -367,8 +368,6 @@ int serve(Config cfg)
             else
                 log_info("render: the map back at %u updates a second, pictures as configured", target_fps);
         }
-        /* Nothing of the map seen: kUnseenFps pictures a second, the newest
-         * frame's at once when it is seen again (picture_pace.h). */
         producer.set_picture_fps(feed.unseen() ? kUnseenFps
                                                : picture_rate(vc.picture_fps, fps_cap, target_fps, picture_floor));
         if (fc.vpp_scale)

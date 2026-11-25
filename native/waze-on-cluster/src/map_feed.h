@@ -63,11 +63,15 @@
  * target parked, waiting or unavailable (the cluster shows other content
  * in the slot, the slot is locked, the HUD gives way to BMW's lists, the
  * display service is down), states in which it writes nothing of the
- * target, and while its host hides it, nothing of the map is seen. Its
- * frames then go at most once every kUnseenMs, and a layer that scales
- * scales no more often, so the layer stays fed (never stalled); the rest
- * are held. The moment it is seen again (the renderer reports it shown, or
- * the host shows it), the newest picture goes at once. A layer the stream
+ * target, and while its host hides it, nothing of the map is seen. No frame
+ * goes then and nothing is scaled; a repeat of the last frame keeps the
+ * layer from stalling (at least every quarter of stall_ms, at most every
+ * kUnseenMs), and the newest picture is held. The moment it is seen again
+ * (the renderer reports it shown, or the host shows it), the newest picture
+ * goes first, as a frame: the producer's when one is on its way
+ * (set_picture_coming), else the one at hand. The layer's fresh_ms, where
+ * the renderer takes it, keeps a frame of its own from before (one sent as
+ * the slot was taken) from being written ahead of it. A layer the stream
  * hides is not unseen: its frames go nowhere, as above. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
@@ -174,8 +178,10 @@ public:
     static const char *const kHostHidden;
     /* How often poll() looks for the worker's frame while it scales. */
     static const int64_t kScaleWaitMs = 5;
-    /* Unseen (the header's "Unseen"): a frame at most this often. */
+    /* Unseen (the header's "Unseen"): a repeat at least this often. */
     static const int64_t kUnseenMs = 1000;
+    /* The layer's fresh_ms (cluster-render PROTOCOL.md). */
+    static const unsigned kFreshMs = 250;
 
     explicit MapFeed(const FeedConfig &cfg);
 
@@ -237,6 +243,9 @@ public:
     bool disabled() const;
     /* Nothing of the map is seen (the header's "Unseen"). */
     bool unseen() const;
+    /* The producer has the newest frame's picture on its way (VideoProducer::
+     * picture_pending), for the moment the map is seen again. */
+    void set_picture_coming(bool coming) { picture_coming_ = coming; }
     /* Frames scaled for this feed. */
     uint64_t scaled_frames() const { return worker_.frames(); }
 
@@ -285,10 +294,10 @@ private:
     void send_newest();
     /* Makes the layer visible once the newest frame has gone. */
     void show_when_sent();
-    /* Unseen, and a frame went within kUnseenMs: the next one waits. */
-    bool unseen_held(int64_t now_ms) const;
-    /* Seen again after unseen: the newest picture at once. */
     void follow_seen(int64_t now_ms);
+    /* Unseen: a repeat when one is due, so the layer never stalls. */
+    void keep_layer(int64_t now_ms);
+    int64_t keep_every_ms() const;
 
     FeedConfig cfg_;
     cr::Client client_;
@@ -341,7 +350,8 @@ private:
      * connection: it reports a target's again only when it changes */
     std::map<std::string, std::string> target_states_;
     bool unseen_ = false;                  /* unseen() at the last poll */
-    int64_t unseen_sent_ms_ = -kUnseenMs;  /* when the last frame went */
+    int64_t kept_ms_ = 0;                  /* unseen: when it went unseen or the last repeat went */
+    bool picture_coming_ = false;
 };
 
 }  // namespace woc

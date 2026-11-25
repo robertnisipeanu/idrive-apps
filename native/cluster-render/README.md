@@ -320,7 +320,9 @@ Beside the layers:
   (over it when that one is exclusive), so its frame and readouts sit over
   it. The picture goes back to its own target while none of the app's
   layers over the rect is drawn, the panel is not on screen, or a scene
-  hosts it, and when the app ends the host or exits. Of several apps
+  hosts it, and when the app ends the host or exits. A host sent with
+  `hide` and `shown` 0 hides the picture while that target is on screen,
+  instead of putting it back on its own slot under the app's layers. Of several apps
   hosting the same target into one target the one drawn highest over the
   picture wins, so a background app's early host loses to the visible
   theme; across targets the one holding it keeps it while it can, so a

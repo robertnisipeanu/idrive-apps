@@ -4,10 +4,11 @@
 
 While the map is not seen (the cluster showing other content in its
 slot or the slot locked, the HUD giving way to BMW's lists, or the app
-hosting it hiding it), the head unit makes and sends one map picture a
-second instead of every frame, and the HUD map is scaled no more often.
-The phone's stream is still decoded, so the map is back with its newest
-picture the moment it is seen again.
+hosting it hiding it, also a cluster theme on a page without the map),
+the head unit makes one map picture a second instead of one for every
+frame and sends none, and the HUD map is not scaled. The phone's stream is
+still decoded, so the map is back with its newest picture the moment it
+is seen again, never an older one first.
 
 ## 0.14.16
 

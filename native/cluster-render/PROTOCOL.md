@@ -131,6 +131,7 @@ Kind fields:
 | | `pan_blocks` | 1 | fast motion as packed 4x4 blocks |
 | | `always_packed` | 0 | optional; 1: every write as packed 4x4 blocks, never the exact atlas. Each update is planned as an exact one (`dirty_threshold`, `settle_ms`, the tiles), and only the blocks in its tiles that changed are written, in place; the whole packed buffer goes only with the layer's first write in a scene or after a failed one, and a still picture writes nothing. Needs `pan_blocks` 1 and `vh` a multiple of 4, else it is off. A target's shared video has it only when all of its videos do. Send it only to a service whose hello has `always_packed` 1 (a service without it ignores it and writes the layer exact); a layer without it is written exact |
 | | `stall_ms` | 6000 | no frame for this long: the layer is stalled (not drawn) |
+| | `fresh_ms` | 0 | optional, 0-1000; when the target is written again after it was not (parked, waiting, locked, released), a frame that came before, once the layer has written one, waits up to this long for a newer frame before it is written, so a client that sends its newest picture when its layer is shown again (the `layer` event) is drawn with that first, never with an older one. Not for a video drawn through its target's composite. Send it only to a service whose hello has `fresh_ms` 1 (a service without it ignores it) |
 | image | `iw`, `ih` | the rect | the image size, up to 1920x720 |
 | | `fps` | 30 | writes a second at most |
 | | `sampling` | `nearest` | or `bilinear` (a rect of another size than the image) |
@@ -923,7 +924,7 @@ target's name, so the service knows it.
 
 - **Live.** A client's host is *eligible* while it is shown (`shown` 1:
   with `shown` 0 it would show the picture nowhere, so it is not live and
-  the picture stays on its own target), `into` is on screen (its scene
+  the picture stays on its own target, unless the host has `hide`, below), `into` is on screen (its scene
   published, and the target `shown`, `lingering`, or kept through a lock
   with its last flush), `into`'s layers are not waiting for a scene file (one with
   `layers` 1 keeps them drawn), and the client has a layer drawn and seen
@@ -950,6 +951,19 @@ target's name, so the service knows it.
   suspended, the stock HMI taking `into`, or a scene file without `layers`
   coming takes the picture back to its own target; when that ends, it is
   hosted again.
+- **Hidden (`hide`).** A host with `hide` 1 and `shown` 0 is eligible
+  while `into` is on screen and its layers do not wait for a scene file,
+  with no layer of its client needed over the rect: the picture is then
+  hosted and shown nowhere. The `host` event carries `into` with `shown` 0,
+  as for a scene's host, so a producer that follows it draws nothing and
+  its own target's slot is let go (waze-on-cluster then makes about one
+  picture a second). It is the lowest of the hosts on `into`: any shown
+  host there wins over it. When `into` goes off screen, the stock HMI
+  takes it or the host ends, the picture goes back to its own target as
+  without `hide`, so it is never shown nowhere while nothing of `into` is
+  on screen either. With `shown` 1, `hide` changes nothing. Send it only
+  to a service whose hello has `host_hide` 1; an older one ignores it, and
+  its `shown` 0 puts the picture back on its own target.
 - **Stacking.** The live host's producer's videos (another client's on
   `into` with `hosted` the hosted target) are drawn just under the anchor,
   or just over it when the anchor is `exclusive`, so no exclusive layer of
@@ -1028,6 +1042,20 @@ F ref 1, the theme's artwork, transparent where the map shows
  "src_x":184,"src_y":0,"src_w":720,"src_h":480}
 ```
 
+The same theme on a page without the map widget, the map hidden rather
+than drawn on its own slot under the panel, and the widget back:
+
+```
+{"op":"host","into":"panel","target":"map","x":600,"y":120,"w":720,"h":480,
+ "src_x":184,"src_y":0,"src_w":720,"src_h":480,"shown":0,"hide":1}
+{"op":"host","into":"panel","target":"map","x":600,"y":120,"w":720,"h":480,
+ "src_x":184,"src_y":0,"src_w":720,"src_h":480}
+```
+
+In the client libraries: `host.hide = true` with `host.shown = false`
+(C++, `takes_host_hide()`), `cr.host('panel', { ..., shown: false, hide:
+true })` (JS, `cr.hostHide`).
+
 ### Bandwidth for a layer
 
 While a layer with `others_fps` is `shown`, every video layer of the other
@@ -1056,7 +1084,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `text` (1: takes [fonts and text layers](#text); 0 where the renderer refused their shaders; absent from older services), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux), `scene_anim` (1: takes the [edit lines](#scene-edits) `--play` and `--skip`, the display able to play a file's animation sequences; 0 where it cannot; absent from older services), `over_order` (1: takes a `scene`'s `over_order`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `host_hide` (1: takes a host's `hide`, [Hosting from layers](#hosting-from-layers); absent from older services), `fresh_ms` (1: takes a video layer's `fresh_ms`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `text` (1: takes [fonts and text layers](#text); 0 where the renderer refused their shaders; absent from older services), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux), `scene_anim` (1: takes the [edit lines](#scene-edits) `--play` and `--skip`, the display able to play a file's animation sequences; 0 where it cannot; absent from older services), `over_order` (1: takes a `scene`'s `over_order`; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

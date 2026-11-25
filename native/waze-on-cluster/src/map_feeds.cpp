@@ -83,6 +83,13 @@ bool MapFeeds::unseen() const
     return (cluster_ || hud) && (!cluster_ || cluster_->unseen()) && (!hud || hud_->unseen());
 }
 
+void MapFeeds::set_picture_coming(bool coming)
+{
+    for (MapFeed *f : {cluster_.get(), hud_.get()})
+        if (f)
+            f->set_picture_coming(coming);
+}
+
 void MapFeeds::set_hud_width(unsigned pct)
 {
     if (pct > kHudMaxPct)

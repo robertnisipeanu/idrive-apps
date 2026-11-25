@@ -200,6 +200,7 @@ void MapFeed::make_layer()
         vo.always_packed = !why;
         vo.pan_blocks = vo.pan_blocks || vo.always_packed;
     }
+    vo.fresh_ms = client_.takes_fresh_ms() ? kFreshMs : 0;
     lo_ = cr::LayerOptions();
     lo_.target = drawn_target();
     lo_.klass = "content";
@@ -350,6 +351,7 @@ void MapFeed::poll(int64_t now_ms)
         remake_layer();
     }
     follow_seen(now_ms);
+    keep_layer(now_ms);
     send_pending(now_ms);
     if (connected_ && !client_.connected()) {
         connected_ = false;
@@ -392,12 +394,11 @@ void MapFeed::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
 {
     if (layer_ && client_.connected())
         frames_++;
-    if (scaling_ || !sending() || unseen_held(now_ms) || !client_.frame(layer_, atlas, id)) {
+    if (scaling_ || !sending() || unseen() || !client_.frame(layer_, atlas, id)) {
         hold(atlas, id);
     } else {
         id_ = id;
         held_new_ = elsewhere_ = in_worker_ = false;
-        unseen_sent_ms_ = now_ms;
     }
     send_pending(now_ms);
     count_second(now_ms);
@@ -420,8 +421,7 @@ void MapFeed::repeat(uint64_t id, int64_t now_ms)
     id_ = id;
     if (layer_ && client_.connected())
         frames_++;
-    /* a held picture is a frame: unseen, it waits its turn */
-    if (sending() && !(held_new_ && unseen_held(now_ms)))
+    if (sending() && !unseen())
         send_newest();
     count_second(now_ms);
 }
@@ -439,20 +439,19 @@ void MapFeed::send_pending(int64_t now_ms)
     uint64_t sid = 0;
     if (worker_.take(&scaled_, &sid, shape_, in_worker_ ? &held_ : nullptr)) {
         in_worker_ = false;
-        if (!scaled_.empty() && layer_)
+        if (unseen())
+            held_new_ = !held_.empty();   /* scaled again when seen */
+        else if (!scaled_.empty() && layer_)
             client_.frame(layer_, &scaled_, sid);
     }
     /* a VPP-made picture goes as it is, after the worker's */
     if (held_part_.set()) {
-        if (held_new_ && sending() && worker_.idle() && !unseen_held(now_ms)) {
+        if (held_new_ && sending() && worker_.idle() && !unseen())
             held_new_ = !client_.frame(layer_, &held_, id_);
-            if (!held_new_)
-                unseen_sent_ms_ = now_ms;
-        }
         return;
     }
     if (!scaling_ || !held_new_ || elsewhere_ || in_worker_ || !sending() || now_ms < next_send_ms_ ||
-        !worker_.idle())
+        !worker_.idle() || unseen())
         return;
     if (worker_.submit(&held_, id_, shape_)) {
         held_new_ = false;
@@ -460,7 +459,7 @@ void MapFeed::send_pending(int64_t now_ms)
         unsigned fps = cfg_.video.fps;
         if (fps_cap() && (!fps || fps_cap() < fps))
             fps = fps_cap();
-        next_send_ms_ = now_ms + std::max<int64_t>(fps ? 1000 / (int64_t)fps : 0, unseen() ? kUnseenMs : 0);
+        next_send_ms_ = now_ms + (fps ? 1000 / (int64_t)fps : 0);
     }
 }
 
@@ -482,7 +481,7 @@ void MapFeed::changed(uint64_t id)
 
 bool MapFeed::wants_picture(int64_t now_ms) const
 {
-    return elsewhere_ && held_new_ && sending() && now_ms >= next_send_ms_ && worker_.idle();
+    return elsewhere_ && held_new_ && sending() && now_ms >= next_send_ms_ && worker_.idle() && !unseen();
 }
 
 bool MapFeed::latest(std::vector<uint8_t> *out) const
@@ -512,11 +511,6 @@ bool MapFeed::unseen() const
     return t != target_states_.end() && (t->second == "parked" || t->second == "waiting" || t->second == "unavailable");
 }
 
-bool MapFeed::unseen_held(int64_t now_ms) const
-{
-    return now_ms - unseen_sent_ms_ < kUnseenMs && unseen();
-}
-
 void MapFeed::follow_seen(int64_t now_ms)
 {
     const bool unseen = this->unseen();
@@ -524,25 +518,47 @@ void MapFeed::follow_seen(int64_t now_ms)
         return;
     unseen_ = unseen;
     log_info("render: the map on %s %s", drawn_target().c_str(),
-             unseen ? "is not seen: a frame a second at most" : "is seen: its frames at their rate");
-    if (unseen)
+             unseen ? "is not seen: no frames, the layer kept with repeats" : "is seen: its frames at their rate");
+    if (unseen) {
+        kept_ms_ = now_ms;
         return;
+    }
     next_send_ms_ = 0;   /* a layer that scales: the newest picture to the worker now */
-    unseen_sent_ms_ = now_ms - kUnseenMs;
-    if (sending())
+    /* The producer's newest picture on its way goes first, as the next
+     * frame; else the newest at hand, as a frame (fresh_ms holds the
+     * renderer's older one for it). */
+    if (picture_coming_ || !sending())
+        return;
+    std::vector<uint8_t> copy;
+    if (held_new_)
         send_newest();
+    else if (client_.latest(layer_, &copy))
+        client_.frame(layer_, &copy, id_);
+}
+
+int64_t MapFeed::keep_every_ms() const
+{
+    const int64_t quarter = (int64_t)cfg_.video.stall_ms / 4;
+    return quarter > 0 && quarter < kUnseenMs ? quarter : kUnseenMs;
+}
+
+void MapFeed::keep_layer(int64_t now_ms)
+{
+    if (!unseen_ || !layer_ || !client_.connected() || !lo_.visible || now_ms - kept_ms_ < keep_every_ms())
+        return;
+    client_.repeat(layer_, id_);
+    kept_ms_ = now_ms;
 }
 
 int64_t MapFeed::wake_in_ms(int64_t now_ms) const
 {
+    if (scaling_ && layer_ && !worker_.idle())
+        return kScaleWaitMs;
+    if (unseen_ && layer_)
+        return std::max<int64_t>(1, kept_ms_ + keep_every_ms() - now_ms);
     if (!scaling_ || !layer_)
         return -1;
-    if (!worker_.idle())
-        return kScaleWaitMs;
-    int64_t due = next_send_ms_;
-    if (held_part_.set() && unseen())   /* a VPP-made picture waits its turn (unseen_held) */
-        due = std::max(due, unseen_sent_ms_ + kUnseenMs);
-    return held_new_ && sending() && !disabled() ? std::max<int64_t>(1, due - now_ms) : -1;
+    return held_new_ && sending() && !disabled() ? std::max<int64_t>(1, next_send_ms_ - now_ms) : -1;
 }
 
 void MapFeed::keep_newest()
