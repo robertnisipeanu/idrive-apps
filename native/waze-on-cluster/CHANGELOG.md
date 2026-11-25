@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The map service runs in the head unit's slice for standard services, level
+with the HMI.
+
 ## 0.14.14
 
 Android Auto: Patch, Remove patch, Zoom and the turn card take effect at
