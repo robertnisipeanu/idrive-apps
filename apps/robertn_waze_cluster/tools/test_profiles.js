@@ -263,6 +263,21 @@ async function main() {
         sync._read = saved;
     });
 
+    await check('a switch: never settled at any change until patchd has the new profile in effect', async () => {
+        const seen = [];
+        const watch = () => seen.push(`${sync._confirmed}:${sync.settled()}`);
+        sync.on('change', watch);
+        patch.profileMute = true;
+        id = 'driverB';
+        await until('B counts', () => sync._confirmed === 'driverB');
+        await sleep(POLL * 2);
+        assert(seen.length > 0 && seen.every((v) => /:false$/.test(v)), `settled while B is not patchd's: ${seen.join(' ')}`);
+        patch.profileMute = false;
+        await until('B in effect', () => sync.profile === 'driverB' && sync.settled(), 6000);
+        sync.removeListener('change', watch);
+        id = 'driverA';
+        await until('A again', () => sync.profile === 'driverA' && sync.settled(), 1500);
+    });
     await check('a read naming another profile greys the checkbox at once, until it counts or the reads come back', async () => {
         assert(sync.canChooseOwn());
         const saved = sync._read;
@@ -320,6 +335,19 @@ async function main() {
         await sleep(POLL * 6);
         flip.stop();
         assert.strictEqual(patch.count('profile'), told);
+    });
+    await check('an answer patchd gave before a page write, arriving after it: the page\'s change stays on the render', async () => {
+        await until('the shared settings on the render', () => render.cluster === 1 && render.hud === 0 && c.shownOn() === 'cluster');
+        patch.profileDelayMs = 200;
+        sync2.refresh();
+        await sleep(50);
+        c.showOn('both');
+        await until('both on the render', () => render.hud === 1 && c.shownOn() === 'both');
+        await sleep(400);
+        patch.profileDelayMs = 0;
+        assert.strictEqual(render.hud, 1, 'the late answer did not take the HUD off');
+        c.showOn('cluster');
+        await until('the cluster again', () => render.hud === 0 && c.shownOn() === 'cluster');
     });
     await check('a patchd before hud_keep_shown: the render not told it', async () => {
         assert.deepStrictEqual(renderCommands(settings(1, 0, 0, 0, 0))[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0' });

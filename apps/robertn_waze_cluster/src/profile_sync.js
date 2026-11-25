@@ -212,7 +212,6 @@ class ProfileSync extends EventEmitter {
         this._chain = Promise.resolve();
         this._timer = null;
         this._stopped = true;
-        this._wasSettled = false;
     }
 
     start() {
@@ -234,9 +233,7 @@ class ProfileSync extends EventEmitter {
         return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null && !this._differs;
     }
 
-    /* The profile that counts (NONE too: no profile detected) is the one
-     * patchd has in effect, its set known, no read names another and no
-     * tick waits for patchd. */
+    /* NONE (no profile detected) settles too. */
     settled() {
         return this._confirmed !== undefined && this.profile === this._confirmed && this.own !== null && !this._differs &&
             this._askedOwn === null;
@@ -246,15 +243,6 @@ class ProfileSync extends EventEmitter {
      * them in effect, or null while not settled. */
     writeTarget() {
         return this.settled() ? { profile: this.profile, own: this.own ? 1 : 0 } : null;
-    }
-
-    /* 'change' when settled() turns. */
-    _noteSettled() {
-        const now = this.settled();
-        if (now !== this._wasSettled) {
-            this._wasSettled = now;
-            this.emit('change');
-        }
     }
 
     /* The checkbox's tick: as pressed until patchd answers, then patchd's. */
@@ -267,7 +255,6 @@ class ProfileSync extends EventEmitter {
             return Promise.resolve();
         }
         this._askedOwn = !!on;
-        this._noteSettled();
         this.emit('change');
         return this._ask({ cmd: 'profile-own', id: this.profile, on: on ? 1 : 0 });
     }
@@ -285,16 +272,16 @@ class ProfileSync extends EventEmitter {
             const agreed = id === NONE || id === this._seen;
             this._seen = id === NONE ? undefined : id;
             const differs = !agreed && id !== this._confirmed;
-            if (differs !== this._differs) {
+            const confirmed = agreed ? id : this._confirmed;
+            /* both before the page redraws: a profile that counts and is
+             * not yet patchd's keeps the settings greyed */
+            if (differs !== this._differs || confirmed !== this._confirmed) {
                 this._differs = differs;
+                this._confirmed = confirmed;
                 this.emit('change');
             }
-            this._noteSettled();
-            if (agreed) {
-                this._confirmed = id;
-                if (id !== this.profile && Date.now() >= this._retryAt) {
-                    return this._ask({ cmd: 'profile', id });
-                }
+            if (agreed && id !== this.profile && Date.now() >= this._retryAt) {
+                return this._ask({ cmd: 'profile', id });
             }
             return undefined;
         }, () => {
@@ -316,6 +303,8 @@ class ProfileSync extends EventEmitter {
                 return undefined;
             }
             const ev = `${msg.cmd}-reply`;
+            /* an answer older than a page write since does not show what is stored */
+            const writes = this._control ? this._control.writes : 0;
             return askOnce(this._patchPath, msg, (m) => m.ev === ev || (m.ev === 'refused' && m.cmd === msg.cmd), this._replyMs)
                 .then((r) => {
                     if (msg.cmd === 'profile-own') {
@@ -327,7 +316,7 @@ class ProfileSync extends EventEmitter {
                         this.own = r.own === true;
                         this._log.info(`driver profile: ${r.own ? 'its own' : 'the shared'} map settings${r.changed ? ', applied' : ''}`);
                         if (r.settings) {
-                            this._toRender(r.settings, r.changed);
+                            this._toRender(r.settings, r.changed, writes);
                         }
                     } else {
                         /* not taken: asked again (patchd not running: at the
@@ -343,7 +332,6 @@ class ProfileSync extends EventEmitter {
                             this._ask({ cmd: 'profile', id: this._confirmed });
                         }
                     }
-                    this._noteSettled();
                     this.emit('change');
                 });
         };
@@ -354,11 +342,14 @@ class ProfileSync extends EventEmitter {
 
     /* The render to the settings stored for the profile in effect: through
      * the page's render connection while the page is open, where it shows
-     * others; else, when they changed, through a short connection. */
-    _toRender(s, changed) {
+     * others (unless the page wrote one after asking); else, when they
+     * changed, through a short connection. */
+    _toRender(s, changed, writes) {
         const c = this._control;
         if (c && c.render && c.render.connected()) {
-            c.showStored(s, changed);
+            if (changed || c.writes === writes) {
+                c.showStored(s, changed);
+            }
             return;
         }
         if (!changed) {

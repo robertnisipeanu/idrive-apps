@@ -27,8 +27,9 @@
  * `rebootFails` set, failed with that code. The map settings per driver
  * profile as patchd keeps them: `map` the settings in effect, `shared` and
  * `own` (by id) the rest, `current` the profile last told; profile and
- * profile-own answer as patchd does (profile-own refused for another id), or
- * not at all with `profileMute` set (a patchd before profiles); cluster,
+ * profile-own answer as patchd does (profile-own refused for another id),
+ * `profileDelayMs` late, or not at all with `profileMute` set (a patchd
+ * before profiles); cluster,
  * hud, hud-size, hud-pos and hud-keep-shown change `map`, and one that names
  * a profile and set ("profile", "own") other than the ones in effect is
  * refused as patchd refuses it, with the settings in effect.
@@ -313,7 +314,9 @@ class FakePatch extends LineServer {
         const changed = JSON.stringify(want) !== JSON.stringify(this.map);
         this.active = target;
         this.map = want;
-        this._send(socket, { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want });
+        const r = { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want };
+        if (this.profileDelayMs) setTimeout(() => this._send(socket, r), this.profileDelayMs);
+        else this._send(socket, r);
     }
 
     /* CarPlay's Wi-Fi band changes, as patchd sends it: a status. */

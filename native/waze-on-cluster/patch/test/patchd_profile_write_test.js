@@ -215,7 +215,6 @@ function threeSets(active) {
     /* Own settings turned on and off mid-session. */
     await ask({ cmd: 'profile', id: 'driverC' });
     r = await ask({ cmd: 'profile-own', id: 'driverC', on: 1 });
-    before = files();
     await saved();
     before = files();
     r = await ask({ cmd: 'hud', on: 0, profile: 'driverC', own: 0 });

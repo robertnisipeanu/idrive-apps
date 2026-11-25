@@ -598,8 +598,6 @@ function mapWriteRefusal(msg) {
     if (own !== (msg.own === 1)) return own ? 'the driver profile has its own map settings' : 'the driver profile uses the shared map settings';
     return null;
 }
-/* The settings in effect: as PROFILES_FILE keeps them, else MAP_STATE's
- * and what waits to be written there. */
 function settingsInEffect() {
     return Object.assign({}, (profiles && profilesKept(profiles) && profileEntry(profiles)) || mapSettingsNow());
 }

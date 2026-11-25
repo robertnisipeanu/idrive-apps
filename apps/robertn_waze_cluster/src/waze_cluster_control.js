@@ -326,6 +326,7 @@ class WazeClusterControl extends EventEmitter {
          * none may be written; {} names none (a page without driver profiles) */
         this._writeTarget = () => ({});
         this._stored = null;        /* map settings to show once the render has said what it shows */
+        this.writes = 0;            /* map settings written to patchd */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -359,15 +360,13 @@ class WazeClusterControl extends EventEmitter {
         this._writeTarget = fn;
     }
 
-    /* A map setting to patchd, naming the settings it is for; false when
-     * none may be written now. */
+    /* A map setting to patchd, naming the settings it is for. */
     _saveMap(msg) {
         const w = this._writeTarget();
-        if (!w) {
-            return false;
+        if (w) {
+            this.writes++;
+            this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
         }
-        this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
-        return true;
     }
 
     /* The render to the map settings stored for the driver profile in
