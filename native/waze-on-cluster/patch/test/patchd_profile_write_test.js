@@ -105,7 +105,10 @@ function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 function sameKeys(a, b) { return Object.keys(a).length === Object.keys(b).length && Object.keys(b).every(function (k) { return a[k] === b[k]; }); }
 function stateText(s) { return Object.keys(s).map(function (k) { return k + ' = ' + s[k]; }).join('\n') + '\n'; }
 function files() { return fs.readFileSync(PROFILES, 'utf8') + '|' + fs.readFileSync(STATE, 'utf8'); }
+/* For a check that nothing is written: past the save's delay. */
 function saved() { return sleep(SAVE_MS + 150); }
+/* For a check that something is written: until it holds, at most 10 s
+ * (a save syncs the disk, which can take long on a busy machine). */
 async function when(cond) {
     for (var end = Date.now() + 10000; ;) {
         var v = false;
@@ -148,7 +151,7 @@ function threeSets(active) {
 
     /* B confirmed: a write for A refused; neither A's, B's nor the shared settings change. */
     await ask({ cmd: 'profile', id: B });
-    await saved();
+    await when(function () { return profiles().active === B && sameKeys(state(), OWN_B); });
     before = files();
     var writes = [
         { cmd: 'hud', on: 0, profile: A, own: 1 }, { cmd: 'cluster', on: 1, profile: A, own: 1 },
@@ -183,12 +186,15 @@ function threeSets(active) {
         r2.ok === false && /own must be/.test(r2.reason));
 
     /* The 5 s sync and a page write on one connection, in both orders. */
-    var both = await askAll([{ cmd: 'profile', id: A }, { cmd: 'hud', on: 1, profile: B, own: 1 }]);
+    /* 85 % is in none of A's (60), B's (50) or the shared (0) settings */
+    var bNow = profiles().own[B];
+    var both = await askAll([{ cmd: 'profile', id: A }, { cmd: 'hud-size', hud_width_pct: 85, profile: B, own: 1 }]);
+    await when(function () { return profiles().active === A && sameKeys(state(), OWN_A); });
     await saved();
     pf = profiles();
-    ok('the switch to A first, then a write B\'s page made: refused, B\'s settings unchanged',
-        both[0].ok && both[1].ok === false && both[1].refused === 'profile' && same(both[1].settings, OWN_A) && pf.own[B].hud === 1 &&
-        same(pf.own[A], OWN_A) && sameKeys(state(), OWN_A), JSON.stringify(both));
+    ok('the switch to A first, then a write B\'s page made: refused; A\'s, B\'s and the shared settings unchanged',
+        both[0].ok && both[1].ok === false && both[1].refused === 'profile' && same(both[1].settings, OWN_A) && same(pf.own[B], bNow) &&
+        bNow.hud_width_pct === 50 && same(pf.own[A], OWN_A) && same(pf.shared, SHARED) && sameKeys(state(), OWN_A), JSON.stringify(both));
     both = await askAll([{ cmd: 'hud-keep-shown', on: 1, profile: A, own: 1 }, { cmd: 'profile', id: B }]);
     ok('a write for A, then the switch to B before the delayed write: saved into A\'s settings only, map.state.conf B\'s',
         both.every(function (x) { return x.ok; }) && await when(function () {
@@ -215,7 +221,7 @@ function threeSets(active) {
     /* Own settings turned on and off mid-session. */
     await ask({ cmd: 'profile', id: 'driverC' });
     r = await ask({ cmd: 'profile-own', id: 'driverC', on: 1 });
-    await saved();
+    await when(function () { return 'driverC' in profiles().own; });
     before = files();
     r = await ask({ cmd: 'hud', on: 0, profile: 'driverC', own: 0 });
     await saved();
@@ -227,7 +233,7 @@ function threeSets(active) {
         return pf.own.driverC.hud === 0 && pf.shared.hud === 1;
     }), JSON.stringify(profiles()));
     await ask({ cmd: 'profile-own', id: 'driverC', on: 0 });
-    await saved();
+    await when(function () { return !('driverC' in profiles().own) && state().hud === 1; });
     before = files();
     r = await ask({ cmd: 'hud', on: 0, profile: 'driverC', own: 1 });
     await saved();
