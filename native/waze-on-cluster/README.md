@@ -116,13 +116,13 @@ cluster's own content until the next picture. The render runs from boot and
 decodes whether or not the map is shown, since the phone sends a keyframe
 only when its stream starts: a render that missed the start shows nothing
 until the phone reconnects. While cluster-render reports the map's target
-parked, waiting or unavailable (the cluster shows other content in the
-slot, the slot is locked, the HUD gives way to BMW's lists), or its host
-hides it, one picture a second is made and none is sent; the newest goes
-the moment the map is seen again, and is the first one the cluster writes
-(cluster-render's `fresh_ms`) unless the cluster's target cannot wait for
-it (tiles of the map a change uncovers there). With a cluster-render that does not take
-`fresh_ms`, only a map its host hides counts as not seen.
+parked, waiting or unavailable (the cluster shows other content in the slot,
+the slot is locked, the HUD gives way to BMW's lists), or its host hides it,
+one picture a second is made and none is sent; the newest goes the moment
+the map is seen again, and is the first one the cluster writes (cluster-
+render's `fresh_ms`) unless the cluster's target cannot wait for it (tiles
+of the map a change uncovers there). With a cluster-render that does not
+take `fresh_ms`, only a map its host hides counts as not seen.
 
 **BMW's turn box.** While the map shows, BMW's CarPlay turn-by-turn box on
 the cluster is hidden (cluster-render README, "Guide hold"). The app's
