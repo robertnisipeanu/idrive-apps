@@ -7,8 +7,9 @@
  * It reads the head unit's current user account
  * (de.bmw.infotainment.personalization.SessionManager, field
  * currentUserAccountReference, a getter), read-only, when the app starts,
- * every POLL_MS, and at once after a read that failed (READ_RETRY_MS); and
- * it takes the account SessionManager's currentUserOnChange event sends. A
+ * every POLL_MS, and READ_RETRY_MS after a read that failed until
+ * UNREADABLE_READS in a row have; and it takes the account
+ * SessionManager's currentUserOnChange event sends. A
  * valid id (PROFILE_ID) counts at once; no profile counts only when the
  * head unit has no SessionManager proxy or no such field. A read that
  * fails, times out or gives no valid id changes nothing, and a proxy that
@@ -23,9 +24,10 @@
  * asks patchd {"cmd":"profile-own","id","on"} the same way, for the Own
  * settings for this driver checkbox; refused, the profile is told again.
  *
- * patchd not running is asked again at the next read; one that does not
- * answer or refuses the command (before profiles) after RETRY_MS. Meanwhile
- * the checkbox is greyed.
+ * patchd not running or not answering is asked again at the next read, and
+ * READ_RETRY_MS later while the page loads (up to LOAD_TRIES times); one
+ * that refuses the command (before profiles) after RETRY_MS. Meanwhile Show
+ * on, the HUD settings and the checkbox are greyed.
  *
  * The page's map settings are written for one driver profile's settings:
  * writeTarget() names the profile and set patchd has in effect, and only
@@ -39,7 +41,7 @@
  * driver has own settings, the shared settings are the only ones and a
  * write names none. Each answer of patchd's moves the page's render to the
  * settings stored for that profile when it shows others
- * (control.showStored).
+ * (control.showStored); a load ends once the render shows them.
  */
 'use strict';
 
@@ -56,6 +58,8 @@ const SETUP_RETRY_MS = 10000;
 const SETUP_RETRY_MAX_MS = 300000;
 const REPLY_MS = 3000;
 const RETRY_MS = 60000;
+/* reads and asks a page load makes while patchd has not answered it */
+const LOAD_TRIES = 4;
 /* reads in a row that fail or give no profile id before the profile counts
  * as unreadable */
 const UNREADABLE_READS = 3;
@@ -86,8 +90,8 @@ function idOf(v) {
  * () -> Promise<id | NONE>. NONE only without the proxy or the field, for
  * good; rejected when the read gives nothing to go by. read.watch(cb): cb(id)
  * for each valid id the proxy's EVENT sends, from the first read that gives
- * one on (a proxy without the event sends none). options: readMs, retryMs,
- * retryMaxMs. */
+ * one on (a proxy without the event sends none). options: readMs, retryMs
+ * (also the subscription's first retry), retryMaxMs. */
 function sessionReader(someipBuilders, log, options) {
     const o = options || {};
     const readMs = o.readMs || READ_MS;
@@ -143,23 +147,46 @@ function sessionReader(someipBuilders, log, options) {
             });
         return starting;
     };
-    let subscribed = false;
-    /* once the service answers: its EVENT, tried again at the next read after a failure */
+    /* EVENT, once the service answers: 'none', 'asking' or 'on'; refused,
+     * asked again after subRetryMs (doubling up to retryMax); after a read
+     * that fails (the service gone or restarting) asked again. The SDK's
+     * subscribe registers a handler of its own each time and its unsubscribe
+     * takes the subscription's id: the last id is unsubscribed first, and
+     * each subscription's handler passes events only while it is the
+     * latest, so no registration a refusal left behind doubles them. */
+    let sub = 'none';
+    let subAt = 0;
+    let subRetryMs = o.retryMs || SETUP_RETRY_MS;
+    let subGen = 0;
+    let subId = null;
     const subscribe = (p) => {
         const ev = p[EVENT];
-        if (subscribed || !ev || typeof ev.subscribe !== 'function') {
+        if (sub !== 'none' || Date.now() < subAt || !ev || typeof ev.subscribe !== 'function') {
             return;
         }
-        subscribed = true;
-        Promise.resolve().then(() => ev.subscribe((v) => {
-            const id = idOf(v);
-            if (id) {
-                watchers.forEach((cb) => cb(id));
-            }
-        })).catch((e) => {
-            subscribed = false;
-            warn('event', `${EVENT} not subscribed (${e && e.message}); tried again at the next read`);
-        });
+        sub = 'asking';
+        const gen = ++subGen;
+        const old = subId;
+        subId = null;
+        Promise.resolve()
+            .then(() => old !== null && typeof ev.unsubscribe === 'function' && ev.unsubscribe(old))
+            .catch(() => {})
+            .then(() => ev.subscribe((v) => {
+                const id = gen === subGen && idOf(v);
+                if (id) {
+                    watchers.forEach((cb) => cb(id));
+                }
+            }))
+            .then((sid) => {
+                subId = sid === undefined ? null : sid;
+                sub = 'on';
+                subRetryMs = o.retryMs || SETUP_RETRY_MS;
+            }, (e) => {
+                sub = 'none';
+                subAt = Date.now() + subRetryMs;
+                warn('event', `${EVENT} not subscribed (${e && e.message}); asked again later`);
+                subRetryMs = Math.min(subRetryMs * 2, retryMax);
+            });
     };
     const read = () => setUp().then((p) => {
         if (!p) {
@@ -168,6 +195,12 @@ function sessionReader(someipBuilders, log, options) {
         return within(Promise.resolve()
             .then(() => p.waitUntilAvailable(readMs))
             .then(() => p[FIELD].getValue()), readMs * 2, `reading ${FIELD}`)
+            .then((v) => v, (e) => {
+                if (sub === 'on') {
+                    sub = 'none';
+                }
+                throw e;
+            })
             .then((v) => {
                 const id = idOf(v);
                 if (id) {
@@ -253,6 +286,7 @@ class ProfileSync extends EventEmitter {
         this._askedOwn = null;      /* the checkbox as pressed, until patchd answers */
         this._confirmed = undefined; /* the profile that counts: the last valid id read, or NONE for good */
         this._loading = false;      /* the page's load runs */
+        this._loadTries = 0;
         this._failed = 0;           /* reads in a row that gave nothing to go by */
         this._switches = 0;         /* events taken: a read begun before the last is older than it */
         this._retryAt = 0;
@@ -356,6 +390,8 @@ class ProfileSync extends EventEmitter {
      * stored for it shown; until then the page loads. */
     load() {
         if (!this._stopped) {
+            this._retryAt = 0;
+            this._loadTries = 0;
             if (!this._loading) {
                 this._loading = true;
                 this.emit('change');
@@ -378,8 +414,12 @@ class ProfileSync extends EventEmitter {
             this._polling = false;
             const again = this._again;
             this._again = null;
-            /* a load ends with a read that counted (and patchd's answer), or reads that keep failing */
-            if (this._loading && again === null && (this._failed === 0 || this.unreadable())) {
+            /* a load ends once patchd has the profile read in effect and the
+             * render shows its settings, or the reads keep failing, or after
+             * LOAD_TRIES without patchd's answer (asked again at each read) */
+            const unanswered = this._failed === 0 && this.profile !== this._confirmed && ++this._loadTries < LOAD_TRIES;
+            const retry = !this.unreadable() && (this._failed > 0 || (this._loading && unanswered));
+            if (this._loading && again === null && !retry) {
                 this._loading = false;
                 this.emit('change');
             }
@@ -389,7 +429,6 @@ class ProfileSync extends EventEmitter {
             if (again !== null) {
                 this._poll(again);
             } else {
-                const retry = this._failed > 0 && !this.unreadable();
                 this._timer = setTimeout(() => this._poll(retry && this._loading), retry ? this._readRetryMs : this._pollMs);
             }
         });
@@ -434,6 +473,7 @@ class ProfileSync extends EventEmitter {
             const ev = `${msg.cmd}-reply`;
             /* an answer older than a page write since does not show what is stored */
             const writes = this._control ? this._control.writes : 0;
+            let shown;
             return askOnce(this._patchPath, msg, (m) => m.ev === ev || (m.ev === 'refused' && m.cmd === msg.cmd), this._replyMs)
                 .then((r) => {
                     if (msg.cmd === 'profile-own') {
@@ -448,23 +488,24 @@ class ProfileSync extends EventEmitter {
                         this.own = r.own === true;
                         this._log.info(`driver profile: ${r.own ? 'its own' : 'the shared'} map settings${r.changed ? ', applied' : ''}`);
                         if (r.settings) {
-                            this._toRender(r.settings, r.changed, writes);
+                            shown = this._toRender(r.settings, r.changed, writes);
                         }
                     } else {
-                        /* not taken: asked again (patchd not running: at the
-                         * next read; not answered or refused: after
-                         * RETRY_MS), the checkbox greyed meanwhile */
+                        /* not taken: asked again (patchd not running or not
+                         * answering: at the next read; refused: after
+                         * RETRY_MS), greyed meanwhile */
                         this._log.warn(`patchd did not take ${msg.cmd}: ${r === undefined ? 'not running' : (r && r.reason) || 'no answer'}`);
                         if (msg.cmd === 'profile') {
                             this.profile = undefined;
                             this.own = null;
-                            this._retryAt = r === undefined ? 0 : Date.now() + this._retryMs;
+                            this._retryAt = r ? Date.now() + this._retryMs : 0;
                         } else if (r && this._confirmed !== undefined) {
                             /* refused (patchd has another profile in effect): what it has */
                             this._ask({ cmd: 'profile', id: this._confirmed });
                         }
                     }
                     this.emit('change');
+                    return shown;
                 });
         };
         const p = this._chain.then(run, run);
@@ -474,18 +515,16 @@ class ProfileSync extends EventEmitter {
 
     /* The render to the settings stored for the profile in effect: through
      * the page's render connection while the page is open, where it shows
-     * others (unless the page wrote one after asking); else, when they
-     * changed, through a short connection. */
+     * others (unless the page wrote one after asking), once it is up;
+     * else, when they changed, through a short connection. Resolves once
+     * the page's render shows them. */
     _toRender(s, changed, writes) {
         const c = this._control;
-        if (c && c.render && c.render.connected()) {
-            if (changed || c.writes === writes) {
-                c.showStored(s, changed);
-            }
-            return;
+        if (c && c.isOpen()) {
+            return changed || c.writes === writes ? c.showStored(s, changed) : undefined;
         }
         if (!changed) {
-            return;
+            return undefined;
         }
         const cmds = renderCommands(s);
         /* the render down or owned by another: its next start reads the saved settings */
@@ -497,6 +536,7 @@ class ProfileSync extends EventEmitter {
         });
         sock.on('error', () => {});
         sock.on('close', () => clearTimeout(end));
+        return undefined;
     }
 }
 

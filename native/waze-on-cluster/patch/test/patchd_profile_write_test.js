@@ -206,7 +206,7 @@ function threeSets(active) {
     ok('a write naming no profile id, or own other than 0 or 1: refused', r.ok === false && /not a profile id/.test(r.reason) &&
         r2.ok === false && /own must be/.test(r2.reason));
 
-    /* The 5 s sync and a page write on one connection, in both orders. */
+    /* The profile sync and a page write on one connection, in both orders. */
     /* 85 % is in none of A's (60), B's (50) or the shared (0) settings */
     var bNow = profiles().own[B];
     var both = await askAll([{ cmd: 'profile', id: A }, { cmd: 'hud-size', hud_width_pct: 85, profile: B, own: 1 }]);

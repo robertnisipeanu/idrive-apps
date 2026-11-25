@@ -114,6 +114,8 @@ const SHOWN_ON = ['cluster', 'hud', 'both', 'off'];
  * HUD and reports the offset as far as it went. An asked size or place shows until the render's status has it,
  * HUD_ASKED_MS has passed, the render reconnects or patchd fails to save the size; then the render's own. */
 const HUD_MOVE_PX = 10, HUD_MOVE_MAX = 400, HUD_ASKED_MS = 300;
+/* how long a load waits for the render to show the stored settings */
+const STORED_MS = 1000;
 const MOVES = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 
 /* One newline-delimited-JSON stream socket, reconnecting while open.
@@ -329,6 +331,8 @@ class WazeClusterControl extends EventEmitter {
         this._loading = () => false;    /* the page loads the driver profile's settings: none shown */
         this._writeChain = Promise.resolve();
         this._stored = null;        /* map settings to show once the render has said what it shows */
+        this._storedWaits = [];     /* showStored's, until the render shows them */
+        this._isOpen = false;
         this.writes = 0;            /* map settings written to patchd */
 
         this.render = new LineSocket({
@@ -402,9 +406,34 @@ class WazeClusterControl extends EventEmitter {
      * moved (patchd put other settings in effect, or refused a write), what
      * was asked and not yet shown gives way to them; without, a change asked
      * meanwhile keeps the render as it is. */
+    /* Resolves once the render shows them, a change asked meanwhile keeps
+     * it, the page closes, or STORED_MS has passed. */
     showStored(settings, moved) {
         this._stored = { settings, moved: !!moved || !!(this._stored && this._stored.moved) };
+        const shown = new Promise((resolve) => {
+            const w = { settings, resolve, timer: setTimeout(() => this._storedShown(w), STORED_MS) };
+            this._storedWaits.push(w);
+        });
         this._applyStored();
+        this._storedShown();
+        return shown;
+    }
+
+    /* The waits for stored settings the render shows now (w: that one, all: every one) end. */
+    _storedShown(w, all) {
+        const rs = this.renderStatus;
+        this._storedWaits = this._storedWaits.filter((x) => {
+            if (x === w || all || (rs && renderShows(rs, x.settings))) {
+                clearTimeout(x.timer);
+                x.resolve();
+                return false;
+            }
+            return true;
+        });
+    }
+
+    isOpen() {
+        return this._isOpen;
     }
 
     _applyStored() {
@@ -415,7 +444,11 @@ class WazeClusterControl extends EventEmitter {
         this._stored = null;
         const s = st.settings;
         const asked = !!this._askedShownOn || this._askedHud != null || !!this._askedPos;
-        if (renderShows(rs, s) || (asked && !st.moved)) {
+        if (asked && !st.moved) {
+            this._storedShown(null, true);
+            return;
+        }
+        if (renderShows(rs, s)) {
             return;
         }
         this._dropAsked();
@@ -425,6 +458,7 @@ class WazeClusterControl extends EventEmitter {
 
     /* Open both sockets, each reconnecting while open. */
     open() {
+        this._isOpen = true;
         this.render.open();
         this.patch.open();
     }
@@ -434,6 +468,8 @@ class WazeClusterControl extends EventEmitter {
         clearTimeout(this._askedPosTimer);
         this._askedPos = null;
         this._stored = null;
+        this._isOpen = false;
+        this._storedShown(null, true);
         this._clearAskedHud();
         this.render.close();
         this.patch.close();
@@ -1186,6 +1222,7 @@ class WazeClusterControl extends EventEmitter {
                 this._askedPos = null;
             }
             this._applyStored();
+            this._storedShown();
             this.emit('change');
         }
     }

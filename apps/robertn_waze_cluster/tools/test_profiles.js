@@ -73,15 +73,26 @@ function builders(value, opts) {
         const proxy = { init: () => (slow ? new Promise(() => {}) : fails ? Promise.reject(new Error('not offered')) : Promise.resolve()),
             waitUntilAvailable: () => Promise.resolve() };
         if (!o.noField) {
-            proxy[FIELD] = { getValue: () => { b.reads++; return o.readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(value()); } };
+            proxy[FIELD] = { getValue: () => {
+                b.reads++;
+                return o.readFails || b.readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(value());
+            } };
         }
         if (o.event) {
-            proxy.currentUserOnChange = { subscribe: (cb) => {
-                b.subscribes = (b.subscribes || 0) + 1;
-                if (b.subscribes <= (o.subscribeFails || 0)) return Promise.reject(new Error('not offered yet'));
-                b.send = cb;
-                return Promise.resolve();
-            } };
+            /* the handler registered before a refusal too, the worst an SDK could do */
+            /* as the SDK: subscribe registers a handler and resolves to its id, unsubscribe takes the id */
+            b.listeners = new Map();
+            b.subscribes = 0;
+            b.unsubscribed = [];
+            b.send = (v) => [...b.listeners.values()].forEach((cb) => cb(v));
+            proxy.currentUserOnChange = {
+                subscribe: (cb) => {
+                    b.subscribes++;
+                    b.listeners.set(b.subscribes, cb);
+                    return b.subscribes <= (o.subscribeFails || 0) ? Promise.reject(new Error('not offered yet')) : Promise.resolve(b.subscribes);
+                },
+                unsubscribe: (sid) => { b.unsubscribed.push(sid); b.listeners.delete(sid); return Promise.resolve(); }
+            };
         }
         return Promise.resolve(proxy);
     };
@@ -123,19 +134,43 @@ async function main() {
         }
         assert.strictEqual(log.lines.filter((l) => /^warn: driver profiles/.test(l)).length, 1, log.lines.join('\n'));
     });
-    await check('the reader: the event\'s subscription, refused at first, tried again at the next read', async () => {
-        const b = builders(() => 'driverA', { event: true, subscribeFails: 1 });
-        const read = sessionReader(b, quiet());
+    await check('the reader: the event\'s subscription refused, asked again after a backoff, never doubled; again after the service was lost', async () => {
+        const b = builders(() => 'driverA', { event: true, subscribeFails: 2 });
+        const read = sessionReader(b, quiet(), { retryMs: 60, retryMaxMs: 1000 });
         const got = [];
         read.watch((id) => got.push(id));
         await read();
         await sleep(10);
-        assert.strictEqual(b.send, undefined, 'refused');
+        assert.strictEqual(b.subscribes, 1, 'asked');
         await read();
         await sleep(10);
-        assert.strictEqual(b.subscribes, 2, 'tried again');
+        assert.strictEqual(b.subscribes, 1, 'refused: not asked again at once');
+        await sleep(70);
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 2, 'asked again after the backoff');
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 2, 'refused again: the backoff doubled');
+        await sleep(130);
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 3, 'asked a third time');
+        assert.strictEqual(b.listeners.size, 3, 'the refusals left their handlers registered');
         b.send('driverB');
-        assert.deepStrictEqual(got, ['driverB']);
+        assert.deepStrictEqual(got, ['driverB'], 'each event once all the same');
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 3, 'subscribed: not asked again');
+        b.readFails = true;
+        await assert.rejects(read());
+        b.readFails = false;
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 4, 'the service lost and back: subscribed again');
+        assert.deepStrictEqual(b.unsubscribed, [3], 'the subscription before it unsubscribed by its id');
+        b.send('driverC');
+        assert.deepStrictEqual(got, ['driverB', 'driverC']);
     });
     await check('the reader: the head unit\'s currentUserOnChange event, subscribed once a read works, gives each valid id it sends', async () => {
         const b = builders(() => 'driverA', { event: true });
@@ -413,6 +448,8 @@ async function main() {
     const mapWrites = () => patch.received.filter((m) => ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'].includes(m.cmd));
     /* G with its own settings (both), the shared ones both; G in effect */
     const setUp = async () => {
+        sync5.stop();
+        page.close();
         page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w), () => sync5.loading());
         patch.profileDelayMs = 0;
         patch.saveMs = 0;
@@ -580,6 +617,70 @@ async function main() {
         patch.statusDelayMs = 0;
         await sleep(1100);
     });
+    await check('patchd drops a page load\'s ask (restarting), then is back: the page usable within a round trip, no backoff', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        page.close();
+        const onConnect = () => sync5.load();   /* as the app does */
+        page.patch.on('connect', onConnect);
+        patch.profileDrop = true;
+        page.open();
+        await until('the load\'s ask dropped', () => sync5.loading() && sync5.profile === undefined, 1500);
+        patch.profileDrop = false;
+        const t0 = Date.now();
+        patch.dropClients();   /* patchd back: the page connects again */
+        await until('usable', () => sync5.settled() && page.canChooseShownOn() && page.shownOn() === 'both', 1500);
+        assert(Date.now() - t0 < 500, `within a round trip: ${Date.now() - t0} ms`);
+        page.patch.removeListener('connect', onConnect);
+    });
+    await check('a load ends only once the render shows the stored settings', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        patch.shared = Object.assign({}, CLUSTER);
+        who = 'driverB';
+        render.statusDelayMs = 150;
+        let shownAtEnd;
+        const watch = () => { if (shownAtEnd === undefined && !sync5.loading()) shownAtEnd = page.shownOn(); };
+        sync5.load();
+        sync5.on('change', watch);
+        await until('loaded', () => shownAtEnd !== undefined);
+        sync5.removeListener('change', watch);
+        render.statusDelayMs = 0;
+        assert.strictEqual(shownAtEnd, 'cluster', 'B\'s stored settings on the render when the controls act');
+    });
+    await check('the page\'s render connected after patchd\'s answer: the stored settings put on it then', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        page.close();
+        await render.close();
+        render.cluster = 1;
+        render.hud = 1;                      /* the render shows other settings than B's */
+        patch.shared = Object.assign({}, CLUSTER);
+        patch.own = { driverG: Object.assign({}, BOTH) };
+        patch.active = null;                 /* B (on the shared settings) already in effect: unchanged */
+        patch.current = 'driverB';
+        patch.map = patch.shared;
+        who = 'driverB';
+        page.open();
+        sync5.load();
+        await until('B in effect, the render not yet up', () => sync5.profile === 'driverB' && !page.render.connected(), 1500);
+        await render.listen();
+        await until('B\'s stored settings on the render', () => render.hud === 0 && render.cluster === 1 && page.shownOn() === 'cluster', 2000);
+    });
+    await check('a refusal\'s backoff does not hold up a page load: asked at once', async () => {
+        await setUp();
+        patch.profileRefuse = true;
+        who = 'driverB';
+        sync5._poll();
+        await until('refused, backing off', () => sync5._retryAt > Date.now() && sync5.profile === undefined);
+        patch.profileRefuse = false;
+        const asked = patch.count('profile');
+        sync5.load();
+        await until('asked at once and in effect', () => patch.count('profile') > asked && sync5.settled() && sync5.profile === 'driverB', 1000);
+    });
     await check('a late profile answer while a write is on its way, the render showing another key too: it ends on patchd\'s stored set', async () => {
         await setUp();
         patch.own = {};
@@ -609,14 +710,13 @@ async function main() {
     patch.profileMute = true;
     const log = quiet();
     const sync3 = new ProfileSync({ readProfile: () => Promise.resolve('driverA'), patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL,
-        replyMs: 100, retryMs: 400, log });
+        replyMs: 100, retryMs: 60000, log });
     sync3.start();
-    await check('a patchd that does not answer: the checkbox greyed, asked again after the retry time, not each read', async () => {
+    await check('a patchd that does not answer: the checkbox greyed, asked again at the next read', async () => {
         await until('asked', () => log.lines.some((l) => /patchd did not take profile: no answer/.test(l)));
         const asked = patch.count('profile');
         assert.strictEqual(sync3.canChooseOwn(), false);
-        await sleep(200);
-        assert.strictEqual(patch.count('profile'), asked, 'not asked again before the retry time');
+        await until('asked again', () => patch.count('profile') > asked, 1000);
         patch.profileMute = false;
         await until('asked again and taken', () => sync3.profile === 'driverA', 1500);
         assert(sync3.canChooseOwn());

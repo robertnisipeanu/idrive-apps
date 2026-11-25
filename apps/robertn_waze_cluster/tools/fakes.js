@@ -11,7 +11,8 @@
  * FakeRender speaks the render control protocol: on connect a status and the
  * log backlog. Like the render, it maps on its own: stream(true) -> starting,
  * then showing the "map" page at 30 updates/s; stream(false) -> idle. The map
- * stays when the connection closes. guide -> the status with the new
+ * stays when the connection closes. With `statusDelayMs` set, its status
+ * after a cluster or hud command comes that much later. guide -> the status with the new
  * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
@@ -28,7 +29,9 @@
  * profile as patchd keeps them: `map` the settings in effect, `shared` and
  * `own` (by id) the rest, `current` the profile last told; profile and
  * profile-own answer as patchd does (profile-own refused for another id),
- * `profileDelayMs` late, or not at all with `profileMute` set (a patchd
+ * `profileDelayMs` late, refused with `profileRefuse` set, by closing the
+ * connection with `profileDrop` set
+ * (a patchd restarting), or not at all with `profileMute` set (a patchd
  * before profiles); its status says whether any profile has own settings,
  * sent again `statusDelayMs` after a tick changes that;
  * cluster,
@@ -202,7 +205,13 @@ class FakeRender extends LineServer {
         }
         if (msg.cmd === 'cluster' && msg.on !== undefined) {
             this.cluster = Number(msg.on);
-            this._broadcast(this._status());
+            if (!this.statusDelayMs) this._broadcast(this._status());
+        }
+        if (msg.cmd === 'hud' || msg.cmd === 'cluster') {
+            if (this.statusDelayMs) {
+                clearTimeout(this._statusTimer);
+                this._statusTimer = setTimeout(() => this._broadcast(this._status()), this.statusDelayMs);
+            }
         }
         if (msg.cmd === 'hud') {
             if (msg.on !== undefined) this.hud = Number(msg.on);
@@ -212,7 +221,7 @@ class FakeRender extends LineServer {
             if (msg.hud_x !== undefined) this.hudX = lim(Number(msg.hud_x));
             if (msg.hud_y !== undefined) this.hudY = Number(msg.hud_y);
             if (msg.hud_keep_shown !== undefined && this.hudKeep !== null) this.hudKeep = Number(msg.hud_keep_shown);
-            this._broadcast(this._status());
+            if (!this.statusDelayMs) this._broadcast(this._status());
         }
     }
 }
@@ -355,7 +364,9 @@ class FakePatch extends LineServer {
             return;
         }
         if (msg.cmd === 'profile' || msg.cmd === 'profile-own') {
-            if (!this.profileMute) this._profile(msg, socket);
+            if (this.profileDrop) socket.destroy();
+            else if (this.profileRefuse) this._send(socket, { ev: 'refused', cmd: msg.cmd, reason: 'not now' });
+            else if (!this.profileMute) this._profile(msg, socket);
             return;
         }
         const MAP = { cluster: ['cluster'], hud: ['hud'], 'hud-size': ['hud_width_pct'], 'hud-pos': ['hud_offset_x', 'hud_offset_y'],
