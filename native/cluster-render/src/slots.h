@@ -530,7 +530,9 @@ public:
      * (Target::ahead). A hold gives up when its scene is lost (removed,
      * unmapped, parked again behind other content) with the slot not locked,
      * or moves to another slot (TargetSpec::table_slots), more than
-     * kHoldLosses times within kHoldLossMs; a yield is no loss. The give-up
+     * kHoldLosses times within kHoldLossMs; a yield is no loss, nor is a
+     * park that turns into one before ours is shown again (the loss is
+     * withdrawn, and a give-up it alone caused undone). The give-up
      * lasts until cluster-render restarts or until the target it follows
      * lets it hold again (guide_hold false, then true). */
     void follow(int64_t now_ms);
@@ -692,6 +694,8 @@ private:
         std::vector<int64_t> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
+        int64_t lost_parked_ms = -1;    /* that loss: when */
+        bool parked_gave_up = false;    /* that loss gave the hold up */
         /* A hold: the box counts as mapped in its slot (follow()), and the
          * last pass that saw it mapped (-1: none). */
         bool boxed = false;
@@ -849,8 +853,8 @@ private:
      * its slot, by the latest report naming the slot. */
     bool box_mapped(int i) const;
     /* A hold's scene lost while its slot is not locked, or (move) its move
-     * to another slot, locked or not. */
-    void note_loss(int i, const char *how, int64_t now_ms, bool move = false);
+     * to another slot, locked or not. True: counted. */
+    bool note_loss(int i, const char *how, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
      * disabled (shown first, then its own slot, then 0x105); *why says

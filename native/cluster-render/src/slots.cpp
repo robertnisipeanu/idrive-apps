@@ -341,6 +341,19 @@ void SlotManager::follow(int64_t now_ms)
                          specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
             t.yielding = y;
         }
+        /* Parked again behind content it yields to: no loss. */
+        if (y && t.lost_parked) {
+            t.lost_parked = false;
+            auto at = std::find(t.losses.begin(), t.losses.end(), t.lost_parked_ms);
+            if (at != t.losses.end())
+                t.losses.erase(at);
+            if (t.parked_gave_up) {
+                t.given_up = t.parked_gave_up = false;
+                log_info("target %s: hold no longer given up: it was parked behind 0x%llx, which it yields to, "
+                         "no loss",
+                         specs_[i].name.c_str(), (unsigned long long)y);
+            }
+        }
         if ((y || t.given_up) && (t.requested || t.kept))
             release(i, now_ms);
         want(i, shown && !y && !t.given_up, true);
@@ -378,21 +391,22 @@ uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
     return 0;
 }
 
-void SlotManager::note_loss(int i, const char *how, int64_t now_ms, bool move)
+bool SlotManager::note_loss(int i, const char *how, int64_t now_ms, bool move)
 {
     Target &t = t_[i];
     if (specs_[i].follows.empty() || (locked(i) && !move) || t.given_up)
-        return;
+        return false;
     t.losses.push_back(now_ms);
     while (now_ms - t.losses.front() > kHoldLossMs)
         t.losses.erase(t.losses.begin());
     if ((int)t.losses.size() <= kHoldLosses)
-        return;
+        return true;
     t.given_up = true;
     log_warn("target %s: hold given up: its scene %s, %zu losses within %lld s; not asked for again until "
              "cluster-render restarts or the target it follows lets it hold again; slot 0x%llx %s",
              specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+    return true;
 }
 
 uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows,
@@ -1052,8 +1066,12 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         return;
     }
     if (s == TargetState::Shown && !specs_[i].follows.empty()) {
-        note_loss(i, "parked again behind other content", now_ms);
-        t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
+        Target &t = t_[i];
+        const bool up = t.given_up;
+        /* Withdrawn if it turns into a yield (follow()). */
+        t.lost_parked = note_loss(i, "parked again behind other content", now_ms);
+        t.lost_parked_ms = now_ms;
+        t.parked_gave_up = !up && t.given_up;
     }
     if (s == TargetState::Acquiring || s == TargetState::Shown)
         park(i, now_ms);

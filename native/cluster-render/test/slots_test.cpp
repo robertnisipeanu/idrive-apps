@@ -2230,14 +2230,15 @@ static void guide_gives_up()
     }
     ok("losses to a lock do not count", asked == 6);
 
-    /* The seat-belt panel shown over the hold: parked again and yielded to,
-     * one loss each time. */
+    /* The seat-belt panel shown over the hold (issue 281, 24 Nov 14:45:05):
+     * parked again, then yielded to: the park's loss withdrawn each time. */
     GuideRig y;
     y.rows(kGuideSlot, 2, {{kBox, 1}});
     y.show_map();
     logged();
+    const int64_t from = y.now;
     int held = 0;
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < 5; k++) {
         bool asked = false;
         for (int64_t w = 0; w < 30000 && !asked; w += 100) {
             y.pass(100);
@@ -2252,11 +2253,67 @@ static void guide_gives_up()
         y.m.on_parked(kGuideScene, y.now);
         y.pass();
         y.rows(kGuideSlot, 2, {{kBox, 1}});   /* the seat belt fastened */
-        if (k == 2)
-            ok("three seat-belt events within 60 s: three losses, not given up",
-               logged().find("given up") == std::string::npos);
     }
-    ok("a fourth: given up", held == 4 && logged().find("hold given up") != std::string::npos);
+    ok("shown, parked behind the seat-belt panel and yielded to, five times within 60 s: not given up",
+       held == 5 && y.now - from < 60000 && logged().find("given up") == std::string::npos);
+
+    /* The box shown over the hold (a fight, no yield): parked again four
+     * times within 60 s, each taken over, still given up. */
+    GuideRig b;
+    b.rows(kGuideSlot, 2, {{kBox, 1}});
+    b.show_map();
+    b.hold();
+    logged();
+    const int64_t start = b.now;
+    int parks = 0;
+    for (int k = 0; k < 4; k++) {
+        b.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+        b.m.on_parked(kGuideScene, b.now);
+        parks++;
+        bool taken = false;
+        for (int64_t w = 0; w < 30000 && !taken; w += 100) {
+            b.pass(100);
+            taken = joined().find("take over guide") != std::string::npos;
+        }
+        if (!taken)
+            break;
+        b.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        b.m.on_shown(kGuideScene, b.now);
+    }
+    b.pass(5000);
+    ok("parked again behind the box four times within 60 s: given up",
+       parks == 4 && b.now - start < 60000 &&
+           logged().find("target guide: hold given up: its scene parked again behind other content, 4 losses") !=
+               std::string::npos);
+
+    /* Three unmaps, then parked behind the seat-belt panel: that park gave
+     * the hold up, and is withdrawn once yielded to. */
+    GuideRig u;
+    u.rows(kGuideSlot, 2, {{kBox, 1}});
+    u.show_map();
+    logged();
+    for (int k = 0; k < 4; k++) {
+        bool asked = false;
+        for (int64_t w = 0; w < 30000 && !asked; w += 100) {
+            u.pass(100);
+            asked = joined().find("request guide") != std::string::npos;
+        }
+        u.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        u.m.on_shown(kGuideScene, u.now);
+        if (k < 3) {
+            u.rows(kGuideSlot, 2, {{kBox, 1}});
+            u.m.on_lost(kGuideScene, "unmapped", u.now);
+        }
+    }
+    u.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
+    u.m.on_parked(kGuideScene, u.now);
+    u.pass();
+    u.rows(kGuideSlot, 2, {{kBox, 1}});
+    u.pass(1000);
+    ok("a fourth loss a park behind the seat-belt panel: the give-up undone, logged, asked for again",
+       logged().find("target guide: hold no longer given up: it was parked behind 0x1000314") !=
+               std::string::npos &&
+           joined().find("request guide") != std::string::npos);
 }
 
 /* Issue 281, as on the car (24 Nov): the box and the seat-belt panel
@@ -2322,11 +2379,10 @@ static void guide_given_up_held_again()
            logged().find("target guide: the hold may be asked for again") != std::string::npos);
 }
 
-/* Losses until the hold gives up: yields, the seat-belt panel shown over
- * the hold (BMW's own content), or else faults, our scene unmapped with
- * only the box (on the take-over list) in the slot, Dcsm2 staying up (the
- * KOMBI's renderer restarting). Returns the requests. */
-static int lose_until_given_up(GuideRig &r, bool yields)
+/* Losses until the hold gives up: our scene unmapped with only the box
+ * (on the take-over list) in the slot, Dcsm2 staying up (the KOMBI's
+ * renderer restarting). Returns the requests. */
+static int lose_until_given_up(GuideRig &r)
 {
     r.rows(kGuideSlot, 2, {{kBox, 1}});
     r.show_map();
@@ -2342,33 +2398,22 @@ static int lose_until_given_up(GuideRig &r, bool yields)
         requests++;
         r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
         r.m.on_shown(kGuideScene, r.now);
-        if (yields) {
-            r.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
-            r.m.on_parked(kGuideScene, r.now);
-            r.pass();
-            r.rows(kGuideSlot, 2, {{kBox, 1}});   /* the seat belt fastened */
-        } else {
-            r.rows(kGuideSlot, 2, {{kBox, 1}});
-            r.m.on_lost(kGuideScene, "unmapped", r.now);
-        }
+        r.rows(kGuideSlot, 2, {{kBox, 1}});
+        r.m.on_lost(kGuideScene, "unmapped", r.now);
     }
     r.pass(300000);
     return requests;
 }
 
-/* Give-ups in two starts, of unmaps or of yields to the seat-belt panel:
- * given up in each, held again at the next start. */
+/* Give-ups in two starts: given up in each, held again at the next start. */
 static void guide_gives_up_twice()
 {
-    for (bool yields : {false, true}) {
-        const std::string what = yields ? "yields only" : "unmaps only";
-        for (int start = 1; start <= 2; start++) {
-            GuideRig r;
-            logged();
-            const int asked = lose_until_given_up(r, yields);
-            ok((what + ", start " + std::to_string(start) + ": held, then given up").c_str(),
-               asked == 4 && logged().find("hold given up") != std::string::npos);
-        }
+    for (int start = 1; start <= 2; start++) {
+        GuideRig r;
+        logged();
+        const int asked = lose_until_given_up(r);
+        ok(("unmaps only, start " + std::to_string(start) + ": held, then given up").c_str(),
+           asked == 4 && logged().find("hold given up") != std::string::npos);
     }
 }
 

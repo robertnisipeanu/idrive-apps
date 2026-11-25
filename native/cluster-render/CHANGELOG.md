@@ -23,7 +23,9 @@ A hold that yields to BMW's own content in its slot (the rear seat-belt
 panel, which comes and goes on its own) no longer counts that as a loss,
 so it no longer gives up over it. A hold that has given up is asked for
 again when the target it follows lets it hold again (Hide BMW's turn box
-off and on), without a restart.
+off and on), without a restart. A hold parked again behind that panel,
+then yielding to it, no longer counts that as a loss either; parked again
+behind BMW's turn box still counts.
 
 ## 0.8.13
 
