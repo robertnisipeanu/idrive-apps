@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-While the map is not seen (its slot not on the cluster, the cluster on
-other content or asleep, the HUD giving way to BMW's lists, or the app
+While the map is not seen (the cluster showing other content in its
+slot or the slot locked, the HUD giving way to BMW's lists, or the app
 hosting it hiding it), the head unit makes and sends one map picture a
 second instead of every frame, and the HUD map is scaled no more often.
 The phone's stream is still decoded, so the map is back with its newest

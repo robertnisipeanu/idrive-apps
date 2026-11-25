@@ -46,6 +46,7 @@ MapFeed::MapFeed(const FeedConfig &cfg)
          * counts, and no status request is outstanding on it. */
         refused_.clear();
         status_asked_ = false;
+        target_states_.clear();   /* each target's comes again on this connection */
         log_info("render: connected to the cluster renderer (%s; %s)", client_.backend.c_str(), client_.targets.c_str());
         if (!layer_) {
             make_layer();
@@ -66,6 +67,7 @@ MapFeed::MapFeed(const FeedConfig &cfg)
     };
     client_.on_target = [this](const std::string &t, const std::string &state, const std::string &holder,
                                const std::string &) {
+        target_states_[t] = state;
         if (t != drawn_target())
             return;
         target_state_ = state;
@@ -503,7 +505,11 @@ bool MapFeed::unseen() const
 {
     if (hosted() && !host_.shown)
         return true;
-    return layer_ && client_.connected() && lo_.visible && (layer_state_ == "waiting" || layer_state_ == "suspended");
+    /* the states in which the renderer writes nothing of the target */
+    if (!layer_ || !client_.connected() || !lo_.visible || layer_state_ != "waiting")
+        return false;
+    const auto t = target_states_.find(drawn_target());
+    return t != target_states_.end() && (t->second == "parked" || t->second == "waiting" || t->second == "unavailable");
 }
 
 bool MapFeed::unseen_held(int64_t now_ms) const
@@ -533,7 +539,10 @@ int64_t MapFeed::wake_in_ms(int64_t now_ms) const
         return -1;
     if (!worker_.idle())
         return kScaleWaitMs;
-    return held_new_ && sending() && !disabled() ? std::max<int64_t>(1, next_send_ms_ - now_ms) : -1;
+    int64_t due = next_send_ms_;
+    if (held_part_.set() && unseen())   /* a VPP-made picture waits its turn (unseen_held) */
+        due = std::max(due, unseen_sent_ms_ + kUnseenMs);
+    return held_new_ && sending() && !disabled() ? std::max<int64_t>(1, due - now_ms) : -1;
 }
 
 void MapFeed::keep_newest()

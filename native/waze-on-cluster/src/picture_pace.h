@@ -32,8 +32,9 @@
  *
  * While nothing of the map is seen (map_feed.h "Unseen": its slot not on
  * the cluster, the HUD giving way, hidden by its host), kUnseenFps pictures
- * a second at most, below the freeze watch's freeze_min_fps, so a stream
- * that freezes then is taken down by its blank pictures (blank_ms) instead.
+ * a second at most, fewer than the freeze watch takes as shipped
+ * (freeze_min_fps 3), so a stream that freezes then is taken down by its
+ * blank pictures (blank_ms) instead.
  * Every frame is still decoded, so the stream stays in step without a new
  * keyframe; seen again, the newest frame's picture comes at once (a late
  * picture at the new rate) and the rest at the rate above. */

@@ -59,19 +59,21 @@
  * through the worker. A layer made for another part, or for none, starts
  * from the next frame, not a part of the old one.
  *
- * Unseen: while the renderer reports the visible layer waiting (its target
- * not on screen: the cluster shows other content in the slot, the slot is
- * locked, the cluster is asleep, the slot not given yet) or suspended under
- * another app's exclusive layer, and while its host hides it, nothing of
- * the map is seen. Its frames then go at most once every kUnseenMs, and a
- * layer that scales scales no more often, so the layer stays fed (never
- * stalled); the rest are held. The moment it is seen again (the renderer reports it shown, or the
- * host shows it), the newest picture goes at once. A layer the stream hides
- * is not unseen: its frames go nowhere, as above. */
+ * Unseen: while the renderer reports the visible layer waiting with its
+ * target parked, waiting or unavailable (the cluster shows other content
+ * in the slot, the slot is locked, the HUD gives way to BMW's lists, the
+ * display service is down), states in which it writes nothing of the
+ * target, and while its host hides it, nothing of the map is seen. Its
+ * frames then go at most once every kUnseenMs, and a layer that scales
+ * scales no more often, so the layer stays fed (never stalled); the rest
+ * are held. The moment it is seen again (the renderer reports it shown, or
+ * the host shows it), the newest picture goes at once. A layer the stream
+ * hides is not unseen: its frames go nowhere, as above. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 
 #include <stdint.h>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -335,6 +337,9 @@ private:
      * held_new_ (else the layer's last), never a whole picture. */
     OutputPart held_part_;
     const char *unpacked_why_ = nullptr;   /* why always_packed did not apply, as last logged */
+    /* every target's state as the renderer last reported it on this
+     * connection: it reports a target's again only when it changes */
+    std::map<std::string, std::string> target_states_;
     bool unseen_ = false;                  /* unseen() at the last poll */
     int64_t unseen_sent_ms_ = -kUnseenMs;  /* when the last frame went */
 };
