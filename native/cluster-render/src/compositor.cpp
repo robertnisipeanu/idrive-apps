@@ -1582,9 +1582,11 @@ void Compositor::host_decided(int target, LayerHost &lh, const LayerHost *winner
         why = "target " + name + " is hosted by a scene";
     } else if (lh.eligible && !live) {
         by = winner->owner;
-        why = winner->into == lh.into ? "target " + name + " is hosted by another client's layers, drawn higher over it"
-                                      : "target " + name + " is hosted by another client's layers on " +
-                                            slots_->targets()[winner->into].name + ", there first";
+        const std::string &on = slots_->targets()[winner->into].name;
+        why = !lh.host.shown && winner->host.shown ? "target " + name + " is shown by another client's layers on " + on
+              : winner->into == lh.into ? "target " + name + " is hosted by another client's layers, drawn higher over it"
+                                        : "target " + name + " is hosted by another client's layers on " + on +
+                                              ", there first";
     }
     if (live != lh.live || why != lh.why || by != lh.by) {
         host_serial_++;

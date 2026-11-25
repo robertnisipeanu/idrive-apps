@@ -3810,7 +3810,7 @@ static void hidden_host_across_targets()
     r.pump(300);
     ok("hide across targets: another app's shown host on the HUD wins over it, though sent later",
        producer.hosts.count("map") && producer.hosts["map"].into == "hud" && producer.hosts["map"].shown &&
-           hosting_theme["map"].find("waiting:") == 0);
+           hosting_theme["map"] == "waiting: target map is shown by another client's layers on hud");
     cr::LayerOptions off = al;
     off.visible = false;
     app.set(hud_layer, off);
@@ -3822,6 +3822,66 @@ static void hidden_host_across_targets()
     r.pump(300);
     ok("hide across targets: shown again: the shown host wins again, also over the hidden host holding the target",
        producer.hosts.count("map") && producer.hosts["map"].into == "hud" && producer.hosts["map"].shown);
+}
+
+/* fresh_ms never holds up the target: an opaque image over a held video,
+ * hidden while the target was off screen, is flushed hidden as soon as the
+ * target is shown again, not after fresh_ms. */
+static void fresh_frames_give_way()
+{
+    const uint64_t kStock = 0x01000201;
+    const std::vector<uint8_t> f1 = atlas(51), f2 = atlas(52);
+    Rig r(2 << 20);
+    cr::Client c("fresh", r.path), cover("cover", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c, &cover};
+    r.pump(50);
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.contend = true;
+    lo.w = 1088;
+    lo.h = 480;
+    cr::VideoOptions vo;
+    vo.stall_ms = 600000;
+    vo.level_bits = 0;
+    vo.pan_blocks = false;
+    vo.fresh_ms = 1000;
+    const uint32_t vid = c.video(lo, vo);
+    c.frame(vid, f1.data(), f1.size(), 1);
+    cr::LayerOptions il;
+    il.target = "panel";
+    il.klass = "overlay";
+    il.w = il.h = 256;
+    cr::ImageOptions io;
+    io.w = io.h = 256;
+    const uint32_t img = cover.image(il, io);
+    const std::vector<uint8_t> opaque(256 * 256 * 4, 255);
+    cover.pixels(img, {}, opaque.data(), opaque.size());
+    r.pump(2000);
+    const auto image_drawn = [&r]() {
+        FakeGraph *g = r.gpu.graph("panel");
+        bool on = false;
+        if (g)
+            for (int q : g->visible())
+                on = on || (g->shown.quads.at(q).r.w == 256 && g->shown.quads.at(q).r.h == 256);
+        return on;
+    };
+    const bool covered = e.target["panel"] == "shown" && image_drawn();
+    r.port.steal(r.sc.targets[1], kStock);
+    c.frame(vid, f2.data(), f2.size(), 2);
+    r.pump(1000);
+    cr::LayerOptions hidden = il;
+    hidden.visible = false;
+    cover.set(img, hidden);
+    r.pump(200);
+    r.port.stock_unmap(0x203, kStock);
+    int steps = 0;
+    for (; steps < 400 && e.target["panel"] != "shown"; steps++)
+        r.pump(5);
+    r.pump(100);
+    ok("fresh_ms: an image over a held video hidden while off screen: flushed hidden at once, not after fresh_ms",
+       covered && steps < 400 && !image_drawn());
 }
 
 /* fresh_ms (PROTOCOL.md): a video's frame that came while its target was
@@ -4428,6 +4488,7 @@ int main()
     display_drops();
     repeats();
     fresh_frames();
+    fresh_frames_give_way();
     hidden_host_across_targets();
     framing();
     scene_files();

@@ -131,7 +131,7 @@ Kind fields:
 | | `pan_blocks` | 1 | fast motion as packed 4x4 blocks |
 | | `always_packed` | 0 | optional; 1: every write as packed 4x4 blocks, never the exact atlas. Each update is planned as an exact one (`dirty_threshold`, `settle_ms`, the tiles), and only the blocks in its tiles that changed are written, in place; the whole packed buffer goes only with the layer's first write in a scene or after a failed one, and a still picture writes nothing. Needs `pan_blocks` 1 and `vh` a multiple of 4, else it is off. A target's shared video has it only when all of its videos do. Send it only to a service whose hello has `always_packed` 1 (a service without it ignores it and writes the layer exact); a layer without it is written exact |
 | | `stall_ms` | 6000 | no frame for this long: the layer is stalled (not drawn) |
-| | `fresh_ms` | 0 | optional, 0-1000; when the target is written again after it was not (parked, waiting, locked, released), a frame that came before, once the layer has written one, waits up to this long for a newer frame before it is written, so a client that sends its newest picture when its layer is shown again (the `layer` event) is drawn with that first, never with an older one. Not for a video drawn through its target's composite. Send it only to a service whose hello has `fresh_ms` 1 (a service without it ignores it) |
+| | `fresh_ms` | 0 | optional, 0-1000; when the target is written again after it was not (parked, waiting, locked, released), a frame that came before, once the layer has written one, waits up to this long for a newer frame before it is written, so a client that sends its newest picture when its layer is shown again (the `layer` event) is drawn with that first, never with an older one, unless the target waits on this layer meanwhile (tiles of it that a change uncovers, its buffer left half written): then the older frame is written at once, so the target's other layers are never held up. Not for a video drawn through its target's composite. Send it only to a service whose hello has `fresh_ms` 1 (a service without it ignores it) |
 | image | `iw`, `ih` | the rect | the image size, up to 1920x720 |
 | | `fps` | 30 | writes a second at most |
 | | `sampling` | `nearest` | or `bilinear` (a rect of another size than the image) |
@@ -987,11 +987,13 @@ target's name, so the service knows it.
   or whose host is not eligible, never moves the picture.
 - **`hosting` event.** The client is told whether its host is live, and
   while it is not, why: `it shows the target nowhere (shown 0)`, `no layer
-  of the client is drawn over its rect on P`, `P is not on screen
-  (STATE)`, `P's layers wait for a scene file there`, `target T is hosted
-  by a scene`, `target T is hosted by another client's layers, drawn higher
-  over it`, or `target T is hosted by another client's layers on P2, there
-  first` (with `by`, that client's name). It comes when the state or the
+  of the client is drawn over its rect on P`, `no layer of the client is
+  drawn on P` (a hidden host), `P is not on screen (STATE)`, `P's layers
+  wait for a scene file there`, `target T is hosted by a scene`, `target T
+  is hosted by another client's layers, drawn higher over it`, `target T
+  is hosted by another client's layers on P2, there first`, or `target T
+  is shown by another client's layers on P2` (a hidden host, which any
+  shown host wins over; with `by`, that client's name). It comes when the state or the
   reason changes, after the service has first decided, and again from the
   start for a new host.
 - **Several hosts.** A client has one host from layers a target; sending

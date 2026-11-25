@@ -8,8 +8,8 @@ hosting it hiding it, also a cluster theme on a page without the map),
 the head unit makes one map picture a second instead of one for every
 frame and sends none, and the HUD map is not scaled. The phone's stream is
 still decoded, so the map is back with its newest picture the moment it
-is seen again, never an older one first, with the cluster-render released
-with it (its `fresh_ms`).
+is seen again; with the cluster-render released with it, that picture is
+the first one the cluster draws.
 
 ## 0.14.16
 
