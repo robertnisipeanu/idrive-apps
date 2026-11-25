@@ -69,7 +69,13 @@
  *                                   hud-reply, hud-size-reply, hud-pos-reply,
  *                                   hud-keep-shown-reply)
  *                                   follows the write and carries ok, the values
- *                                   saved and reason.
+ *                                   saved and reason. With "profile":"<id>"|null
+ *                                   and "own":0|1 (the driver profile and set
+ *                                   the app's page showed), each is saved only
+ *                                   while that profile and set are in effect;
+ *                                   otherwise nothing is saved and the reply
+ *                                   carries ok false, refused "profile", reason
+ *                                   and the settings in effect.
  *                  {"cmd":"profile","id":"<id>"|null}
  *                  {"cmd":"profile-own","id":"<id>","on":0|1}
  *                                   the driver profile now (the head unit's user
@@ -571,6 +577,31 @@ function profileCmd(msg, sock) {
     }
     reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed || restored, settings: want });
     restored = false;
+}
+
+/* The map settings the app writes. A write names the driver profile its
+ * page showed ("profile": the id, or null for none) and whether that
+ * profile's own settings were the ones in effect ("own": 0 or 1). It is
+ * saved only while patchd has that profile and that set in effect, so it
+ * goes into those settings and no others: the reason it is refused, else
+ * null. A write without "profile" (an app before it) goes into the
+ * settings in effect. */
+var MAP_CMDS = ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'];
+function mapWriteRefusal(msg) {
+    if (!('profile' in msg)) return null;
+    var id = msg.profile === '' ? null : msg.profile;
+    if (id !== null && !profileIdOk(id)) return 'not a profile id';
+    if (msg.own !== 0 && msg.own !== 1) return 'own must be 0 or 1';
+    if (currentProfile === undefined) return 'no driver profile told since the start';
+    if (id !== currentProfile) return 'not the driver profile in effect';
+    var own = !!(id !== null && profiles && profiles.own[id]);
+    if (own !== (msg.own === 1)) return own ? 'the driver profile has its own map settings' : 'the driver profile uses the shared map settings';
+    return null;
+}
+/* The settings in effect: as PROFILES_FILE keeps them, else MAP_STATE's
+ * and what waits to be written there. */
+function settingsInEffect() {
+    return Object.assign({}, (profiles && profilesKept(profiles) && profileEntry(profiles)) || mapSettingsNow());
 }
 var statusWaiters = null;    /* the callers of the carplay_patch status read in flight */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
@@ -2374,7 +2405,18 @@ function handle(line, sock) {
         return;
     }
     /* Where the map shows and the HUD map's settings: not operations on
-     * carplay, so not held back by one. */
+     * carplay, so not held back by one. Each is saved only into the driver
+     * profile's settings it names (mapWriteRefusal). */
+    if (MAP_CMDS.indexOf(msg.cmd) >= 0) {
+        var refusal = mapWriteRefusal(msg);
+        if (refusal) {
+            log('not saved: ' + msg.cmd + ' for ' + (msg.own ? 'the own map settings of ' : 'the map settings in effect for ') +
+                'driver profile ' + (profileIdOk(msg.profile) ? profileTag(msg.profile) : msg.profile == null ? 'none' : '(not an id)') +
+                ': ' + refusal);
+            reply(sock, { ev: msg.cmd + '-reply', ok: false, refused: 'profile', reason: refusal, settings: settingsInEffect() });
+            return;
+        }
+    }
     if (msg.cmd === 'cluster' || msg.cmd === 'hud') {
         var set = {};
         if (msg.on !== 0 && msg.on !== 1) { reply(sock, { ev: msg.cmd + '-reply', ok: false, reason: 'on must be 0 or 1' }); return; }

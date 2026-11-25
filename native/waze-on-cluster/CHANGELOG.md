@@ -3,6 +3,9 @@
 ## Unreleased
 
 ## 0.14.15
+A map setting the app saves for one driver profile goes into that
+profile's settings only; one made for another driver than the one in use
+is not saved. Settings saved by earlier versions stay as they are.
 
 The map service runs in the head unit's slice for standard services, level
 with the HMI.

@@ -279,6 +279,27 @@ function shownOnOf(rs) {
     return cluster && hud ? 'both' : cluster ? 'cluster' : hud ? 'hud' : 'off';
 }
 
+/* The render's commands for map settings as patchd keeps them: a display
+ * turned on first, so a switch from one display to the other never passes
+ * through neither, then the HUD's size, place and whether it stays shown
+ * over BMW's pop-ups (from a patchd that has it). */
+function renderCommands(s) {
+    const on = (v) => (v ? '1' : '0');
+    const shows = ['cluster', 'hud'].sort((a, b) => s[b] - s[a]);
+    const hud = { cmd: 'hud', hud_width_pct: String(s.hud_width_pct), hud_x: String(s.hud_offset_x), hud_y: String(s.hud_offset_y) };
+    if (s.hud_keep_shown === 0 || s.hud_keep_shown === 1) {
+        hud.hud_keep_shown = on(s.hud_keep_shown);
+    }
+    return shows.map((d) => ({ cmd: d, on: on(s[d]) })).concat([hud]);
+}
+
+/* Whether the render's status shows map settings as patchd keeps them. */
+function renderShows(rs, s) {
+    return rs.cluster === s.cluster && rs.hud === s.hud && rs.hud_width_pct === s.hud_width_pct &&
+        rs.hud_x === s.hud_offset_x && rs.hud_y === s.hud_offset_y &&
+        (!(s.hud_keep_shown === 0 || s.hud_keep_shown === 1) || rs.hud_keep_shown === undefined || rs.hud_keep_shown === s.hud_keep_shown);
+}
+
 /* After a zoom or turn-card value that waits for the next head-unit start. */
 function afterRestart(waits) {
     return waits ? ` ${t('(after restart)')}` : '';
@@ -301,6 +322,10 @@ class WazeClusterControl extends EventEmitter {
         this._forget();
         this.captureState = { state: 'unavailable' };
         this.renderStatus = null;   /* the render tool's last status while connected */
+        /* what a map setting written now is for ({profile, own}), null while
+         * none may be written; {} names none (a page without driver profiles) */
+        this._writeTarget = () => ({});
+        this._stored = null;        /* map settings to show once the render has said what it shows */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -328,6 +353,52 @@ class WazeClusterControl extends EventEmitter {
         this.patch.on('close', () => { this._forget(); this._restartRequested = false; this.emit('change'); });
     }
 
+    /* fn() -> {profile, own} for the driver profile's settings a map
+     * setting is written for, or null while none may be (greyed). */
+    setWriteTarget(fn) {
+        this._writeTarget = fn;
+    }
+
+    /* A map setting to patchd, naming the settings it is for; false when
+     * none may be written now. */
+    _saveMap(msg) {
+        const w = this._writeTarget();
+        if (!w) {
+            return false;
+        }
+        this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
+        return true;
+    }
+
+    /* The render to the map settings stored for the driver profile in
+     * effect, once it has said what it shows, unless it shows them. With
+     * moved (patchd put other settings in effect, or refused a write), what
+     * was asked and not yet shown gives way to them; without, a change asked
+     * meanwhile keeps the render as it is. */
+    showStored(settings, moved) {
+        this._stored = { settings, moved: !!moved || !!(this._stored && this._stored.moved) };
+        this._applyStored();
+    }
+
+    _applyStored() {
+        const st = this._stored, rs = this.renderStatus;
+        if (!st || !rs || !this.render.connected() || shownOnOf(rs) === null) {
+            return;
+        }
+        this._stored = null;
+        const s = st.settings;
+        const asked = !!this._askedShownOn || this._askedHud != null || !!this._askedPos;
+        if (renderShows(rs, s) || (asked && !st.moved)) {
+            return;
+        }
+        this._askedShownOn = null;
+        this._clearAskedHud();
+        clearTimeout(this._askedPosTimer);
+        this._askedPos = null;
+        renderCommands(s).forEach((m) => this.render.send(m));
+        this.emit('change');
+    }
+
     /* Open both sockets, each reconnecting while open. */
     open() {
         this.render.open();
@@ -338,6 +409,7 @@ class WazeClusterControl extends EventEmitter {
     close() {
         clearTimeout(this._askedPosTimer);
         this._askedPos = null;
+        this._stored = null;
         this._clearAskedHud();
         this.render.close();
         this.patch.close();
@@ -404,9 +476,11 @@ class WazeClusterControl extends EventEmitter {
         return on === 'both' || on === display;
     }
 
-    /* A choice goes to the render and is saved by patchd: both connected. */
+    /* A choice goes to the render and is saved by patchd, for the driver
+     * profile's settings in effect: both connected, the profile settled. */
     canChooseShownOn() {
-        return this.render.connected() && this.connectedPatch() && this.clusterOn() !== null && this.hudOn() !== null;
+        return this.render.connected() && this.connectedPatch() && this.clusterOn() !== null && this.hudOn() !== null &&
+            !!this._writeTarget();
     }
 
     /* Shows the map on the cluster, the HUD, both or neither ('off': BMW's
@@ -422,7 +496,7 @@ class WazeClusterControl extends EventEmitter {
         this._askedShownOn = choice;
         changes.forEach((d) => {
             this.render.send({ cmd: d, on: want[d] ? '1' : '0' });
-            this.patch.send({ cmd: d, on: want[d] ? 1 : 0 });
+            this._saveMap({ cmd: d, on: want[d] ? 1 : 0 });
         });
         this.emit('change');
     }
@@ -508,7 +582,7 @@ class WazeClusterControl extends EventEmitter {
             this.emit('change');
         }, HUD_ASKED_MS);
         this.render.send({ cmd: 'hud', hud_width_pct: String(pct) });
-        this.patch.send({ cmd: 'hud-size', hud_width_pct: pct });
+        this._saveMap({ cmd: 'hud-size', hud_width_pct: pct });
         this.emit('change');
     }
 
@@ -552,7 +626,7 @@ class WazeClusterControl extends EventEmitter {
             this.emit('change');
         }, HUD_ASKED_MS);
         this.render.send({ cmd: 'hud', hud_x: String(x), hud_y: String(y) });
-        this.patch.send({ cmd: 'hud-pos', hud_x: x, hud_y: y });
+        this._saveMap({ cmd: 'hud-pos', hud_x: x, hud_y: y });
         this.emit('change');
     }
     /* ---- the HUD map over BMW's pop-ups ---- */
@@ -571,7 +645,7 @@ class WazeClusterControl extends EventEmitter {
         if (this.canKeepHud()) {
             const keep = !this.hudKeepShown();
             this.render.send({ cmd: 'hud', hud_keep_shown: keep ? '1' : '0' });
-            this.patch.send({ cmd: 'hud-keep-shown', on: keep ? 1 : 0 });
+            this._saveMap({ cmd: 'hud-keep-shown', on: keep ? 1 : 0 });
         }
     }
 
@@ -1072,6 +1146,7 @@ class WazeClusterControl extends EventEmitter {
             if (this._askedPos && msg.hud_x === this._askedPos[0] && msg.hud_y === this._askedPos[1]) {
                 this._askedPos = null;
             }
+            this._applyStored();
             this.emit('change');
         }
     }
@@ -1092,6 +1167,12 @@ class WazeClusterControl extends EventEmitter {
         } else if (/^(cluster|hud|hud-size|hud-pos|hud-keep-shown)-reply$/.test(msg.ev)) {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
+            }
+            /* written for other settings than the driver profile's in
+             * effect: nothing saved; the render back to the ones stored */
+            if (!msg.ok && msg.refused === 'profile' && msg.settings) {
+                this.showStored(msg.settings, true);
+                this.emit('refused');
             }
         } else if (msg.ev === 'reboot-reply') {
             /* A refused or failed request clears the asked flag; the status
@@ -1114,5 +1195,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH,
-    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, HUD_SIZE_STEPS
+    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, HUD_SIZE_STEPS, renderCommands
 };

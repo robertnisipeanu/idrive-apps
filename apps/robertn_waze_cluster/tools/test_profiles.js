@@ -27,7 +27,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const { ProfileSync, sessionReader, IFACE, INSTANCE, FIELD } = require('../src/profile_sync.js');
-const { WazeClusterControl } = require('../src/waze_cluster_control.js');
+const { WazeClusterControl, renderCommands } = require('../src/waze_cluster_control.js');
 const { FakeRender, FakePatch } = require('./fakes.js');
 
 const RSOCK = `/tmp/woc-sr-${process.pid}.sock`;
@@ -178,8 +178,25 @@ async function main() {
         assert.strictEqual(patch.received.filter((m) => m.cmd === 'profile' && m.id === 'driverA').length, 1, 'told once while it stays');
         assert.deepStrictEqual(render.received, []);
     });
+    await check('a write names the profile and set patchd has in effect, and none until then', async () => {
+        assert(sync.settled());
+        assert.deepStrictEqual(sync.writeTarget(), { profile: 'driverA', own: 0 });
+        const fresh = new ProfileSync({ readProfile: () => Promise.resolve('driverA'), patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL * 3,
+            log: quiet() });
+        const seen = [];
+        fresh.on('change', () => seen.push(fresh.settled()));
+        fresh.start();
+        await sleep(POLL);
+        assert.strictEqual(fresh.settled(), false, 'one read: not settled');
+        assert.strictEqual(fresh.writeTarget(), null, 'one read: no write');
+        await until('settled', () => fresh.settled());
+        assert(seen.indexOf(true) >= 0, 'a change when it settles');
+        fresh.stop();
+    });
     await check('ticked: shown ticked at once; own settings, a copy of the ones in effect; nothing moves', async () => {
         const asked = sync.setOwn(true);
+        assert.strictEqual(sync.settled(), false, 'while the tick waits for patchd: not settled');
+        assert.strictEqual(sync.writeTarget(), null, 'while the tick waits for patchd: no write');
         assert.strictEqual(sync.ownShown(), true, 'ticked as pressed');
         await sync.setOwn(false);
         assert.strictEqual(patch.count('profile-own'), 0, 'a press while one is asked: nothing asked yet');
@@ -189,6 +206,7 @@ async function main() {
         assert.deepStrictEqual(render.received, []);
         await sync.setOwn(true);
         assert.strictEqual(patch.count('profile-own'), 1, 'ticked again: nothing asked');
+        assert.deepStrictEqual(sync.writeTarget(), { profile: 'driverA', own: 1 }, 'a write names A\'s own settings');
     });
     /* driver A picks the HUD alone at 60 %, moved left, kept shown over BMW's pop-ups (the page's commands, which patchd saves) */
     patch.map = settings(0, 1, 60, -40, 0, 1);
@@ -252,6 +270,7 @@ async function main() {
         let n = 0;
         sync._read = () => (n++ === 0 ? Promise.resolve('driverB') : new Promise((resolve) => { release = resolve; }));
         await until('greyed, the next read waiting', () => !sync.canChooseOwn() && release);
+        assert.strictEqual(sync.writeTarget(), null, 'a read naming another profile: no write until it counts');
         assert.strictEqual(sync.profile, 'driverA', 'driverB not yet told');
         const asked = patch.count('profile-own');
         await sync.setOwn(false);
@@ -287,6 +306,7 @@ async function main() {
         await until('none', () => sync2.profile === null);
         assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile').slice(-1), [{ cmd: 'profile', id: null }]);
         assert.strictEqual(sync2.canChooseOwn(), false);
+        assert.deepStrictEqual(sync2.writeTarget(), { profile: null, own: 0 }, 'a write names no profile, the shared settings');
         const asked = patch.count('profile-own');
         await sync2.setOwn(true);
         assert.strictEqual(patch.count('profile-own'), asked, 'a greyed tick asks nothing');
@@ -302,10 +322,7 @@ async function main() {
         assert.strictEqual(patch.count('profile'), told);
     });
     await check('a patchd before hud_keep_shown: the render not told it', async () => {
-        render.received.length = 0;
-        sync2._toRender(settings(1, 0, 0, 0, 0));
-        await until('render moved', () => render.received.length === 3);
-        assert.deepStrictEqual(render.received[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0' });
+        assert.deepStrictEqual(renderCommands(settings(1, 0, 0, 0, 0))[2], { cmd: 'hud', hud_width_pct: '0', hud_x: '0', hud_y: '0' });
     });
     sync2.stop();
     c.close();

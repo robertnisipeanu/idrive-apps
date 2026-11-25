@@ -240,6 +240,7 @@ class OnlineApp extends EventEmitter {
 const hmiContexts = [];
 let displayLanguage = null;
 let sessionUser = '';
+const GUEST = 'de.bmw.infotainment.personalization.UserAccountManager.guest';
 const someipBuilders = {
     buildTypedProxy: (iface, instance) => Promise.resolve(iface === 'de.bmw.infotainment.personalization.SessionManager' ? {
         init: () => Promise.resolve(),
@@ -446,6 +447,31 @@ async function main() {
         const showOn = byName.wocShowOn;
         const size = byName.wocHudSize;
         const hudRows = () => ['wocHudKeep', 'wocHudSize', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocHudDown'].map((n) => byName[n].enabled);
+        const own = byName.wocProfile;
+        const sync = OnlineApp.instance._profiles;
+        const mapWrites = () => patch.received.filter((m) => ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'].includes(m.cmd));
+
+        /* the start, before a driver profile is read (an empty value): Show
+         * on, the HUD's rows and Own greyed; a pick or press saves nothing */
+        await sleep(100);
+        assert(showOn.enabled === false && hudRows().every((e) => e === false) && own.enabled === false && own.selected === false &&
+            own.text === 'Own settings for this driver', 'greyed until a driver profile is settled');
+        assert.strictEqual(patch.count('profile'), 0, 'an empty value tells patchd nothing');
+        render.received.length = 0;
+        showOn.pick(1);
+        await until('a greyed drop-down picked: back where it was', () => showOn.shown() === 'Show on: Cluster');
+        own.press();
+        await until('a greyed checkbox pressed: unticked again', () => own.selected === false);
+        await sleep(100);
+        assert.deepStrictEqual(render.received, [], 'a pick before the profile is settled: nothing to the render');
+        assert.deepStrictEqual(mapWrites(), [], 'a pick before the profile is settled: nothing saved');
+        assert.strictEqual(patch.count('profile-own'), 0, 'a greyed checkbox pressed asks nothing');
+        /* the guest profile, on the shared settings */
+        sessionUser = GUEST;
+        await until('the guest profile settled', () => sync.profile === GUEST && showOn.enabled === true);
+        await sleep(450);
+        console.log('ok   until a driver profile is settled: Show on, the HUD\'s rows and Own greyed; a pick sends and saves nothing');
+
         await until('the cluster, the HUD off', () => showOn.shown() === 'Show on: Cluster' && showOn.enabled === true &&
             byName.wocHud.text === 'HUD map: Off' && size.text === 'Size: Standard' && size.cells['0:Value'] === 5 &&
             byName.wocHudPos.text === 'Position: Centre');
@@ -457,6 +483,8 @@ async function main() {
         showOn.pick(1);
         await until('the HUD alone', () => render.hud === 1 && render.cluster === 0 && showOn.shown() === 'Show on: HUD (experimental)' &&
             byName.wocHud.text === 'HUD map: Showing' && byName.wocMap.text === 'Cluster map: Off' && byName.wocGuide.enabled === false);
+        assert.deepStrictEqual(mapWrites().slice(-2), [{ cmd: 'hud', on: 1, profile: GUEST, own: 0 }, { cmd: 'cluster', on: 0, profile: GUEST, own: 0 }],
+            'each write names the driver profile and the settings the page showed');
         await until('the size and position enabled', () => hudRows().every((e) => e === true));
         assert.deepStrictEqual(render.received, [{ cmd: 'hud', on: '1' }, { cmd: 'cluster', on: '0' }], 'the HUD on, then the cluster off');
         await until('saved', () => patch.count('hud') === 1 && patch.count('cluster') === 1);
@@ -522,7 +550,7 @@ async function main() {
         await until('off from the cluster', () => render.cluster === 0 && render.hud === 0 && offShown());
         assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'only the cluster off');
         await until('off saved', () => saves() === saved + 1);
-        assert.deepStrictEqual(patch.received.slice(-1), [{ cmd: 'cluster', on: 0 }]);
+        assert.deepStrictEqual(patch.received.slice(-1), [{ cmd: 'cluster', on: 0, profile: GUEST, own: 0 }]);
         render.received.length = 0;
         size.turn(1);
         byName.wocHudLeft.emit('action');
@@ -559,17 +587,8 @@ async function main() {
             'Disabled after errors greys them');
 
         /* ---- own settings per driver profile ---- */
-        const own = byName.wocProfile;
-        /* no profile read yet (an empty value): greyed, nothing told, a press asks nothing */
-        await sleep(100);
-        assert(own.enabled === false && own.selected === false && own.text === 'Own settings for this driver', 'greyed, unticked');
-        assert.strictEqual(patch.count('profile'), 0, 'an empty value tells patchd nothing');
-        own.press();
-        await until('a greyed checkbox pressed: unticked again', () => own.selected === false);
-        await sleep(100);
-        assert.strictEqual(patch.count('profile-own'), 0, 'a greyed checkbox pressed asks nothing');
         sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
-        await until('driver A: enabled, unticked', () => own.enabled === true && own.selected === false);
+        await until('driver A: enabled, unticked', () => sync.profile === sessionUser && own.enabled === true && own.selected === false);
         await sleep(450);
         own.ticks.length = 0;
         own.press();
@@ -587,6 +606,25 @@ async function main() {
         sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
         await until('A again: its HUD, ticked', () => render.hud === 1 && render.cluster === 0 && showOn.shown() === 'Show on: HUD (experimental)' &&
             own.selected === true);
+        /* patchd put B's settings in effect before A's page write reached it
+         * (the profile sync racing the page): refused, nothing saved, the
+         * render back to the stored settings, the profile told again */
+        const aOwn = JSON.stringify(patch.own[sessionUser]), shared = JSON.stringify(patch.shared);
+        patch.current = 'a1b2c3d4-0000-4000-8000-000000000002';
+        patch.active = null;
+        patch.map = patch.shared;
+        const toldBefore = patch.count('profile');
+        await sleep(450);
+        showOn.pick(3);
+        await until('refused: the render back to the stored settings, A told again and its own on the render', () =>
+            patch.count('profile') > toldBefore && patch.current === sessionUser && render.hud === 1 && render.cluster === 0 &&
+            showOn.shown() === 'Show on: HUD (experimental)');
+        assert(mapWrites().slice(-1)[0].profile === sessionUser && mapWrites().slice(-1)[0].own === 1, 'the write named A\'s own settings');
+        assert(render.received.some((m) => m.cmd === 'hud' && m.on === '0'), 'the render had taken the pick');
+        assert.strictEqual(JSON.stringify(patch.own[sessionUser]), aOwn, 'A\'s own settings unchanged');
+        assert.strictEqual(JSON.stringify(patch.shared), shared, 'the shared settings unchanged');
+        console.log('ok   a page write patchd refuses (another driver profile in effect): nothing saved, the render back to the ' +
+            'stored settings, the profile told again');
         await sleep(450);
         own.press();
         await until('unticked: the shared settings back', () => own.selected === false && own.enabled === true && render.cluster === 1 &&
@@ -606,8 +644,17 @@ async function main() {
 
         render.stream(false);
         patch.announce('patched', 'high', null);
+        /* the render shows other settings than the ones stored for the driver
+         * in effect (the shared ones, on the cluster): the page opened, it is
+         * moved to them */
+        render.cluster = 0;
+        render.hud = 1;
+        render.received.length = 0;
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: true });
         await until('page reads the current state', () => status.text === 'Status: Patched' && byName.wocMap.text === 'Cluster map: Waiting for the phone');
+        await until('the stored settings on the render and the page', () => render.cluster === 1 && render.hud === 0 &&
+            showOn.shown() === 'Show on: Cluster');
+        console.log('ok   the page opened: the render moved to the settings stored for the driver profile in effect');
         console.log('ok   a page opened again reads the render\'s current state');
 
         /* The patch the install wrote, from the daemon: its line, Patch

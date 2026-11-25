@@ -24,12 +24,21 @@
  * patchd not running is asked again at the next read; one that does not
  * answer or refuses the command (before profiles) after RETRY_MS. Meanwhile
  * the checkbox is greyed.
+ *
+ * The page's map settings are written for one driver profile's settings:
+ * writeTarget() names the profile and set patchd has in effect, and only
+ * while that is the profile that counts (settled()); patchd refuses a write
+ * that names any other. Until then, from the app's start until two reads
+ * agree, while a read names another profile, or while a tick of the
+ * checkbox waits for patchd, nothing names one. Each answer of patchd's
+ * moves the page's render to the settings stored for that profile when it
+ * shows others (control.showStored).
  */
 'use strict';
 
 const EventEmitter = require('events');
 const net = require('net');
-const { RENDER_PATH, PATCH_PATH } = require('./waze_cluster_control.js');
+const { RENDER_PATH, PATCH_PATH, renderCommands } = require('./waze_cluster_control.js');
 
 const POLL_MS = 5000;
 const READ_MS = 3000;
@@ -203,6 +212,7 @@ class ProfileSync extends EventEmitter {
         this._chain = Promise.resolve();
         this._timer = null;
         this._stopped = true;
+        this._wasSettled = false;
     }
 
     start() {
@@ -224,6 +234,29 @@ class ProfileSync extends EventEmitter {
         return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null && !this._differs;
     }
 
+    /* The profile that counts (NONE too: no profile detected) is the one
+     * patchd has in effect, its set known, no read names another and no
+     * tick waits for patchd. */
+    settled() {
+        return this._confirmed !== undefined && this.profile === this._confirmed && this.own !== null && !this._differs &&
+            this._askedOwn === null;
+    }
+
+    /* What a map setting written now is for: {profile, own} as patchd has
+     * them in effect, or null while not settled. */
+    writeTarget() {
+        return this.settled() ? { profile: this.profile, own: this.own ? 1 : 0 } : null;
+    }
+
+    /* 'change' when settled() turns. */
+    _noteSettled() {
+        const now = this.settled();
+        if (now !== this._wasSettled) {
+            this._wasSettled = now;
+            this.emit('change');
+        }
+    }
+
     /* The checkbox's tick: as pressed until patchd answers, then patchd's. */
     ownShown() {
         return this._askedOwn !== null ? this._askedOwn : this.own === true;
@@ -234,6 +267,7 @@ class ProfileSync extends EventEmitter {
             return Promise.resolve();
         }
         this._askedOwn = !!on;
+        this._noteSettled();
         this.emit('change');
         return this._ask({ cmd: 'profile-own', id: this.profile, on: on ? 1 : 0 });
     }
@@ -255,6 +289,7 @@ class ProfileSync extends EventEmitter {
                 this._differs = differs;
                 this.emit('change');
             }
+            this._noteSettled();
             if (agreed) {
                 this._confirmed = id;
                 if (id !== this.profile && Date.now() >= this._retryAt) {
@@ -291,8 +326,8 @@ class ProfileSync extends EventEmitter {
                         this.profile = r.id;
                         this.own = r.own === true;
                         this._log.info(`driver profile: ${r.own ? 'its own' : 'the shared'} map settings${r.changed ? ', applied' : ''}`);
-                        if (r.changed && r.settings) {
-                            this._toRender(r.settings);
+                        if (r.settings) {
+                            this._toRender(r.settings, r.changed);
                         }
                     } else {
                         /* not taken: asked again (patchd not running: at the
@@ -308,6 +343,7 @@ class ProfileSync extends EventEmitter {
                             this._ask({ cmd: 'profile', id: this._confirmed });
                         }
                     }
+                    this._noteSettled();
                     this.emit('change');
                 });
         };
@@ -316,23 +352,19 @@ class ProfileSync extends EventEmitter {
         return p;
     }
 
-    /* The render to the settings in effect: a display turned on first, so a
-     * switch from one display to the other never passes through neither,
-     * then the HUD's size, place and whether it stays shown over BMW's
-     * pop-ups (from a patchd that has it). */
-    _toRender(s) {
-        const on = (v) => (v ? '1' : '0');
-        const shows = ['cluster', 'hud'].sort((a, b) => s[b] - s[a]);
-        const hud = { cmd: 'hud', hud_width_pct: String(s.hud_width_pct), hud_x: String(s.hud_offset_x), hud_y: String(s.hud_offset_y) };
-        if (s.hud_keep_shown === 0 || s.hud_keep_shown === 1) {
-            hud.hud_keep_shown = on(s.hud_keep_shown);
-        }
-        const cmds = shows.map((d) => ({ cmd: d, on: on(s[d]) })).concat([hud]);
+    /* The render to the settings stored for the profile in effect: through
+     * the page's render connection while the page is open, where it shows
+     * others; else, when they changed, through a short connection. */
+    _toRender(s, changed) {
         const c = this._control;
         if (c && c.render && c.render.connected()) {
-            cmds.forEach((m) => c.render.send(m));
+            c.showStored(s, changed);
             return;
         }
+        if (!changed) {
+            return;
+        }
+        const cmds = renderCommands(s);
         /* the render down or owned by another: its next start reads the saved settings */
         const sock = net.connect(this._renderPath);
         const end = setTimeout(() => sock.destroy(), RENDER_HOLD_MS * 3);

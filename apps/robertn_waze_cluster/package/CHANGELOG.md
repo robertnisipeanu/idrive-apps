@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Show on and the HUD settings are greyed until the app knows which driver
+profile is in use, and each change is saved only for that driver: with Own
+settings for this driver, a change can no longer end up in another
+driver's settings and come back a few seconds later as that driver's. When
+the page opens, it shows the settings stored for the driver in use.
+Requires the next waze-on-cluster.
+
 ## 0.6.16
 
 Android Auto: Patch, Remove patch, Zoom and Hide phone's turn card can be

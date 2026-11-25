@@ -11,7 +11,9 @@
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
- * flip it), Logs. HUD: HUD map (the map
+ * flip it), Logs. Show on and the HUD's checkbox, slider and position
+ * buttons are greyed until the driver profile is settled (profile_sync.js),
+ * so each change is saved into that profile's settings. HUD: HUD map (the map
  * on the HUD), the Keep HUD map over BMW's pop-ups checkbox, the Size
  * slider, Position with Move left, Move right, Move up, Move down and
  * Centre; the checkbox, the slider and the position buttons are greyed
@@ -148,6 +150,13 @@ class WazeClusterApp extends OnlineApp {
         /* the map settings per driver profile, page shown or not */
         this._profiles = new ProfileSync({ control: this._control, log: logger, readProfile: sessionReader(someipBuilders, logger) });
         this._profiles.on('change', () => this._render());
+        /* Show on and the HUD's settings are written for the driver
+         * profile's settings in effect: greyed until it is settled; a write
+         * patchd refused puts the stored ones back and tells the profile
+         * again, as does each new connection to patchd */
+        this._control.setWriteTarget(() => this._profiles.writeTarget());
+        this._control.on('refused', () => this._profiles.refresh());
+        this._control.patch.on('connect', () => this._profiles.refresh());
 
         this.on('initialized', () => {
             this._appInitialized()
@@ -445,7 +454,6 @@ class WazeClusterApp extends OnlineApp {
         this._reportVisibilityStatus(visible);
         if (visible) {
             this._control.open();
-            this._profiles.refresh();
             /* back from an overlay or another app on the Logs page, which
              * says nothing of its own */
             if (this._shownPage === 'logs') {

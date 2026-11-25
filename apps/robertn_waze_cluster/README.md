@@ -61,6 +61,8 @@ The app is in the head unit's display language.
   change is immediate. **Off** shows BMW's own content on both.
 - **Own settings for this driver:** ticked, the current driver profile
   keeps its own Show on, HUD size and HUD position.
+  Show on and the HUD settings are greyed for a few seconds after the app
+  starts, until it knows which driver profile is in use.
 - **Hide BMW's turn box:** ticked (the default), BMW's turn-by-turn box on
   the cluster is hidden while the map shows.
 - **Logs:** opens the Logs page (see below).

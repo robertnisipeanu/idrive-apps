@@ -29,7 +29,9 @@
  * `own` (by id) the rest, `current` the profile last told; profile and
  * profile-own answer as patchd does (profile-own refused for another id), or
  * not at all with `profileMute` set (a patchd before profiles); cluster,
- * hud, hud-size and hud-pos change `map`.
+ * hud, hud-size, hud-pos and hud-keep-shown change `map`, and one that names
+ * a profile and set ("profile", "own") other than the ones in effect is
+ * refused as patchd refuses it, with the settings in effect.
  *
  * FakeLogs speaks the logs socket: on connect its state; save -> saving,
  * then the new archive first in the list (or `failWith` as the error).
@@ -346,6 +348,12 @@ class FakePatch extends LineServer {
         const MAP = { cluster: ['cluster'], hud: ['hud'], 'hud-size': ['hud_width_pct'], 'hud-pos': ['hud_offset_x', 'hud_offset_y'],
             'hud-keep-shown': ['hud_keep_shown'] };
         if (MAP[msg.cmd]) {
+            if ('profile' in msg && (this.current === undefined || msg.profile !== this.current ||
+                    (msg.own === 1) !== !!(msg.profile && this.own[msg.profile]))) {
+                this._send(socket, { ev: `${msg.cmd}-reply`, ok: false, refused: 'profile', reason: 'not the driver profile in effect',
+                    settings: this.map });
+                return;
+            }
             const v = msg.cmd === 'hud-pos' ? [msg.hud_x, msg.hud_y] : [msg.cmd === 'hud-size' ? msg.hud_width_pct : msg.on];
             this.map = Object.assign({}, this.map);
             MAP[msg.cmd].forEach((k, i) => { this.map[k] = v[i]; });
