@@ -72,9 +72,10 @@
  * when one is on its way (set_picture_coming; the one at hand waits up to
  * kAwaitMs for it), else the one at hand. The layer's fresh_ms keeps a
  * frame of its own from before (one sent as the slot was taken) from being
- * written ahead of it; with a renderer that does not take fresh_ms, a layer
- * is never unseen. A layer the stream hides is not unseen: its frames go
- * nowhere, as above. */
+ * written ahead of it, unless the target waits on the layer meanwhile
+ * (cluster-render PROTOCOL.md "fresh_ms"); with a renderer that does not
+ * take fresh_ms, a layer is never unseen. A layer the stream hides is not
+ * unseen: its frames go nowhere, as above. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 

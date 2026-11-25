@@ -993,9 +993,9 @@ target's name, so the service knows it.
   is hosted by another client's layers, drawn higher over it`, `target T
   is hosted by another client's layers on P2, there first`, or `target T
   is shown by another client's layers on P2` (a hidden host, which any
-  shown host wins over; with `by`, that client's name). It comes when the state or the
-  reason changes, after the service has first decided, and again from the
-  start for a new host.
+  shown host wins over; with `by`, that client's name). It comes when the
+  state or the reason changes, after the service has first decided, and
+  again from the start for a new host.
 - **Several hosts.** A client has one host from layers a target; sending
   it again replaces it, also into another target. Another client's host of
   the same target is never refused for it: it waits. Other clients may have

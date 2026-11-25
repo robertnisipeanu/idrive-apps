@@ -3824,14 +3824,23 @@ static void hidden_host_across_targets()
        producer.hosts.count("map") && producer.hosts["map"].into == "hud" && producer.hosts["map"].shown);
 }
 
-/* fresh_ms never holds up the target: an opaque image over a held video,
- * hidden while the target was off screen, is flushed hidden as soon as the
- * target is shown again, not after fresh_ms. */
+/* fresh_ms gives way to the target: a held video with tiles left unwritten
+ * under an opaque image (a frame that changed there while covered), the
+ * image hidden while the target was off screen: on resume the video's
+ * uncovering write goes at once, its frame from before with it, so the
+ * hide is flushed without waiting fresh_ms. */
 static void fresh_frames_give_way()
 {
     const uint64_t kStock = 0x01000201;
-    const std::vector<uint8_t> f1 = atlas(51), f2 = atlas(52);
-    Rig r(2 << 20);
+    const std::vector<uint8_t> f1 = atlas(51), f3 = atlas(53);
+    std::vector<uint8_t> f2 = f1;   /* f1 changed under the image, and a little outside it */
+    for (size_t y = 0; y < 256; y++)
+        for (size_t x = 0; x < 256; x++)
+            f2[y * 1088 + x] ^= 0x40;
+    for (size_t y = 320; y < 384; y++)
+        for (size_t x = 640; x < 704; x++)
+            f2[y * 1088 + x] ^= 0x40;
+    Rig r;
     cr::Client c("fresh", r.path), cover("cover", r.path);
     Events e;
     e.wire(c);
@@ -3846,6 +3855,8 @@ static void fresh_frames_give_way()
     vo.stall_ms = 600000;
     vo.level_bits = 0;
     vo.pan_blocks = false;
+    vo.dirty_threshold = 0;
+    vo.settle_ms = 0;
     vo.fresh_ms = 1000;
     const uint32_t vid = c.video(lo, vo);
     c.frame(vid, f1.data(), f1.size(), 1);
@@ -3859,6 +3870,8 @@ static void fresh_frames_give_way()
     const std::vector<uint8_t> opaque(256 * 256 * 4, 255);
     cover.pixels(img, {}, opaque.data(), opaque.size());
     r.pump(2000);
+    c.frame(vid, f2.data(), f2.size(), 2);   /* its tiles under the image left unwritten */
+    r.pump(500);
     const auto image_drawn = [&r]() {
         FakeGraph *g = r.gpu.graph("panel");
         bool on = false;
@@ -3869,7 +3882,7 @@ static void fresh_frames_give_way()
     };
     const bool covered = e.target["panel"] == "shown" && image_drawn();
     r.port.steal(r.sc.targets[1], kStock);
-    c.frame(vid, f2.data(), f2.size(), 2);
+    c.frame(vid, f3.data(), f3.size(), 3);
     r.pump(1000);
     cr::LayerOptions hidden = il;
     hidden.visible = false;
@@ -3880,7 +3893,8 @@ static void fresh_frames_give_way()
     for (; steps < 400 && e.target["panel"] != "shown"; steps++)
         r.pump(5);
     r.pump(100);
-    ok("fresh_ms: an image over a held video hidden while off screen: flushed hidden at once, not after fresh_ms",
+    ok("fresh_ms: a held video with tiles under an image hidden while off screen: its uncovering write goes, the "
+       "hide flushed at once, not after fresh_ms",
        covered && steps < 400 && !image_drawn());
 }
 
