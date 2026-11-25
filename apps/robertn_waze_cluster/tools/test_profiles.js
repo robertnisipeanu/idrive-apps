@@ -76,7 +76,12 @@ function builders(value, opts) {
             proxy[FIELD] = { getValue: () => { b.reads++; return o.readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(value()); } };
         }
         if (o.event) {
-            proxy.currentUserOnChange = { subscribe: (cb) => { b.send = cb; return Promise.resolve(); } };
+            proxy.currentUserOnChange = { subscribe: (cb) => {
+                b.subscribes = (b.subscribes || 0) + 1;
+                if (b.subscribes <= (o.subscribeFails || 0)) return Promise.reject(new Error('not offered yet'));
+                b.send = cb;
+                return Promise.resolve();
+            } };
         }
         return Promise.resolve(proxy);
     };
@@ -118,12 +123,27 @@ async function main() {
         }
         assert.strictEqual(log.lines.filter((l) => /^warn: driver profiles/.test(l)).length, 1, log.lines.join('\n'));
     });
-    await check('the reader: the head unit\'s currentUserOnChange event, subscribed at set-up, gives each valid id it sends', async () => {
+    await check('the reader: the event\'s subscription, refused at first, tried again at the next read', async () => {
+        const b = builders(() => 'driverA', { event: true, subscribeFails: 1 });
+        const read = sessionReader(b, quiet());
+        const got = [];
+        read.watch((id) => got.push(id));
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.send, undefined, 'refused');
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 2, 'tried again');
+        b.send('driverB');
+        assert.deepStrictEqual(got, ['driverB']);
+    });
+    await check('the reader: the head unit\'s currentUserOnChange event, subscribed once a read works, gives each valid id it sends', async () => {
         const b = builders(() => 'driverA', { event: true });
         const read = sessionReader(b, quiet());
         const got = [];
         read.watch((id) => got.push(id));
         assert.strictEqual(await read(), 'driverA');
+        await sleep(10);
         assert(typeof b.send === 'function', 'subscribed');
         b.send('driverB');
         b.send({ currentUserAccountReference: 'driverC' });
@@ -473,6 +493,23 @@ async function main() {
         patch.profileDelayMs = 0;
         watched.stop();
         page.close();
+    });
+    await check('a read that began before the head unit\'s event: its older id does not override the event\'s', async () => {
+        let notify = null;
+        let release = null;
+        const read = () => new Promise((resolve) => { release = resolve; });
+        read.watch = (cb) => { notify = cb; };
+        const late = new ProfileSync({ readProfile: read, patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
+        late.start();
+        await until('a read on its way', () => release);
+        const told = patch.received.filter((m) => m.cmd === 'profile').length;
+        notify('driverB');
+        await until('B told', () => late.profile === 'driverB');
+        release('driverG');
+        await sleep(50);
+        assert.strictEqual(late._confirmed, 'driverB', 'B stands');
+        assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile').slice(told), [{ cmd: 'profile', id: 'driverB' }], 'G never told');
+        late.stop();
     });
     await check('the page opened while the first read fails: read again at once, not at the poll', async () => {
         let n = 0;

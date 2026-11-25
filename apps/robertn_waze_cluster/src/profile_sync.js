@@ -85,8 +85,9 @@ function idOf(v) {
 /* A reader of the current user account through the SDK's typed proxy:
  * () -> Promise<id | NONE>. NONE only without the proxy or the field, for
  * good; rejected when the read gives nothing to go by. read.watch(cb): cb(id)
- * for each valid id the proxy's EVENT sends, from its set-up on (a proxy
- * without the event sends none). options: readMs, retryMs, retryMaxMs. */
+ * for each valid id the proxy's EVENT sends, from the first read that gives
+ * one on (a proxy without the event sends none). options: readMs, retryMs,
+ * retryMaxMs. */
 function sessionReader(someipBuilders, log, options) {
     const o = options || {};
     const readMs = o.readMs || READ_MS;
@@ -123,19 +124,7 @@ function sessionReader(someipBuilders, log, options) {
                     warn('none', `no ${FIELD}; the map settings are shared`);
                     return null;
                 }
-                return p.init().then(() => {
-                    const ev = p[EVENT];
-                    if (ev && typeof ev.subscribe === 'function') {
-                        /* not subscribed: the reads alone */
-                        Promise.resolve(ev.subscribe((v) => {
-                            const id = idOf(v);
-                            if (id) {
-                                watchers.forEach((cb) => cb(id));
-                            }
-                        })).catch((e) => warn('event', `${EVENT} not subscribed (${e && e.message}); reads only`));
-                    }
-                    return p;
-                });
+                return p.init().then(() => p);
             }, (e) => {
                 none = true;
                 warn('none', `no ${IFACE} proxy (${e && e.message}); the map settings are shared`);
@@ -154,6 +143,24 @@ function sessionReader(someipBuilders, log, options) {
             });
         return starting;
     };
+    let subscribed = false;
+    /* once the service answers: its EVENT, tried again at the next read after a failure */
+    const subscribe = (p) => {
+        const ev = p[EVENT];
+        if (subscribed || !ev || typeof ev.subscribe !== 'function') {
+            return;
+        }
+        subscribed = true;
+        Promise.resolve().then(() => ev.subscribe((v) => {
+            const id = idOf(v);
+            if (id) {
+                watchers.forEach((cb) => cb(id));
+            }
+        })).catch((e) => {
+            subscribed = false;
+            warn('event', `${EVENT} not subscribed (${e && e.message}); tried again at the next read`);
+        });
+    };
     const read = () => setUp().then((p) => {
         if (!p) {
             return NONE;
@@ -164,6 +171,7 @@ function sessionReader(someipBuilders, log, options) {
             .then((v) => {
                 const id = idOf(v);
                 if (id) {
+                    subscribe(p);
                     return id;
                 }
                 if (v !== '') {
@@ -246,6 +254,7 @@ class ProfileSync extends EventEmitter {
         this._confirmed = undefined; /* the profile that counts: the last valid id read, or NONE for good */
         this._loading = false;      /* the page's load runs */
         this._failed = 0;           /* reads in a row that gave nothing to go by */
+        this._switches = 0;         /* events taken: a read begun before the last is older than it */
         this._retryAt = 0;
         this._chain = Promise.resolve();
         this._timer = null;
@@ -255,6 +264,7 @@ class ProfileSync extends EventEmitter {
         if (this._read && typeof this._read.watch === 'function') {
             this._read.watch((id) => {
                 if (!this._stopped) {
+                    this._switches++;
                     this._take(id, false);
                 }
             });
@@ -316,8 +326,11 @@ class ProfileSync extends EventEmitter {
         if (!('profile' in w)) {
             return Promise.resolve(true);
         }
+        const switches = this._switches;
         return Promise.resolve().then(() => this._read()).then((id) => {
-            this._take(id, false);
+            if (switches === this._switches) {
+                this._take(id, false);
+            }
             const now = this.writeTarget();
             return !!now && now.profile === w.profile && now.own === w.own;
         }, () => {
@@ -362,7 +375,8 @@ class ProfileSync extends EventEmitter {
         }
         clearTimeout(this._timer);
         this._polling = true;
-        Promise.resolve().then(() => this._read()).then((id) => this._take(id, tell), () => this._readFailed()).then(() => {
+        const switches = this._switches;
+        Promise.resolve().then(() => this._read()).then((id) => this._take(id, tell, switches), () => this._readFailed()).then(() => {
             this._polling = false;
             const again = this._again;
             this._again = null;
@@ -394,7 +408,11 @@ class ProfileSync extends EventEmitter {
 
     /* A read's or the event's id counts at once; one that is not patchd's
      * (or with tell, any) is told, the page greyed until patchd answers. */
-    _take(id, tell) {
+    _take(id, tell, switches) {
+        if (switches !== undefined && switches !== this._switches) {
+            /* the read began before an event since: the event's id stands */
+            return tell && Date.now() >= this._retryAt ? this._ask({ cmd: 'profile', id: this._confirmed }) : undefined;
+        }
         const was = this.unreadable();
         this._failed = 0;
         if (id !== this._confirmed || was) {
