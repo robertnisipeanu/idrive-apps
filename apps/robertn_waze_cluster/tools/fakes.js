@@ -29,7 +29,8 @@
  * `own` (by id) the rest, `current` the profile last told; profile and
  * profile-own answer as patchd does (profile-own refused for another id),
  * `profileDelayMs` late, or not at all with `profileMute` set (a patchd
- * before profiles); its status says whether any profile has own settings;
+ * before profiles); its status says whether any profile has own settings,
+ * sent again `statusDelayMs` after a tick changes that;
  * cluster,
  * hud, hud-size, hud-pos and hud-keep-shown change `map`, and one that names
  * a profile and set ("profile", "own") other than the ones in effect is
@@ -325,7 +326,7 @@ class FakePatch extends LineServer {
         const r = { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want, own_settings: this._ownSettings() };
         if (this.profileDelayMs) setTimeout(() => this._send(socket, r), this.profileDelayMs);
         else this._send(socket, r);
-        if (ownBefore !== null && ownBefore !== this._ownSettings()) this._broadcast(this._status());
+        if (ownBefore !== null && ownBefore !== this._ownSettings()) setTimeout(() => this._broadcast(this._status()), this.statusDelayMs || 0);
     }
 
     /* CarPlay's Wi-Fi band changes, as patchd sends it: a status. */

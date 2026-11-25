@@ -324,7 +324,7 @@ async function main() {
     ['29', '30', '64'].forEach((id) => assert(new RegExp(`<component id="${id}" type="label" widget="LT_Label_1Row">\\s*<property id="2" value="0"\\/>\\s*` +
         '<property id="3" value="0"\\/>').test(XML), `application.xml: ${components[id].name}, hidden and unfocusable`));
     console.log('ok   the main page: General, HUD, CarPlay and Android Auto under unfocusable header rows, Show on the first stop; no log rows; ' +
-        'CarPlay Wi-Fi and its line CarPlay\'s last, the restart\'s rows the page\'s last, all four hidden');
+        'the driver profile\'s line under Own, CarPlay Wi-Fi and its line CarPlay\'s last, the restart\'s rows the page\'s last, all five hidden');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
     assert.deepStrictEqual(logsPage.properties.ParentState, { value: 1, type: 'UInt' }, 'the Logs page is a child of the main page');
@@ -455,7 +455,7 @@ async function main() {
         /* no driver with own settings: the shared settings are the only
          * ones; with no driver profile read (an empty value), Show on acts,
          * its writes name no profile, and no line says the profile is unreadable */
-        await until('several reads with nothing to go by', () => sync._failed >= 4);
+        await until('reads with nothing to go by', () => sync.unreadable());
         assert(showOn.enabled === true && own.enabled === false && profileLine.visible === false,
             'no own settings: Show on acts without a driver profile, no line about it');
         await sleep(450);
@@ -654,12 +654,15 @@ async function main() {
             render.hud === 0 && showOn.shown() === 'Show on: Cluster');
         const told = patch.count('profile');
         sessionUser = '';
-        await sleep(150);
-        assert(own.enabled === true && patch.count('profile') === told && showOn.shown() === 'Show on: Cluster', 'an empty read changes nothing');
+        await until('empty reads: greyed, the line shown', () => own.enabled === false && showOn.enabled === false &&
+            byName.wocProfileStatus.visible === true);
+        assert(patch.count('profile') === told && showOn.shown() === 'Show on: Cluster', 'empty reads tell patchd nothing and keep what is shown');
         sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
+        await until('read again: enabled, the line hidden', () => own.enabled === true && showOn.enabled === true &&
+            byName.wocProfileStatus.visible === false);
         render.received.length = 0;
         console.log('ok   Own settings for this driver: greyed until a profile is read; ticked, the profile keeps its own map settings; ' +
-            'a switch moves the render to the other profile\'s or the shared settings; unticked, the shared ones back; an empty read changes nothing');
+            'a switch moves the render to the other profile\'s or the shared settings; unticked, the shared ones back; empty reads grey the page under the line until the profile reads again');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);
@@ -678,6 +681,28 @@ async function main() {
         await until('the stored settings on the render and the page', () => render.cluster === 1 && render.hud === 0 &&
             showOn.shown() === 'Show on: Cluster');
         console.log('ok   the page opened: the render moved to the settings stored for the driver profile in effect');
+
+        /* a driver switch while the app is in the background, its poll not
+         * yet come: back in focus, the page loads the new driver's stored
+         * settings at once */
+        const B = 'a1b2c3d4-0000-4000-8000-000000000002';
+        patch.own[B] = { cluster: 0, hud: 1, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0, hud_keep_shown: 0 };
+        byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
+        await until('hidden', () => render._clients.size === 0 && patch._clients.size === 0);
+        sync._pollMs = 600000;
+        await until('no read on its way', () => !sync._polling);
+        clearTimeout(sync._timer);
+        sessionUser = B;
+        const t0 = Date.now();
+        byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: true });
+        await until('B\'s own settings: the HUD alone', () => sync.profile === B && render.hud === 1 && render.cluster === 0 &&
+            showOn.shown() === 'Show on: HUD (experimental)' && showOn.enabled === true);
+        assert(Date.now() - t0 < 1500, `at once, not at a poll: ${Date.now() - t0} ms`);
+        console.log('ok   back in focus after a driver switch in the background: the new driver\'s stored settings at once');
+        sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
+        sync._pollMs = 20;
+        sync.load();
+        await until('A again', () => sync.profile === sessionUser && render.cluster === 1);
         console.log('ok   a page opened again reads the render\'s current state');
 
         /* The patch the install wrote, from the daemon: its line, Patch

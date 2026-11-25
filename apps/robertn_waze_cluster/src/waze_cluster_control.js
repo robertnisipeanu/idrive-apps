@@ -326,6 +326,7 @@ class WazeClusterControl extends EventEmitter {
          * none may be written; {} names none (a page without driver profiles) */
         this._writeTarget = () => ({});
         this._confirmWrite = () => Promise.resolve(true);
+        this._loading = () => false;    /* the page loads the driver profile's settings: none shown */
         this._writeChain = Promise.resolve();
         this._stored = null;        /* map settings to show once the render has said what it shows */
         this.writes = 0;            /* map settings written to patchd */
@@ -360,9 +361,10 @@ class WazeClusterControl extends EventEmitter {
      * setting is written for, {} for none named, or null while none may be
      * (greyed); confirm(w) -> Promise<bool>: w still holds, checked right
      * before the write is sent. */
-    setWriteTarget(target, confirm) {
+    setWriteTarget(target, confirm, loading) {
         this._writeTarget = target;
         this._confirmWrite = confirm || (() => Promise.resolve(true));
+        this._loading = loading || (() => false);
     }
 
     /* Map settings as [render command, patchd command] pairs, sent in the
@@ -477,6 +479,9 @@ class WazeClusterControl extends EventEmitter {
     /* 'cluster', 'hud', 'both' or 'off': as just asked for until the render
      * reports it, else as the render last said; null while it has not. */
     shownOn() {
+        if (this._loading()) {
+            return null;
+        }
         return this._askedShownOn || (this.renderStatus && shownOnOf(this.renderStatus));
     }
 
@@ -495,7 +500,7 @@ class WazeClusterControl extends EventEmitter {
             return null;
         }
         const on = this.shownOn();
-        return on === 'both' || on === display;
+        return on === null ? null : on === 'both' || on === display;
     }
 
     /* A choice goes to the render and is saved by patchd, for the driver
@@ -559,6 +564,9 @@ class WazeClusterControl extends EventEmitter {
 
     /* ---- the HUD map's size ---- */
     hudWidth() {
+        if (this._loading()) {
+            return null;
+        }
         if (this._askedHud != null) {
             return this._askedHud;
         }
@@ -611,6 +619,9 @@ class WazeClusterControl extends EventEmitter {
 
     /* ---- where the HUD map is: moved from its centre, in HUD pixels ---- */
     hudOffset() {
+        if (this._loading()) {
+            return null;
+        }
         if (this._askedPos) {
             return this._askedPos;
         }
@@ -650,6 +661,9 @@ class WazeClusterControl extends EventEmitter {
     /* True while the HUD map stays shown over them, false while it gives way;
      * null while the render has not said. */
     hudKeepShown() {
+        if (this._loading()) {
+            return null;
+        }
         const v = this.renderStatus && this.renderStatus.hud_keep_shown;
         return v === 0 || v === 1 ? v === 1 : null;
     }
@@ -1119,7 +1133,7 @@ class WazeClusterControl extends EventEmitter {
     }
 
     /* patchd's own_settings: whether any driver has own map settings. */
-    _noteOwnSettings(msg) {
+    noteOwnSettings(msg) {
         if (msg.own_settings === true || msg.own_settings === false) {
             this.ownSettings = msg.own_settings;
         }
@@ -1181,7 +1195,7 @@ class WazeClusterControl extends EventEmitter {
             this.captureState = msg.capture;
             this.emit('change');
         } else if (msg.ev === 'status') {
-            this._noteOwnSettings(msg);
+            this.noteOwnSettings(msg);
             /* A map-only event (no aa) keeps the last Android Auto status. */
             const prev = this.patchStatus;
             const status = this._fromOlder(msg, prev);
@@ -1194,7 +1208,7 @@ class WazeClusterControl extends EventEmitter {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
             }
-            this._noteOwnSettings(msg);
+            this.noteOwnSettings(msg);
             this._inFlight = Math.max(0, this._inFlight - 1);
             /* the render ends on the settings patchd has stored: after the
              * last write, or at once for one not saved */

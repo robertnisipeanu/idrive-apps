@@ -153,9 +153,10 @@ class WazeClusterApp extends OnlineApp {
         /* the map settings per driver profile, page shown or not */
         this._profiles = new ProfileSync({ control: this._control, log: logger, readProfile: sessionReader(someipBuilders, logger) });
         this._profiles.on('change', () => this._render());
-        this._control.setWriteTarget(() => this._profiles.writeTarget(), (w) => this._profiles.confirmWrite(w));
-        this._control.on('refused', () => this._profiles.refresh());
-        this._control.patch.on('connect', () => this._profiles.refresh());
+        this._control.setWriteTarget(() => this._profiles.writeTarget(), (w) => this._profiles.confirmWrite(w),
+            () => this._profiles.loading());
+        this._control.on('refused', () => this._profiles.load());
+        this._control.patch.on('connect', () => this._profiles.load());
 
         this.on('initialized', () => {
             this._appInitialized()
@@ -432,6 +433,7 @@ class WazeClusterApp extends OnlineApp {
         if (visible) {
             this._sawForeground = true;
             this._setVisible(true);
+            this._profiles.load();
         } else if (!this._pages.main && !this._pages.logs) {
             this._hideTimer = setTimeout(() => {
                 this._hideTimer = null;
@@ -577,7 +579,6 @@ class WazeClusterApp extends OnlineApp {
         this._write(PROFILE_NAME, t('Own settings for this driver'));
         this._setSelected(PROFILE_NAME, profiles.ownShown());
         this._setEnabled(PROFILE_NAME, profiles.canChooseOwn());
-        /* with own settings in use, a profile that cannot be read keeps Show on and the HUD greyed */
         const unreadable = c.ownSettings === true && profiles.unreadable();
         this._write(PROFILE_STATUS_NAME, unreadable ? t("Driver profile can't be read") : '');
         this._setVisibleComp(PROFILE_STATUS_NAME, unreadable);

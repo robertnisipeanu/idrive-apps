@@ -3,8 +3,8 @@
 'use strict';
 /**
  * profile_sync against the fake patch daemon (which keeps the map settings
- * per driver profile as patchd does) and the fake render: a profile is told
- * to patchd once two reads agree; one without its own settings gets the
+ * per driver profile as patchd does) and the fake render: a read's profile
+ * counts and is told to patchd at once; one without its own settings gets the
  * shared ones; ticked, it keeps a copy that changes on its own; a switch
  * puts the other profile's settings on the render (through a short
  * connection while the page is closed, through the page's own while it is
@@ -13,7 +13,9 @@
  * over BMW's pop-ups as a profile's own, and not told to the render by a
  * patchd before it; unticked, the shared ones back; a
  * tick patchd refuses (another profile in effect) tells the profile again;
- * a read naming another profile greys the checkbox until that one counts;
+ * a read or the head unit's event naming another profile greys the page
+ * until patchd has it; the page's load (open, back in focus) shows the
+ * stored settings of the profile it reads, after one round trip;
  * no profile (no proxy or field): patchd told none, the checkbox greyed;
  * reads with nothing to go by change nothing; a patchd before profiles: the
  * checkbox greyed, asked again later; patchd not running: asked at the next
@@ -73,6 +75,9 @@ function builders(value, opts) {
         if (!o.noField) {
             proxy[FIELD] = { getValue: () => { b.reads++; return o.readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(value()); } };
         }
+        if (o.event) {
+            proxy.currentUserOnChange = { subscribe: (cb) => { b.send = cb; return Promise.resolve(); } };
+        }
         return Promise.resolve(proxy);
     };
     return b;
@@ -112,6 +117,19 @@ async function main() {
             await assert.rejects(read(), /no profile id read/, JSON.stringify(v));
         }
         assert.strictEqual(log.lines.filter((l) => /^warn: driver profiles/.test(l)).length, 1, log.lines.join('\n'));
+    });
+    await check('the reader: the head unit\'s currentUserOnChange event, subscribed at set-up, gives each valid id it sends', async () => {
+        const b = builders(() => 'driverA', { event: true });
+        const read = sessionReader(b, quiet());
+        const got = [];
+        read.watch((id) => got.push(id));
+        assert.strictEqual(await read(), 'driverA');
+        assert(typeof b.send === 'function', 'subscribed');
+        b.send('driverB');
+        b.send({ currentUserAccountReference: 'driverC' });
+        b.send('');
+        b.send('a/b');
+        assert.deepStrictEqual(got, ['driverB', 'driverC'], 'ids only, in order');
     });
     await check('the reader: no proxy, or no field: none for good', async () => {
         for (const opts of [{ buildFails: true }, { noField: true }]) {
@@ -168,29 +186,32 @@ async function main() {
     sync.on('change', () => changes++);
     assert.strictEqual(sync.canChooseOwn(), false, 'greyed before patchd has said');
     sync.start();
-    await check('the first profile is told once two reads agree; the shared settings, the render left alone', async () => {
+    await check('the first read\'s profile is told at once; the shared settings, the render left alone', async () => {
         await until('told', () => sync.profile === 'driverA');
         assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile' && m.id !== 'driverS'), [{ cmd: 'profile', id: 'driverA' }]);
-        assert(reads >= 2, 'two reads first');
+        assert(reads >= 1, 'read');
         assert.strictEqual(sync.own, false);
         assert(sync.canChooseOwn(), 'the checkbox acts');
         await sleep(POLL * 4);
         assert.strictEqual(patch.received.filter((m) => m.cmd === 'profile' && m.id === 'driverA').length, 1, 'told once while it stays');
         assert.deepStrictEqual(render.received, []);
     });
-    await check('a write names the profile and set patchd has in effect, and none until then', async () => {
+    await check('a write names the profile and set patchd has in effect, and none until patchd has answered', async () => {
         assert(sync.settled());
         assert.deepStrictEqual(sync.writeTarget(), { profile: 'driverA', own: 0 });
-        const fresh = new ProfileSync({ readProfile: () => Promise.resolve('driverA'), patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL * 3,
+        patch.profileDelayMs = 100;
+        const fresh = new ProfileSync({ readProfile: () => Promise.resolve('driverA'), patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000,
             log: quiet() });
         const seen = [];
         fresh.on('change', () => seen.push(fresh.settled()));
         fresh.start();
-        await sleep(POLL);
-        assert.strictEqual(fresh.settled(), false, 'one read: not settled');
-        assert.strictEqual(fresh.writeTarget(), null, 'one read: no write');
+        await sleep(40);
+        assert.strictEqual(fresh._confirmed, 'driverA', 'one read counts');
+        assert.strictEqual(fresh.settled(), false, 'patchd has not answered: not settled');
+        assert.strictEqual(fresh.writeTarget(), null, 'no write');
         await until('settled', () => fresh.settled());
         assert(seen.indexOf(true) >= 0, 'a change when it settles');
+        patch.profileDelayMs = 0;
         fresh.stop();
     });
     await check('ticked: shown ticked at once; own settings, a copy of the ones in effect; nothing moves', async () => {
@@ -252,15 +273,23 @@ async function main() {
         await until('state re-read', () => sync.profile === 'driverA' && sync.own === true && sync.ownShown() === true);
         assert.strictEqual(patch.own.driverA !== undefined, true, 'A keeps its own settings');
     });
-    await check('reads with nothing to go by: nothing told, the profile in effect stays', async () => {
+    await check('reads with nothing to go by: nothing told, the profile in effect stays; two change nothing, the third greys', async () => {
         const told = patch.count('profile');
         const saved = sync._read;
-        sync._read = () => Promise.reject(new Error('no profile id read'));
-        await sleep(POLL * 5);
-        assert.strictEqual(patch.count('profile'), told);
-        assert.strictEqual(sync.profile, 'driverA');
-        assert(sync.canChooseOwn());
+        let failed = 0;
+        sync._read = () => { failed++; return Promise.reject(new Error('no profile id read')); };
+        await until('two failed reads', () => failed >= 2 && !sync._polling);
+        sync._read = () => new Promise(() => {});
+        assert(sync.canChooseOwn() && sync.settled() && !sync.unreadable(), 'two: nothing changes');
+        sync._read = () => { failed++; return Promise.reject(new Error('no profile id read')); };
+        sync.stop();
+        sync.start();
+        await until('unreadable', () => sync.unreadable());
+        assert(!sync.canChooseOwn() && !sync.settled(), 'greyed');
+        assert.strictEqual(patch.count('profile'), told, 'nothing told');
+        assert.strictEqual(sync.profile, 'driverA', 'the profile in effect stays');
         sync._read = saved;
+        await until('back', () => sync.canChooseOwn() && sync.settled());
     });
 
     await check('a switch: never settled at any change until patchd has the new profile in effect', async () => {
@@ -278,21 +307,20 @@ async function main() {
         id = 'driverA';
         await until('A again', () => sync.profile === 'driverA' && sync.settled(), 1500);
     });
-    await check('a read naming another profile greys the checkbox at once, until it counts or the reads come back', async () => {
+    await check('a single read naming another profile: greyed at once and told at once; settled on it once patchd answers', async () => {
         assert(sync.canChooseOwn());
         const saved = sync._read;
-        let release = null;
-        let n = 0;
-        sync._read = () => (n++ === 0 ? Promise.resolve('driverB') : new Promise((resolve) => { release = resolve; }));
-        await until('greyed, the next read waiting', () => !sync.canChooseOwn() && release);
-        assert.strictEqual(sync.writeTarget(), null, 'a read naming another profile: no write until it counts');
-        assert.strictEqual(sync.profile, 'driverA', 'driverB not yet told');
+        patch.profileDelayMs = 150;
+        sync._read = () => Promise.resolve('driverB');
+        await until('greyed at once', () => !sync.canChooseOwn() && sync._confirmed === 'driverB');
+        assert.strictEqual(sync.writeTarget(), null, 'no write until patchd has B');
         const asked = patch.count('profile-own');
         await sync.setOwn(false);
         assert.strictEqual(patch.count('profile-own'), asked, 'a tick meanwhile asks nothing');
+        await until('B told and in effect', () => sync.profile === 'driverB' && sync.settled());
+        patch.profileDelayMs = 0;
         sync._read = saved;
-        release('driverA');
-        await until('enabled again', () => sync.canChooseOwn() && sync.profile === 'driverA');
+        await until('A again', () => sync.canChooseOwn() && sync.profile === 'driverA');
     });
 
     /* ---- with the page open: its own render connection ---- */
@@ -333,20 +361,11 @@ async function main() {
         await sync2.setOwn(true);
         assert.strictEqual(patch.count('profile-own'), asked, 'a greyed tick asks nothing');
     });
-    await check('reads that keep changing are not told', async () => {
-        const told = patch.count('profile');
-        let n = 0;
-        const flip = new ProfileSync({ readProfile: () => Promise.resolve(n++ % 2 ? 'driverA' : 'driverB'), patchPath: PSOCK, renderPath: RSOCK,
-            pollMs: POLL, log: quiet() });
-        flip.start();
-        await sleep(POLL * 6);
-        flip.stop();
-        assert.strictEqual(patch.count('profile'), told);
-    });
     await check('an answer patchd gave before a page write, arriving after it: the page\'s change stays on the render', async () => {
         await until('the shared settings on the render', () => render.cluster === 1 && render.hud === 0 && c.shownOn() === 'cluster');
         patch.profileDelayMs = 200;
-        sync2.refresh();
+        /* an answer on its way (as one after patchd reconnected) when the page writes */
+        sync2._ask({ cmd: 'profile', id: sync2._confirmed });
         await sleep(50);
         c.showOn('both');
         await until('both on the render', () => render.hud === 1 && c.shownOn() === 'both');
@@ -370,10 +389,11 @@ async function main() {
     const page = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, retryMs: 50 });
     const sync5 = new ProfileSync({ control: page, readProfile: () => (readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(who)),
         patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
-    page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w));
+    page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w), () => sync5.loading());
     const mapWrites = () => patch.received.filter((m) => ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'].includes(m.cmd));
     /* G with its own settings (both), the shared ones both; G in effect */
     const setUp = async () => {
+        page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w), () => sync5.loading());
         patch.profileDelayMs = 0;
         patch.saveMs = 0;
         patch.own = { driverG: Object.assign({}, BOTH) };
@@ -387,8 +407,6 @@ async function main() {
         page.open();
         await until('page connected', () => page.render.connected() && page.connectedPatch() && page.ownSettings === true);
         sync5.start();
-        await until('one read', () => sync5._seen === 'driverG' && !sync5._polling);
-        sync5._poll();
         await until('G settled', () => sync5.settled() && sync5.profile === 'driverG' && page.canChooseShownOn() && page.shownOn() === 'both');
     };
     await setUp();
@@ -397,7 +415,7 @@ async function main() {
         render.received.length = 0;
         who = 'driverB';
         page.showOn('cluster');
-        await until('greyed', () => sync5.writeTarget() === null && !page.canChooseShownOn());
+        await until('B told', () => sync5.profile === 'driverB');
         await sleep(100);
         assert.strictEqual(mapWrites().length, writes, 'nothing written for G');
         assert.deepStrictEqual(render.received, [], 'nothing to the render');
@@ -410,14 +428,65 @@ async function main() {
         assert.deepStrictEqual(mapWrites().slice(-1), [{ cmd: 'hud', on: 0, profile: 'driverB', own: 0 }]);
         assert.deepStrictEqual(patch.own.driverG, BOTH, 'G\'s own settings unchanged');
     });
-    await check('a driver switch, then the page opened: the profile read at once, greyed until the new one counts', async () => {
+    await check('a driver switch, then the page opened (or back in focus): loading, then the new driver\'s stored settings at once', async () => {
         sync5.stop();
         page.close();
         await setUp();
+        patch.shared = Object.assign({}, CLUSTER);   /* B's: the shared settings, the cluster alone */
         who = 'driverB';
-        sync5.refresh();
-        await until('greyed at once', () => !page.canChooseShownOn() && sync5.writeTarget() === null);
-        assert.strictEqual(sync5.profile, 'driverG', 'B not yet told');
+        patch.profileDelayMs = 150;
+        const t0 = Date.now();
+        sync5.load();
+        assert(sync5.loading() && !page.canChooseShownOn() && sync5.writeTarget() === null && page.shownOn() === null,
+            'loading: greyed, no setting shown');
+        await until('B\'s stored settings shown and usable', () => sync5.settled() && sync5.profile === 'driverB' && page.shownOn() === 'cluster' &&
+            render.hud === 0 && page.canChooseShownOn());
+        const ms = Date.now() - t0;
+        assert(ms < 1000, `one round trip, not a poll: ${ms} ms`);
+        assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile').slice(-1), [{ cmd: 'profile', id: 'driverB' }]);
+        patch.profileDelayMs = 0;
+    });
+    await check('the head unit says the driver changed (its event): greyed at once, the new driver told and its settings shown, no poll', async () => {
+        sync5.stop();
+        page.close();
+        let notify = null;
+        const read = () => Promise.resolve(who);
+        read.watch = (cb) => { notify = cb; };
+        const watched = new ProfileSync({ control: page, readProfile: read, patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
+        page.setWriteTarget(() => watched.writeTarget(), (w) => watched.confirmWrite(w), () => watched.loading());
+        patch.shared = Object.assign({}, CLUSTER);
+        patch.own = { driverG: Object.assign({}, BOTH) };
+        patch.active = 'driverG';
+        patch.current = 'driverG';
+        patch.map = patch.own.driverG;
+        Object.assign(render, { cluster: 1, hud: 1 });
+        who = 'driverG';
+        page.open();
+        watched.start();
+        await until('G settled', () => watched.settled() && page.shownOn() === 'both');
+        who = 'driverB';
+        patch.profileDelayMs = 100;
+        notify('driverB');
+        assert(!watched.settled() && watched.writeTarget() === null, 'greyed at once');
+        await until('B in effect, its settings on the render', () => watched.settled() && watched.profile === 'driverB' && render.hud === 0 &&
+            page.shownOn() === 'cluster');
+        patch.profileDelayMs = 0;
+        watched.stop();
+        page.close();
+    });
+    await check('the page opened while the first read fails: read again at once, not at the poll', async () => {
+        let n = 0;
+        const flaky = new ProfileSync({ control: page, readProfile: () => (n++ < 2 ? Promise.reject(new Error('timeout')) : Promise.resolve('driverG')),
+            patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, readRetryMs: 50, log: quiet() });
+        page.setWriteTarget(() => flaky.writeTarget(), (w) => flaky.confirmWrite(w), () => flaky.loading());
+        page.open();
+        flaky.start();
+        await until('the start\'s read failed', () => n === 1 && !flaky._polling);
+        clearTimeout(flaky._timer);
+        flaky.load();
+        await until('loaded after one retry', () => !flaky.loading() && flaky.settled() && n === 3, 1000);
+        flaky.stop();
+        page.close();
     });
     await check('a profile that cannot be read: greyed with own settings in use, the line\'s state set; not without', async () => {
         sync5.stop();
@@ -441,8 +510,40 @@ async function main() {
         fresh.stop();
         page.close();
     });
+    await check('a driver profile confirmed, then reads that keep failing: greyed with own settings in use, back once a read comes', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        readFails = true;
+        for (let i = 0; i < 3; i++) {
+            sync5._poll();
+            await until('read', () => !sync5._polling);
+        }
+        assert(sync5.unreadable(), 'unreadable');
+        assert.strictEqual(sync5.writeTarget(), null, 'greyed');
+        assert(!page.canChooseShownOn() && !sync5.canChooseOwn(), 'Show on and Own greyed');
+        readFails = false;
+        sync5._poll();
+        await until('settled again', () => sync5.settled() && page.canChooseShownOn());
+    });
+    await check('the first own settings ticked: the page names the profile at once, before patchd\'s next status', async () => {
+        sync5.stop();
+        page.close();
+        await setUp();
+        patch.own = {};
+        patch.active = null;
+        patch._broadcast(patch._status());
+        sync5.load();
+        await until('no own settings', () => page.ownSettings === false && sync5.settled() && !sync5.own);
+        patch.statusDelayMs = 1000;
+        await sync5.setOwn(true);
+        assert.strictEqual(sync5.own, true, 'ticked');
+        assert.strictEqual(page.ownSettings, true, 'own settings known from the reply');
+        assert.deepStrictEqual(sync5.writeTarget(), { profile: 'driverG', own: 1 }, 'a write names G\'s own settings');
+        patch.statusDelayMs = 0;
+        await sleep(1100);
+    });
     await check('a late profile answer while a write is on its way, the render showing another key too: it ends on patchd\'s stored set', async () => {
-        page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w));
         await setUp();
         patch.own = {};
         patch.active = null;
@@ -455,7 +556,7 @@ async function main() {
         render.announce(render.state, render.reason);
         patch.profileDelayMs = 150;
         patch.saveMs = 400;
-        sync5.refresh();
+        sync5._ask({ cmd: 'profile', id: sync5._confirmed });
         await sleep(30);
         page.showOn('both');
         await until('both on the render', () => render.hud === 1 && page.shownOn() === 'both');
