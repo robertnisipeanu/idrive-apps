@@ -149,13 +149,14 @@ async function main() {
         await read();
         await sleep(10);
         assert.strictEqual(b.subscribes, 2, 'asked again after the backoff');
+        await sleep(80);
         await read();
         await sleep(10);
-        assert.strictEqual(b.subscribes, 2, 'refused again: the backoff doubled');
-        await sleep(130);
+        assert.strictEqual(b.subscribes, 2, 'refused again: not asked after the first backoff (60 ms), it doubled');
+        await sleep(60);
         await read();
         await sleep(10);
-        assert.strictEqual(b.subscribes, 3, 'asked a third time');
+        assert.strictEqual(b.subscribes, 3, 'asked a third time after the doubled backoff (120 ms)');
         assert.strictEqual(b.listeners.size, 3, 'the refusals left their handlers registered');
         b.send('driverB');
         assert.deepStrictEqual(got, ['driverB'], 'each event once all the same');
@@ -171,6 +172,17 @@ async function main() {
         assert.deepStrictEqual(b.unsubscribed, [3], 'the subscription before it unsubscribed by its id');
         b.send('driverC');
         assert.deepStrictEqual(got, ['driverB', 'driverC']);
+    });
+    await check('the reader: the subscription\'s backoff stops doubling at its cap', async () => {
+        const b = builders(() => 'driverA', { event: true, subscribeFails: 4 });
+        const read = sessionReader(b, quiet(), { retryMs: 100, retryMaxMs: 150 });
+        const askAfter = async (ms) => { await sleep(ms); await read(); await sleep(10); return b.subscribes; };
+        await read();
+        await sleep(10);
+        assert.strictEqual(b.subscribes, 1);
+        assert.strictEqual(await askAfter(110), 2, 'after 100 ms');
+        assert.strictEqual(await askAfter(170), 3, 'after 150 ms, not 200');
+        assert.strictEqual(await askAfter(170), 4, 'after 150 ms again, not 300');
     });
     await check('the reader: the head unit\'s currentUserOnChange event, subscribed once a read works, gives each valid id it sends', async () => {
         const b = builders(() => 'driverA', { event: true });
@@ -443,7 +455,7 @@ async function main() {
     let readFails = false;
     const page = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, retryMs: 50 });
     const sync5 = new ProfileSync({ control: page, readProfile: () => (readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(who)),
-        patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
+        patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, replyMs: 200, log: quiet() });
     page.setWriteTarget(() => sync5.writeTarget(), (w) => sync5.confirmWrite(w), () => sync5.loading());
     const mapWrites = () => patch.received.filter((m) => ['cluster', 'hud', 'hud-size', 'hud-pos', 'hud-keep-shown'].includes(m.cmd));
     /* G with its own settings (both), the shared ones both; G in effect */
@@ -670,13 +682,22 @@ async function main() {
         await render.listen();
         await until('B\'s stored settings on the render', () => render.hud === 0 && render.cluster === 1 && page.shownOn() === 'cluster', 2000);
     });
-    await check('a refusal\'s backoff does not hold up a page load: asked at once', async () => {
+    await check('a page load\'s ask that gets no answer: asked again by the load itself, no backoff', async () => {
         await setUp();
-        patch.profileRefuse = true;
+        patch.profileMute = true;
+        const asked = patch.count('profile');
+        sync5.load();
+        await until('the first ask', () => patch.count('profile') > asked);
+        patch.profileMute = false;
+        await until('the load\'s own retry answered', () => !sync5.loading() && sync5.settled(), 1500);
+    });
+    await check('a no-answer backoff does not hold up a page load: asked at once', async () => {
+        await setUp();
+        patch.profileMute = true;
         who = 'driverB';
         sync5._poll();
-        await until('refused, backing off', () => sync5._retryAt > Date.now() && sync5.profile === undefined);
-        patch.profileRefuse = false;
+        await until('no answer, backing off', () => sync5._retryAt > Date.now() + 5000 && sync5.profile === undefined);
+        patch.profileMute = false;
         const asked = patch.count('profile');
         sync5.load();
         await until('asked at once and in effect', () => patch.count('profile') > asked && sync5.settled() && sync5.profile === 'driverB', 1000);
@@ -710,25 +731,36 @@ async function main() {
     patch.profileMute = true;
     const log = quiet();
     const sync3 = new ProfileSync({ readProfile: () => Promise.resolve('driverA'), patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL,
-        replyMs: 100, retryMs: 60000, log });
+        replyMs: 100, retryMs: 300, retryMaxMs: 1000, log });
+    const asks = () => patch.received.filter((m) => m.cmd === 'profile').map((m) => m.at);
+    patch.on('command', (m) => { m.at = Date.now(); });
     sync3.start();
-    await check('a patchd that does not answer: the checkbox greyed, asked again at the next read', async () => {
-        await until('asked', () => log.lines.some((l) => /patchd did not take profile: no answer/.test(l)));
-        const asked = patch.count('profile');
+    await check('a patchd that takes the connection and does not answer: greyed, asked again after a backoff that doubles, logged once', async () => {
+        const from = asks().length;
+        await until('four asks', () => asks().length >= from + 4, 6000);
+        const at = asks().slice(from);
+        /* each ask waits replyMs (100) for its answer; then the backoff: 300, 600, 1000 (the cap) */
+        const gaps = [at[1] - at[0], at[2] - at[1], at[3] - at[2]].map((g) => g - 100);
+        assert(gaps[0] >= 280 && gaps[0] < 550, `first backoff ~300 ms: ${gaps}`);
+        assert(gaps[1] >= 580 && gaps[1] < 900, `doubled ~600 ms: ${gaps}`);
+        assert(gaps[2] >= 980 && gaps[2] < 1300, `capped at 1000 ms: ${gaps}`);
         assert.strictEqual(sync3.canChooseOwn(), false);
-        await until('asked again', () => patch.count('profile') > asked, 1000);
+        assert.strictEqual(log.lines.filter((l) => /patchd did not take profile: no answer/.test(l)).length, 1, 'one warning for the streak');
         patch.profileMute = false;
-        await until('asked again and taken', () => sync3.profile === 'driverA', 1500);
+        await until('asked again and taken', () => sync3.profile === 'driverA', 2500);
         assert(sync3.canChooseOwn());
+        assert.strictEqual(sync3._noAnswerMs, 300, 'an answer resets the backoff');
     });
     sync3.stop();
     await patch.close();
+    const log4 = quiet();
     const sync4 = new ProfileSync({ readProfile: () => Promise.resolve('driverB'), patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL,
-        retryMs: 60000, log: quiet() });
+        retryMs: 60000, log: log4 });
     sync4.start();
     await sleep(POLL * 4);
-    await check('patchd not running: asked at the next read once it runs', async () => {
+    await check('patchd not running: asked at the next read once it runs, logged once', async () => {
         assert.strictEqual(sync4.profile, undefined);
+        assert.strictEqual(log4.lines.filter((l) => /patchd did not take profile: not running/.test(l)).length, 1, 'one warning for the streak');
         const p2 = new FakePatch(PSOCK);
         await p2.listen();
         await until('taken', () => sync4.profile === 'driverB');

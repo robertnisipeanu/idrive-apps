@@ -24,10 +24,13 @@
  * asks patchd {"cmd":"profile-own","id","on"} the same way, for the Own
  * settings for this driver checkbox; refused, the profile is told again.
  *
- * patchd not running or not answering is asked again at the next read, and
- * READ_RETRY_MS later while the page loads (up to LOAD_TRIES times); one
- * that refuses the command (before profiles) after RETRY_MS. Meanwhile Show
- * on, the HUD settings and the checkbox are greyed.
+ * patchd not running is asked again at the next read. One that takes the
+ * connection and does not answer is asked again after NO_ANSWER_MS,
+ * doubling up to NO_ANSWER_MAX_MS, until it answers or a page load (which
+ * also runs at each new connection to patchd) asks it at once. While the
+ * page loads, either is asked again READ_RETRY_MS later, up to LOAD_TRIES
+ * times. Each streak is logged once. Meanwhile Show on, the HUD settings
+ * and the checkbox are greyed.
  *
  * The page's map settings are written for one driver profile's settings:
  * writeTarget() names the profile and set patchd has in effect, and only
@@ -57,7 +60,8 @@ const READ_MS = 3000;
 const SETUP_RETRY_MS = 10000;
 const SETUP_RETRY_MAX_MS = 300000;
 const REPLY_MS = 3000;
-const RETRY_MS = 60000;
+const NO_ANSWER_MS = 10000;
+const NO_ANSWER_MAX_MS = 300000;
 /* reads and asks a page load makes while patchd has not answered it */
 const LOAD_TRIES = 4;
 /* reads in a row that fail or give no profile id before the profile counts
@@ -265,7 +269,8 @@ function askOnce(path, obj, done, ms) {
 class ProfileSync extends EventEmitter {
     /* options: control (the page's WazeClusterControl), log, readProfile
      * (with watch(cb) when it can send a change), patchPath, renderPath,
-     * pollMs, readRetryMs, replyMs, retryMs. Emits 'change' when profile,
+     * pollMs, readRetryMs, replyMs, retryMs and retryMaxMs (the no-answer
+     * backoff). Emits 'change' when profile,
      * own, settled(), loading() or canChooseOwn() may have changed. */
     constructor(options) {
         super();
@@ -278,7 +283,10 @@ class ProfileSync extends EventEmitter {
         this._pollMs = o.pollMs || POLL_MS;
         this._readRetryMs = o.readRetryMs || READ_RETRY_MS;
         this._replyMs = o.replyMs || REPLY_MS;
-        this._retryMs = o.retryMs || RETRY_MS;
+        this._retryMs = o.retryMs || NO_ANSWER_MS;
+        this._retryMaxMs = o.retryMaxMs || NO_ANSWER_MAX_MS;
+        this._noAnswerMs = this._retryMs;   /* the next no-answer backoff */
+        this._warned = null;                /* why patchd did not take the last ask, logged */
         /* the profile patchd has put in effect (NONE: none) and whether it
          * has its own settings; undefined and null until patchd has said */
         this.profile = undefined;
@@ -391,6 +399,7 @@ class ProfileSync extends EventEmitter {
     load() {
         if (!this._stopped) {
             this._retryAt = 0;
+            this._noAnswerMs = this._retryMs;
             this._loadTries = 0;
             if (!this._loading) {
                 this._loading = true;
@@ -482,8 +491,12 @@ class ProfileSync extends EventEmitter {
                     if (this._control) {
                         this._control.noteOwnSettings(r || {});
                     }
+                    if (r) {
+                        this._noAnswerMs = this._retryMs;
+                    }
                     if (r && r.ev === ev && r.ok) {
                         this._retryAt = 0;
+                        this._warned = null;
                         this.profile = r.id;
                         this.own = r.own === true;
                         this._log.info(`driver profile: ${r.own ? 'its own' : 'the shared'} map settings${r.changed ? ', applied' : ''}`);
@@ -491,14 +504,19 @@ class ProfileSync extends EventEmitter {
                             shown = this._toRender(r.settings, r.changed, writes);
                         }
                     } else {
-                        /* not taken: asked again (patchd not running or not
-                         * answering: at the next read; refused: after
-                         * RETRY_MS), greyed meanwhile */
-                        this._log.warn(`patchd did not take ${msg.cmd}: ${r === undefined ? 'not running' : (r && r.reason) || 'no answer'}`);
+                        const why = r === undefined ? 'not running' : (r && r.reason) || 'no answer';
+                        if (why !== this._warned) {
+                            this._warned = why;
+                            this._log.warn(`patchd did not take ${msg.cmd}: ${why}`);
+                        }
                         if (msg.cmd === 'profile') {
                             this.profile = undefined;
                             this.own = null;
-                            this._retryAt = r ? Date.now() + this._retryMs : 0;
+                            /* no answer outside a page load: asked again after a backoff */
+                            this._retryAt = r === null && !this._loading ? Date.now() + this._noAnswerMs : 0;
+                            if (this._retryAt) {
+                                this._noAnswerMs = Math.min(this._noAnswerMs * 2, this._retryMaxMs);
+                            }
                         } else if (r && this._confirmed !== undefined) {
                             /* refused (patchd has another profile in effect): what it has */
                             this._ask({ cmd: 'profile', id: this._confirmed });
