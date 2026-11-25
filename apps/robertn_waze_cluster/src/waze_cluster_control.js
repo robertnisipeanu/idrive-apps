@@ -405,9 +405,9 @@ class WazeClusterControl extends EventEmitter {
      * effect, once it has said what it shows, unless it shows them. With
      * moved (patchd put other settings in effect, or refused a write), what
      * was asked and not yet shown gives way to them; without, a change asked
-     * meanwhile keeps the render as it is. */
-    /* Resolves once the render shows them, a change asked meanwhile keeps
-     * it, the page closes, or STORED_MS has passed. */
+     * meanwhile keeps the render as it is. Resolves once the render shows
+     * them, a change asked meanwhile keeps it, the page closes, or STORED_MS
+     * has passed. */
     showStored(settings, moved) {
         this._stored = { settings, moved: !!moved || !!(this._stored && this._stored.moved) };
         const shown = new Promise((resolve) => {

@@ -195,7 +195,7 @@ function sessionReader(someipBuilders, log, options) {
         return within(Promise.resolve()
             .then(() => p.waitUntilAvailable(readMs))
             .then(() => p[FIELD].getValue()), readMs * 2, `reading ${FIELD}`)
-            .then((v) => v, (e) => {
+            .catch((e) => {
                 if (sub === 'on') {
                     sub = 'none';
                 }

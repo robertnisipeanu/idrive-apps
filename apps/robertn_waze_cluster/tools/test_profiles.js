@@ -79,8 +79,8 @@ function builders(value, opts) {
             } };
         }
         if (o.event) {
-            /* the handler registered before a refusal too, the worst an SDK could do */
-            /* as the SDK: subscribe registers a handler and resolves to its id, unsubscribe takes the id */
+            /* as the SDK: subscribe registers a handler and resolves to its id, unsubscribe takes the
+             * id; the handler registered before a refusal too, the worst an SDK could do */
             b.listeners = new Map();
             b.subscribes = 0;
             b.unsubscribed = [];
