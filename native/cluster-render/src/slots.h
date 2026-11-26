@@ -880,7 +880,8 @@ private:
      * route guidance never counts (is_guidance). */
     bool popup_blocks(int i, int64_t now_ms);
     /* A shown scene the display removed: evidence for the governor, a
-     * share target's only logged. */
+     * share target's or a hold's (its blank scene uploads nothing) only
+     * logged. */
     void removal_evidence(int i, const std::string &why, int64_t ms);
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);

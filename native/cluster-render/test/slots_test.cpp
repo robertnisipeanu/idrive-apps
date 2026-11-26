@@ -2798,6 +2798,77 @@ static void guide_hold_ready()
            joined().find("request guide") != std::string::npos);
 }
 
+/* Issue 281, part 4f: car Test 5e, 16:19:49-16:19:52.774. The warning locks
+ * 0x100 and 0x103 3.4 s; the slots back, ours shown again; 0x101/0x102
+ * disabled again; the KOMBI removes ours with 0x103 not locked. A hold's
+ * blank scene uploads nothing: no evidence, the loss handled as before.
+ * The map removed the same way still is evidence. */
+static void guide_removal_not_evidence()
+{
+    PairRig r(kTopSlot);
+    r.port.keeps = true;
+    std::vector<std::string> ev;
+    r.m.on_evidence = [&](Evidence e, const std::string &, int64_t) { ev.push_back(evidence_name(e)); };
+    r.crows(kTopSlot, 1, {});
+    r.show_map();
+    r.pass();
+    r.table(3, 3, 0, 0);
+    r.m.on_parked(kGuideScene, r.now);
+    r.m.on_parked(kSmallScene, r.now);
+    r.pass();
+    r.table(1, 3, 3, 3);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(10000);
+    joined();
+    logged();
+    /* 16:19:49.16: 0x100 and 0x103 locked, 0x101/0x102 too; ours kept. */
+    r.warning(true);
+    r.rows(kMapSlot, 0, {{kMapScene, 1}});
+    r.crows(kTopSlot, 0, {{kBox, 0, 0}, {kGuideScene, 1, 0}, {kBelt, 0, 1024}, {kSmallScene, 3, 1024}});
+    r.pass();
+    r.m.on_lost(kSmallScene, "unmapped", r.now);
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    r.m.on_lost(kGuideScene, "unmapped", r.now);
+    r.pass(3420);
+    const bool kept = r.m.kept(GuideRig::kGuide) && joined().find("release") == std::string::npos;
+    /* 16:19:52.584: back; ours mapped again, shown .620. */
+    r.warning(false);
+    r.crows(kTopSlot, 1, {{kBox, 0, 0}, {kGuideScene, 0, 0}, {kBelt, 0, 1024}, {kSmallScene, 0, 1024}});
+    r.rows(kMapSlot, 1, {{kMapScene, 0}});
+    r.pass(30);
+    r.crows(kTopSlot, 1, {{kBox, 0, 0}, {kGuideScene, 0, 0}, {kBelt, 0, 1024}, {kSmallScene, 3, 1024}});
+    r.m.on_parked(kSmallScene, r.now);
+    r.rows(kMapSlot, 2, {{kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(30);
+    /* .654: 0x101/0x102 disabled again, 0x103 occupied, ours shown. */
+    r.warning(true);
+    r.crows(kTopSlot, 2, {{kBox, 0, 0}, {kGuideScene, 1, 0}, {kBelt, 0, 1024}, {kSmallScene, 3, 1024}});
+    r.pass(70);
+    /* .727: the table reports ours unmapped, the small one shown. */
+    r.crows(kTopSlot, 1, {{kBox, 0, 0}, {kGuideScene, 0, 0}, {kBelt, 0, 1024}, {kSmallScene, 3, 1024}});
+    r.crows(kTopSlot, 2, {{kBox, 0, 0}, {kGuideScene, 0, 0}, {kBelt, 0, 1024}, {kSmallScene, 1, 1024}});
+    r.pass(20);
+    const bool shown = r.state(GuideRig::kGuide) == TargetState::Shown;
+    r.m.on_lost(kGuideScene, "fetch removed", r.now);
+    r.pass(1100);
+    const std::string lost = logged();
+    ok("t5e 16:19:52.747: the hold's blank scene removed with 0x103 not locked: no upload evidence, logged",
+       kept && shown && ev.empty() &&
+           lost.find("target guide: taken: fetch removed (a hold's blank scene, nothing uploaded: the upload cap "
+                     "stays)") != std::string::npos);
+    ok("the loss handled as before: the hold waits to be asked for again",
+       r.state(GuideRig::kGuide) == TargetState::Waiting || r.state(GuideRig::kGuide) == TargetState::Acquiring);
+    r.warning(false);
+    r.pass(3000);
+    r.rows(kMapSlot, 1, {{kMapScene, 0}});
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    r.pass(1100);
+    ok("the map removed with its slot not locked: evidence, as before",
+       ev.size() == 1 && ev[0] == std::string("scene removed"));
+}
+
 /* Part 4b: a route while the warning disables 0x101/0x102, as at car Test
  * 5b (26 Nov 15:03:38): the box parked in 0x103, its top layout shown; both
  * of ours asked for, then parked (the small one 300 ms before the end of
@@ -5455,6 +5526,7 @@ int main()
     guide_small_scene();
     guide_warning_over();
     guide_hold_ready();
+    guide_removal_not_evidence();
     guide_small_race();
     guide_small_ready();
     guide_given_up_held_again();

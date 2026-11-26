@@ -1435,6 +1435,11 @@ void SlotManager::removal_evidence(int i, const std::string &why, int64_t ms)
 {
     if (specs_[i].share)
         log_info("target %s: %s (the HUD share's: the upload cap stays)", specs_[i].name.c_str(), why.c_str());
+    else if (!specs_[i].follows.empty())
+        /* A hold's blank 16x16 scene uploads nothing: its removal says
+         * nothing about the upload budget (issue 281, car Test 5e). */
+        log_info("target %s: %s (a hold's blank scene, nothing uploaded: the upload cap stays)",
+                 specs_[i].name.c_str(), why.c_str());
     else if (on_evidence)
         on_evidence(Evidence::Removal, specs_[i].name + ": " + why, ms);
 }

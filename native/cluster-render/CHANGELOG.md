@@ -32,6 +32,11 @@ comes back parked behind it instead of showing for ~0.2 s in the middle.
 Refused before the box is seen, it is asked for again when the slot's
 status changes. A hold on a listed slot still follows the box.
 
+The KOMBI removing one of the guide hold's blank scenes no longer lowers
+the upload cap or the remembered ceiling: they upload nothing, so the map
+keeps 5500 KB/s after a warning instead of being slowed to 5000 and
+remembered at 5000 for later drives. The map's removals count as before.
+
 A hold that yields to BMW's own content in its slot (content not in
 `guide_take_over`) no longer counts that as a loss, so it no longer gives
 up over it. A hold that has given up is asked for again when the target

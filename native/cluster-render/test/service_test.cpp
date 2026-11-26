@@ -561,6 +561,49 @@ static void guide_hold_top_card()
     ok("guide_hold 0 again: both of ours released", !r.port.row(0x105, kGuide) && !r.port.row(0x105, kSmall));
 }
 
+/* Issue 281, part 4f (car Test 5e, 16:19:52.747): the KOMBI removes the
+ * hold's shown blank scene with its slot not locked. It uploads nothing:
+ * the cap stays 5500 and nothing is remembered. The map removed the same
+ * way lowers the cap to 5000 and remembers it, as before. */
+static void guide_removal_keeps_cap()
+{
+    char tmpl[] = "/tmp/crs-ceiling.XXXXXX";
+    const std::string dir = mkdtemp(tmpl) ? tmpl : "/tmp";
+    const std::string file = dir + "/upload-ceiling";
+    {
+        Rig r(5500 * 1024);
+        r.sc.ceiling.path = file;
+        hold_rig(r);
+        cr::Client a("waze", r.path);
+        r.clients = {&a};
+        r.pump(50);
+        cr::LayerOptions lo;
+        lo.target = "map";
+        lo.contend = true;
+        show_map(r, a, lo);
+        r.pump(4000);
+        const SlotInfo *ours = r.port.row(0x105, kGuide);
+        Governor &gov = r.svc->compositor().governor();
+        gov.activity(r.now);
+        r.svc->slots().on_lost(kGuide, "fetch removed", r.now);
+        r.pump(1100);
+        ok("t5e: the hold's shown blank scene removed: the cap stays 5500, nothing remembered",
+           ours && ours->map_status == 1 && gov.cap() == 5500u * 1024 && !std::ifstream(file).good());
+        r.port.stock_unmap(0x100, kHmiMap);   /* the slot shows only ours */
+        r.pump(50);
+        gov.activity(r.now);
+        r.svc->slots().on_lost(0x010004f0, "fetch removed", r.now);
+        r.pump(1100);
+        std::ifstream in(file);
+        std::string first;
+        std::getline(in, first);
+        ok("the shown map removed: the cap lowered to 5000 and remembered, as before",
+           gov.cap() == 5000u * 1024 && first == "ceiling_kb 5000");
+    }
+    if (std::system(("rm -rf " + dir).c_str()) != 0)
+        std::printf("cleanup failed\n");
+}
+
 /* The KOMBI restarting: our mappings dropped and the display service gone,
  * then back. */
 static void kombi_restart(Rig &r)
@@ -4553,6 +4596,7 @@ int main()
     guide_hold();
     guide_hold_choice();
     guide_hold_top_card();
+    guide_removal_keeps_cap();
     hud_yield_choice();
     display_drops();
     repeats();
