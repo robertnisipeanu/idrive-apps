@@ -18,10 +18,10 @@
  * An earlier patch beside another tool's change (foreign) is left as it is,
  * a conflict. A plan that cannot be made (an I/O error) leaves carplay
  * stock, the error in patchd's status, until the watcher plans it at the
- * next head-unit start. On any car coded with a cluster display, or whose
- * coding cannot be read, an earlier release's patch is put back as it ships
- * and planned in memory; a car coded with no cluster display is not
- * supported. A stock build outside the proven list is left as
+ * next head-unit start. On a car coded KI_KOMBI_VARIANT 7, or whose coding
+ * cannot be read, an earlier release's patch is put back as it ships and
+ * planned in memory; on any other coding it is put back and nothing is
+ * planned (9 and 10 built in, 0 and the rest not supported). A stock build outside the proven list is left as
  * a conflict. Removal (deactivate) disarms the next start, deletes the plan
  * and its record, reverts an earlier release's patch left on disk and drops
  * our backup: a revert is pending only while the running carplay's memory
@@ -35,7 +35,7 @@
  * patchd refuses CarPlay's Patch button and the removal turns the patch
  * off; MID and HIGH F plan as HIGH. The first install on HIGH F applies the
  * patch again to an original 0.8.2's boot recovery restored. The cluster
- * coding: an install plans on any coding with a cluster display. The
+ * coding: an install plans on 7 or an unreadable coding only. The
  * pending marker is the world-readable JSON patchd and the app read. Runs
  * the real patchd.js and carplay_patch.js on a temporary copy, with a fake
  * /proc (carplay's process: its exe, maps and mem, carplay_proc.js), a fake
@@ -853,10 +853,10 @@ async function main() {
      * KI_KOMBI_VARIANT 7, and its first patch there is on trial (unproven
      * until boot recovery's watcher sees it run healthy). An earlier
      * release's patch it migrates is on trial too, whatever that release
-     * recorded: the plan has not run here. On another coding, or one that
-     * cannot be read, it plans nothing and reports the conflict the app
-     * shows, also on HIGH F over 0.8.2's restore; a patch CarPlay's Patch
-     * button planned there is left as it is. */
+     * recorded: the plan has not run here. A coding that cannot be read is
+     * planned as 7; on any other coding it plans nothing, drops a plan of
+     * ours and reports the conflict the app shows, also on HIGH F over
+     * 0.8.2's restore. */
     var record = require('../patch_record.js');
     function trial() { var x = rec(); return x ? { enabled: x.enabled, proven: x.proven, trial: x.trial } : null; }
     var TRIAL = JSON.stringify({ enabled: true, proven: false, trial: true });
@@ -1169,7 +1169,7 @@ async function main() {
     var NOID = Buffer.concat([SRCBUF, Buffer.from('appended')]);
     updated(NOID);
     var noidOther = /^restorable:\s+no \(another build: (.*)\)$/m.exec(cp.execFileSync(process.execPath, [PATCHER, 'status', '--target', TGT], { encoding: 'utf8' }) || '');
-    if (noidOther && noidOther[1] !== 'its build-id differs') {
+    if (noidOther && noidOther[1] !== LOC.BUILD_ID_DIFFERS) {
         st = await daemonStatus();
         ok('another build it cannot tell from a change (' + noidOther[1] + '): the conflict', st.conflict === 'carplay is another build than our backup', JSON.stringify(st));
         r = hook('activate');

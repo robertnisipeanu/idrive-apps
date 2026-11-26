@@ -272,7 +272,7 @@ function keepRestartRecords(t, dir, id, opts) {
 
 /* Failed boots or crashes before a restore: a patch the record does not
  * call proven (a patch on trial, which every build is until it ran healthy
- * on this car, or a car coded otherwise) is restored at its first, a proven
+ * on this car) is restored at its first, a proven
  * one at its second; a binary of the backup's build the record does not
  * describe counts as proven. */
 var THRESHOLD = { proven: 2, unknown: 2, unproven: 1 };

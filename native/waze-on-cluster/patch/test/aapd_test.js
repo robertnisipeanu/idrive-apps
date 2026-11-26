@@ -447,7 +447,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     }
     r = throwing(['status']);
     ok('a throwing locator: status prints every line, restorable, the backup named', r.code === 0 &&
-        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'undo', 'known', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
+        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'replaced', 'undo', 'known', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
             .every(function (k2) { return new RegExp('^' + k2 + ':', 'm').test(r.out); }) &&
         /^restorable:\s+yes$/m.test(r.out) && /^known:\s+NO — locator failed: boom$/m.test(r.out) && /^gate:\s+UNKNOWN \(locator failed: boom\)$/m.test(r.out) &&
         r.out.split('\n').some(function (l) { return /^backup:/.test(l) && l.indexOf(th.bin + '.woc-orig') > 0; }), r.out);
@@ -895,6 +895,19 @@ function nextStart(t, pid) {
     r = hook(nrr, 'activate');
     ok('its plan boot recovery turned off after a crash stays off at the next install', r.code === 0 && aaRecord(nrr).enabled === false &&
         /boot recovery removed the patch after the patched aapd crashed/.test(r.result.aa && r.result.aa.status), r.out);
+
+    /* A 0.13.x plan (record v 1 at revision 2, no ready start) boot recovery
+     * turned off: this version's revision 3 is newer, so the install plans
+     * it again, on trial. */
+    var old13 = patchdUnit();
+    r = hook(old13, 'activate');
+    var orec = aaRecord(old13);
+    fs.writeFileSync(path.join(old13.d, 'var', 'inmem-aapd.json'), JSON.stringify(Object.assign(orec, { v: 1, rev: 2, enabled: false, by: 'recovery', fails: 1, why: 'crash', proven: true, trial: false,
+        edits: orec.edits.filter(function (e) { return e !== 'readystart'; }) })) + '\n');
+    r = hook(old13, 'activate');
+    var o13 = aaRecord(old13);
+    ok('a 0.13.x plan boot recovery turned off: the install plans it again at revision 3, on trial', r.code === 0 && o13.enabled === true && o13.rev === 3 && o13.trial === true &&
+        /Android Auto patch armed in memory/.test(r.result.aa && r.result.aa.status), r.out);
 
     /* A removal passes only when nothing of Android Auto's is left to undo:
      * aapd restored but aapd.conf not is refused. */

@@ -376,6 +376,7 @@ function cmdStatus(target, codingFile) {
     var p;
     try { p = restorePlan(target, buf, c); } catch (e) { p = { err: e.message }; }
     line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) || modeOnly(target, buf, p) ? 'yes' : 'no');
+    line('replaced', replaced(p) ? 'yes' : 'no');
     /* Our edits beside another change: the file differs from its original
      * outside the sites of our edits. */
     var fo = foreignIn(target);
@@ -387,7 +388,7 @@ function cmdStatus(target, codingFile) {
      * unless the target is another build by its build-id (a car software
      * update replaced it: the backup goes when the patch is planned). */
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
-    if (hasBak && !bad.length && !(p && p.b && p.b.other === 'its build-id differs')) {
+    if (hasBak && !bad.length && !replaced(p)) {
         var b;
         try { b = checkedBackup(target, p.bc && !p.b.stock ? { buf: p.b.buf, c: p.bc } : null); } catch (e) { b = { err: e.message }; }
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
@@ -491,12 +492,16 @@ function checkedBackup(target, pre) {
  * URL 64 + 11), twice over. */
 var SAME_BUILD_MAX_DIFF = 2 * (4 + 59 + 5 + 4 * 8 + 55 + 7 + 64 + 11);
 
+/* Whether a restore plan's backup is of a build a car software update
+ * replaced (by the target's build-id). */
+function replaced(p) { return !!p && !!p.b && p.b.other === locator.BUILD_ID_DIFFERS; }
+
 /* Why `cur` is not the build `orig` is the original of, or null when it is:
  * the same build-id and size, or, when either has no build-id, the same size
  * and at most SAME_BUILD_MAX_DIFF bytes apart. */
 function otherBuild(cur, orig) {
     var a = locator.buildId(cur), b = locator.buildId(orig);
-    if (a && b && a !== b) return 'its build-id differs';
+    if (a && b && a !== b) return locator.BUILD_ID_DIFFERS;
     if (cur.length !== orig.length) return 'its size differs';
     if (a && b) return null;
     for (var i = 0, n = 0; i < cur.length; i++) {
@@ -651,7 +656,7 @@ function cmdRevert(target, yes, force, dropBackup) {
      * backup behind): restoring would downgrade it. One by its build-id:
      * with --drop-backup the backup, of a build no longer there, goes and
      * carplay stays. */
-    if (b.other === 'its build-id differs' && !force && dropBackup) {
+    if (replaced(p) && !force && dropBackup) {
         process.stdout.write('current ' + target + ' is another build than the backup (' + b.other + '); left as it is, nothing to do\n');
         drop();
         return;

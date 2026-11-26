@@ -102,12 +102,12 @@ var SHIPPED = {
  * ready start, which only the patch in memory writes. */
 var EDITS = [['gate', 'gate'], ['call', 'selfstart call'], ['guard', 'selfstart guard'], ['screen', 'screen']];
 var SITES = EDITS.concat([['confpath', 'confpath'], ['readystart', 'readystart']]);
+/* A site's name on the status lines and in the plan. */
+function siteName(e) { return e[1].replace(' ', '-'); }
 /* The most bytes aapd may differ in from its backup and still be its build:
  * the edits' bytes (gate 7, call 5, guard 16, screen at most 16), twice
  * over. */
 var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 16 + 16);
-/* binOther's words for a file a car software update replaced. */
-var REPLACED = /^its build-id differs$/;
 /* The patch's revision, kept in the plan's record (inmem.js) and in an
  * earlier release's patch record. Boot recovery keeps it when it turns a
  * patch off, and an install applies again a patch boot recovery turned off
@@ -225,7 +225,7 @@ function trusted(file) {
 
 function binOther(cur, orig) {
     var a = buildId(cur), b = buildId(orig);
-    if (a && b && a !== b) return 'its build-id differs';
+    if (a && b && a !== b) return cpLocate.BUILD_ID_DIFFERS;
     if (cur.length !== orig.length) return 'its size differs';
     if (a && b) return null;
     for (var i = 0, n = 0; i < cur.length; i++) if (cur[i] !== orig[i] && ++n > SAME_BUILD_MAX_DIFF) return 'more than ' + SAME_BUILD_MAX_DIFF + ' bytes differ';
@@ -358,12 +358,15 @@ function cmdStatus(t) {
     line('coding', cd.err ? 'unreadable (' + cd.err + ')' : 'KI_KOMBI_VARIANT ' + cd.variant);
     var why = notRestorable(us);
     line('restorable', why ? 'no (' + why + ')' : 'yes');
+    /* aapd another build than its backup by its build-id (a car software
+     * update replaced it), and nothing else in the way of a revert */
+    line('replaced', why && us[0].p && us[0].p.other === cpLocate.BUILD_ID_DIFFERS && !(us[1].p && (us[1].p.err || us[1].p.other)) ? 'yes' : 'no');
     line('undo', undoLine(us));
     var modified = !c.bad.length && notPristine(c);
     line('known', c.bad.length ? 'NO — ' + c.bad[0] : modified ? 'yes, modified build (' + modified + ')' : 'yes, pristine ' + label(c));
     SITES.forEach(function (e) {
         var s = c.loc[e[0]];
-        line(e[1].replace(' ', '-'), s && s.ok ? s.state.toUpperCase() : 'UNKNOWN (' + (s ? s.reason : 'not located') + ')');
+        line(siteName(e), s && s.ok ? s.state.toUpperCase() : 'UNKNOWN (' + (s ? s.reason : 'not located') + ')');
     });
     line('geometry', geometryText(us[1].cur, us[1].b));
     var fo = foreignIn(t);
@@ -392,7 +395,7 @@ function cmdProbe(t, file) {
     line('patch-rev', String(PATCH_REV));
     line('patchable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     SITES.forEach(function (e) {
-        var s = c.loc[e[0]], k = e[1].replace(' ', '-');
+        var s = c.loc[e[0]], k = siteName(e);
         if (!s || !s.ok) { line(k, 'not found (' + (s ? s.reason : 'not located') + ')'); return; }
         line(k, s.state + ' at 0x' + s.offset.toString(16) + ', ' + s.len + ' bytes: ' + buf.toString('hex', s.offset, s.offset + s.len) +
             ' (stock ' + (s.stock || '?') + ', patched ' + s.patched + ')' + (s.readyFlag !== undefined ? ', ready flag +0x' + s.readyFlag.toString(16) : ''));
@@ -419,7 +422,7 @@ function cmdRevert(t, yes, force, dropBackup) {
         /* Another build by its build-id (a car software update replaced
          * it): with --drop-backup its backup, of a build no longer there,
          * goes and the file stays. */
-        if (x.p.other && !force && dropBackup && REPLACED.test(x.p.other)) { process.stdout.write(x.file + ' is another build than its backup (' + x.p.other + '); left as it is\n'); return; }
+        if (x.p.other && !force && dropBackup && x.p.other === cpLocate.BUILD_ID_DIFFERS) { process.stdout.write(x.file + ' is another build than its backup (' + x.p.other + '); left as it is\n'); return; }
         if (x.p.other && !force) { left.push(x.file + ' is another build than its backup (' + x.p.other + '); left as it is (--force overwrites it)'); return; }
         if (!yes) die('pass --yes to proceed');
         /* At its original already: only the mode and owner. */
@@ -459,10 +462,9 @@ function plans() { return require('./carplay_patch.js'); }
  * found but changed). */
 function readyStart(c) { return !!c.loc.readystart && c.loc.readystart.ok; }
 function planSites(c) { return SITES.filter(function (e) { return e[0] !== 'readystart' || readyStart(c); }); }
-var NAMES = { gate: 'gate', call: 'selfstart-call', guard: 'selfstart-guard', screen: 'screen', confpath: 'confpath', readystart: 'readystart' };
 /* The plan's regions of `c` ([[offset, length]]) and their names. */
 function planRegions(c) { return planSites(c).map(function (e) { return [c.loc[e[0]].offset, c.loc[e[0]].len]; }); }
-function planNames(c) { return planSites(c).map(function (e) { return NAMES[e[0]]; }); }
+function planNames(c) { return planSites(c).map(siteName); }
 
 function writeFileWhole(file, data) {
     var tmp = file + '.tmp';
@@ -535,7 +537,7 @@ function cmdOverlay(t, planFile, confCopy) {
         var x = c.loc[e[0]];
         /* a plan without the ready start, for a build where it is not found */
         if (e[0] === 'readystart' && !planned && !(x && x.ok)) { line('readystart', 'NOT APPLIED (' + (x ? x.reason : 'not located') + ')'); return; }
-        line(e[1].replace(' ', '-'), x && x.ok ? x.state.toUpperCase() : 'UNKNOWN (' + (x ? x.reason : 'not located') + ')');
+        line(siteName(e), x && x.ok ? x.state.toUpperCase() : 'UNKNOWN (' + (x ? x.reason : 'not located') + ')');
         if (!x || !x.ok || x.state !== 'patched') bad.push(e[1] + ' not patched');
     });
     var orig = readOr(t.conf), copy = confCopy ? readOr(confCopy) : null, g = orig && copy ? conf.edited(orig.toString('utf8'), copy.toString('utf8')) : null;

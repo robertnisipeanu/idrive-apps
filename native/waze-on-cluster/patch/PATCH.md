@@ -1014,7 +1014,8 @@ build still needs a verified backup, and so does carplay 21.27.4: its list
 lacks the variant slot and three of the geometry immediates.
 
 `status` prints `restorable: yes` when the revert would change the target,
-else `no` with why. Every write is an atomic rename, with the original's
+else `no` with why, and `replaced: yes` when the target is another build
+than the backup by its build-id (a car software update). Every write is an atomic rename, with the original's
 mode and owner (file_mode.js); a pristine original that carplay.service's
 user cannot run gets only those from `revert`, or from an `apply` that
 changes nothing. After each write to the target the patcher records it in
@@ -1429,8 +1430,11 @@ build still needs a verified backup.
 `revert` exits non-zero unless each file ends at its original, with no
 backup of ours, or another build than its backup; `--drop-backup` drops the
 backups of those files only, the backup of an aapd whose build-id differs
-from its backup's (a car software update) included. `status` prints `restorable: yes` when the
-revert would change either file, or only its mode, and `undo:` with each
+from its backup's (a car software update) included. `status` prints
+`restorable: yes` when the revert would change either file, or only its
+mode, `replaced: yes` when aapd is another build than its backup by its
+build-id and aapd.conf's backup, if any, is trusted and of its own build,
+and `undo:` with each
 file's state (`original`, `none`, `other`, `restorable` or `untrusted`).
 Each file is written with its original's mode and owner (above); a file
 that is exactly its original but lacks the access aapd.service's user needs
@@ -1469,9 +1473,9 @@ reported in the hook's result (`"aa": {"status", "conflict"}`) and nothing
 is armed. A patch Remove patch turned off stays off for any aapd and
 aapd.conf, a firmware update's included, until the Patch button. A patch
 boot recovery turned off stays off, in memory or (an earlier release's) in
-the files, unless the revision this version plans for that build
-(`PATCH_REV`, 2 for a build without the ready start's site) is newer than
-the turned-off one or a firmware update replaced aapd or aapd.conf
+the files, unless `PATCH_REV` (2 for this version's own plan of a build
+without the ready start's site, which stays off) is newer than the
+turned-off one or a firmware update replaced aapd or aapd.conf
 (planned again, on trial); what a restore cut short left of it in the files is put back. When CarPlay's step fails, Android Auto's does not run.
 `deactivate` turns the patch in memory off (record, plan and copy deleted)
 and puts back an earlier release's patch left in the files.
@@ -1578,9 +1582,9 @@ and a failing patch is not tried again:
   next start 2 s again. A start that fails is tried again the same way.
 - **The patch stays off** while its record names the restore (the plan's
   record `by: "recovery"`, or an earlier release's patch record): an
-  install leaves it off, unless the patch revision it plans for that
-  build (`aapd_patch.js` `PATCH_REV`, 2 for a build without the ready
-  start's site; kept in the record as `rev`, 1 when there is none) is
+  install leaves it off, unless its patch revision (`aapd_patch.js`
+  `PATCH_REV`, kept in the record as `rev`, 1 when there is none; 2 for
+  this version's own plan of a build without the ready start's site) is
   newer than the removed patch's, or the plan's record no longer describes
   aapd and aapd.conf (a firmware update replaced one); Android Auto's Patch button applies it
   again. `patchd` reports the restore as `recovered` with
@@ -1743,8 +1747,7 @@ Then, by the binary about to start:
 
 The threshold is 1 failed start for a patch the record does not call
 proven (`proven: false`: a patch on trial, which every build is until it
-ran healthy on this car, or a car not coded `KI_KOMBI_VARIANT` 7, which
-CarPlay's Patch button patches with `--unproven`) and 2 for a proven one or a
+ran healthy on this car) and 2 for a proven one or a
 binary of the backup's build the record does not describe (`unknown`, an
 older release's patch). Only a healthy start
 clears the counter: a proven patch is restored after two failed starts, or

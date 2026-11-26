@@ -267,6 +267,14 @@ function makePlan(d) {
     return (r.stdout || '').trim();
 }
 function readPlan() { try { return fs.readFileSync(path.join(SD, 'inmem-carplay.plan'), 'utf8'); } catch (e) { return null; } }
+/* This version's plan of the app's patch made while the coding cannot be read, and its record's v. */
+function makePlanUnreadable() {
+    var r = cp.spawnSync(process.execPath, ['-e', 'require(process.argv[1]).makePlan("carplay", ["--panel", "high", "--coding", process.argv[2]], 60000, function (e) { console.log(e ? "ERR " + e.message : "OK"); })',
+        path.join(NEW, 'inmem.js'), path.join(W, 'no-coding')], { encoding: 'utf8', env: IENV });
+    var v = null;
+    try { v = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-carplay.json'), 'utf8')).v; } catch (e) {}
+    return ((r.stdout || '').trim() || (r.stderr || '').trim().slice(-200)) + ' v' + v;
+}
 /* The activate of this version or of an I release (folder d), as its
  * patcher steps (patchd.js inmemApply; patchd_activate_test.js runs patchd
  * itself): a file the patcher does not recognise, or with another tool's
@@ -414,6 +422,14 @@ function inMemRelease(v, d) {
         live && ours === 'OK' && newKind !== 'null' && backKind !== 'null' &&
         nRecH === 'stock' && nRecKind !== 'null' && /stock$/.test(nRmH) && nRmKind !== 'null' && nUp === 'planned',
         [live, ours, newKind, backKind, rec, nRecH, nRecKind, nRmH, nRmKind, nUp].join(' '));
+    /* This version's plan made while the coding could not be read (record
+     * v 2): the release reads no patch there, so it arms nothing; this
+     * version reads it. */
+    clearInmem();
+    var un = makePlanUnreadable(), unRel = inmemKind(d), unNew = inmemKind();
+    if (v === NEXT) ok(v + ' (I, this version) plans CarPlay with the coding unreadable, record v 2, and reads it', un === 'OK v2' && unRel !== 'null', [un, unRel].join(' '));
+    else ok(v + ' (I) over this version\'s CarPlay plan made with the coding unreadable: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
+        un === 'OK v2' && unRel === 'null' && unNew !== 'null', [un, unRel, unNew].join(' '));
     clearInmem();
 }
 

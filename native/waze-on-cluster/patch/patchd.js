@@ -841,7 +841,7 @@ function readState(cb) {
          * software update's (replaced: the backup is dropped when the patch
          * is planned), any other a change it cannot tell from another
          * tool's. */
-        var other = /^restorable:\s+no \(another build: (.*)\)$/m.exec(text), replaced = !!other && other[1] === 'its build-id differs';
+        var other = /^restorable:\s+no \(another build: (.*)\)$/m.exec(text), replaced = /^replaced:\s+yes$/m.test(text);
         /* "patched" requires every edit: the variant gate, a known sink
          * (redirected to this tool, or stock in avb mode), self-start, and —
          * on the high panel — the resolution geometry. A binary missing one
@@ -1000,10 +1000,11 @@ function recoveredAa() {
     return rec && rec.by === 'recovery' ? { why: rec.why === 'crash' ? 'crash' : 'boot', rev: rec.rev || 1 } : null;
 }
 var AA_PATCH_REV = require('./aapd_patch.js').PATCH_REV;
-/* The patch revision this version plans for the build a record of its own
- * describes: 2 for a build without the ready start's site (the plan names
- * no readystart), else AA_PATCH_REV. */
-function aaPlanRev(rec) { return Array.isArray(rec.edits) && rec.edits.indexOf('readystart') < 0 ? 2 : AA_PATCH_REV; }
+/* The revision a turned-off record must reach to stay off: 2 for this
+ * version's own plan of a build without the ready start's site, else
+ * AA_PATCH_REV, so an earlier release's record at revision 2 (0.13.x) is
+ * planned again. */
+function aaPlanRev(rec) { return rec.v === 2 && Array.isArray(rec.edits) && rec.edits.indexOf('readystart') < 0 ? 2 : AA_PATCH_REV; }
 
 /* The Android Auto patch as aapd_patch.js status reads it: { state:
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
@@ -1059,7 +1060,7 @@ function readAaState(cb, fresh) {
         /* Our backups beside another aapd (a firmware update): not ours to
          * undo, so a removal leaves it, as carplay's does. */
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
-        st.replaced = st.otherBuild && /^no \([^;()]* is another build than its backup: its build-id differs\)$/.test(get('restorable'));
+        st.replaced = st.otherBuild && get('replaced') === 'yes';
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
         else if (known) st.reason = 'partly patched; Android Auto\'s Patch button applies the rest';
