@@ -26,6 +26,7 @@ std::string parked_reason(Holder h)
 }  // namespace
 
 const int64_t SlotManager::kTakeOverMs[6] = {1500, 1500, 1500, 1500, 10000, 30000};
+const uint64_t SlotManager::kWarningSlots[2] = {0x101, 0x102};
 static const int kTakeOverSteps = sizeof SlotManager::kTakeOverMs / sizeof SlotManager::kTakeOverMs[0];
 
 const char *holder_name(Holder h)
@@ -1508,6 +1509,18 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
                 parked.push_back(Parked{(int)i, s.content, was});
         }
     }
+    /* A warning slot reported back (disabled before, available now), or
+     * disabled, in this report. */
+    uint64_t warning_back = 0;
+    bool warning_on = false;
+    for (uint64_t w : kWarningSlots) {
+        auto r = rows.find(w);
+        if (r == rows.end() || r->second.empty())
+            continue;
+        warning_on = warning_on || r->second.front().status == 0;
+        if (!warning_back && r->second.front().status == 1 && slot_status(w) == 0)
+            warning_back = w;
+    }
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
     for (const auto &mv : moves)
@@ -1651,6 +1664,47 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         if (back && t.slot_away && st.retry_ms > now_ms) {
             st.retry_ms = t.removed_ms >= 0 ? std::max(now_ms, t.removed_ms + kRemovalWaitMs) : now_ms;
             t.slot_away = t.lock_away = false;
+        }
+    }
+    /* A warning over: the KOMBI shows the box parked beside a parked hold
+     * when the first warning slot comes back, whichever was mapped first
+     * (car Test 5d, 15:52:13.657). Unmapped as the HMI at once, which maps
+     * it again behind ours: once per return, not a take-over (none counted,
+     * the ladder untouched), never a loss. Shown anyway, take_over goes on
+     * as before. */
+    for (size_t i = 0; i < t_.size(); i++) {
+        Target &t = t_[i];
+        const TargetSpec &spec = specs_[i];
+        if (spec.follows.empty() || !spec.pairs_with.empty())
+            continue;
+        if (warning_on)
+            t.return_unmapped = false;
+        if (!warning_back || t.return_unmapped || !spec.take_over_stock || !t.requested || !t.wanted ||
+            !t.contend || t.declined)
+            continue;
+        auto it = slots_.find(spec.slot);
+        if (it == slots_.end())
+            continue;
+        bool parked = false;
+        std::vector<SlotInfo> box;
+        for (const SlotInfo &s : it->second) {
+            if (s.content == spec.scene_id)
+                parked = parked || s.map_status == 3;
+            else if (s.map_status == 3 && holder_of(s.content, s.slot) == Holder::Stock && takes((int)i, s.content) &&
+                     s.klass == spec.content_class)
+                box.push_back(s);
+        }
+        if (!parked || box.empty())
+            continue;
+        t.return_unmapped = true;
+        for (const SlotInfo &s : box) {
+            log_info("target %s: slot 0x%llx back from a warning: unmapping the stock HMI's 0x%llx (class %u, map "
+                     "status 3) as the HMI at once, before the KOMBI shows it (the ladder untouched); ours 0x%llx; "
+                     "slot 0x%llx %s",
+                     spec.name.c_str(), (unsigned long long)warning_back, (unsigned long long)s.content, s.klass,
+                     (unsigned long long)spec.scene_id, (unsigned long long)spec.slot, rows_text(spec.slot).c_str());
+            t.ahead.erase(s.content);
+            port_->take_over(spec, s.content);
         }
     }
 }

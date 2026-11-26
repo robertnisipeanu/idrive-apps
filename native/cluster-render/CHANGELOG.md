@@ -18,6 +18,11 @@ the map is shown with the hold allowed, box or not (in 0x103 until the box
 is seen, then in the box's slot), so BMW's top layout no longer flashes
 when Apple Maps restarts its route; refused or its slot disabled, it is
 asked for again when the slot's status changes, never counted as a loss.
+When the warning ends, BMW's box (0x01000310) parked beside the hold's
+scene is unmapped at once as the first of slots 0x101/0x102 comes back,
+before the KOMBI shows it in the middle (it did for ~0.3 s): once per
+warning end, not a take-over, never a loss; shown anyway, it is taken
+over as before.
 
 A hold that yields to BMW's own content in its slot (content not in
 `guide_take_over`) no longer counts that as a loss, so it no longer gives

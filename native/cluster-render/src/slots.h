@@ -215,6 +215,12 @@
  *   kSmallTakeOverSettleMs, the 1.5 s spacing kept. A hold that has a
  *   small scene it may ask for does not yield to take_over_contents of
  *   the small one's class; one without (none, given up, refused) does.
+ *   When the first of kWarningSlots comes back (status 0 to 1) while a
+ *   hold is parked in its slot, its take_over_contents of its class parked
+ *   there too are unmapped as the HMI at once, before the KOMBI shows them
+ *   (car Test 5d): once per return, no take-over counted, the ladder and
+ *   its spacing untouched, never a loss; one shown anyway is taken over
+ *   as before.
  *
  * - Preload: while a layer on the target has preload 1, visible or not, and
  *   the port can keep a fetch with no map (Port::preloads), the target's
@@ -494,6 +500,10 @@ public:
      * the HMI's was mapped again in front). */
     static const int64_t kSmallTakeOverSettleMs = 300;
     static const int kSmallTakeOvers = 3;
+    /* The slots a warning (the rear seat belt) disables, 0x101/0x102 on
+     * iDrive 7: the first back unmaps the box parked beside a parked hold
+     * at once (on_slots; car Test 5d). */
+    static const uint64_t kWarningSlots[2];
     /* A report of a disabled slot holds its targets' requests this long at
      * most, in case the display never reports the slot again. */
     static const int64_t kLockTrustMs = 30000;
@@ -675,6 +685,9 @@ private:
         bool refused_wait = false;
         int refused_status = -1;
         bool declined = false;       /* a hold: the target it follows does not let it hold */
+        /* A hold: its unmap at a warning slot's return went (on_slots);
+         * again once one of them is reported disabled. */
+        bool return_unmapped = false;
         /* The last mapping event (on_availability); kNoMapping: none since
          * the last request, or logged already. */
         int64_t mapped_ms = kNoMapping;

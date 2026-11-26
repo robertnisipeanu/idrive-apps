@@ -2474,7 +2474,7 @@ static void guide_small_scene()
 
     logged();
     const int64_t from = r.now;
-    bool quiet = true, clean = true, back = true;
+    bool quiet = true, clean = true, back = true, unmapped = true;
     for (int k = 0; k < 5; k++) {
         /* The warning: ours parked (reported first), the small one shown. */
         r.warning(true);
@@ -2486,8 +2486,10 @@ static void guide_small_scene()
         r.pass(5000);
         quiet = quiet && unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Parked &&
                 r.state(PairRig::kSmall) == TargetState::Shown;
-        /* Over: the small one parked (reported first), ours shown. */
+        /* Over: the box parked beside ours unmapped at once (part 4d);
+         * the small one parked (reported first), ours shown. */
         r.warning(false);
+        unmapped = unmapped && unpolled(joined()) == "take over guide 0x1000310";
         r.table(3, 3, 3, 3);
         r.m.on_parked(kSmallScene, r.now);
         r.pass();
@@ -2502,7 +2504,10 @@ static void guide_small_scene()
     const std::string warnings = logged();
     ok("five warnings within 60 s: the small scene shown, ours parked, no take-over, no request, no release",
        quiet && r.now - from < 60000 && warnings.find("take-over") == std::string::npos);
-    ok("each over: ours shown at once, the box never shown, nothing asked for or taken over", back && clean);
+    ok("each over: ours shown at once, the box never shown, nothing asked for or taken over on the ladder",
+       back && clean);
+    ok("each over: the box parked beside ours unmapped once, at once, as the slots come back (part 4d)",
+       unmapped && count(warnings, "back from a warning") == 5);
     ok("not given up, no yield",
        warnings.find("given up") == std::string::npos && warnings.find("yields") == std::string::npos);
 
@@ -2582,6 +2587,124 @@ static void guide_small_scene()
     ok("the map gone: both of ours released",
        gone.find("release guide") != std::string::npos && gone.find("release guide_small") != std::string::npos &&
            r.state(GuideRig::kGuide) == TargetState::Idle && r.state(PairRig::kSmall) == TargetState::Idle);
+}
+
+/* Issue 281, part 4d: the warning ends (car Test 5d, 26 Nov 15:52:13).
+ * Ours and the box parked in 0x103, our small scene shown; 0x101 comes back
+ * (.534), then 0x102: the box unmapped as the HMI at once, once, before the
+ * KOMBI shows it (.657 on the car). Not a take-over on the ladder: the box
+ * shown anyway is taken over on that pass as before. None with Hide off,
+ * guide_hold 0, or ours not mapped. */
+static void warning_over(PairRig &r)
+{
+    r.crows(kTopSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
+    r.show_map();
+    r.pass();
+    r.table(3, 3, 1, 3);
+    r.m.on_parked(kGuideScene, r.now);
+    r.m.on_parked(kSmallScene, r.now);
+    r.pass();
+    r.table(1, 3, 3, 3);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(20000);
+    r.warning(true);
+    r.table(3, 3, 3, 3);
+    r.m.on_parked(kGuideScene, r.now);
+    r.pass();
+    r.table(3, 1, 3, 3);
+    r.m.on_shown(kSmallScene, r.now);
+    r.pass(16000);
+    joined();
+    logged();
+}
+
+static void guide_warning_over()
+{
+    PairRig r;
+    warning_over(r);
+    r.slot(0x101, 1, 0);
+    const std::string first = unpolled(joined());
+    r.now += 2;
+    r.slot(0x102, 1, 0);
+    const std::string second = unpolled(joined());
+    const std::string log = logged();
+    ok("15:52:13: 0x101 back, the box and ours parked: the box unmapped at once, as the HMI, once",
+       first == "take over guide 0x1000310" &&
+           log.find("target guide: slot 0x101 back from a warning: unmapping the stock HMI's 0x1000310 (class 0, map "
+                    "status 3) as the HMI at once") != std::string::npos &&
+           count(log, "back from a warning") == 1);
+    ok("0x102 back 2 ms later: no second unmap", second.empty());
+    ok("not a take-over: none counted, no loss, no give-up",
+       log.find("take-over") == std::string::npos && log.find("given up") == std::string::npos &&
+           log.find("INCIDENT") == std::string::npos);
+    /* The HMI maps it again behind ours; ours shown. */
+    r.table(3, 3, 0, 3);
+    r.pass(50);
+    r.table(3, 3, 3, 3);
+    r.m.on_parked(kSmallScene, r.now);
+    r.pass();
+    r.table(1, 3, 3, 3);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(5000);
+    ok("then ours shown, the box parked: nothing more", unpolled(joined()).empty() &&
+       r.state(GuideRig::kGuide) == TargetState::Shown && logged().find("take-over") == std::string::npos);
+    /* The next warning and its end: once again. */
+    r.warning(true);
+    r.table(3, 1, 3, 3);
+    r.m.on_parked(kGuideScene, r.now);
+    r.m.on_shown(kSmallScene, r.now);
+    r.pass(5000);
+    joined();
+    r.warning(false);
+    ok("the next warning over: once again", unpolled(joined()) == "take over guide 0x1000310");
+
+    /* The KOMBI shows the box anyway: the take-over follows as before,
+     * on the same pass, the first on the ladder. */
+    PairRig s;
+    warning_over(s);
+    s.warning(false);
+    joined();
+    s.table(3, 3, 1, 3);
+    s.pass();
+    const std::string shown = unpolled(joined());
+    ok("the box shown anyway: taken over at once on the ladder, take-over 1",
+       shown == "take over guide 0x1000310" &&
+           logged().find("target guide: take-over 1 (2 since start): unmapping the stock HMI's 0x1000310 (class 0, "
+                         "map status 1)") != std::string::npos);
+
+    /* Ours not mapped (not asked for yet): the box left alone. */
+    PairRig n;
+    n.warning(true);
+    n.crows(kTopSlot, 2, {{kSmallScene, 1, 1024}, {kBox, 3, 0}, {kBelt, 3, 1024}});
+    n.pass(1000);
+    joined();
+    n.warning(false);
+    ok("ours not mapped: the box not unmapped", joined().find("take over") == std::string::npos);
+
+    /* Hide off (a layer with guide_hold 0): the box left alone. */
+    PairRig h;
+    warning_over(h);
+    h.m.want(0, true, true, false);
+    h.pass(3000);
+    joined();
+    h.table(0, 0, 3, 3);
+    h.warning(false);
+    h.pass();
+    ok("Hide off: the box not unmapped at the warning's end", joined().find("take over") == std::string::npos &&
+       logged().find("back from a warning") == std::string::npos);
+
+    /* guide_hold 0: no hold, the box never touched. */
+    PairRig o;
+    o.crows(kTopSlot, 2, {{kBox, 3, 0}, {kBelt, 1, 1024}});
+    o.warning(true);
+    o.m.want(0, true, true, false);
+    o.pass();
+    o.rows(kMapSlot, 2, {{kMapScene, 1}});
+    o.m.on_shown(kMapScene, o.now);
+    o.pass(5000);
+    o.warning(false);
+    o.pass(1000);
+    ok("guide_hold 0: the box never touched at the warning's end", joined().find("take over") == std::string::npos);
 }
 
 /* Part 4b: a route while the warning disables 0x101/0x102, as at car Test
@@ -5228,6 +5351,7 @@ int main()
     guide_yields_not_losses();
     guide_top_card();
     guide_small_scene();
+    guide_warning_over();
     guide_small_race();
     guide_small_ready();
     guide_given_up_held_again();

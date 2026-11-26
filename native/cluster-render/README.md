@@ -145,7 +145,9 @@ Every client's layers on a target are drawn in that target's scene.
   a warning disables slots 0x101/0x102 (`guide_take_over`), by a second
   empty scene (`guide_small_scene_id`) kept in the box's slot (0x103 until
   the box is seen) the whole time the map shows, so the top layout comes
-  behind it. A layer on `map` with `guide_hold` 0 keeps the box shown.
+  behind it. When the warning ends, the box parked beside ours is unmapped
+  at once, before the KOMBI can show it in the middle. A layer on `map`
+  with `guide_hold` 0 keeps the box shown.
   A car that needs a fixed slot sets `guide_slots = 0x103` (or any slot) in
   `cluster-render.local.conf`.
 - **Scene ids** come from `scene_ids_allowed`: `map` 0x010004f0, the guide
