@@ -63,8 +63,7 @@ says why; bytes away from the sites do not count. On a car not coded for
 the cluster map, or whose coding cannot be read, it plans nothing and puts
 an earlier release's patch back as it ships, except a patch CarPlay's Patch
 button applied with our backup beside it, which it plans in memory as that
-button does. A plan the Patch button made there is planned again for a new
-CarPlay after a car software update. A
+button does. A
 patch you turned off with Remove patch stays off across updates, car
 software updates and restarts, until you press Patch (PATCH.md
 "Install-time activation", "In memory").
