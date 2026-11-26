@@ -40,7 +40,7 @@
  * contents mapped before ours or while ours was asked for, never those
  * mapped after it; the take-overs are counted; the HMI mapping its content
  * again behind ours is logged; rendering verification never releases a
- * hold; HMI content off the take-over list (the seat-belt panel) shown in
+ * hold; HMI content off the take-over list (the top layout) shown in
  * the slot makes it yield at once, and it is not asked for while that is
  * shown; parked there, it is never taken over or yielded to; the HMI
  * mapping the box again behind ours takes no second take-over; more than 3
@@ -58,8 +58,8 @@
  * its slot when the box is unmapped or mapped in any other slot or a
  * disabled one, moves with it (released first, never two slots; each move
  * a loss; a ladder wait carried over), is asked for again after display
- * drops right after its mapping in either slot, and yields to the seat-belt
- * panel there; a
+ * drops right after its mapping in either slot, and yields to the top
+ * layout there (off its list); a
  * listed slot stays where it is. A loss
  * with the slot locked does not climb the ladder, and after a lock a
  * take-over target is asked for once the slot is not locked, with stock
@@ -1747,19 +1747,23 @@ static bool requested_none(const std::string &calls) { return calls.find("reques
 
 static const uint64_t kGuideSlot = 0x105, kGuideScene = 0x010004f1;
 /* The HMI's maneuver panel; a second content a take-over may unmap (not the
- * HMI's: for the queue's order); the seat-belt-warning panel, never taken
- * over. */
+ * HMI's: for the queue's order); BMW's turn box in its top layout, shown
+ * while a warning disables slots 0x101/0x102: off GuideRig's list by
+ * default (as guide_take_over = 0x01000310), so BMW content the hold yields
+ * to; on it with kDefaultTakes (the shipped guide_take_over). */
 static const uint64_t kBox = 0x01000310, kBoxAlt = 0x01000315, kBelt = 0x01000314;
+static const std::vector<uint64_t> kDefaultTakes = {kBox, kBelt};
 
 /* The rig with a hold of kGuideSlot following the map (target 3); from_table:
- * its slot from the slot table instead (guide_slots = auto). */
+ * its slot from the slot table instead (guide_slots = auto); takes: its
+ * take_over_contents. */
 struct GuideRig : Rig {
     static const int kGuide = 3;
-    explicit GuideRig(bool from_table = false)
+    explicit GuideRig(bool from_table = false, const std::vector<uint64_t> &takes = {kBox, kBoxAlt})
     {
         TargetSpec g;
         g.name = "guide"; g.slot = from_table ? 0 : kGuideSlot; g.scene_id = kGuideScene; g.width = g.height = 16;
-        g.linger_ms = 0; g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox, kBoxAlt};
+        g.linger_ms = 0; g.take_over_stock = true; g.follows = "map"; g.take_over_contents = takes;
         if (from_table)
             g.table_slots = {0x105, 0x103};
         m.add(g);
@@ -1923,7 +1927,7 @@ static void guide_never_verified_out()
 }
 
 /* Slot 0x105 as the car reported it with a route (2026-11-03): the box
- * shown, the seat-belt variant 0x01000314 parked behind it at all times. */
+ * shown, the box's top layout 0x01000314 parked behind it at all times. */
 static void guide_live_route()
 {
     GuideRig r;
@@ -1931,17 +1935,17 @@ static void guide_live_route()
     r.show_map();
     joined();
     r.pass();
-    ok("the box shown, the seat-belt panel parked: the hold asked for", calls_are("publish guide; request guide"));
+    ok("the box shown, the top layout parked: the hold asked for", calls_are("publish guide; request guide"));
     r.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}, {kGuideScene, 3}});
     r.m.on_parked(kGuideScene, r.now);
     joined();
     logged();
     r.pass();
-    ok("parked behind both: the box taken over, the seat-belt panel left alone",
+    ok("parked behind both: the box taken over, the top layout left alone",
        calls_are("take over guide 0x1000310; slots?") &&
            logged().find("unmapping the stock HMI's 0x1000310 (class 0, map status 1) in slot 0x105 as the HMI; the "
                          "next") != std::string::npos);
-    /* The KOMBI shows ours, not the parked seat-belt panel; the HMI maps the
+    /* The KOMBI shows ours, not the parked top layout; the HMI maps the
      * box again behind ours about 100 ms later, before our map status. */
     r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}});
     r.pass(100);
@@ -1961,7 +1965,7 @@ static void guide_live_route()
 
 static void guide_yields()
 {
-    /* The take-over as on the car, but the KOMBI promotes the seat-belt
+    /* The take-over as on the car, but the KOMBI promotes the top
      * panel instead of ours. */
     GuideRig k;
     k.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
@@ -1975,7 +1979,7 @@ static void guide_yields()
     k.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}});
     k.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
     k.pass();
-    ok("the seat-belt panel promoted instead of ours: released in the same pass, never taken over",
+    ok("the top layout promoted instead of ours: released in the same pass, never taken over",
        calls_are("release guide") && k.state(GuideRig::kGuide) == TargetState::Idle &&
            logged().find("target guide: hold yields to 0x1000314 (class 0, map status 1)") != std::string::npos);
     k.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
@@ -1987,7 +1991,7 @@ static void guide_yields()
                                             logged().find("hold no longer yields: 0x1000314 is not shown") !=
                                                 std::string::npos);
 
-    /* A seat-belt warning while held: the KOMBI shows the panel over ours. */
+    /* A warning while held: the KOMBI shows the top layout over ours. */
     GuideRig r;
     r.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
     r.show_map();
@@ -1998,7 +2002,7 @@ static void guide_yields()
     r.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
     r.m.on_parked(kGuideScene, r.now);
     r.pass();
-    ok("the seat-belt panel shown over the hold: released, never taken over",
+    ok("the top layout shown over the hold: released, never taken over",
        calls_are("slots?; release guide") && r.state(GuideRig::kGuide) == TargetState::Idle);
     r.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
     r.pass(10000);
@@ -2012,7 +2016,7 @@ static void guide_yields()
     b.show_map();
     joined();
     b.pass(5000);
-    ok("the seat-belt panel shown when the map is: never asked for, never taken over", calls_are(""));
+    ok("the top layout shown when the map is: never asked for, never taken over", calls_are(""));
 
     GuideRig o;
     o.rows(kGuideSlot, 2, {{kBox, 1}});
@@ -2057,7 +2061,7 @@ static void guide_not_mapped()
 }
 
 /* A door opened: the KOMBI locks 0x105 and unmaps everything in it, then
- * the HMI maps the box and the seat-belt panel again, as seen on the car
+ * the HMI maps the box and the top layout again, as seen on the car
  * (2026-11-03) with `panel` there. The map staying shown is this test's. */
 static void guide_door_lock()
 {
@@ -2230,7 +2234,7 @@ static void guide_gives_up()
     }
     ok("losses to a lock do not count", asked == 6);
 
-    /* The seat-belt panel shown over the hold (issue 281, 24 Nov 14:45:05):
+    /* The top layout shown over the hold (issue 281, 24 Nov 14:45:05):
      * parked again, then yielded to: the park's loss withdrawn each time. */
     GuideRig y;
     y.rows(kGuideSlot, 2, {{kBox, 1}});
@@ -2252,9 +2256,9 @@ static void guide_gives_up()
         y.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
         y.m.on_parked(kGuideScene, y.now);
         y.pass();
-        y.rows(kGuideSlot, 2, {{kBox, 1}});   /* the seat belt fastened */
+        y.rows(kGuideSlot, 2, {{kBox, 1}});   /* the warning gone */
     }
-    ok("shown, parked behind the seat-belt panel and yielded to, five times within 60 s: not given up",
+    ok("shown, parked behind the top layout and yielded to, five times within 60 s: not given up",
        held == 5 && y.now - from < 60000 && logged().find("given up") == std::string::npos);
 
     /* The box shown over the hold (a fight, no yield): parked again four
@@ -2286,7 +2290,7 @@ static void guide_gives_up()
            logged().find("target guide: hold given up: its scene parked again behind other content, 4 losses") !=
                std::string::npos);
 
-    /* Three unmaps, then parked behind the seat-belt panel: that park gave
+    /* Three unmaps, then parked behind the top layout: that park gave
      * the hold up, and is withdrawn once yielded to. */
     GuideRig u;
     u.rows(kGuideSlot, 2, {{kBox, 1}});
@@ -2310,13 +2314,91 @@ static void guide_gives_up()
     u.pass();
     u.rows(kGuideSlot, 2, {{kBox, 1}});
     u.pass(1000);
-    ok("a fourth loss a park behind the seat-belt panel: the give-up undone, logged, asked for again",
+    ok("a fourth loss a park behind the top layout: the give-up undone, logged, asked for again",
        logged().find("target guide: hold no longer given up: it was parked behind 0x1000314") !=
                std::string::npos &&
            joined().find("request guide") != std::string::npos);
 }
 
-/* Issue 281, as on the car (24 Nov): the box and the seat-belt panel
+/* Issue 281, part 3, with the shipped guide_take_over (the box and its top
+ * layout 0x1000314): the top layout shown while a warning disables slots
+ * 0x101/0x102 (car, 25 Nov 23:42:18), the box parked behind it. */
+static void guide_top_card()
+{
+    GuideRig r(false, kDefaultTakes);
+    r.slot(0x101, 0, 0);
+    r.slot(0x102, 0, 0);
+    r.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
+    logged();
+    r.show_map();
+    joined();
+    r.pass();
+    ok("the top layout shown, the box parked: the hold asked for, not yielding",
+       calls_are("publish guide; request guide") && logged().find("yields") == std::string::npos);
+    r.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}, {kGuideScene, 3}});
+    r.m.on_parked(kGuideScene, r.now);
+    joined();
+    r.pass();
+    ok("parked behind it: the top layout and the box ahead of ours taken over",
+       calls_are("take over guide 0x1000314; take over guide 0x1000310; slots?") &&
+           logged().find("unmapping the stock HMI's 0x1000314 (class 0, map status 1), 0x1000310 (class 0, map "
+                         "status 3) in slot 0x105 as the HMI") != std::string::npos);
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(60000);
+    ok("ours shown, both parked behind it a minute: no traffic",
+       calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown);
+
+    /* The HMI shows the top layout over ours again and again: each taken
+     * over 1.5 s apart, given up after kHoldLosses like the box. */
+    GuideRig h(false, kDefaultTakes);
+    h.rows(kGuideSlot, 2, {{kBox, 1}});
+    h.show_map();
+    h.hold();
+    joined();
+    logged();
+    const int64_t start = h.now;
+    std::vector<int64_t> taken_at;
+    int parks = 0;
+    for (int k = 0; k < 4; k++) {
+        h.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
+        h.m.on_parked(kGuideScene, h.now);
+        parks++;
+        bool taken = false;
+        for (int64_t w = 0; w < 30000 && !taken; w += 10) {
+            h.pass();
+            taken = joined().find("take over guide 0x1000314") != std::string::npos;
+        }
+        if (!taken)
+            break;
+        taken_at.push_back(h.now);
+        h.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
+        h.m.on_shown(kGuideScene, h.now);
+    }
+    h.pass(5000);
+    bool paced = taken_at.size() == 3;
+    for (size_t k = 1; k < taken_at.size(); k++)
+        paced = paced && taken_at[k] - taken_at[k - 1] >= 1500;
+    const std::string fight = logged();
+    ok("the top layout over ours four times within 60 s: taken over 1.5 s apart, never yielded to, given up",
+       parks == 4 && paced && h.now - start < 60000 && fight.find("yields") == std::string::npos &&
+           h.state(GuideRig::kGuide) == TargetState::Idle &&
+           fight.find("target guide: hold given up: its scene parked again behind other content, 4 losses") !=
+               std::string::npos);
+
+    /* Hide BMW's turn box off: the top layout is never touched. */
+    GuideRig o(false, kDefaultTakes);
+    o.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
+    o.m.want(0, true, true, false);
+    o.pass();
+    o.rows(kMapSlot, 2, {{kMapScene, 1}});
+    o.m.on_shown(kMapScene, o.now);
+    o.pass(60000);
+    ok("guide_hold 0: the map shown, the hold never asked for, the top layout never taken over",
+       o.state(0) == TargetState::Shown && joined().find("guide") == std::string::npos);
+}
+
+/* Issue 281, as on the car (24 Nov): the box and the top layout
  * mapped in the same moment while the hold is asked for, the panel coming
  * and going every 10 s. Yielded to each time, no loss: never given up. */
 static void guide_yields_not_losses()
@@ -2338,7 +2420,7 @@ static void guide_yields_not_losses()
         r.rows(kGuideSlot, 2, {{kBox, 1}});   /* the panel goes */
     }
     r.pass();
-    ok("five yields to the seat-belt panel within 60 s while acquiring: asked for again each time, not given up",
+    ok("five yields to the top layout within 60 s while acquiring: asked for again each time, not given up",
        asked == 5 && joined().find("request guide") != std::string::npos &&
            logged().find("given up") == std::string::npos);
 }
@@ -2881,7 +2963,7 @@ static void map_then_drop(GuideRig &r, uint64_t slot)
 static void guide_auto_slot()
 {
     /* A 2021 X5 G05 (US, 2026-11-04): 0x105 reported disabled and empty,
-     * the box shown in 0x103 with the seat-belt panel parked behind it. */
+     * the box shown in 0x103 with the top layout parked behind it. */
     GuideRig r(true);
     logged();
     r.slot(kGuideSlot, 0, 0);
@@ -2903,7 +2985,7 @@ static void guide_auto_slot()
     joined();
     logged();
     r.pass();
-    ok("parked in 0x103: the box taken over, the seat-belt panel left alone",
+    ok("parked in 0x103: the box taken over, the top layout left alone",
        calls_are("take over guide 0x1000310; slots?") &&
            logged().find("unmapping the stock HMI's 0x1000310 (class 0, map status 1) in slot 0x103 as the HMI; the "
                          "next") != std::string::npos);
@@ -2933,7 +3015,7 @@ static void guide_auto_slot()
     f.m.on_parked(kGuideScene, f.now);
     joined();
     f.pass();
-    ok("parked: the box taken over, the seat-belt panel left alone, as with guide_slots = 0x105",
+    ok("parked: the box taken over, the top layout left alone, as with guide_slots = 0x105",
        calls_are("take over guide 0x1000310; slots?"));
 
     /* 0x105 and 0x103 disabled, the box nowhere the hold follows it. */
@@ -3068,7 +3150,7 @@ static void guide_auto_slot()
         ok("then the box in 0x105 again: the hold asked for", joined().find("request guide") != std::string::npos);
     }
 
-    /* The seat-belt warning in the followed slot. */
+    /* The top layout shown in the followed slot. */
     GuideRig b(true);
     b.rows(kOtherGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
     b.show_map();
@@ -3079,7 +3161,7 @@ static void guide_auto_slot()
     b.rows(kOtherGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
     b.m.on_parked(kGuideScene, b.now);
     b.pass();
-    ok("auto, the seat-belt panel shown over the hold in 0x103: released at once, never taken over, not moved",
+    ok("auto, the top layout shown over the hold in 0x103: released at once, never taken over, not moved",
        calls_are("slots?; release guide") && b.state(GuideRig::kGuide) == TargetState::Idle &&
            b.guide_slot() == kOtherGuideSlot);
     b.rows(kOtherGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
@@ -3227,7 +3309,7 @@ static void guide_box_comes_and_goes()
     ok("parked, the box gone before the take-over: released 3 s later, no take-over",
        calls_are("release guide") && p.state(GuideRig::kGuide) == TargetState::Idle);
 
-    /* The seat-belt warning while held, the route over during it: not asked
+    /* The top layout shown while held, the route over during it: not asked
      * for again when the warning goes. */
     GuideRig b;
     b.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
@@ -3237,7 +3319,7 @@ static void guide_box_comes_and_goes()
     b.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
     b.m.on_parked(kGuideScene, b.now);
     b.pass();
-    ok("the seat-belt panel shown over the hold: released at once", calls_are("slots?; release guide") &&
+    ok("the top layout shown over the hold: released at once", calls_are("slots?; release guide") &&
                                                                        b.state(GuideRig::kGuide) == TargetState::Idle);
     b.rows(kGuideSlot, 2, {{kBelt, 1}});
     b.pass(5000);
@@ -3964,7 +4046,7 @@ static void keep_guide()
        has(joined(), "release guide") && o.m.kept(0) && !o.m.kept(GuideRig::kGuide) &&
            !o.m.requested(GuideRig::kGuide));
 
-    GuideRig s;   /* the hold yields to the seat-belt panel shown after the unlock */
+    GuideRig s;   /* the hold yields to the top layout shown after the unlock */
     s.port.keeps = true;
     s.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
     s.show_map();
@@ -4676,6 +4758,7 @@ int main()
     guide_live_route();
     guide_yields();
     guide_yields_not_losses();
+    guide_top_card();
     guide_given_up_held_again();
     guide_not_mapped();
     guide_door_lock();

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+The guide hold also hides BMW's turn box in its top layout (0x01000314,
+shown while a warning disables slots 0x101/0x102): `guide_take_over` is
+now `0x01000310,0x01000314`, and 0x01000314 is no longer refused there. It
+is taken over as the box is, and a park behind it counts as a loss.
+
+A hold that yields to BMW's own content in its slot (content not in
+`guide_take_over`) no longer counts that as a loss, so it no longer gives
+up over it. A hold that has given up is asked for again when the target
+it follows lets it hold again (Hide BMW's turn box off and on), without a
+restart. A hold parked again behind such content, then yielding to it, no
+longer counts that as a loss either; parked again behind BMW's turn box
+still counts.
+
 ## 0.8.14
 
 A host from layers sent with `hide` and `shown` 0 hides the hosted picture
@@ -19,13 +32,6 @@ not, a frame that came before waits up to that long for a newer one, so a
 map shown again is drawn with its newest picture first; the target's
 other layers are written meanwhile. The hello's
 `fresh_ms` 1 says the service takes it.
-A hold that yields to BMW's own content in its slot (the rear seat-belt
-panel, which comes and goes on its own) no longer counts that as a loss,
-so it no longer gives up over it. A hold that has given up is asked for
-again when the target it follows lets it hold again (Hide BMW's turn box
-off and on), without a restart. A hold parked again behind that panel,
-then yielding to it, no longer counts that as a loss either; parked again
-behind BMW's turn box still counts.
 
 ## 0.8.13
 

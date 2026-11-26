@@ -77,8 +77,6 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         uint64_t v = 0;
         if (!number(c, true, &v) || !v)
             return refuse(warn, "guide_take_over: \"" + c + "\" is not a hex content id");
-        if (v == 0x01000314)
-            return refuse(warn, "guide_take_over: 0x1000314 is the seat-belt-warning panel, never taken over");
         takes.push_back(v);
     }
     if (takes.empty())

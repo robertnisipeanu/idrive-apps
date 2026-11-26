@@ -31,9 +31,8 @@ struct HoldSettings {
  * or spaces, each once and no other target's. Scene ids from scene_id up,
  * one per slot, each in allowed and no other target's.
  * take_over: the hex content ids the holds' take-overs may unmap, at least
- * one, separated the same way, never 0x01000314 (the seat-belt-warning
- * panel). Anything else adds no hold: false, with *warn naming it, and
- * targets left as they were. */
+ * one, separated the same way. Anything else adds no hold: false, with
+ * *warn naming it, and targets left as they were. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
                 std::string *warn);
 

@@ -141,7 +141,8 @@ Every client's layers on a target are drawn in that target's scene.
   shown and the stock HMI's CarPlay turn box (content 0x01000310) is in its
   slot (0x105 or 0x103, found by itself with `guide_slots = auto`), the
   service covers that slot with an empty scene, so the box is hidden while
-  the map shows. A layer on `map` with `guide_hold` 0 keeps the box shown.
+  the map shows. So is the box in its top layout (0x01000314), shown while
+  a warning disables slots 0x101/0x102 (`guide_take_over`). A layer on `map` with `guide_hold` 0 keeps the box shown.
   A car that needs a fixed slot sets `guide_slots = 0x103` (or any slot) in
   `cluster-render.local.conf`.
 - **Scene ids** come from `scene_ids_allowed`: `map` 0x010004f0, the guide

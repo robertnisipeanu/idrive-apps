@@ -21,7 +21,7 @@
  * as parked behind the stock HMI, and is shown when the stock content goes.
  * A hold of the guidance slot (slots.h): no client's target; held, with
  * the box taken over and parked behind it, while the map is shown, and with
- * the seat-belt panel parked there; released with the map and at stop; the
+ * the top layout parked there; released with the map and at stop; the
  * map's layer choosing it with guide_hold, and a client without the field
  * getting it. Cluster restarts right after the hold's mapping, again and
  * again: the map and the hold shown again after each. A video frame repeated: a few bytes
@@ -361,12 +361,12 @@ static const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kGuide = 0x010004
 
 /* The rig with a hold of the guidance slot following the map (slots.h), on
  * a KOMBI that shows the HMI's map and its turn-by-turn box. */
-static void hold_rig(Rig &r)
+static void hold_rig(Rig &r, const std::vector<uint64_t> &takes = {kBox})
 {
     r.sc.targets[0].linger_ms = 0;
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
-    g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
+    g.take_over_stock = true; g.follows = "map"; g.take_over_contents = takes;
     r.sc.targets.push_back(g);
     r.start();
     r.port.stock_map(0x100, kHmiMap);
@@ -445,10 +445,10 @@ static void guide_hold()
     r.pump(4000);
     ours = r.port.row(0x105, kGuide);
     ok("the map back: held again", ea.target["map"] == "shown" && ours && ours->map_status == 1);
-    r.port.stock_map(0x105, kBelt);   /* the seat-belt panel parked behind ours, as the HMI keeps it */
+    r.port.stock_map(0x105, kBelt);   /* the top layout parked behind ours, as the HMI keeps it */
     r.pump(20);
     ours = r.port.row(0x105, kGuide);
-    ok("the seat-belt panel parked there: still held, the panel never taken over",
+    ok("the top layout parked there: still held, the panel never taken over",
        ea.target["map"] == "shown" && ours && ours->map_status == 1 &&
            r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kHmiMap, kBox});
     r.svc->shutdown(r.now);
@@ -505,6 +505,43 @@ static void guide_hold_choice()
     ours = r.port.row(0x105, kGuide);
     ok("a client that never sends guide_hold: the map shown and held",
        r.svc->slots().status(0).state == TargetState::Shown && ours && ours->map_status == 1 && box_status(r) == 3);
+}
+
+/* Issue 281, part 3, with the shipped guide_take_over: BMW's turn box in its
+ * top layout (0x1000314) shown while a warning disables slots 0x101/0x102,
+ * the box parked behind it. Hide off leaves it alone; Hide on takes it over. */
+static void guide_hold_top_card()
+{
+    const uint64_t kTop = 0x01000314;
+    Rig r;
+    hold_rig(r, {kBox, kTop});
+    r.port.stock_unmap(0x105, kBox);
+    r.port.stock_map(0x105, kTop);
+    r.port.stock_map(0x105, kBox);
+    cr::Client a("waze", r.path);
+    Events ea;
+    ea.wire(a);
+    r.clients = {&a};
+    r.pump(50);
+    cr::LayerOptions lo;
+    lo.target = "map";
+    lo.contend = true;
+    lo.guide_hold = false;
+    const uint32_t map = show_map(r, a, lo);
+    r.pump(40000);
+    const SlotInfo *top = r.port.row(0x105, kTop);
+    ok("guide_hold 0: the top layout shown, never taken over, the hold never asked for",
+       ea.target["map"] == "shown" && top && top->map_status == 1 && !r.port.row(0x105, kGuide) &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap});
+
+    lo.guide_hold = true;
+    a.set(map, lo);
+    r.pump(400);
+    const SlotInfo *ours = r.port.row(0x105, kGuide);
+    top = r.port.row(0x105, kTop);
+    ok("guide_hold 1: held, the top layout and the box taken over and parked behind ours",
+       ours && ours->map_status == 1 && top && top->map_status == 3 && box_status(r) == 3 &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kTop, kBox});
 }
 
 /* The KOMBI restarting: our mappings dropped and the display service gone,
@@ -4498,6 +4535,7 @@ int main()
     take_over_and_fall_back();
     guide_hold();
     guide_hold_choice();
+    guide_hold_top_card();
     hud_yield_choice();
     display_drops();
     repeats();

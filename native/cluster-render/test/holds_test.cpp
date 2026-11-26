@@ -200,8 +200,13 @@ int main()
        refused({"guide_hold=1", "guide_take_over=0x1000310x"}, "\"0x1000310x\" is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over=16777744"}, "is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over= "}, "guide_take_over names no content"));
-    ok("the seat-belt-warning panel in guide_take_over: refused",
-       refused({"guide_hold=1", "guide_take_over=0x01000310,0x01000314"}, "0x1000314 is the seat-belt-warning panel"));
+    ok("BMW's turn box in its top layout (0x1000314) in guide_take_over: accepted",
+       load({"guide_hold=1", "guide_take_over=0x01000310,0x01000314"}, &t, &err) && t.size() == 2 && err.empty() &&
+           t[1].take_over_contents == std::vector<uint64_t>{0x01000310, 0x01000314});
+    ok("shipped guide_take_over: the box and its top layout",
+       shipped("guide_take_over") == "0x01000310,0x01000314" &&
+           load({"guide_hold=1", "guide_take_over=" + shipped("guide_take_over")}, &t, &err) && err.empty() &&
+           t[1].take_over_contents == std::vector<uint64_t>{0x01000310, 0x01000314});
     ok("two slots, by comma or space: the next scene id each",
        load({"guide_hold=1", "guide_slots=0x105, 0x103"}, &t, &err) && t.size() == 3 && t[2].slot == 0x103 &&
            t[2].scene_id == 0x010004f2 && load({"guide_hold=1", "guide_slots=0x105 0x103"}, &t, &err) &&
