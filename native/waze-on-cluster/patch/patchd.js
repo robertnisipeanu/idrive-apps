@@ -2037,7 +2037,16 @@ function inmemHook(which, cb) {
         var codingWhy = codingConflict(st.coding === null ? null : [null, String(st.coding)]), foreign = foreignStart(CP);
         var conflict = codingWhy || foreign;
         var buttons = codingWhy && !foreign && st.restorable && st.backup && !st.foreign && record.buttonPatch(record.current(TARGET));
-        if (conflict && !buttons) {
+        /* So is the Patch button's plan on a car coded otherwise that no
+         * longer describes carplay, which a firmware update replaced:
+         * planned again for the new carplay with its own arguments (keep,
+         * below), every check of the patcher run on the new build, as the
+         * button plans it (unproven; on trial while the coding cannot be
+         * read). A refusal is a conflict. A record still to plan
+         * (needsPlan, no proven or trial field) is the boot step's. */
+        var replan = codingWhy && !foreign && !ours && rec && rec.enabled === true && rec.proven === false && rec.trial === false &&
+            Array.isArray(rec.args) && rec.args.indexOf('--unproven') >= 0 && !inmem.describes('carplay', rec);
+        if (conflict && !buttons && !replan) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'carplay left as it is: ' + conflict, conflict); return; }
             revert(true, true, function (rErr) {
                 inmem.disarm('carplay');
@@ -2059,7 +2068,7 @@ function inmemHook(which, cb) {
             if (why) { out(0, why); return; }
             settle();
             out(0, activation === 'deferred' ? 'map patch armed in memory; takes effect at the next carplay start' : 'map patch armed in memory; carplay runs it already',
-                buttons ? codingWhy : null, reset);
+                buttons || replan ? codingWhy : null, reset);
         });
     });
 }

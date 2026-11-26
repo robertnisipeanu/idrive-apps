@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+On a car not coded for the CarPlay cluster map, a map patch applied with
+CarPlay's Patch button stays on after a car software update replaces
+CarPlay, as long as the new CarPlay can be patched; it showed `Not
+supported on this car` until Patch was pressed again.
+
 On a car not coded for the CarPlay cluster map, a map patch that CarPlay's
 Patch button applied with a release before 0.11.0 stays on after updating;
 it showed `Not supported on this car` until Patch was pressed again.

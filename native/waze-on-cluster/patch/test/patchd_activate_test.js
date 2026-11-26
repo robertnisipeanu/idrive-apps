@@ -1095,6 +1095,98 @@ async function main() {
     fs.unlinkSync(dropin);
     ok('coding 9, the Patch button\'s patch, carplay.service starting another program: put back as it ships, nothing armed, the conflict', r.code === 0 &&
         disk() === sha(SRCBUF) && rec() === null && !armed() && r.result.conflict === CODED9 && /put back as it ships/.test(r.result.status || ''), JSON.stringify([r.result, drec()]));
+    /* The Patch button's plan on a car coded otherwise, then a car software
+     * update that replaces carplay: an install plans it again for the new
+     * carplay, unproven, the coding conflict in the result; a new carplay
+     * the patcher refuses is a conflict, nothing armed. On a car coded 7
+     * a plan made with --unproven is planned again with its arguments. */
+    function patchButtonPlan(coding) {
+        fresh(SRCBUF);
+        headUnit.coding(coding);
+        hook('activate');
+        return button({ cmd: 'apply', panel: 'high', mode: 'avb' });
+    }
+    /* a car software update: carplay replaced, then the head unit starts */
+    function replaceCarplay(buf) {
+        fs.writeFileSync(TGT + '.fw', buf, { mode: 0o755 });
+        var t = new Date(Date.now() + 7200000);
+        fs.utimesSync(TGT + '.fw', t, t);
+        fs.renameSync(TGT + '.fw', TGT);
+        headUnitStart();
+    }
+    await patchButtonPlan(9);
+    headUnitStart();
+    ok('coding 9: the Patch button\'s plan, unproven, --unproven', JSON.stringify(trial()) === JSON.stringify({ enabled: true, proven: false, trial: false }) &&
+        rec().args.indexOf('--unproven') >= 0, JSON.stringify(rec()));
+    var planIno = rec().ino;
+    replaceCarplay(SRCBUF);
+    ok('coding 9, a car software update replaced carplay: the plan no longer describes it', !inmem.describes('carplay', rec()) && !inmem.current('carplay'));
+    r = hook('activate');
+    ok('coding 9, the Patch button\'s plan after a car software update: an install plans it again for the new carplay, unproven, armed, the conflict in the result',
+        r.code === 0 && !!inmem.current('carplay') && rec().ino !== planIno && JSON.stringify(trial()) === JSON.stringify({ enabled: true, proven: false, trial: false }) &&
+        rec().args.indexOf('--unproven') >= 0 && armed() && r.result.conflict === CODED9 && /map patch armed in memory/.test(r.result.status || ''),
+        JSON.stringify([r.result, rec()]));
+    await patchButtonPlan(9);
+    headUnitStart();
+    replaceCarplay(unknown);
+    r = hook('activate');
+    ok('coding 9, the Patch button\'s plan, a car software update to a carplay the patcher refuses: a conflict naming the site, nothing armed, the plan describing nothing',
+        r.code === 0 && !armed() && !inmem.current('carplay') && /variant: slot 0 handler not a store$/.test(r.result.conflict || ''), JSON.stringify([r.result, rec()]));
+    /* the coding unreadable at the install: planned again, on trial, as
+     * the button plans while the coding cannot be read */
+    await patchButtonPlan(9);
+    headUnitStart();
+    headUnit.coding(null);
+    replaceCarplay(SRCBUF);
+    r = hook('activate');
+    ok('the Patch button\'s plan, a firmware update, the coding unreadable at the install: planned again for the new carplay, on trial, --unproven',
+        r.code === 0 && !!inmem.current('carplay') && JSON.stringify(trial()) === TRIAL && rec().args.indexOf('--unproven') >= 0 && armed() &&
+        r.result.conflict === 'cluster coding unreadable', JSON.stringify([r.result, rec()]));
+    /* a record still to plan (no proven or trial field), coding 9: left to the boot step */
+    await patchButtonPlan(9);
+    headUnitStart();
+    inmem.disarm('carplay');
+    inmem.planFailed('carplay', rec().args, 'not planned yet');
+    replaceCarplay(SRCBUF);
+    r = hook('activate');
+    ok('a Patch button record still to plan, coding 9, a firmware update: the install plans nothing, the record left to the boot step', r.code === 0 &&
+        rec().needsPlan === true && !armed() && r.result.conflict === CODED9, JSON.stringify([r.result, rec()]));
+    /* the user's Remove patch holds across the update */
+    await patchButtonPlan(9);
+    headUnitStart();
+    inmem.disarm('carplay');
+    inmem.disable('carplay', { by: 'user' });
+    replaceCarplay(SRCBUF);
+    r = hook('activate');
+    ok('coding 9, the Patch button\'s plan turned off with Remove patch, then a car software update: an install leaves it off', r.code === 0 && !armed() &&
+        rec().enabled === false && rec().by === 'user' && /the patch was turned off/.test(r.result.status || ''), JSON.stringify([r.result, rec()]));
+    /* a stale plan made with --unproven, coding 7 at the install: the
+     * install plans it as any enabled plan */
+    await patchButtonPlan(9);
+    headUnitStart();
+    headUnit.coding(7);
+    replaceCarplay(SRCBUF);
+    r = hook('activate');
+    ok('coding 7, a plan made with --unproven after a car software update: planned again with its arguments, no conflict', r.code === 0 &&
+        !!inmem.current('carplay') && rec().args.indexOf('--unproven') >= 0 && !r.result.conflict && armed(), JSON.stringify([r.result, rec()]));
+    r = hook('deactivate');
+    /* a plan on trial or proven (made on a car coded 7), the coding refused
+     * at an install after a firmware update: not the Patch button's plan on
+     * a car coded otherwise, so it is left to the conflict */
+    var KINDS7 = [['on trial', null], ['proven', { proven: true, trial: false }]];
+    for (var k7 = 0; k7 < KINDS7.length; k7++) {
+        var c = KINDS7[k7];
+        await patchButtonPlan(7);
+        headUnitStart();
+        if (c[1]) inmem.update('carplay', c[1]);
+        var was = trial();
+        headUnit.coding(9);
+        replaceCarplay(SRCBUF);
+        r = hook('activate');
+        ok('a plan ' + c[0] + ' made on a car coded 7, coding 9 after a firmware update: left as it was, nothing planned, the conflict', r.code === 0 &&
+            !inmem.current('carplay') && JSON.stringify(trial()) === JSON.stringify(was) && !armed() && r.result.conflict === CODED9, JSON.stringify([r.result, rec()]));
+        hook('deactivate');
+    }
     earlierOnDisk(false, true);
     before = disk();
     headUnit.coding(9);
