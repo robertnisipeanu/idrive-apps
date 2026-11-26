@@ -201,7 +201,15 @@
  *   (move_hold): released there first if requested, so it never holds two
  *   slots; a wait on the ladder carries over. A hold the display refuses
  *   for its slot (Refusal::NoSlot) is not asked for again until the service
- *   restarts.
+ *   restarts. A hold's take-overs unmap only content of its own content
+ *   class. A hold may have a small scene (TargetSpec::pairs_with), of
+ *   another class, mapped with it in its slot as the HMI keeps its box
+ *   and its top layout: the KOMBI shows whichever class the neighbour
+ *   slots' state calls for. Either of the two shown, the other parked
+ *   behind it is no loss and no take-over. The small one takes over at
+ *   most once until it is shown or asked for again. A hold that has a
+ *   small scene it may ask for does not yield to take_over_contents of
+ *   the small one's class; one without (none, given up, refused) does.
  *
  * - Preload: while a layer on the target has preload 1, visible or not, and
  *   the port can keep a fetch with no map (Port::preloads), the target's
@@ -304,6 +312,11 @@ struct TargetSpec {
      * take_over_contents mapped in (SlotManager::on_slots); slot 0 until
      * one is. */
     std::vector<uint64_t> table_slots;
+    /* A hold's small scene (the guide hold's, content class 1024): the name
+     * of the hold it goes with. It is in that hold's slot, asked for and
+     * released with it, and the two are held while either is shown
+     * (SlotManager::follow). Empty: not one. */
+    std::string pairs_with;
     /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
      * falls back to when the display refuses its own, scene_id
      * (SlotManager::fall_back). */
@@ -534,7 +547,10 @@ public:
      * park that turns into one before ours is shown again (the loss is
      * withdrawn, and a give-up it alone caused undone). The give-up
      * lasts until cluster-render restarts or until the target it follows
-     * lets it hold again (guide_hold false, then true). */
+     * lets it hold again (guide_hold false, then true). A hold's small
+     * scene (TargetSpec::pairs_with) is wanted exactly while its hold is
+     * and it has not given up; a park of either while the other is shown
+     * is no loss, and one counted before the other showed is withdrawn. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kNoMapping = INT64_MIN / 2;
@@ -852,6 +868,11 @@ private:
     /* One of the hold's take_over_contents is mapped (shown or parked) in
      * its slot, by the latest report naming the slot. */
     bool box_mapped(int i) const;
+    /* The hold paired with hold i (TargetSpec::pairs_with, either way); -1:
+     * none. */
+    int pair_of(int i) const;
+    /* Hold i's pair is shown. */
+    bool pair_shown(int i) const;
     /* A hold's scene lost while its slot is not locked, or (move) its move
      * to another slot, locked or not. True: counted. */
     bool note_loss(int i, const char *how, int64_t now_ms, bool move = false);

@@ -174,7 +174,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("generation", "auto");
     cfg->define("vsomeip_app", "cluster-demo");
     cfg->define("targets", "map,panel,hud");
-    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1,0x010004f8");
+    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1,0x010004f8,0x010004f9");
     cfg->define("map_slot", "0x100");
     cfg->define("map_content_class", "0");
     cfg->define("map_scene_id", "0x010004f0");
@@ -207,6 +207,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("guide_scene_id", "0x010004f1");
     cfg->define("guide_content_class", "0");
     cfg->define("guide_take_over", "0x01000310,0x01000314");
+    cfg->define("guide_small_scene_id", "0x010004f9");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
     cfg->define("id8_targets", "map,hud,guide,widget,popup");
@@ -359,7 +360,8 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         return true;
     std::string warn;
     const bool held = load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"), cfg.str("guide_scene_id"),
-                                              cfg.str("guide_content_class"), cfg.str("guide_take_over")},
+                                              cfg.str("guide_content_class"), cfg.str("guide_take_over"),
+                                              cfg.str("guide_small_scene_id")},
                                  allowed, out, &warn);
     if (!warn.empty())
         log_warn("guide hold%s: %s", held ? "" : " off", warn.c_str());

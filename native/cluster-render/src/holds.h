@@ -22,6 +22,7 @@ namespace crs {
 /* The settings as written. */
 struct HoldSettings {
     std::string hold, slots, scene_id, content_class, take_over;   /* guide_hold, guide_slots, ... */
+    std::string small_scene_id;   /* guide_small_scene_id; empty: no small scene */
 };
 
 /* Appends a hold per slot of slots unless hold is 0; hold other than 0 or 1
@@ -32,9 +33,19 @@ struct HoldSettings {
  * one per slot, each in allowed and no other target's.
  * take_over: the hex content ids the holds' take-overs may unmap, at least
  * one, separated the same way. Anything else adds no hold: false, with
- * *warn naming it, and targets left as they were. */
+ * *warn naming it, and targets left as they were.
+ * small_scene_id: then each hold's small scene (TargetSpec::pairs_with,
+ * <hold>_small, content class kSmallClass, 16x16), ids from it up, one per
+ * hold, appended after the holds. One that is not a number, not in
+ * allowed or another target's leaves the holds without small scenes, with
+ * *warn saying why; true. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
                 std::string *warn);
+
+/* The content class of a hold's small scene: the class of the HMI's box in
+ * its top layout (0x01000314), which the KOMBI shows in the box's slot
+ * while a warning disables slots 0x101/0x102 (VERIFIED on the car). */
+const uint32_t kSmallClass = 1024;
 
 /* The HUD's slot and scene on iDrive 7 (README.md "The HUD"). */
 const uint64_t kHudSlot = 0x323, kHudScene = 0x01000400;

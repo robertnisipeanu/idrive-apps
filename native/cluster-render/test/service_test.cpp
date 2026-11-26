@@ -357,17 +357,22 @@ static void take_over_and_fall_back()
     ok("the stock content gone: shown", ea.target["panel"] == "shown");
 }
 
-static const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kGuide = 0x010004f1;
+static const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kGuide = 0x010004f1, kSmall = 0x010004f9;
 
 /* The rig with a hold of the guidance slot following the map (slots.h), on
- * a KOMBI that shows the HMI's map and its turn-by-turn box. */
-static void hold_rig(Rig &r, const std::vector<uint64_t> &takes = {kBox})
+ * a KOMBI that shows the HMI's map and its turn-by-turn box; small: with
+ * its small scene (class 1024, kSmall), as guide_small_scene_id gives. */
+static void hold_rig(Rig &r, const std::vector<uint64_t> &takes = {kBox}, bool small = false)
 {
     r.sc.targets[0].linger_ms = 0;
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
     g.take_over_stock = true; g.follows = "map"; g.take_over_contents = takes;
     r.sc.targets.push_back(g);
+    if (small) {
+        g.name = "guide_0x105_small"; g.scene_id = kSmall; g.content_class = 1024; g.pairs_with = "guide_0x105";
+        r.sc.targets.push_back(g);
+    }
     r.start();
     r.port.stock_map(0x100, kHmiMap);
     r.port.stock_map(0x105, kBox);
@@ -507,16 +512,19 @@ static void guide_hold_choice()
        r.svc->slots().status(0).state == TargetState::Shown && ours && ours->map_status == 1 && box_status(r) == 3);
 }
 
-/* Issue 281, part 3, with the shipped guide_take_over: BMW's turn box in its
- * top layout (0x1000314) shown while a warning disables slots 0x101/0x102,
- * the box parked behind it. Hide off leaves it alone; Hide on takes it over. */
+/* Issue 281, parts 3 and 4, with the shipped guide_take_over and the
+ * small scene: BMW's turn box in its top layout (0x1000314, class 1024)
+ * shown while a warning disables slots 0x101/0x102, the box parked behind
+ * it. Hide off leaves it and both of ours alone; Hide on maps both of ours,
+ * and the top layout is unmapped once, by the small scene (this KOMBI shows
+ * by the order of mapping, not by class). */
 static void guide_hold_top_card()
 {
     const uint64_t kTop = 0x01000314;
     Rig r;
-    hold_rig(r, {kBox, kTop});
+    hold_rig(r, {kBox, kTop}, true);
     r.port.stock_unmap(0x105, kBox);
-    r.port.stock_map(0x105, kTop);
+    r.port.stock_map(0x105, kTop, 1024);
     r.port.stock_map(0x105, kBox);
     cr::Client a("waze", r.path);
     Events ea;
@@ -530,18 +538,27 @@ static void guide_hold_top_card()
     const uint32_t map = show_map(r, a, lo);
     r.pump(40000);
     const SlotInfo *top = r.port.row(0x105, kTop);
-    ok("guide_hold 0: the top layout shown, never taken over, the hold never asked for",
-       ea.target["map"] == "shown" && top && top->map_status == 1 && !r.port.row(0x105, kGuide) &&
+    ok("guide_hold 0: the top layout shown, never taken over, neither of ours asked for",
+       ea.target["map"] == "shown" && top && top->map_status == 1 && top->klass == 1024 &&
+           !r.port.row(0x105, kGuide) && !r.port.row(0x105, kSmall) &&
            r.port.taken_over == std::vector<uint64_t>{kHmiMap});
 
     lo.guide_hold = true;
     a.set(map, lo);
-    r.pump(400);
-    const SlotInfo *ours = r.port.row(0x105, kGuide);
+    r.pump(4000);
+    const SlotInfo *ours = r.port.row(0x105, kGuide), *small = r.port.row(0x105, kSmall);
     top = r.port.row(0x105, kTop);
-    ok("guide_hold 1: held, the top layout and the box taken over and parked behind ours",
-       ours && ours->map_status == 1 && top && top->map_status == 3 && box_status(r) == 3 &&
-           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kTop, kBox});
+    ok("guide_hold 1: both of ours mapped, ours shown, the top layout unmapped once and parked behind",
+       ours && ours->map_status == 1 && small && small->map_status == 3 && small->klass == 1024 && top &&
+           top->map_status == 3 && box_status(r) == 3 &&
+           std::count(r.port.taken_over.begin(), r.port.taken_over.end(), kTop) == 1);
+    r.pump(40000);
+    ok("held 40 s more: no more take-overs", r.port.taken_over.size() == 3 && r.port.row(0x105, kSmall));
+
+    lo.guide_hold = false;
+    a.set(map, lo);
+    r.pump(400);
+    ok("guide_hold 0 again: both of ours released", !r.port.row(0x105, kGuide) && !r.port.row(0x105, kSmall));
 }
 
 /* The KOMBI restarting: our mappings dropped and the display service gone,

@@ -117,7 +117,35 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
     }
     if (holds.empty())
         return refuse(warn, "guide_hold: guide_slots names no slot");
+    std::vector<TargetSpec> smalls;
+    uint64_t small_id = 0;
+    if (!cfg.small_scene_id.empty() && !number(cfg.small_scene_id, false, &small_id))
+        refuse(warn, "guide_small_scene_id must be a number, not \"" + cfg.small_scene_id + "\": no small scene");
+    for (const TargetSpec &h : small_id ? holds : std::vector<TargetSpec>()) {
+        TargetSpec s = h;
+        s.name = h.name + "_small";
+        s.table_slots.clear();
+        s.content_class = kSmallClass;
+        s.scene_id = small_id + smalls.size();
+        s.pairs_with = h.name;
+        std::string clash;
+        const std::vector<TargetSpec> *seen[] = {targets, &holds, &smalls};
+        for (const std::vector<TargetSpec> *v : seen)
+            for (const TargetSpec &o : *v)
+                if (o.scene_id == s.scene_id)
+                    clash = " is target " + o.name + "'s";
+        if (clash.empty() && std::find(allowed.begin(), allowed.end(), s.scene_id) == allowed.end())
+            clash = " is not in scene_ids_allowed";
+        if (!clash.empty()) {
+            refuse(warn, "guide_small_scene_id: " + s.name + "'s scene id " + hex(s.scene_id) + clash +
+                             ": no small scene");
+            smalls.clear();
+            break;
+        }
+        smalls.push_back(s);
+    }
     targets->insert(targets->end(), holds.begin(), holds.end());
+    targets->insert(targets->end(), smalls.begin(), smalls.end());
     return true;
 }
 

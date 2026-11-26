@@ -40,6 +40,7 @@ public:
     std::vector<uint64_t> promoted;        /* scenes of ours shown since, told at the next tick */
     std::map<uint64_t, uint64_t> slot_of;  /* scene -> the slot it was asked for */
     std::vector<SlotInfo> table;           /* one row per mapping, oldest first */
+    std::map<uint64_t, uint32_t> klass_of; /* content -> its content class in the rows (0 if not given) */
 
     bool available() const override { return up; }
     void request(const TargetSpec &t) override
@@ -49,6 +50,7 @@ public:
         releasing.erase(t.scene_id);
         pending[t.scene_id] = now + grant_ms;
         slot_of[t.scene_id] = t.slot;
+        klass_of[t.scene_id] = t.content_class;
     }
     bool confirmed(const TargetSpec &t) const override
     {
@@ -133,10 +135,12 @@ public:
             }
         }
     }
-    /* The stock HMI maps its content into the slot: shown if the slot shows
-     * nothing, else parked. */
-    void stock_map(uint64_t slot, uint64_t content)
+    /* The stock HMI maps its content (of content class klass) into the
+     * slot: shown if the slot shows nothing, else parked. The class is
+     * only reported: shown or parked goes by the order of mapping. */
+    void stock_map(uint64_t slot, uint64_t content, uint32_t klass = 0)
     {
+        klass_of[content] = klass;
         map(slot, content);
         report();
     }
@@ -207,6 +211,8 @@ private:
         s.slot = slot;
         s.content = content;
         s.map_status = map_status;
+        auto k = klass_of.find(content);
+        s.klass = k == klass_of.end() ? 0 : k->second;
         table.push_back(s);
         status(slot);
     }

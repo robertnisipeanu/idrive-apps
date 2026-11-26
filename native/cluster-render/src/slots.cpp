@@ -284,10 +284,12 @@ bool SlotManager::fall_back(int i, const std::string &why, int64_t now_ms)
 
 void SlotManager::follow(int64_t now_ms)
 {
-    for (size_t k = 0; k < specs_.size(); k++) {
-        const int i = (int)k;
+    /* The holds first, then their small scenes, which go with them. */
+    for (size_t k = 0; k < 2 * specs_.size(); k++) {
+        const int i = (int)(k % specs_.size());
         Target &t = t_[i];
-        if (specs_[i].follows.empty())
+        const bool small = !specs_[i].pairs_with.empty();
+        if (specs_[i].follows.empty() || small != (k >= specs_.size()))
             continue;
         const int lead = index(specs_[i].follows);
         const bool declined = lead >= 0 && !t_[lead].guide_hold;
@@ -330,7 +332,7 @@ void SlotManager::follow(int64_t now_ms)
         const bool shown = lead_on && !declined && boxed;
 
         SlotInfo row;
-        const uint64_t y = yield_to(i, &row);
+        const uint64_t y = small ? 0 : yield_to(i, &row);
         if (y != t.yielding) {
             if (y)
                 log_info("target %s: hold yields to 0x%llx (class %u, map status %u); slot 0x%llx %s",
@@ -341,23 +343,47 @@ void SlotManager::follow(int64_t now_ms)
                          specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
             t.yielding = y;
         }
-        /* Parked again behind content it yields to: no loss. */
-        if (y && t.lost_parked) {
+        /* Parked again behind content it yields to, or behind its pair
+         * shown: no loss. */
+        const int p = pair_of(i);
+        if ((y || pair_shown(i)) && t.lost_parked) {
             t.lost_parked = false;
             auto at = std::find(t.losses.begin(), t.losses.end(), t.lost_parked_ms);
             if (at != t.losses.end())
                 t.losses.erase(at);
             if (t.parked_gave_up) {
                 t.given_up = t.parked_gave_up = false;
-                log_info("target %s: hold no longer given up: it was parked behind 0x%llx, which it yields to, "
-                         "no loss",
-                         specs_[i].name.c_str(), (unsigned long long)y);
+                if (y)
+                    log_info("target %s: hold no longer given up: it was parked behind 0x%llx, which it yields to, "
+                             "no loss",
+                             specs_[i].name.c_str(), (unsigned long long)y);
+                else
+                    log_info("target %s: hold no longer given up: it was parked behind ours 0x%llx, no loss",
+                             specs_[i].name.c_str(), (unsigned long long)specs_[p].scene_id);
             }
         }
         if ((y || t.given_up) && (t.requested || t.kept))
             release(i, now_ms);
-        want(i, shown && !y && !t.given_up, true);
+        want(i, (small ? p >= 0 && t_[p].wanted : shown && !y) && !t.given_up, true);
     }
+}
+
+int SlotManager::pair_of(int i) const
+{
+    if (!specs_[i].pairs_with.empty())
+        return index(specs_[i].pairs_with);
+    if (specs_[i].follows.empty())
+        return -1;
+    for (size_t j = 0; j < specs_.size(); j++)
+        if (specs_[j].pairs_with == specs_[i].name)
+            return (int)j;
+    return -1;
+}
+
+bool SlotManager::pair_shown(int i) const
+{
+    const int p = pair_of(i);
+    return p >= 0 && t_[p].status.state == TargetState::Shown;
 }
 
 bool SlotManager::takes(int i, uint64_t content) const
@@ -382,9 +408,15 @@ uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
     auto it = slots_.find(specs_[i].slot);
     if (it == slots_.end())
         return 0;
+    /* Its small scene, which it may ask for: take_over_contents of the
+     * small one's class are the small one's to take over, not yielded to. */
+    const int p = pair_of(i);
+    const bool small = p >= 0 && !t_[p].given_up && !t_[p].refused;
     for (const SlotInfo &s : it->second)
         if (s.content && (s.map_status == 1 || s.map_status == 2) && s.content != specs_[i].scene_id &&
-            !takes(i, s.content)) {
+            (p < 0 || s.content != specs_[p].scene_id) &&
+            (!takes(i, s.content) ||
+             (s.klass != specs_[i].content_class && !(small && s.klass == specs_[p].content_class)))) {
             *row = s;
             return s.content;
         }
@@ -467,6 +499,16 @@ void SlotManager::move_hold(int i, uint64_t slot, const std::string &why, int64_
         set(i, TargetState::Waiting, Holder::None, st.reason, now_ms, st.retry_ms);
     else
         set(i, TargetState::Idle, Holder::None, "", now_ms);
+    /* Its small scene goes with it, released there first. */
+    const int p = pair_of(i);
+    if (p >= 0 && specs_[p].slot != slot) {
+        take_down(p, now_ms);
+        specs_[p].slot = slot;
+        t_[p].verdict = t_[p].lost_parked = false;
+        t_[p].removed_ms = -1;
+        t_[p].ahead.clear();
+        set(p, TargetState::Idle, Holder::None, "", now_ms);
+    }
 }
 
 void SlotManager::note_ahead(int i)
@@ -752,6 +794,8 @@ void SlotManager::acquire(int i, int64_t now_ms)
     t.ahead.clear();
     if (!spec.follows.empty())
         note_ahead(i);
+    if (!spec.pairs_with.empty())
+        t.takeovers = 0;   /* its one take-over (take_over) */
     t.watch_ms = now_ms;
     port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);
@@ -1024,6 +1068,8 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     charge_resend(i, now_ms);
     t_[i].lost_parked = false;
     t_[i].unmapped_ms = -1;
+    if (!specs_[i].pairs_with.empty())
+        t_[i].takeovers = 0;   /* its one take-over (take_over) */
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.remap = t.from_load = t.lock_takeover = false;
@@ -1065,7 +1111,8 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
             release(i, now_ms);   /* nobody wants it and nothing of it is on screen */
         return;
     }
-    if (s == TargetState::Shown && !specs_[i].follows.empty()) {
+    /* Parked behind its pair, shown: held, no loss. */
+    if (s == TargetState::Shown && !specs_[i].follows.empty() && !pair_shown(i)) {
         Target &t = t_[i];
         const bool up = t.given_up;
         /* Withdrawn if it turns into a yield (follow()). */
@@ -1119,10 +1166,17 @@ void SlotManager::take_over(int i, int64_t now_ms)
     /* Copies: a take-over's answer can replace the rows. */
     std::vector<SlotInfo> unmapped(1, *row), behind;
     if (!spec.follows.empty()) {
-        if (!takes(i, row->content))
-            return;   /* follow() yields to it */
+        /* Another class's: follow() yields to it, or its small scene takes
+         * it over. */
+        if (!takes(i, row->content) || row->klass != spec.content_class)
+            return;
+        /* A small scene: one unmap, then the HMI maps it again behind ours;
+         * no more until ours is shown or asked for again. */
+        if (!spec.pairs_with.empty() && t.takeovers > 0)
+            return;
         for (const SlotInfo &s : slots_[spec.slot])
-            if (s.map_status == 3 && holder_of(s.content, s.slot) == Holder::Stock && takes(i, s.content))
+            if (s.map_status == 3 && holder_of(s.content, s.slot) == Holder::Stock && takes(i, s.content) &&
+                s.klass == spec.content_class)
                 (t.ahead.count(s.content) ? unmapped : behind).push_back(s);
     }
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
@@ -1740,7 +1794,9 @@ void SlotManager::tick(int64_t now_ms)
                     release(i, now_ms);   /* nothing of it is on screen: no linger */
                 break;
             }
-            poll_slots = true;
+            /* Parked behind its pair: held, nothing to watch for. */
+            if (!pair_shown(i))
+                poll_slots = true;
             take_over(i, now_ms);
             break;
         case TargetState::Shown:

@@ -4,8 +4,14 @@
 
 The guide hold also hides BMW's turn box in its top layout (0x01000314,
 shown while a warning disables slots 0x101/0x102): `guide_take_over` is
-now `0x01000310,0x01000314`, and 0x01000314 is no longer refused there. It
-is taken over as the box is, and a park behind it counts as a loss.
+now `0x01000310,0x01000314`, and 0x01000314 is no longer refused there.
+While those slots are disabled the KOMBI shows only content of class 1024
+there, so the hold maps a second empty scene of that class in the same
+slot (`guide_small_scene_id`, 0x010004f9, added to `scene_ids_allowed`),
+asked for and released with the first. 0x01000314 is unmapped at most once
+for it, so it no longer blinks, and the hold is not given up or slowed by
+it: after the warning the middle is clean at once. Without the small scene
+0x01000314 is never unmapped.
 
 A hold that yields to BMW's own content in its slot (content not in
 `guide_take_over`) no longer counts that as a loss, so it no longer gives

@@ -283,6 +283,21 @@ struct Rig {
         }
         m.on_slots(t, now);
     }
+    /* The same, each row with its content class. */
+    struct Row {
+        uint64_t content;
+        uint32_t map_status, klass;
+    };
+    void crows(uint64_t id, uint32_t status, std::vector<Row> mappings)
+    {
+        std::vector<SlotInfo> t;
+        for (const Row &mp : mappings) {
+            SlotInfo s;
+            s.slot = id; s.status = status; s.content = mp.content; s.map_status = mp.map_status; s.klass = mp.klass;
+            t.push_back(s);
+        }
+        m.on_slots(t, now);
+    }
     TargetState state(int i) const { return m.status(i).state; }
 };
 
@@ -2321,74 +2336,47 @@ static void guide_gives_up()
 }
 
 /* Issue 281, part 3, with the shipped guide_take_over (the box and its top
- * layout 0x1000314): the top layout shown while a warning disables slots
- * 0x101/0x102 (car, 25 Nov 23:42:18), the box parked behind it. */
+ * layout 0x1000314, class 1024): the top layout shown while a warning
+ * disables slots 0x101/0x102 (car, 25 Nov 23:42:18), the box parked behind
+ * it. A hold without a small scene never unmaps it: it yields, as before
+ * 0x1000314 was on the list. */
 static void guide_top_card()
 {
     GuideRig r(false, kDefaultTakes);
     r.slot(0x101, 0, 0);
     r.slot(0x102, 0, 0);
-    r.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
+    r.crows(kGuideSlot, 2, {{kBelt, 1, 1024}, {kBox, 3, 0}});
     logged();
     r.show_map();
     joined();
+    r.pass(5000);
+    ok("no small scene, the top layout shown: yielded to, never asked for, never taken over",
+       joined().find("guide") == std::string::npos &&
+           logged().find("target guide: hold yields to 0x1000314 (class 1024, map status 1)") != std::string::npos);
+    r.crows(kGuideSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
     r.pass();
-    ok("the top layout shown, the box parked: the hold asked for, not yielding",
-       calls_are("publish guide; request guide") && logged().find("yields") == std::string::npos);
-    r.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}, {kGuideScene, 3}});
+    r.crows(kGuideSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}, {kGuideScene, 3, 0}});
     r.m.on_parked(kGuideScene, r.now);
     joined();
     r.pass();
-    ok("parked behind it: the top layout and the box ahead of ours taken over",
-       calls_are("take over guide 0x1000314; take over guide 0x1000310; slots?") &&
-           logged().find("unmapping the stock HMI's 0x1000314 (class 0, map status 1), 0x1000310 (class 0, map "
-                         "status 3) in slot 0x105 as the HMI") != std::string::npos);
-    r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
-    r.m.on_shown(kGuideScene, r.now);
-    r.pass(60000);
-    ok("ours shown, both parked behind it a minute: no traffic",
-       calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown);
+    ok("the warning gone: asked for, only the box taken over, the parked top layout (class 1024) left alone",
+       calls_are("take over guide 0x1000310; slots?"));
 
-    /* The HMI shows the top layout over ours again and again: each taken
-     * over 1.5 s apart, given up after kHoldLosses like the box. */
+    /* Held, then the top layout shown over ours: yielded to, no take-over. */
     GuideRig h(false, kDefaultTakes);
     h.rows(kGuideSlot, 2, {{kBox, 1}});
     h.show_map();
     h.hold();
     joined();
-    logged();
-    const int64_t start = h.now;
-    std::vector<int64_t> taken_at;
-    int parks = 0;
-    for (int k = 0; k < 4; k++) {
-        h.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
-        h.m.on_parked(kGuideScene, h.now);
-        parks++;
-        bool taken = false;
-        for (int64_t w = 0; w < 30000 && !taken; w += 10) {
-            h.pass();
-            taken = joined().find("take over guide 0x1000314") != std::string::npos;
-        }
-        if (!taken)
-            break;
-        taken_at.push_back(h.now);
-        h.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
-        h.m.on_shown(kGuideScene, h.now);
-    }
-    h.pass(5000);
-    bool paced = taken_at.size() == 3;
-    for (size_t k = 1; k < taken_at.size(); k++)
-        paced = paced && taken_at[k] - taken_at[k - 1] >= 1500;
-    const std::string fight = logged();
-    ok("the top layout over ours four times within 60 s: taken over 1.5 s apart, never yielded to, given up",
-       parks == 4 && paced && h.now - start < 60000 && fight.find("yields") == std::string::npos &&
-           h.state(GuideRig::kGuide) == TargetState::Idle &&
-           fight.find("target guide: hold given up: its scene parked again behind other content, 4 losses") !=
-               std::string::npos);
+    h.crows(kGuideSlot, 2, {{kBelt, 1, 1024}, {kGuideScene, 3, 0}, {kBox, 3, 0}});
+    h.m.on_parked(kGuideScene, h.now);
+    h.pass(20000);
+    ok("held, the top layout shown over ours: released, never taken over",
+       joined().find("take over") == std::string::npos && h.state(GuideRig::kGuide) == TargetState::Idle);
 
     /* Hide BMW's turn box off: the top layout is never touched. */
     GuideRig o(false, kDefaultTakes);
-    o.rows(kGuideSlot, 2, {{kBelt, 1}, {kBox, 3}});
+    o.crows(kGuideSlot, 2, {{kBelt, 1, 1024}, {kBox, 3, 0}});
     o.m.want(0, true, true, false);
     o.pass();
     o.rows(kMapSlot, 2, {{kMapScene, 1}});
@@ -2396,6 +2384,194 @@ static void guide_top_card()
     o.pass(60000);
     ok("guide_hold 0: the map shown, the hold never asked for, the top layout never taken over",
        o.state(0) == TargetState::Shown && joined().find("guide") == std::string::npos);
+}
+
+/* calls without the slot table polls ("slots?"). */
+static std::string unpolled(const std::string &calls)
+{
+    std::string out;
+    for (size_t at = 0; at <= calls.size();) {
+        const size_t end = std::min(calls.find("; ", at), calls.size());
+        const std::string c = calls.substr(at, end - at);
+        if (!c.empty() && c != "slots?")
+            out += (out.empty() ? "" : "; ") + c;
+        at = end + 2;
+    }
+    return out;
+}
+
+/* The hold with its small scene (guide_small_scene_id, class 1024, target
+ * 4), as the service has it with the shipped settings: its slot from the
+ * slot table, the shipped guide_take_over. */
+static const uint64_t kSmallScene = 0x010004f9, kTopSlot = 0x103;
+struct PairRig : GuideRig {
+    static const int kSmall = 4;
+    PairRig() : GuideRig(true, kDefaultTakes)
+    {
+        TargetSpec s = m.targets()[kGuide];
+        s.name = "guide_small"; s.scene_id = kSmallScene; s.content_class = 1024; s.table_slots.clear();
+        s.pairs_with = "guide";
+        m.add(s);
+    }
+    /* Slot 0x103 as the car reports it, ours and the HMI's pair: our hold
+     * (class 0), our small scene (class 1024), the box (class 0), its top
+     * layout (class 1024), each with its map status. */
+    void table(uint32_t ours, uint32_t small, uint32_t box, uint32_t top)
+    {
+        crows(kTopSlot, 2, {{kGuideScene, ours, 0}, {kSmallScene, small, 1024}, {kBox, box, 0}, {kBelt, top, 1024}});
+    }
+    /* A warning (the rear seat belt) disables slots 0x101/0x102, or ends. */
+    void warning(bool on)
+    {
+        slot(0x101, on ? 0 : 1, 0);
+        slot(0x102, on ? 0 : 1, 0);
+    }
+};
+
+/* Issue 281, part 4: Car Test 5 (26 Nov 14:31-14:33) replayed with the
+ * small scene. A route: the box shown in 0x103, its top layout parked;
+ * both of ours asked for, ours shown over the box; the rear seat-belt
+ * warning disables 0x101/0x102 and the KOMBI shows our small scene, ours
+ * parked: no take-over, no back-off, not given up, five warnings within
+ * 60 s; each warning over, ours shown at once, the box never. */
+static void guide_small_scene()
+{
+    PairRig r;
+    r.crows(kTopSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
+    logged();
+    r.show_map();
+    joined();
+    r.pass();
+    ok("a route: both of ours asked for in the box's slot, in order",
+       calls_are("publish guide; request guide; publish guide_small; request guide_small") &&
+           r.guide_slot() == kTopSlot && r.m.targets()[PairRig::kSmall].slot == kTopSlot);
+    r.table(3, 3, 1, 3);
+    r.m.on_parked(kGuideScene, r.now);
+    r.m.on_parked(kSmallScene, r.now);
+    joined();
+    r.pass();
+    const std::string first = joined();
+    ok("both parked behind the box: only the box taken over, by the hold; the top layout left alone",
+       first.find("take over guide 0x1000310") != std::string::npos &&
+           first.find("0x1000314") == std::string::npos && first.find("take over guide_small") == std::string::npos);
+    r.table(1, 3, 3, 3);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(20000);
+    ok("ours shown, the small scene parked behind it: no traffic, not even a poll",
+       calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown &&
+           r.state(PairRig::kSmall) == TargetState::Parked);
+
+    logged();
+    const int64_t from = r.now;
+    bool quiet = true, clean = true, back = true;
+    for (int k = 0; k < 5; k++) {
+        /* The warning: ours parked (reported first), the small one shown. */
+        r.warning(true);
+        r.table(3, 3, 3, 3);
+        r.m.on_parked(kGuideScene, r.now);
+        r.pass();
+        r.table(3, 1, 3, 3);
+        r.m.on_shown(kSmallScene, r.now);
+        r.pass(5000);
+        quiet = quiet && unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Parked &&
+                r.state(PairRig::kSmall) == TargetState::Shown;
+        /* Over: the small one parked (reported first), ours shown. */
+        r.warning(false);
+        r.table(3, 3, 3, 3);
+        r.m.on_parked(kSmallScene, r.now);
+        r.pass();
+        r.table(1, 3, 3, 3);
+        r.m.on_shown(kGuideScene, r.now);
+        r.pass();
+        back = back && r.state(GuideRig::kGuide) == TargetState::Shown;
+        r.pass(5000);
+        clean = clean && unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Shown &&
+                r.state(PairRig::kSmall) == TargetState::Parked;
+    }
+    const std::string warnings = logged();
+    ok("five warnings within 60 s: the small scene shown, ours parked, no take-over, no request, no release",
+       quiet && r.now - from < 60000 && warnings.find("take-over") == std::string::npos);
+    ok("each over: ours shown at once, the box never shown, nothing asked for or taken over", back && clean);
+    ok("not given up, no yield",
+       warnings.find("given up") == std::string::npos && warnings.find("yields") == std::string::npos);
+
+    /* The KOMBI shows the top layout, not ours, as the warning starts:
+     * unmapped once as the HMI, which maps it again behind ours. */
+    PairRig f;
+    f.crows(kTopSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
+    f.show_map();
+    f.pass();
+    f.table(3, 3, 1, 3);
+    f.m.on_parked(kGuideScene, f.now);
+    f.m.on_parked(kSmallScene, f.now);
+    f.pass();
+    f.table(1, 3, 3, 3);
+    f.m.on_shown(kGuideScene, f.now);
+    f.pass(20000);
+    joined();
+    logged();
+    f.warning(true);
+    f.table(3, 3, 3, 1);
+    f.m.on_parked(kGuideScene, f.now);
+    f.pass(2000);
+    const std::string front = unpolled(joined());
+    ok("the top layout shown in front of our small scene: one take-over, by the small scene, of it alone",
+       front == "take over guide_small 0x1000314" &&
+           logged().find("target guide_small: take-over 1 (1 since start): unmapping the stock HMI's 0x1000314 "
+                         "(class 1024, map status 1) in slot 0x103 as the HMI") != std::string::npos);
+    f.table(3, 1, 3, 3);
+    f.m.on_shown(kSmallScene, f.now);
+    f.pass(20000);
+    ok("then held: the small scene shown, ours parked, no traffic, not given up",
+       calls_are("") && f.state(PairRig::kSmall) == TargetState::Shown &&
+           f.state(GuideRig::kGuide) == TargetState::Parked && logged().find("given up") == std::string::npos);
+
+    /* The KOMBI shows it again after its one unmap, ours never shown: no
+     * second take-over, so no blink. */
+    PairRig g;
+    g.crows(kTopSlot, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
+    g.show_map();
+    g.pass();
+    g.table(3, 3, 1, 3);
+    g.m.on_parked(kGuideScene, g.now);
+    g.m.on_parked(kSmallScene, g.now);
+    g.pass();
+    g.table(1, 3, 3, 3);
+    g.m.on_shown(kGuideScene, g.now);
+    g.pass(20000);
+    joined();
+    g.warning(true);
+    g.table(3, 3, 3, 1);
+    g.m.on_parked(kGuideScene, g.now);
+    g.pass(30000);
+    const std::string storm = joined();
+    size_t overs = 0;
+    for (size_t at = storm.find("take over"); at != std::string::npos; at = storm.find("take over", at + 1))
+        overs++;
+    ok("the top layout shown again after the unmap, ours never shown: no second take-over in 30 s",
+       overs == 1 && storm.find("take over guide_small 0x1000314") != std::string::npos &&
+           g.state(GuideRig::kGuide) == TargetState::Parked);
+
+    /* Hide BMW's turn box off: neither scene asked for, 0x1000314 never
+     * touched. */
+    PairRig o;
+    o.crows(kTopSlot, 2, {{kBelt, 1, 1024}, {kBox, 3, 0}});
+    o.warning(true);
+    o.m.want(0, true, true, false);
+    o.pass();
+    o.rows(kMapSlot, 2, {{kMapScene, 1}});
+    o.m.on_shown(kMapScene, o.now);
+    o.pass(60000);
+    ok("guide_hold 0: the map shown, neither scene asked for, the top layout never taken over",
+       o.state(0) == TargetState::Shown && joined().find("guide") == std::string::npos);
+
+    /* The map gone: both released. */
+    r.m.want(0, false, true);
+    r.pass(3000);
+    const std::string gone = joined();
+    ok("the map gone: both of ours released",
+       gone.find("release guide") != std::string::npos && gone.find("release guide_small") != std::string::npos &&
+           r.state(GuideRig::kGuide) == TargetState::Idle && r.state(PairRig::kSmall) == TargetState::Idle);
 }
 
 /* Issue 281, as on the car (24 Nov): the box and the top layout
@@ -4759,6 +4935,7 @@ int main()
     guide_yields();
     guide_yields_not_losses();
     guide_top_card();
+    guide_small_scene();
     guide_given_up_held_again();
     guide_not_mapped();
     guide_door_lock();
