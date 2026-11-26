@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+The Status rows say Not supported only where the patch cannot be applied,
+and why: `Not supported on this head unit`, `Not supported — no cluster
+display` or `Not supported — this CarPlay version` (Android Auto
+version). A patch turned off with Remove patch reads `Removed`.
+
 ## 0.6.17
 
 With Own settings for this driver in use, the page loads the current

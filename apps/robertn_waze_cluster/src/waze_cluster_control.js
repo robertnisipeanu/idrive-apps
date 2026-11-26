@@ -250,22 +250,29 @@ function headUnitRefused(conflict) {
 }
 
 /* A patch state the conflict keeps from being applied, in the words both
- * sections use. */
-function conflictText(conflict) {
-    return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? t('Not supported on this car')
+ * sections use; product names the section ('CarPlay', 'Android Auto').
+ * Not supported only where the patch cannot be applied: a head unit that
+ * refuses our parts or has no Android Auto, a car coded with no cluster
+ * display, a build whose edit sites the patcher cannot find or verify. */
+function conflictText(conflict, product) {
+    return headUnitRefused(conflict) || /^no Android Auto/.test(conflict) ? t('Not supported on this head unit')
+        : /no cluster display is coded/.test(conflict) ? t('Not supported — no cluster display')
+        : /^not patchable/.test(conflict) ? t('Not supported — this {0} version', product)
+        : /^not supported/.test(conflict) ? t('Not supported on this car')
         : /unreadable/.test(conflict) ? t('Unavailable')
+        : /^in-memory plan unusable/.test(conflict) ? t('Failed, {0}', conflict)
         : t('Changed by another tool');
 }
 
 /* A change that failed, with its reason: the conflict that refused it in
  * the words both sections use, else patchd's own words. */
-function failedText(st) {
+function failedText(st, product) {
     const why = st.error || st.reason;
     if (st.conflict && why && why.indexOf(st.conflict) >= 0) {
-        return conflictText(st.conflict);
+        return conflictText(st.conflict, product);
     }
     if (why && /^(not supported|not patchable)/.test(why)) {
-        return conflictText(why);
+        return conflictText(why, product);
     }
     return why ? t('Failed, {0}', why) : t('Failed');
 }
@@ -777,7 +784,7 @@ class WazeClusterControl extends EventEmitter {
         }
         const pending = this.pending(), ps = this.patchStatus;
         if (pending === 'apply' && ps && headUnitRefused(ps.conflict)) {
-            return conflictText(ps.conflict);
+            return conflictText(ps.conflict, 'CarPlay');
         }
         if (pending) {
             return pending === 'revert' ? t('Removed after restart') : t('Patched after restart');
@@ -789,18 +796,20 @@ class WazeClusterControl extends EventEmitter {
             return this._lastPatchCmd === 'revert' ? t('Removing patch…') : t('Patching…');
         }
         if (ps.state === 'error') {
-            return failedText(ps);
+            return failedText(ps, 'CarPlay');
         }
         if (ps.recovered && ps.state !== 'patched' && !headUnitRefused(ps.conflict)) {
             return t('Removed — head unit kept restarting');
         }
         if (ps.conflict && (ps.state !== 'patched' || headUnitRefused(ps.conflict))) {
-            return conflictText(ps.conflict);
+            return conflictText(ps.conflict, 'CarPlay');
         }
         if (ps.state === 'patched') {
             return this._outdated(ps) ? t('Update needed') : t('Patched');
         }
-        return ps.state === 'original' ? t('Not patched') : t('Partly patched');
+        /* Not applied: turned off with Remove patch, or not yet (an install
+         * that could not plan it, a car software update since). */
+        return ps.state === 'original' ? (ps.removed === 'user' ? t('Removed') : t('Not patched')) : t('Partly patched');
     }
 
     /* The cluster map row: the shared render's map, while CarPlay's patch
@@ -998,7 +1007,7 @@ class WazeClusterControl extends EventEmitter {
             return aa.reason === 'reverting' ? t('Removing patch…') : t('Patching…');
         }
         if (aa.state === 'error' || aa.error) {
-            return failedText(aa);
+            return failedText(aa, 'Android Auto');
         }
         if (aa.pending && !(aa.pending === 'apply' && headUnitRefused(aa.conflict))) {
             return aa.pending === 'revert' ? t('Removed after restart') : t('Patched after restart');
@@ -1009,9 +1018,9 @@ class WazeClusterControl extends EventEmitter {
         /* A conflict patchd refuses changes for is named also while patched,
          * since it greys Zoom and the turn card. */
         if (aa.state === 'absent' || (aa.conflict && (aa.state !== 'patched' || this._aaBlocked()))) {
-            return conflictText(aa.conflict || 'no Android Auto');
+            return conflictText(aa.conflict || 'no Android Auto', 'Android Auto');
         }
-        return aa.state === 'patched' ? t('Patched') : aa.state === 'original' ? t('Not patched') : t('Partly patched');
+        return aa.state === 'patched' ? t('Patched') : aa.state === 'original' ? (aa.removed === 'user' ? t('Removed') : t('Not patched')) : t('Partly patched');
     }
 
     /* ---- CarPlay's Wi-Fi band ---- */

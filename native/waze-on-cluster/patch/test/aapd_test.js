@@ -172,18 +172,42 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     ok('status: the pristine build, coding 7, nothing to restore, planable, nothing foreign, no list of builds named', /known:\s+yes, pristine build 2dfb9881/.test(s) && !/^proven:/m.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
         /restorable:\s+no/.test(s) && /geometry:\s+ORIGINAL/.test(s) && /^confpath:\s+ORIGINAL$/m.test(s) && /^planable:\s+yes$/m.test(s) && /^foreign:\s+no$/m.test(s), s);
 
-    [[coding(9), 'KI_KOMBI_VARIANT 9 is not the supported'], [coding(2), 'KI_KOMBI_VARIANT 2 is not the supported'], [coding(7, 0x0b), 'coding not valid'],
-     [Buffer.alloc(16), 'is 16 bytes']].forEach(function (c) {
+    /* Every coding with a cluster display is planned, one that cannot be
+     * read too (as class 2, 12.3); the geometry goes under the screen size
+     * aapd looks the cluster up by: 10.25 for KI_KOMBI_VARIANT 10, 12.3 for
+     * the others. KI_KOMBI_VARIANT 0 (no cluster display) is refused. */
+    var conf = require('../aapd_conf.js'), DIMS = function (o, size) { return JSON.parse(o).SCREENS.KOMBI_DISPLAY.DIMENSIONS[size]; };
+    [[coding(9), 'ok', '12.3'], [coding(2), 'ok', '12.3'], [coding(10), 'ok', '10.25'], [coding(7, 0x0b), 'unreadable', '12.3'],
+     [Buffer.alloc(16), 'unreadable', '12.3'], [null, 'unreadable', '12.3']].forEach(function (c) {
         var u = unit();
-        fs.writeFileSync(u.coding, c[0]);
-        var r = plan(u);
-        ok('coding: the plan refused (' + c[1] + '), nothing written', r.code === 1 && r.out.indexOf(c[1]) >= 0 && untouched(u) && !fs.existsSync(r.plan) && !fs.existsSync(r.copy), r.out);
+        if (c[0]) fs.writeFileSync(u.coding, c[0]); else fs.unlinkSync(u.coding);
+        var r = plan(u), what = c[0] ? 'KI_KOMBI_VARIANT ' + ((c[0][0x2c + 0x75a] & 0x7e) >> 1) + (c[0].length !== 0x1030 || (c[0][0x28] & 0x0f) !== 9 ? ' (unreadable)' : '') : 'no coding';
+        var copy = r.code === 0 ? fs.readFileSync(r.copy, 'utf8') : '', orig = String(SRCCONF), other = c[2] === '12.3' ? '10.25' : '12.3';
+        ok('coding ' + what + ': planned, coding ' + c[1] + ', the geometry under ' + c[2] + ', the other screen as it ships', r.code === 0 && r.sum.coding === c[1] &&
+            r.sum.writes.screen === c[2] && untouched(u) && JSON.stringify(DIMS(copy, other)) === JSON.stringify(DIMS(orig, other)) &&
+            DIMS(copy, c[2]).SA_WIDTHPIXELS === conf.GEOMETRY.shown.safe.w && JSON.stringify((conf.edited(orig, copy) || {})) === JSON.stringify({ dpi: 180, card: 'shown', size: c[2] }), r.out);
     });
-    var nc = unit();
-    fs.unlinkSync(nc.coding);
-    var r = plan(nc);
-    ok('coding: an unreadable coding fails the plan, not a refusal of the file (a later try may read it)', r.code === 1 && /^error: refusing: the cluster coding cannot be read/m.test(r.out) &&
-        !require('../inmem.js').refusal(/^error: (.*)$/m.exec(r.out)[1]) && untouched(nc), r.out);
+    var c0 = unit();
+    fs.writeFileSync(c0.coding, coding(0));
+    var r = plan(c0);
+    ok('coding 0 (no cluster display): the plan refused, a refusal of the car, nothing written', r.code === 1 &&
+        /^error: refusing: not supported on this car \(KI_KOMBI_VARIANT 0: no cluster display is coded\)$/m.test(r.out) &&
+        require('../inmem.js').refusal(/^error: (.*)$/m.exec(r.out)[1]) && untouched(c0) && !fs.existsSync(r.plan), r.out);
+
+    /* A build where the ready start is not found (as builds before the
+     * edit was added may be): planned with the other edits, the overlay
+     * reads them patched and the ready start not applied. */
+    var nr = unit(), nrb = Buffer.from(SRC);
+    nrb[LOC.readystart.offset] ^= 0xff;
+    fs.writeFileSync(nr.bin, nrb);
+    var nrs = status(nr);
+    ok('no ready start: status names why, planable', /^readystart:\s+UNKNOWN \(/m.test(nrs) && /^planable:\s+yes$/m.test(nrs), nrs);
+    r = plan(nr);
+    ok('no ready start: planned without it, the other edits all there', r.code === 0 && r.sum && JSON.stringify(r.sum.edits) === JSON.stringify(['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath']) &&
+        sha(nr.bin) === sha(nrb), r.out);
+    var nro = patcher(nr, ['overlay', '--plan', r.plan, '--conf-copy', r.copy]).out;
+    ok('no ready start: the overlay reads the plan patched, the ready start not applied', /^readystart:\s+NOT APPLIED \(/m.test(nro) && /^gate:\s+PATCHED$/m.test(nro) &&
+        /^confpath:\s+PATCHED$/m.test(nro) && /^overlay:\s+ok$/m.test(nro), nro);
 
     /* A site the locator does not find (aapd_locate_test.js perturbs each):
      * refused with the reason, nothing written. */
@@ -693,9 +717,9 @@ function nextStart(t, pid) {
         noAaInmem(fo) && !marker(fo, 'aa-pending'), r.out);
 
     /* Not supported, not patchable, absent: CarPlay is patched in memory as
-     * ever, except on a car not coded 7, where CarPlay's patch is left too,
-     * with the same conflict. */
-    [['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /not supported on this car \(KI_KOMBI_VARIANT 9\)/],
+     * ever, except on a car coded with no cluster display, where CarPlay's
+     * patch is left too, with the same conflict. */
+    [['coding 0', function (u) { fs.writeFileSync(u.coding, coding(0)); }, /not supported on this car \(KI_KOMBI_VARIANT 0: no cluster display is coded\)/],
      ['an aapd the locator refuses', function (u) { var b = Buffer.from(SRC); b[LOC.gate.offset + 6] = 3; fs.writeFileSync(u.bin, b); }, /not patchable: gate: variant check not found/],
      ['an aapd without the config path', function (u) { var b = Buffer.from(SRC); b.write('/etc/aapd.cfg', LOC.confpath.offset, 'latin1'); fs.writeFileSync(u.bin, b); }, /not patchable: config path/],
      ['an aapd.conf without the 12.3" codec', function (u) { fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]')); }, /aapd\.conf not usable: no number/],
@@ -712,7 +736,7 @@ function nextStart(t, pid) {
         var x = hook(u, 'activate');
         ok('activate with ' + c[0] + ': Android Auto left as it is, nothing armed, exit 0', x.code === 0 && c[2].test(JSON.stringify(x.result.aa)) &&
             (before === null || sha(u.bin) === before) && sha(u.conf) === confBefore && !marker(u, 'aa-pending') && noAaInmem(u), x.out);
-        if (HAVE_CP && c[0] === 'coding 9') ok('activate with ' + c[0] + ': CarPlay left as it is, the same conflict', x.result.conflict === 'not supported on this car (KI_KOMBI_VARIANT 9)' &&
+        if (HAVE_CP && c[0] === 'coding 0') ok('activate with ' + c[0] + ': CarPlay left as it is, the same conflict', x.result.conflict === 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)' &&
             sha(u.carplay) === sha(CARPLAY) && !marker(u, 'activation-pending'), JSON.stringify(x.result));
         else if (HAVE_CP) ok('activate with ' + c[0] + ': CarPlay patched as ever, in memory', /map patch armed in memory/.test(x.result.status) && sha(u.carplay) === sha(CARPLAY), JSON.stringify(x.result));
     });

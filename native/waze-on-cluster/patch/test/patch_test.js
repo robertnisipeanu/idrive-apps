@@ -705,21 +705,55 @@ function codingAndRecord() {
         ok('coding: status names it', /^coding:\s+KI_KOMBI_VARIANT 7$/m.test(r.out), r.out);
         r = plan(ct, ['--panel', 'high']);
         ok('coding: variant 7, the plan says the coding is ok', r.code === 0 && !!r.plan && (summaryOf(r.out) || {}).coding === 'ok', r.out);
-        [[function () { car.coding(9); }, 'KI_KOMBI_VARIANT 9 is not the supported cluster coding (7)', /^coding:\s+KI_KOMBI_VARIANT 9$/m, 'refused'],
-         [function () { car.coding(7, 0x0b); }, 'the cluster coding cannot be read (coding not valid (flags 0xb))', /^coding:\s+unreadable \(coding not valid/m, 'unreadable'],
-         [function () { car.coding(null); }, 'the cluster coding cannot be read', /^coding:\s+unreadable \(.* unreadable\)$/m, 'unreadable']].forEach(function (c) {
+        /* Every coding with a cluster display is planned: 9 is IC_HIGH as it
+         * ships, 1-6, 8, 10 and 11 get their own slot remapped too
+         * (variant-<n>), one that cannot be read is planned as for 7; 0
+         * codes no cluster and is refused. */
+        [[function () { car.coding(9); }, /^coding:\s+KI_KOMBI_VARIANT 9$/m, 'ok', null],
+         [function () { car.coding(10); }, /^coding:\s+KI_KOMBI_VARIANT 10$/m, 'ok', 10],
+         [function () { car.coding(4); }, /^coding:\s+KI_KOMBI_VARIANT 4$/m, 'ok', 4],
+         [function () { car.coding(7, 0x0b); }, /^coding:\s+unreadable \(coding not valid/m, 'unreadable', null],
+         [function () { car.coding(null); }, /^coding:\s+unreadable \(.* unreadable\)$/m, 'unreadable', null]].forEach(function (c) {
             fresh();
             c[0]();
             r = run(['status', '--target', ct]);
-            ok('coding: status reads ' + c[2], c[2].test(r.out), r.out);
+            ok('coding: status reads ' + c[1], c[1].test(r.out), r.out);
             r = plan(ct, ['--panel', 'high']);
-            ok('coding: plan refused (' + c[1] + '), no plan, nothing written', r.code !== 0 && r.out.indexOf('refusing: ' + c[1]) >= 0 && /pass --unproven/.test(r.out) &&
-                !r.plan && sha256(ct) === ORIG_SHA && !fs.existsSync(ct + '.woc-orig') && rec() === 'none', r.out);
-            r = plan(ct, ['--panel', 'high', '--unproven']);
-            ok('coding: with --unproven (the Patch button) planned, the coding ' + c[3], r.code === 0 && !!r.plan && (summaryOf(r.out) || {}).coding === c[3] &&
-                sha256(ct) === ORIG_SHA, r.out);
+            var sum = summaryOf(r.out) || {}, edits = sum.edits || [];
+            ok('coding: ' + c[1] + ' planned, the coding ' + c[2] + (c[3] ? ', its own slot remapped (variant-' + c[3] + ')' : ', slot 7 alone'),
+                r.code === 0 && !!r.plan && sum.coding === c[2] && edits.indexOf('variant') >= 0 &&
+                (c[3] ? edits[edits.length - 1] === 'variant-' + c[3] : !edits.some(function (e) { return /^variant-/.test(e); })) &&
+                sha256(ct) === ORIG_SHA && rec() === 'none', r.out);
+            if (c[3]) {
+                /* the plan's line for that slot: stock as the build ships it, then IC_HIGH's value */
+                var text = fs.readFileSync(PLAN_OUT, 'utf8'), line = text.split('\n').filter(function (l) { return l.indexOf('edit variant-' + c[3] + ' ') === 0; })[0] || '';
+                var seven = text.split('\n').filter(function (l) { return l.indexOf('edit variant ') === 0; })[0] || '';
+                ok('coding: variant-' + c[3] + ' writes slot 7\'s patched value over its stock one', line.split(' ')[4] === seven.split(' ')[4] && line.split(' ')[3] !== line.split(' ')[4], line + ' / ' + seven);
+                r = run(['overlay', '--target', ct, '--plan', PLAN_OUT]);
+                ok('coding: the plan with variant-' + c[3] + ' laid over the file reads patched', /^variant:\s+PATCHED -> IC_HIGH$/m.test(r.out) && /^overlay:\s+ok$/m.test(r.out), r.out);
+            }
             car.coding(7);
         });
+        /* A file with a coding's own slot remapped (no plan of ours writes
+         * the file): not the pristine build, so no plan is made over it. */
+        fresh();
+        var cs = fs.readFileSync(ct), cl = require('../carplay_locate.js').locate(cs).variant;
+        cs.writeUInt32LE(cl.high, cl.table + 4 * 4);
+        fs.writeFileSync(ct, cs);
+        r = run(['status', '--target', ct]);
+        ok('coding: a file with slot 4 remapped reads as a modified build', /^known:\s+yes, modified build \(variant-4 edited\)/m.test(r.out), r.out);
+        car.coding(4);
+        r = plan(ct, ['--panel', 'high']);
+        ok('coding: no plan over a file with slot 4 remapped', r.code !== 0 && !r.plan && /pristine build on disk: variant-4 edited/.test(r.out), r.out);
+        car.coding(7);
+        fresh();
+        car.coding(0);
+        r = plan(ct, ['--panel', 'high']);
+        ok('coding: KI_KOMBI_VARIANT 0 (no cluster display) refused, no plan, nothing written', r.code !== 0 &&
+            r.out.indexOf('refusing: not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)') >= 0 && !r.plan && sha256(ct) === ORIG_SHA, r.out);
+        r = plan(ct, ['--panel', 'high', '--unproven']);
+        ok('coding: KI_KOMBI_VARIANT 0 refused with --unproven too', r.code !== 0 && !r.plan, r.out);
+        car.coding(7);
 
         /* An earlier release's first patch, recorded on trial: its revert
          * leaves no healthy mark. */

@@ -1199,6 +1199,24 @@ test('the newest release reads and writes a state this version left, log and all
     assert(!('log' in after) && !('seen' in after.prev) && after.fails === 0 && after.unknown === 0, newest + ': its save keeps only what it knows: ' + JSON.stringify(after));
 });
 
+test('a plan still to make is made again only for the build it was for: after a car software update the service runs as it ships', async () => {
+    if (!fs.existsSync(CARPLAY_BIN)) { console.log('     (skipped: CARPLAY_BIN not set)'); return; }
+    makeWorld();
+    const bin = fs.readFileSync(CARPLAY_BIN);
+    fs.writeFileSync(CARPLAY, bin, { mode: 0o755 });
+    inmem.planFailed('carplay', ['--panel', 'high'], 'the coding was not published yet');
+    const id = require('../carplay_locate.js').buildId(bin);
+    assert.strictEqual(inmem.readRecord('carplay').build, id, 'the record keeps the build-id');
+    /* another build: the build-id note's last byte changed */
+    const other = Buffer.from(bin), at = other.indexOf(Buffer.from(id, 'hex'));
+    assert(at > 0, 'the build-id is in the file');
+    other[at + 19] ^= 0xff;
+    fs.writeFileSync(CARPLAY, other, { mode: 0o755 });
+    const planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 1000));
+    assert.deepStrictEqual([planned, inmem.readRecord('carplay')], [false, null], 'another build: not planned, the record dropped');
+    clearInmem();
+});
+
 test('the original (Disable used) or no backup of ours: nothing armed, counted or restored', async () => {
     for (const kind of ['original', 'none']) {
         const w = makeWorld();
@@ -1222,8 +1240,8 @@ test('a missing or corrupt state file restores nothing on its own; the boot is a
 
 test('a patch of ours found in carplay\'s file is put back at the boot step at once, whatever the count or its record, nothing armed over it, our backup dropped, and recorded as a plan to make', async () => {
     const CODING = process.env.WOC_CODING;
-    for (const [kind, rec, unproven] of [['file-proven', null, false], ['file-unproven', null, true], ['file-trial', null, false], ['unknown', null, false],
-        ['unknown', '{oops', false], ['unknown', '{"patched":true,"proven":false}\n', false]]) {
+    for (const [kind, rec] of [['file-proven', null], ['file-unproven', null], ['file-trial', null], ['unknown', null],
+        ['unknown', '{oops'], ['unknown', '{"patched":true,"proven":false}\n']]) {
         const what = kind + (rec ? ' ' + JSON.stringify(rec) : '');
         const w = makeWorld();
         w.install('carplay', kind);
@@ -1236,7 +1254,7 @@ test('a patch of ours found in carplay\'s file is put back at the boot step at o
         assert(!fs.existsSync(w.T.carplay.target + '.woc-orig') && !fs.existsSync(w.T.carplay.target + '.woc-orig.json') &&
             !fs.existsSync(record.recordPath(w.T.carplay.target)), what + ': no backup or record of ours left beside it');
         const m = inmem.readRecord('carplay');
-        assert.deepStrictEqual([m.enabled, m.needsPlan, m.args], [true, true, ['--panel', 'high', '--coding', CODING].concat(unproven ? ['--unproven'] : [])],
+        assert.deepStrictEqual([m.enabled, m.needsPlan, m.args], [true, true, ['--panel', 'high', '--coding', CODING]],
             what + ': a plan to make, for the watcher');
         assert(ro(), what + ': / read-only again');
     }

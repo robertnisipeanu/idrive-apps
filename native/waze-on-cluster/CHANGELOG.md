@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+Installing turns the CarPlay and Android Auto map patches on by itself on
+every car whose cluster has a display, whatever its cluster coding, also
+when the coding cannot be read; only a car coded with no cluster display
+is not supported. On a car coded otherwise than 7, CarPlay's patch makes
+that coding take the cluster map, and on a car coded 10 Android Auto's
+map comes at the size the cluster shows. A first patch is on trial as on
+any car. After a car software update replaces CarPlay or aapd, they run
+as they ship until the next install or Patch.
+
+Android Auto's patch is planned again on aapd builds where the edit that
+asks for the stream when the phone sets the cluster display up is not
+found: the map then starts with the first navigation status, as before
+0.14.0.
+
 ## 0.14.18
 
 On a car not coded for the CarPlay cluster map, a map patch that CarPlay's

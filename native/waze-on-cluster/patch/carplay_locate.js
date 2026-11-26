@@ -281,24 +281,37 @@ function switchSlots(im, m, label) {
 
 /* The switch at `m`: raw 9 -> IC_HIGH, 10 -> IC_MID, 0 -> NOT_ACTIVE, every
  * other raw value -> OTHER through one shared table value, and slot 7 that
- * OTHER value (stock) or slot 9's or 10's (patched). */
+ * OTHER value (stock) or slot 9's or 10's (patched). One slot of the car's
+ * own coding, other than 0, 7 and 9, may also hold slot 9's value (coded:
+ * the plan for a car coded otherwise than 7 writes it, slotOf). */
 function decodeSwitch(im, m) {
     var sw = switchSlots(im, m, 'variant');
     if (sw.reason) return { ok: false, small: sw.small, reason: sw.reason };
-    var n = sw.n, table = sw.table, vals = sw.vals, kinds = sw.kinds;
+    var n = sw.n, table = sw.table, vals = sw.vals, kinds = sw.kinds, coded = null;
     if (kinds[9] !== IC_HIGH) return { ok: false, reason: 'variant: slot 9 is not IC_HIGH' };
-    if (kinds[10] !== IC_MID) return { ok: false, reason: 'variant: slot 10 is not IC_MID' };
     if (kinds[0] !== NOT_ACTIVE) return { ok: false, reason: 'variant: slot 0 is not NOT_ACTIVE' };
+    function codedAt(k) {
+        if (vals[k] !== vals[9] || coded !== null) return false;
+        coded = k;
+        return true;
+    }
+    if (kinds[10] !== IC_MID && !codedAt(10)) return { ok: false, reason: 'variant: slot 10 is not IC_MID' };
     var other = null;
     for (var k = 1; k < n; k++) {
         if (k === 9 || k === 10 || k === SLOT) continue;
+        if (kinds[k] !== OTHER && codedAt(k)) continue;
         if (kinds[k] !== OTHER) return { ok: false, reason: 'variant: slot ' + k + ' is not OTHER' };
         if (other !== null && vals[k] !== other) return { ok: false, reason: 'variant: OTHER slots differ' };
         other = vals[k];
     }
-    if ([other, vals[9], vals[10]].indexOf(vals[SLOT]) < 0) return { ok: false, reason: 'variant: slot 7 not OTHER/IC_HIGH/IC_MID' };
-    return { ok: true, table: table, slots: n, slot: table + SLOT * 4, original: other, high: vals[9], mid: vals[10] };
+    var mid = coded === 10 ? null : vals[10];
+    if ([other, vals[9], mid].indexOf(vals[SLOT]) < 0) return { ok: false, reason: 'variant: slot 7 not OTHER/IC_HIGH/IC_MID' };
+    return { ok: true, table: table, slots: n, slot: table + SLOT * 4, original: other, high: vals[9], mid: mid, coded: coded };
 }
+
+/* The offset of the converter table's slot for raw value k (v: the located
+ * variant), or null when there is none. */
+function slotOf(v, k) { return v && v.ok && k >= 0 && k < v.slots ? v.table + k * 4 : null; }
 
 /* ---- Edit 2: the second-stream sink URL --------------------------------- */
 
@@ -1057,7 +1070,7 @@ function sha256(b) { return require('crypto').createHash('sha256').update(b).dig
 
 module.exports = {
     locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, SHOWUI_URL: SHOWUI_URL, ALT_URL: ALT_URL,
-    stockOriginal: stockOriginal, partsDiffering: partsDiffering,
+    stockOriginal: stockOriginal, partsDiffering: partsDiffering, slotOf: slotOf,
     /* the ELF reading aapd_locate.js shares */
     elf: { parseElf: parseElf, Image: Image, noteBuildId: buildId, scan: scan, namedString: namedString, leaRefs: leaRefs,
            funcOfString: funcOfString, relocated: relocated, hex32: hex32, version: version,

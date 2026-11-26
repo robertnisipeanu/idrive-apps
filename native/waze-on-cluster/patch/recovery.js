@@ -137,7 +137,7 @@ function targets(o) {
             foreignIn: function () { return require('./carplay_patch.js').foreignIn(o.carplay); },
             /* the plan's arguments for a patch in the file put back (drec, its record) */
             planArgs: function (drec) {
-                return ['--panel', 'high', '--coding', CODING].concat(record.buttonPatch(drec) ? ['--unproven'] : []);
+                return ['--panel', 'high', '--coding', CODING];
             },
             check: function (i, cur) {
                 if (!exists(o.carplay + '.woc-orig')) return null;
@@ -1448,7 +1448,7 @@ module.exports = {
     Recovery: Recovery, tally: tally, parseShow: parseShow, targets: targets, TARGETS: TARGETS, THRESHOLD: THRESHOLD,
     RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, BOOT_EXIT_MS: BOOT_EXIT_MS, restoreTarget: restoreTarget, repairModes: repairModes,
     PROVE_RETRY_MS: PROVE_RETRY_MS,
-    realSystemState: realSystemState, recmgrCrashKey: recmgrCrashKey, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
+    realSystemState: realSystemState, recmgrCrashKey: recmgrCrashKey, retryPlan: retryPlan, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
 };
 
 /* ---- run as the boot step or the watcher ---- */
@@ -1509,6 +1509,15 @@ function runBoot(name) {
 function retryPlan(name, cb, waitMs, planMs) {
     var rec = inmem.readRecord(name);
     if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
+    /* A car software update replaced the service's binary since: it runs
+     * as it ships until the next install or the Patch button plans it. */
+    var now = inmem.buildOf(TARGETS[name].target);
+    if (rec.build && now !== rec.build) {
+        log(name + ': another build than the patch was to be planned for (a car software update): ' + name + ' runs as it ships until the next install or its Patch button');
+        try { inmem.remove(name); } catch (e) {}
+        cb(false);
+        return;
+    }
     var until = Date.now() + (waitMs || 0);
     (function wait() {
         if (!exists(CODING) && Date.now() < until) { setTimeout(wait, 1000); return; }

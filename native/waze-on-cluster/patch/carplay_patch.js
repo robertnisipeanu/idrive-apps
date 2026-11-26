@@ -10,7 +10,9 @@
  *            ->OTHER (which fails the alternate-display gate). Remapping the
  *            variant-7 slot to a supported value makes every downstream check
  *            pass, so MGU advertises the 2nd display and the phone sends the
- *            cluster stream. Touches variant 7 only.
+ *            cluster stream. The plan for a car coded otherwise (1-6, 8, 10,
+ *            11) also remaps its own coding's slot to IC_HIGH (variant-<n>);
+ *            9 is IC_HIGH as it ships, and 0 codes no cluster.
  *   sink     the 2nd-stream Cinemo sink URL string. As shipped it is
  *            `avb://media_transport.avb_streaming.15?mime_type=video/H264`,
  *            sending the H.264 undecoded over AVB to the cluster. Repointing it
@@ -303,7 +305,7 @@ function notPristine(c) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
-        c.showui.state === 'patched' ? ['showui'] : []);
+        c.showui.state === 'patched' ? ['showui'] : [], c.loc.variant.ok && c.loc.variant.coded !== null ? ['variant-' + c.loc.variant.coded] : []);
     return edited.length ? edited.join(', ') + ' edited' : null;
 }
 
@@ -824,7 +826,7 @@ function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, 
     if (!outFile) die('plan needs --out <file>');
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
     var coding = readCoding(codingFile), codingBad = codingRefusal(coding);
-    if (codingBad && !unproven) die('refusing: ' + codingBad + '; pass --unproven to patch it anyway');
+    if (codingBad) die('refusing: ' + codingBad);
     var wantRes = resFor(panel, res, safe);
     var sinkUrl = sinkUrlFor(capture, sink);
     if (sinkUrl !== undefined && Buffer.byteLength(sinkUrl, 'latin1') > locator.SINK_STOCK.length) die('sink URL too long');
@@ -834,7 +836,22 @@ function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, 
     if (why) die('in memory needs the pristine build on disk: ' + why);
     var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
     if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');
-    var p = planText(buf, e.out, c);
+    /* A car coded otherwise than 7 (and than 9, IC_HIGH as it ships): its
+     * own coding's slot remapped too, from stock, and the edited image
+     * located again with that slot read as the coded one. */
+    var rs = regions(c), names = regionNames(c), n = coding.err ? null : coding.variant;
+    if (n !== null && n !== 7 && n !== 9 && panel === 'high') {
+        var at = locator.slotOf(c.loc.variant, n);
+        if (at === null) die('refusing: the converter has no slot for KI_KOMBI_VARIANT ' + n);
+        var stock = n === 10 ? c.loc.variant.mid : c.loc.variant.original;
+        if (buf.readUInt32LE(at) !== stock) die('in memory needs the pristine build on disk: variant-' + n + ' edited');
+        e.out.writeUInt32LE(c.loc.variant.high, at);
+        var ec = classify(e.out);
+        if (!ec.ok || ec.loc.variant.coded !== n || ec.loc.variant.slot !== c.loc.variant.slot) die('refusing: the edited image does not verify (variant-' + n + ')');
+        rs = rs.concat([[at, 4]]);
+        names = names.concat(['variant-' + n]);
+    }
+    var p = planOf(buf, e.out, rs, names, c.loc.buildId);
     if (p.err) die('refusing: ' + p.err);
     var o = overlay(buf, p.text);
     if (o.err || !o.buf.equals(e.out)) die('refusing: the plan does not reproduce the edited image (' + (o.err || 'bytes differ') + ')');

@@ -25,7 +25,8 @@
  *     time are the recorded ones, those of each input (aapd.conf, which a
  *     copy is made from) too, and the plan and each copy only while their
  *     SHA-256 are. A plan that could not be made: {v, enabled, needsPlan,
- *     args, error}.
+ *     args, error, build (the target's GNU build-id then, null without
+ *     one)}.
  *
  * In /run (gone at every head-unit start), written by arm() before the
  * service starts, only while the record is current and enabled:
@@ -147,8 +148,8 @@ function current(name) {
 }
 
 /* What boot recovery counts the patch as: 'proven' (it ran healthy on this
- * car), 'unproven' (on trial, or a car coded otherwise that CarPlay's Patch
- * button patched), or null when nothing is to be armed. */
+ * car), 'unproven' (on trial, or a record of an earlier release that
+ * called it unproven), or null when nothing is to be armed. */
 function kind(name) {
     var rec = current(name);
     return !rec ? null : rec.proven === true && rec.trial !== true ? 'proven' : 'unproven';
@@ -175,8 +176,8 @@ function refusal(words) {
 /* The conflict a refusal is reported as: a plan whose own check fails as a
  * build the patcher cannot patch, every other refusal in its own words. */
 function refusalConflict(words) {
-    var m = /^refusing: ((?:the edited image|the plan does not)[\s\S]*)$/.exec(words);
-    return m ? 'not patchable: ' + m[1] : words;
+    var m = /^refusing: ((?:the edited image|the plan does not)[\s\S]*)$/.exec(words), n = /^refusing: (not supported on this car[\s\S]*)$/.exec(words);
+    return m ? 'not patchable: ' + m[1] : n ? n[1] : words;
 }
 
 /* Makes the plan for the target as it is on disk (its patcher's `plan`,
@@ -221,8 +222,9 @@ function makePlan(name, args, timeoutMs, cb) {
          * here records it proven (boot recovery). Proven carries over only
          * from a patch that ran healthy here and is on, or that the user
          * turned off (Remove patch); one boot recovery turned off goes on
-         * trial again. A car coded otherwise (CarPlay's Patch button,
-         * --unproven) is never on trial: it stays unproven. */
+         * trial again. Whatever the coding: the patcher reports a coding it
+         * cannot read as such, and the plan stays on trial there until a
+         * healthy run too. */
         var proven = sum.coding === 'ok' && same && prior.proven === true && prior.trial !== true &&
             (prior.enabled === true || prior.by === 'user');
         var onTrial = !proven && sum.coding !== 'refused';
@@ -275,7 +277,13 @@ function planFailed(name, args, why) {
     /* A plan left that cannot be removed is never used: the record names no plan. */
     try { fs.unlinkSync(p.plan); } catch (e) {}
     ensureDir(STATE_DIR);
-    writeWhole(p.record, JSON.stringify({ v: 1, enabled: true, needsPlan: true, target: t.target, args: args, error: why, at: new Date().toISOString() }) + '\n');
+    writeWhole(p.record, JSON.stringify({ v: 1, enabled: true, needsPlan: true, target: t.target, args: args, error: why, build: buildOf(t.target),
+        at: new Date().toISOString() }) + '\n');
+}
+
+/* The GNU build-id of the file at f, or null. */
+function buildOf(f) {
+    try { return require('./carplay_locate.js').buildId(fs.readFileSync(f)) || null; } catch (e) { return null; }
 }
 
 /* Turns the patch off for later starts: the record enabled false with why
@@ -471,7 +479,7 @@ function memState(name, pid, planText) {
 
 module.exports = {
     TARGETS: TARGETS, paths: paths, readRecord: readRecord, current: current, kind: kind, describes: describes, update: update,
-    makePlan: makePlan, refusal: refusal, refusalConflict: refusalConflict, armError: armError, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
+    makePlan: makePlan, refusal: refusal, refusalConflict: refusalConflict, armError: armError, adopt: adopt, planFailed: planFailed, buildOf: buildOf, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
     patchId: patchId, runningId: runningId, runsCurrent: runsCurrent,
     LIB: LIB, RUN_DIR: RUN_DIR,
 };

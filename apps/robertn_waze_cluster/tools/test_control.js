@@ -281,7 +281,7 @@ test('the cluster map stays while a change runs or fails on the side in effect, 
     await until('Android Auto refused', () => c.aaStatusText() === 'Status: Changed by another tool');
     /* a Patch whose plan failed its own check: refused for this build */
     send({ state: 'error', reason: 'not patchable: the edited image does not verify (sink)', aa: { state: 'original', density: 180, densities: D } });
-    await until('CarPlay not patchable', () => c.statusText() === 'Status: Not supported on this car');
+    await until('CarPlay not patchable', () => c.statusText() === 'Status: Not supported — this CarPlay version');
     send({ state: 'original', aa: { state: 'original', density: 180, densities: D } });
     await until('both off', () => c.mapText() === 'Cluster map: Off');
     c.close();
@@ -723,6 +723,20 @@ test('CarPlay\'s Patch button only for original, unknown or outdated; CarPlay\'s
     c.close();
 });
 
+test('a patch turned off with Remove patch reads Removed, and Patch is offered', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch());
+    patch.removed = 'user';
+    patch.announce('original', null, null);
+    await until('removed', () => c.statusText() === 'Status: Removed');
+    assert.strictEqual(c.canEnable(), true);
+    patch.removed = undefined;
+    patch.announce('original', null, null);
+    await until('not patched', () => c.statusText() === 'Status: Not patched');
+    c.close();
+});
+
 test('a conflict the install left alone is shown, and CarPlay\'s Patch button stays the user\'s choice', async (render, patch) => {
     const c = control();
     c.open();
@@ -733,7 +747,7 @@ test('a conflict the install left alone is shown, and CarPlay\'s Patch button st
     assert.strictEqual(c.canEnable(), true);
     patch.conflict = 'not patchable: self-start: onSuggestUi call not found';
     patch.announce('unknown', null, null);
-    await until('unknown conflict', () => c.statusText() === 'Status: Not supported on this car');
+    await until('unknown conflict', () => c.statusText() === 'Status: Not supported — this CarPlay version');
     assert.strictEqual(c.canEnable(), true);
     c.close();
 });
@@ -751,7 +765,7 @@ test('a head unit that refuses the tool: not supported in both sections, also pa
     patch.conflict = NOT;
     patch.aa = { state: 'original', density: 180, densities: D, conflict: NOT };
     patch.announce('original', null, null);
-    await until('not supported', () => c.statusText() === 'Status: Not supported on this car' && c.aaStatusText() === 'Status: Not supported on this car');
+    await until('not supported', () => c.statusText() === 'Status: Not supported on this head unit' && c.aaStatusText() === 'Status: Not supported on this head unit');
     assert.deepStrictEqual([c.canEnable(), c.canDisable(), c.canEnableAa(), c.canDisableAa()], [false, false, false, false]);
     assert.strictEqual(c.mapText(), 'Cluster map: Off');
     assert.strictEqual(c.hideGuidance(), null, 'the turn box row is greyed');
@@ -762,7 +776,7 @@ test('a head unit that refuses the tool: not supported in both sections, also pa
     patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D, conflict: NOT };
     patch.announce('patched', 'high', null);
     await until('patched, not supported', () => c.mapText() === 'Cluster map: Unavailable');
-    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this car', 'Status: Not supported on this car']);
+    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this head unit', 'Status: Not supported on this head unit']);
     assert.deepStrictEqual([c.canEnable(), c.canDisable(), c.canEnableAa(), c.canDisableAa()], [false, true, false, true]);
     assert.deepStrictEqual([c.canZoom(-ZOOM_STEP), c.canZoom(ZOOM_STEP), c.canToggleCard()], [false, false, false]);
     /* A patch written before, waiting for the start that boot recovery
@@ -771,7 +785,7 @@ test('a head unit that refuses the tool: not supported in both sections, also pa
     patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180, densities: D, conflict: NOT };
     patch.announce('unknown', null, null, 'deferred');
     await until('pending, not supported', () => c.canRestart());
-    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this car', 'Status: Not supported on this car']);
+    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this head unit', 'Status: Not supported on this head unit']);
     patch.pending = null;
     assert.strictEqual(c.hudText(), 'HUD map: Unavailable');
     assert.deepStrictEqual([c.canChooseShownOn(), c.canChangeHudSize(), c.canCentreHud()], [false, false, false],
@@ -823,7 +837,7 @@ test('a patch boot recovery removed says so until its Patch button applies it ag
     patch.conflict = NOT;
     patch.aa = { state: 'original', density: 180, densities: [150, 400, 10], recovered: 1, conflict: NOT };
     patch.announce('original', null, null);
-    await until('refused first', () => c.statusText() === 'Status: Not supported on this car' && c.aaStatusText() === 'Status: Not supported on this car');
+    await until('refused first', () => c.statusText() === 'Status: Not supported on this head unit' && c.aaStatusText() === 'Status: Not supported on this head unit');
     assert.deepStrictEqual([c.canEnable(), c.canEnableAa()], [false, false]);
     c.close();
 });
@@ -890,11 +904,12 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D }, 'Status: Patched', [false, true, true, true]],
         [{ state: 'patched', dpi: 400, diskCard: 'shown', density: 400, densities: D }, 'Status: Patched', [false, true, true, false]],
         [{ state: 'unknown', density: 180, densities: D }, 'Status: Partly patched', [true, true, false, false]],
-        [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' }, 'Status: Not supported on this car', [false, false, false, false]],
-        [{ state: 'original', density: 180, conflict: 'not patchable: gate: variant check not found' }, 'Status: Not supported on this car', [false, false, false, false]],
+        [{ state: 'original', density: 180, densities: D, removed: 'user' }, 'Status: Removed', [true, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)' }, 'Status: Not supported — no cluster display', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'not patchable: gate: variant check not found' }, 'Status: Not supported — this Android Auto version', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.conf not usable: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS' }, 'Status: Changed by another tool', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)' }, 'Status: Changed by another tool', [false, false, false, false]],
-        [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Status: Not supported on this car', [false, false, false, false]],
+        [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Status: Not supported on this head unit', [false, false, false, false]],
         [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Status: Patched after restart', [false, false, false, false]],
         [{ state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 170, diskCard: 'shown', density: 170, densities: D, runDpi: 180, runCard: 'shown', removable: true },
             'Status: Patched after restart', [false, true, true, true]],
@@ -1004,8 +1019,8 @@ test('Android Auto patched with a conflict patchd refuses changes for: Zoom and 
         [null, true, 'Status: Patched', [false, true, true, true, true]],
         ['aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)', true, 'Status: Changed by another tool', [false, true, false, false, false]],
         ['aapd is another build than our backup', false, 'Status: Changed by another tool', [false, false, false, false, false]],
-        ['not supported on this car (KI_KOMBI_VARIANT 9)', true, 'Status: Not supported on this car', [false, true, false, false, false]],
-        ['cluster coding unreadable', true, 'Status: Unavailable', [false, true, false, false, false]],
+        ['not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)', true, 'Status: Not supported — no cluster display', [false, true, false, false, false]],
+        ['aapd state unreadable: timed out', true, 'Status: Unavailable', [false, true, false, false, false]],
     ];
     for (const [conflict, removable, line, can] of cases) {
         const aa = Object.assign({}, patched, { removable }, conflict ? { conflict } : {});
