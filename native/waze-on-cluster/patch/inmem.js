@@ -167,10 +167,9 @@ function update(name, fields) {
  * patchable, not the pristine build, the head unit, the coding, a plan
  * whose own check fails, which fails the same way for the same file until
  * an update or the Patch button plans again), as opposed to a failure a
- * later try may not meet (the file unreadable, the coding not published
- * yet). */
+ * later try may not meet (the file unreadable). */
 function refusal(words) {
-    return /^refusing: (?!the cluster coding cannot be read)/.test(words) || /in memory needs the pristine build/.test(words);
+    return /^refusing: /.test(words) || /in memory needs the pristine build/.test(words);
 }
 
 /* The conflict a refusal is reported as: a plan whose own check fails as a

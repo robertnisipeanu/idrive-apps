@@ -276,8 +276,7 @@ test('the patcher\'s refusals of a file are conflicts; a failure a later try may
     ['refusing: head unit: unknown variant is not supported', 'refusing: KI_KOMBI_VARIANT 9 is not the supported cluster coding (7); pass --unproven to patch it anyway',
         'refusing: variant: not found', 'in memory needs the pristine build on disk: variant edited',
         'refusing: the edited image does not verify (sink)', 'refusing: the plan does not reproduce the edited image (bytes differ)'].forEach((w) => assert.strictEqual(inmem.refusal(w), true, w));
-    ['cannot read /usr/bin/carplay: EIO: i/o error',
-        'refusing: the cluster coding cannot be read (/dev/shm/rawcodingdata unreadable); pass --unproven to patch it anyway'].forEach((w) => assert.strictEqual(inmem.refusal(w), false, w));
+    ['cannot read /usr/bin/carplay: EIO: i/o error'].forEach((w) => assert.strictEqual(inmem.refusal(w), false, w));
     assert.strictEqual(inmem.refusalConflict('refusing: the edited image does not verify (sink)'), 'not patchable: the edited image does not verify (sink)');
     assert.strictEqual(inmem.refusalConflict('refusing: the plan does not reproduce the edited image (bytes differ)'), 'not patchable: the plan does not reproduce the edited image (bytes differ)');
     assert.strictEqual(inmem.refusalConflict('refusing: variant: not found'), 'refusing: variant: not found');

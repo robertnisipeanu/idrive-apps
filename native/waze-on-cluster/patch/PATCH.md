@@ -747,6 +747,8 @@ build (on trial), or its Patch button. A record of a plan still to make
 (`needsPlan`, a plan that failed or a put-back cut short) keeps the GNU
 build-id of the file it was for (`build`); the boot step and the watcher
 plan it again only for that build, and drop the record over another one.
+The boot step plans it once the cluster coding reads, and otherwise
+leaves it to the watcher, which plans it whatever the coding reads then.
 A patch turned off with Remove patch stays off across the update, until
 the Patch button; one boot recovery turned off stays off for the file it
 turned off, and the next install plans another build again, on trial.
@@ -956,8 +958,9 @@ a crash of an armed start turns the patch off at once, `by: "recovery"`,
 `why: "crash"`, and the watcher starts aapd again, stock). A patch of ours
 found in aapd or aapd.conf at its boot step is put back before aapd starts
 and planned there and then. A plan still to make is made at the boot step
-(`waze-on-cluster-aa-boot.service`, after `codingshm.service`) and by the
-watcher.
+(`waze-on-cluster-aa-boot.service`, after `codingshm.service`) once the
+cluster coding reads, and otherwise by the watcher, whatever the coding
+reads then.
 
 ## Reversibility
 
@@ -1202,7 +1205,7 @@ In aapd 22.39.3:
   0.0); with 0.0 it skips aapd.conf and sends an 800x480 stream with the UI
   in its top 800x300. The fall-through's 16 bytes (10 of them padding)
   become `cmp eax,2 ; je <the 12.3 load> ; pxor xmm0,xmm0 ; jmp <return>`:
-  class 2 reads 12.3, every other class as before.
+  class 2 reads 12.3, every other class as aapd ships it.
 - **confpath.** The path aapd reads aapd.conf by, pointed at the copy with
   the geometry ("Android Auto in memory"). Releases up to 0.12.1 edited
   `/etc/aapd.conf` itself instead and had no such edit.

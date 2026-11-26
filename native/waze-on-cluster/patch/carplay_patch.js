@@ -161,7 +161,7 @@ function die(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1
 function hex(n) { return '0x' + n.toString(16); }
 
 /* The cluster coding, read and judged as aapd_patch.js does: {variant} or
- * {err}, and why it is not KI_KOMBI_VARIANT 7 (null when it is). Loaded on use,
+ * {err}, and why the patch cannot work with it (null when it can). Loaded on use,
  * so boot recovery, which loads this file for its backup check, does not
  * load the Android Auto patcher. */
 function readCoding(file) { return require('./aapd_patch.js').readCoding(file); }
