@@ -6,9 +6,8 @@
  *
  * aapd describes its cluster display to the phone from the KOMBI_DISPLAY
  * block, for the screen size its KombiVariant maps to (aapd_patch.js
- * "screen": 10.25 on a KI_KOMBI_VARIANT 10 car, 12.3 on every other): the
- * DIMENSIONS entry of that size (SIZES; 12.3 when none is given) and the
- * one codec definition CODEC_SUPPORTED names for it. The
+ * "screen": 12.3 on a KI_KOMBI_VARIANT 7 car): the DIMENSIONS "12.3" entry
+ * and the one codec definition CODEC_SUPPORTED names for it. The
  * video resolution follows CODEC_HEIGHT (480 -> 800x480, 720 -> 1280x720,
  * 1080 -> 1920x1080), the density REPORTED_SCREEN_DENSITY, and the margins
  * are
@@ -38,10 +37,9 @@ var CARDS = ['shown', 'hidden'], DEFAULT_CARD = 'shown';
 var DENSITIES = [];
 for (var d = DENSITY_MIN; d <= DENSITY_MAX; d += DENSITY_STEP) DENSITIES.push(d);
 
-var SIZES = ['12.3', '10.25'];
+var SIZE = '12.3';
 var BLOCK = 'SCREENS/KOMBI_DISPLAY/';
-function dimsOf(size) { return BLOCK + 'DIMENSIONS/' + (size || SIZES[0]) + '/'; }
-var DIMS = dimsOf(SIZES[0]);
+var DIMS = BLOCK + 'DIMENSIONS/' + SIZE + '/';
 
 /* The stream, the part of it the phone draws its UI in, and the safe area,
  * for each turn-card setting. Hidden keeps the safe area's lower edge where
@@ -130,9 +128,9 @@ function numberSpans(text, unique) {
 function mm(px, dpi) { return Math.round(px / dpi * 25.4 * 1000) / 1000; }
 
 /* The values the edit at dpi and card sets, by key path, with the codec
- * definition at `codec`, for the screen size `size`. */
-function wanted(codec, dpi, card, size) {
-    var g = GEOMETRY[card], w = {}, DIMS = dimsOf(size);
+ * definition at `codec`. */
+function wanted(codec, dpi, card) {
+    var g = GEOMETRY[card], w = {};
     w[codec + 'CODEC_WIDTH'] = g.codec.w;
     w[codec + 'CODEC_HEIGHT'] = g.codec.h;
     w[codec + 'REPORTED_SCREEN_DENSITY'] = dpi;
@@ -153,31 +151,27 @@ function wanted(codec, dpi, card, size) {
     return w;
 }
 
-/* The number spans and the codec definition's key path of a text for the
- * screen size `size` (12.3 when none): { spans, codec } or { err }. */
-function layout(text, size) {
+/* The number spans and the 12.3 codec definition's key path of a text:
+ * { spans, codec } or { err }. */
+function layout(text) {
     var spans, k;
-    size = size || SIZES[0];
-    if (SIZES.indexOf(size) < 0) return { err: 'no screen size ' + size };
     try { spans = numberSpans(text, true); k = (JSON.parse(text).SCREENS || {}).KOMBI_DISPLAY; } catch (e) { return { err: 'not JSON (' + e.message + ')' }; }
-    var sup = k && k.CODEC_SUPPORTED && k.CODEC_SUPPORTED[size];
-    if (!Array.isArray(sup) || sup.length !== 1 || typeof sup[0] !== 'string') return { err: 'no single codec for the ' + size + ' screen in KOMBI_DISPLAY' };
-    var codec = BLOCK + 'CODEC_DEFINITION/' + sup[0] + '/', missing = Object.keys(wanted(codec, DEFAULT_DPI, DEFAULT_CARD, size)).filter(function (p) { return !spans[p]; });
+    var sup = k && k.CODEC_SUPPORTED && k.CODEC_SUPPORTED[SIZE];
+    if (!Array.isArray(sup) || sup.length !== 1 || typeof sup[0] !== 'string') return { err: 'no single codec for the ' + SIZE + ' screen in KOMBI_DISPLAY' };
+    var codec = BLOCK + 'CODEC_DEFINITION/' + sup[0] + '/', missing = Object.keys(wanted(codec, DEFAULT_DPI, DEFAULT_CARD)).filter(function (p) { return !spans[p]; });
     return missing.length ? { err: 'no number ' + missing[0] } : { spans: spans, codec: codec };
 }
 
-/* Why the text cannot be edited for the screen size `size` (12.3 when
- * none), or null. */
-function check(text, size) { return layout(text, size).err || null; }
+/* Why the text cannot be edited, or null. */
+function check(text) { return layout(text).err || null; }
 
-/* The original's text edited for dpi and card on the screen size `size`
- * (12.3 when none), or throws why it cannot be. */
-function transform(text, dpi, card, size) {
+/* The original's text edited for dpi and card, or throws why it cannot be. */
+function transform(text, dpi, card) {
     if (DENSITIES.indexOf(dpi) < 0) throw new Error('density ' + dpi + ' is not ' + DENSITY_MIN + '-' + DENSITY_MAX + ' in steps of ' + DENSITY_STEP);
     if (CARDS.indexOf(card) < 0) throw new Error('card ' + card + ' is not one of ' + CARDS.join(', '));
-    var l = layout(text, size);
+    var l = layout(text);
     if (l.err) throw new Error(l.err);
-    return setNumbers(text, l.spans, wanted(l.codec, dpi, card, size));
+    return setNumbers(text, l.spans, wanted(l.codec, dpi, card));
 }
 
 /* /etc/aapd.conf of MGU P18_23w44.2-1-3, aapd 22.39.3's: its SHA-256 and
@@ -219,19 +213,12 @@ function setNumbers(text, spans, w) {
     return out;
 }
 
-/* {dpi, card, size} of `cur` when it is the edit of `orig` at one of
- * DENSITIES and CARDS on one of SIZES, else null. */
+/* {dpi, card} of `cur` when it is the edit of `orig` at one of DENSITIES
+ * and CARDS, else null. */
 function edited(orig, cur) {
-    var spans;
-    try { spans = numberSpans(cur); } catch (e) { return null; }
-    for (var z = 0; z < SIZES.length; z++) {
-        var l = layout(orig, SIZES[z]);
-        if (l.err) continue;
-        /* the density the edit wrote is the codec's reported one */
-        var d = spans[l.codec + 'REPORTED_SCREEN_DENSITY'], dpi = d ? d[2] : null;
-        if (DENSITIES.indexOf(dpi) < 0) continue;
-        for (var c = 0; c < CARDS.length; c++) {
-            if (transform(orig, dpi, CARDS[c], SIZES[z]) === cur) return { dpi: dpi, card: CARDS[c], size: SIZES[z] };
+    for (var c = 0; c < CARDS.length; c++) {
+        for (var i = 0; i < DENSITIES.length; i++) {
+            try { if (transform(orig, DENSITIES[i], CARDS[c]) === cur) return { dpi: DENSITIES[i], card: CARDS[c] }; } catch (e) { return null; }
         }
     }
     return null;
@@ -255,7 +242,7 @@ function otherFile(cur, orig) {
 }
 
 module.exports = {
-    GEOMETRY: GEOMETRY, DENSITIES: DENSITIES, DEFAULT_DPI: DEFAULT_DPI, SIZES: SIZES,
+    GEOMETRY: GEOMETRY, DENSITIES: DENSITIES, DEFAULT_DPI: DEFAULT_DPI,
     DENSITY_MIN: DENSITY_MIN, DENSITY_MAX: DENSITY_MAX, DENSITY_STEP: DENSITY_STEP, CARDS: CARDS, DEFAULT_CARD: DEFAULT_CARD,
     SHIPPED: SHIPPED, check: check, transform: transform, edited: edited, stockOriginal: stockOriginal, otherFile: otherFile, srcCrop: srcCrop,
 };

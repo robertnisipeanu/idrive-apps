@@ -835,6 +835,11 @@ function readState(cb) {
         var coding = /^coding:\s+KI_KOMBI_VARIANT (\d+)$/m.exec(text);
         var foreign = /^foreign:\s+yes$/m.test(text);
         var hasBackup = !!backup && backup[1] !== 'none';
+        /* Our backup beside another build: one by its build-id is a car
+         * software update's (replaced: the backup is dropped when the patch
+         * is planned), any other a change it cannot tell from another
+         * tool's. */
+        var other = /^restorable:\s+no \(another build: (.*)\)$/m.exec(text), replaced = !!other && other[1] === 'its build-id differs';
         /* "patched" requires every edit: the variant gate, a known sink
          * (redirected to this tool, or stock in avb mode), self-start, and —
          * on the high panel — the resolution geometry. A binary missing one
@@ -848,15 +853,17 @@ function readState(cb) {
         /* What keeps the tool from arming the patch by itself: a head unit
          * that refuses our parts, a binary the patcher cannot patch (an edit
          * site not found, or one it does not recognise), one something else
-         * modified (no backup of ours, not the pristine build), a car coded
-         * with no cluster display (KI_KOMBI_VARIANT 0), or another program
-         * started as carplay. Any other build is armed, whatever the
-         * coding, on trial until it ran healthy here. */
+         * modified (no backup of ours, not the pristine build), our backup
+         * beside a build it cannot tell from another tool's change, a
+         * coding the patch is not made for (codingConflict), or another
+         * program started as carplay. Any other build is armed, on trial
+         * until it ran healthy here. */
         var hu = headUnit.refused();
         var conflict = hu ? notSupported(hu)
             : err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
+            : other && !replaced ? 'carplay is another build than our backup'
             : codingConflict(coding) || foreignStart(CP);
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -866,6 +873,7 @@ function readState(cb) {
         var st = { state: state, panel: es.panel, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, recovered: recovered(TARGET),
+                        otherBuild: !!other, replaced: replaced,
                         ours: es.ours, foreign: foreign, unreadable: !!(err && !text),
                         complete: !err && /^end:\s+complete$/m.test(text) };
         st.diskConflict = conflict;
@@ -885,6 +893,7 @@ function readState(cb) {
  * running process; with the record turned off and the process still
  * running the patch, the removal waiting. st[t.svc]: deferred while a
  * change waits. */
+var unusable = {};
 function inmemOverlay(t, st, cb) {
     var rec = inmem.readRecord(t.name), cur = inmem.current(t.name);
     /* A migration's record that has not adopted the file yet: the file's
@@ -919,6 +928,7 @@ function inmemOverlay(t, st, cb) {
             if (err || !/^overlay:\s+ok$/m.test(text)) {
                 st.state = 'unknown';
                 st.conflict = 'in-memory plan unusable: ' + ((/^overlay:\s+NO — (.*)$/m.exec(text) || [])[1] || (err ? err.message : 'no answer'));
+                if (unusable[t.name] !== st.conflict) { unusable[t.name] = st.conflict; log(t.name + ': ' + st.conflict); }
                 cb();
                 return;
             }
@@ -1042,13 +1052,14 @@ function readAaState(cb, fresh) {
         /* Our backups beside another aapd (a firmware update): not ours to
          * undo, so a removal leaves it, as carplay's does. */
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
+        st.replaced = st.otherBuild && /another build than its backup: its build-id differs/.test(get('restorable'));
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
         else if (known) st.reason = 'partly patched; Android Auto\'s Patch button applies the rest';
         st.binary = st.state;
         var hu = headUnit.refused();
         st.conflict = hu ? notSupported(hu) : codingConflict(coding) || (
-              st.otherBuild ? 'aapd is another build than our backup'
+              st.otherBuild && !st.replaced ? 'aapd is another build than our backup'
             : !known && !backup ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : planWhy && !st.ours && !backup ? 'not patchable: ' + planWhy[1]
             : !backup && !pristine ? AA.modified
@@ -1067,8 +1078,8 @@ function readAaState(cb, fresh) {
 }
 /* The conflict of a coding a status read (its "coding:" line matched for
  * the variant, or null when it is unreadable), in the patchers' words
- * (aapd_patch.js codingRefusal): only a car coded with no cluster display
- * has one. Any other coding, an unreadable one too, is patched. */
+ * (aapd_patch.js codingRefusal): every coding but KI_KOMBI_VARIANT 7 has
+ * one; an unreadable coding has none and is patched as 7. */
 function codingConflict(coding) {
     return coding ? require('./aapd_patch.js').codingRefusal({ variant: Number(coding[1]) }) : null;
 }
@@ -1798,10 +1809,9 @@ function revert(noRestart, dropBackup, done) { revertFile(CP, noRestart, dropBac
  * with the error in the status, and is tried again at the next head-unit
  * start (its boot step, the watcher) or by its Patch button. */
 
-/* The plan's arguments for the patcher: the panel and the sink of the
- * mode (avb: the stock sink; udp: the stream sink this tool receives; fifo:
- * the file:// FIFO). The patcher reads the coding for the variant slot to
- * remap. */
+/* The plan's arguments for the patcher: the panel, the coding it checks
+ * and the sink of the mode (avb: the stock sink; udp: the stream sink this
+ * tool receives; fifo: the file:// FIFO). */
 function planArgs(panel, mode) {
     var args = ['--panel', panel, '--coding', CODING];
     if (mode === 'udp') args.push('--sink', 'udp://127.0.0.1:' + UDP_PORT + '?mime_type=video/H264');
@@ -1945,8 +1955,9 @@ function inmemRevert(t, noRestart, removal, done, run) {
     } catch (e) { done(e, null, null); return; }
     readFresh(t, function (st) {
         /* Our backups beside another build (a firmware update) are not ours
-         * to write. */
-        (st.ours || st.restorable || (removal && st.backup && !st.otherBuild) ? function (cb) { revertFile(t, noRestart, removal, cb); }
+         * to write; a removal drops those of a build a car software update
+         * replaced (by its build-id). */
+        (st.ours || st.restorable || (removal && st.backup && (!st.otherBuild || st.replaced)) ? function (cb) { revertFile(t, noRestart, removal, cb); }
             : function (cb) { cb(null, null, null); })(function (pErr, roErr, diskActivation) {
             if (pErr) { done(pErr, roErr, null); return; }
             if (!planText) { done(null, roErr, diskActivation || null); return; }
@@ -1997,6 +2008,16 @@ function afterStart(t, action, cb, tries, planText) {
     }, planText);
 }
 
+/* An enabled patch in memory the coding keeps from working: its record,
+ * plan and copies go, and nothing is armed. */
+function dropPlan(t) {
+    var rec = inmem.readRecord(t.name);
+    if (!rec || rec.enabled !== true) return;
+    inmem.disarm(t.name);
+    try { inmem.remove(t.name); } catch (e) { log(t.name + ': ' + e.message); }
+    log(t.name + ': the patch in memory goes: ' + codingConflict([null, String(require('./aapd_patch.js').readCoding(CODING).variant)]));
+}
+
 /* The install hooks' step for carplay: cb(code, {status, conflict}). */
 function inmemHook(which, cb) {
     function out(code, status, conflict, reset) {
@@ -2031,15 +2052,16 @@ function inmemHook(which, cb) {
                 : 'the patch was turned off; its Patch button applies it');
             return;
         }
-        var reset = highfReset(CP, st), off = st.binary === 'original' && st.backup && !st.pending && !(rec && rec.enabled === true);
+        var reset = highfReset(CP, st), off = st.binary === 'original' && st.backup && !st.otherBuild && !st.pending && !(rec && rec.enabled === true);
         function settle() { if (highfInstall && (reset || !off)) highfMark(CP, reset ? 'applied' : 'left'); }
         if (st.recovered && !ours) { out(0, 'boot recovery removed the patch after ' + st.recovered + ' failed head-unit start' + (st.recovered === 1 ? '' : 's') + '; its Patch button applies it'); return; }
         if (off && !reset) { out(0, 'the patch was turned off; its Patch button applies it'); return; }
-        /* A car coded with no cluster display and another program started
+        /* A coding the patch is not made for and another program started
          * as carplay keep the install from planning; an earlier patch of
          * ours still goes back to stock (Remove patch semantics: nothing
-         * else is written). Any other coding is planned. */
-        var conflict = codingConflict(st.coding === null ? null : [null, String(st.coding)]) || foreignStart(CP);
+         * else is written), and a plan made for another coding goes. */
+        var cc = codingConflict(st.coding === null ? null : [null, String(st.coding)]), conflict = cc || foreignStart(CP);
+        if (cc) dropPlan(CP);
         if (conflict) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'carplay left as it is: ' + conflict, conflict); return; }
             revert(true, true, function (rErr) {
@@ -2050,8 +2072,8 @@ function inmemHook(which, cb) {
         }
         /* An install plans the user's own choices again (the arguments an
          * enabled plan was made with), with this version's edits. Any build
-         * whose sites the patcher finds and verifies is planned, whatever
-         * the coding, on trial until it ran healthy on this car. */
+         * whose sites the patcher finds and verifies is planned, on trial
+         * until it ran healthy on this car. */
         var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;
         inmemApply(CP, keep || planArgs('high', 'avb'), true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
@@ -2125,7 +2147,7 @@ function aaHook(which, cb) {
             return;
         }
         var reset = highfReset(AA, st), retry = !!st.recovered && !!st.recoveredRev && st.recoveredRev < AA_PATCH_REV;
-        var off = st.binary === 'original' && st.backup && !st.pending && !(rec && rec.enabled === true);
+        var off = st.binary === 'original' && st.backup && !st.otherBuild && !st.pending && !(rec && rec.enabled === true);
         function settle() { if (highfInstall && (reset || !off)) highfMark(AA, reset ? 'applied' : 'left'); }
         /* An earlier release's boot recovery put its patch in the files back
          * (the record beside them says so): it stays off, and what a restore
@@ -2144,6 +2166,7 @@ function aaHook(which, cb) {
          * still goes back to stock. Any other build is planned, on trial
          * until it ran healthy on this car. */
         var conflict = st.conflict && !aaRetryable(st.conflict) ? st.conflict : null;
+        if (codingConflict(st.coding === null ? null : [null, String(st.coding)])) dropPlan(AA);
         if (conflict) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'aapd left as it is: ' + conflict, conflict); return; }
             revertFile(AA, true, true, function (rErr) {

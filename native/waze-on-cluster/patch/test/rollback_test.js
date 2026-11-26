@@ -840,7 +840,20 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
         live = fresh(); var backKind = aKind(d), lUp = aActivate(d), lKind = aKind();
         ok(v + ' over this version\'s Android Auto patch in memory: it reads this version\'s record, its activate plans again over stock files, which this version reads as its patch',
             live && backKind !== 'null' && lUp === 'planned' && lKind !== 'null', [live, backKind, lUp, lKind].join(' | '));
-        aClearInmem();
+        /* This version's plan for a build without the ready start's site
+         * (its record v 2): the release reads no patch there, so its boot
+         * recovery arms nothing and aapd runs as it ships; this version
+         * reads it. */
+        aClear(); aClearInmem();
+        var rs = require(path.join(NEW, 'aapd_locate.js')).locate(AA_STOCK).readystart, noReady = Buffer.from(AA_STOCK);
+        noReady[rs.offset - 6] = 0xdf;
+        fs.writeFileSync(A, noReady, { mode: 0o755 });
+        fs.writeFileSync(AC, AA_CONF, { mode: 0o644 });
+        var nrPlan = aPlan(), nrNew = aKind(), nrRel = aKind(d), nrV = null;
+        try { nrV = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-aapd.json'), 'utf8')).v; } catch (e) {}
+        ok(v + ' over this version\'s Android Auto plan of a build without the ready start: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
+            nrPlan === 'OK' && nrV === 2 && nrNew !== 'null' && nrRel === 'null', [nrPlan, nrV, nrNew, nrRel].join(' | '));
+        aClear(); aClearInmem();
     }
 })();
 

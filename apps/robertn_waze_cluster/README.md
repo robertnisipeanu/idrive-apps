@@ -107,8 +107,10 @@ want first, then restart once.
 | `Status: Removed` | You removed the patch. Press **Patch** to apply it again. |
 | `Status: Not supported on this head unit` | Your head unit doesn't support the map. |
 | `Status: Not supported — no cluster display` | Your car is coded without a cluster display. |
+| `Status: Not supported — this cluster` | The map is made for another cluster than your car's. |
 | `Status: Not supported — this CarPlay version` or `this Android Auto version` | The map can't be added to your car's version of CarPlay or Android Auto. A car software update may change that. [Report it](#logs-and-reporting-a-problem) with your logs. |
 | `Status: Unavailable` | If it stays once the head unit has fully started, [report it](#logs-and-reporting-a-problem). |
+| `Status: Failed — press Patch to try again` | Press **Patch**. If it fails again, [report it](#logs-and-reporting-a-problem). |
 | `Status: Failed`, `Partly patched` or `Changed by another tool` | [Report it](#logs-and-reporting-a-problem). |
 | `Cluster map: Off` | Check **Show on**: **Off** and **HUD (experimental)** keep the map off the cluster. Check that CarPlay's or Android Auto's Status is `Patched`. |
 | `Cluster map: Waiting for the phone` | Connect your phone. |

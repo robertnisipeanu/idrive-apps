@@ -10,9 +10,7 @@
  *            ->OTHER (which fails the alternate-display gate). Remapping the
  *            variant-7 slot to a supported value makes every downstream check
  *            pass, so MGU advertises the 2nd display and the phone sends the
- *            cluster stream. The plan for a car coded otherwise (1-6, 8, 10,
- *            11) also remaps its own coding's slot to IC_HIGH (variant-<n>);
- *            9 is IC_HIGH as it ships, and 0 codes no cluster.
+ *            cluster stream. Touches variant 7 only.
  *   sink     the 2nd-stream Cinemo sink URL string. As shipped it is
  *            `avb://media_transport.avb_streaming.15?mime_type=video/H264`,
  *            sending the H.264 undecoded over AVB to the cluster. Repointing it
@@ -305,7 +303,7 @@ function notPristine(c) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
-        c.showui.state === 'patched' ? ['showui'] : [], c.loc.variant.ok && c.loc.variant.coded !== null ? ['variant-' + c.loc.variant.coded] : []);
+        c.showui.state === 'patched' ? ['showui'] : []);
     return edited.length ? edited.join(', ') + ' edited' : null;
 }
 
@@ -495,9 +493,10 @@ var SAME_BUILD_MAX_DIFF = 2 * (4 + 59 + 5 + 4 * 8 + 55 + 7 + 64 + 11);
  * the same build-id and size, or, when either has no build-id, the same size
  * and at most SAME_BUILD_MAX_DIFF bytes apart. */
 function otherBuild(cur, orig) {
-    if (cur.length !== orig.length) return 'its size differs';
     var a = locator.buildId(cur), b = locator.buildId(orig);
-    if (a && b) return a === b ? null : 'its build-id differs';
+    if (a && b && a !== b) return 'its build-id differs';
+    if (cur.length !== orig.length) return 'its size differs';
+    if (a && b) return null;
     for (var i = 0, n = 0; i < cur.length; i++) {
         if (cur[i] !== orig[i] && ++n > SAME_BUILD_MAX_DIFF) return 'no build-id, and more than ' + SAME_BUILD_MAX_DIFF + ' bytes differ';
     }
@@ -647,7 +646,14 @@ function cmdRevert(target, yes, force, dropBackup) {
         process.stdout.write('already at the original; nothing to do\n'); record.ensure(target, revRec); drop(); return;
     }
     /* Another build (a firmware update replaced carplay and left the old
-     * backup behind): restoring would downgrade it. */
+     * backup behind): restoring would downgrade it. One by its build-id:
+     * with --drop-backup the backup, of a build no longer there, goes and
+     * carplay stays. */
+    if (b.other === 'its build-id differs' && !force && dropBackup) {
+        process.stdout.write('current ' + target + ' is another build than the backup (' + b.other + '); left as it is\n');
+        drop();
+        return;
+    }
     if (b.other && !force) {
         die('current ' + target + ' is another build than the backup (' + b.other + ').' +
             '\n  It may have been replaced (e.g. a firmware update). Refusing to overwrite it.' +
@@ -815,13 +821,13 @@ function overlay(buf, text) {
 /* `plan`: the patch, as a plan for libwocpatch.so, made from
  * the file on disk, which must be the pristine build (it is what the
  * process maps) and stays as it is. Checks: the head unit, the coding
- * (KI_KOMBI_VARIANT 0, no cluster display, is refused; another coding than
- * 7 or 9 gets its own converter slot remapped too, `variant-<n>`; an
- * unreadable one is planned as 7), the locator: every edit site found and
+ * (aapd_patch.js codingRefusal: KI_KOMBI_VARIANT 7, or one that cannot be
+ * read, planned as 7), the locator: every edit site found and
  * verified, on any build. --unproven, which earlier releases' records
  * pass, changes nothing. Writes the plan to `outFile` by rename and prints
  * one JSON line: build, version, sha256, size, edits, coding ('ok',
- * 'refused', 'unreadable'), writes, planSha256. */
+ * 'unreadable'), variant (the coding read, null when unreadable), writes,
+ * planSha256. */
 function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
@@ -838,22 +844,7 @@ function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
     if (why) die('in memory needs the pristine build on disk: ' + why);
     var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
     if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');
-    /* A car coded otherwise than 7 (and than 9, IC_HIGH as it ships): its
-     * own coding's slot remapped too, from stock, and the edited image
-     * located again with that slot read as the coded one. */
-    var rs = regions(c), names = regionNames(c), n = coding.err ? null : coding.variant;
-    if (n !== null && n !== 7 && n !== 9 && panel === 'high') {
-        var at = locator.slotOf(c.loc.variant, n);
-        if (at === null) die('refusing: the converter has no slot for KI_KOMBI_VARIANT ' + n);
-        var stock = n === 10 ? c.loc.variant.mid : c.loc.variant.original;
-        if (buf.readUInt32LE(at) !== stock) die('in memory needs the pristine build on disk: variant-' + n + ' edited');
-        e.out.writeUInt32LE(c.loc.variant.high, at);
-        var ec = classify(e.out);
-        if (!ec.ok || ec.loc.variant.coded !== n || ec.loc.variant.slot !== c.loc.variant.slot) die('refusing: the edited image does not verify (variant-' + n + ')');
-        rs = rs.concat([[at, 4]]);
-        names = names.concat(['variant-' + n]);
-    }
-    var p = planOf(buf, e.out, rs, names, c.loc.buildId);
+    var p = planText(buf, e.out, c);
     if (p.err) die('refusing: ' + p.err);
     var o = overlay(buf, p.text);
     if (o.err || !o.buf.equals(e.out)) die('refusing: the plan does not reproduce the edited image (' + (o.err || 'bytes differ') + ')');
@@ -862,9 +853,8 @@ function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
     fsyncFile(tmp);
     fs.renameSync(tmp, outFile);
     process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: c.loc.version ? 'carplay ' + c.loc.version : label(c), sha256: sha256(buf), size: buf.length, edits: p.edits,
-        coding: cd(coding), writes: { mapurl: e.writes.mapurl, showui: e.writes.showui, res: e.writes.res ? resKey(e.writes.res) : null },
+        coding: coding.err ? 'unreadable' : 'ok', variant: coding.err ? null : coding.variant, writes: { mapurl: e.writes.mapurl, showui: e.writes.showui, res: e.writes.res ? resKey(e.writes.res) : null },
         planSha256: sha256(Buffer.from(p.text)) }) + '\n');
-    function cd(x) { return x.err ? 'unreadable' : codingRefusal(x) ? 'refused' : 'ok'; }
 }
 
 /* `overlay`: the edit lines of `status` for the file with the plan laid

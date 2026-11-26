@@ -1448,7 +1448,7 @@ module.exports = {
     Recovery: Recovery, tally: tally, parseShow: parseShow, targets: targets, TARGETS: TARGETS, THRESHOLD: THRESHOLD,
     RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, BOOT_EXIT_MS: BOOT_EXIT_MS, restoreTarget: restoreTarget, repairModes: repairModes,
     PROVE_RETRY_MS: PROVE_RETRY_MS,
-    realSystemState: realSystemState, recmgrCrashKey: recmgrCrashKey, retryPlan: retryPlan, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
+    realSystemState: realSystemState, recmgrCrashKey: recmgrCrashKey, retryPlan: retryPlan, codingMoved: codingMoved, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
 };
 
 /* ---- run as the boot step or the watcher ---- */
@@ -1480,12 +1480,14 @@ function runBoot(name) {
             ' in ' + Math.round(monoMs() - t0) + ' ms, ' + Math.round(process.uptime() * 1000) + ' ms since node started');
         process.exit(0);
     }
-    /* A plan still to make is made first (BOOT_PLAN_MS at most), unless
+    /* A plan made for another coding than the car reads becomes a plan
+     * still to make (codingMoved). A plan still to make is made first
+     * (BOOT_PLAN_MS at most), unless
      * our backup is beside the binary: the step puts that back first.
      * After the step put a patch in the file back, an enabled record is
      * planned (when it has no plan) and armed, so this start applies it;
      * the boot's bound still holds over all of it. */
-    (t.inmem && !exists(t.backups[0]) ? function (cb) { retryPlan(t.name, cb, BOOT_CODING_WAIT_MS, BOOT_PLAN_MS); } : function (cb) { cb(false); })(function () {
+    (t.inmem && !exists(t.backups[0]) ? function (cb) { codingMoved(t.name); retryPlan(t.name, cb, BOOT_CODING_WAIT_MS, BOOT_PLAN_MS); } : function (cb) { cb(false); })(function () {
         rec.startBoot(function (r) {
             var ir = t.inmem && rec._putBack && r.action !== 'restore-failed' ? inmem.readRecord(t.name) : null;
             if (!ir || ir.enabled !== true) { done(r); return; }
@@ -1507,8 +1509,9 @@ function runBoot(name) {
  * it. The cluster coding the plan reads is waited for up to waitMs; a
  * coding still not readable then is planned for only when anyCoding is
  * set (the watcher's try), since at the boot step it may be one not yet
- * published and the plan is made for the coding it reads. cb(planned). */
-function retryPlan(name, cb, waitMs, planMs, anyCoding) {
+ * published and the plan is made for the coding it reads. counter: the
+ * service's Recovery whose count a new plan starts at nothing. cb(planned). */
+function retryPlan(name, cb, waitMs, planMs, anyCoding, counter) {
     var rec = inmem.readRecord(name);
     if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
     /* A car software update replaced the service's binary since: it runs
@@ -1536,50 +1539,95 @@ function retryPlan(name, cb, waitMs, planMs, anyCoding) {
                 else { try { inmem.planFailed(name, rec.args || [], err.message); } catch (e) {} }
             } else {
                 log(name + ': in-memory patch planned (' + r.edits.join(', ') + ')');
-                new Recovery({ target: TARGETS[name] }).resetCount();
+                (counter || new Recovery({ target: TARGETS[name] })).resetCount();
             }
             cb(!err);
         });
     }
 }
 
-/* The watcher plans what the boot steps did not get to, carplay's then
- * aapd's, then watches. */
-function runWatcher() {
-    retryPlan('carplay', function () {
-        if (!exists(TARGETS.aapd.target)) { watch(); return; }
-        retryPlan('aapd', watch, 120000, 60000, true);
-    }, 120000, 60000, true);
+/* A plan made for another cluster coding than the car reads (one made
+ * while the coding could not be read, or by a release that did not record
+ * it, is for 7): it cannot work there, so its record becomes a plan still
+ * to make, nothing is armed for the next start, and retryPlan plans it for
+ * the coding the car reads, with every check a plan has. Only a coding
+ * that reads, and a record that describes the file as it is, count.
+ * true when so. */
+function codingMoved(name) {
+    var rec = inmem.readRecord(name);
+    if (!rec || rec.enabled !== true || rec.needsPlan || !inmem.describes(name, rec)) return false;
+    var cd = require('./aapd_patch.js').readCoding(CODING), was = typeof rec.coding === 'number' ? rec.coding : 7;
+    if (cd.err || cd.variant === was) return false;
+    log(name + ': the patch was planned for KI_KOMBI_VARIANT ' + was + ' and the car reads ' + cd.variant + ': planned again for it');
+    try {
+        inmem.disarm(name);
+        inmem.planFailed(name, rec.args || [], 'planned for KI_KOMBI_VARIANT ' + was + ', the car reads ' + cd.variant);
+    } catch (e) { log(name + ': ' + e.message); return false; }
+    return true;
 }
 
-/* The watcher follows carplay, and aapd where the unit has it; each has its
- * own counter and acts alone. */
-function watch() {
-    var recs = [new Recovery({ target: TARGETS.carplay })];
-    if (exists(TARGETS.aapd.target)) recs.push(new Recovery({ target: TARGETS.aapd }));
-    var timer = null;
-    var starting = recs.length;
-    var stopping = false;
-    function each(fn, cb) {
-        var left = recs.length;
-        recs.forEach(function (r) { fn(r, function () { if (--left === 0) cb(); }); });
-    }
+/* cb() once the cluster coding reads, polled every second for up to ms;
+ * never when it does not. */
+function whenCoding(ms, cb) {
+    var until = Date.now() + ms;
+    (function poll() {
+        if (!require('./aapd_patch.js').readCoding(CODING).err) { cb(); return; }
+        if (Date.now() < until) setTimeout(poll, 1000);
+    })();
+}
+
+/* The watcher follows carplay, and aapd where the unit has it, each with
+ * its own counter, from its start. A plan the boot steps did not get to is
+ * made first for its own service (followed once it is made or given up,
+ * the cluster coding waited for up to 120 s); a plan made for another
+ * coding than the car's is planned again once the coding reads, for the
+ * service's next start. */
+function runWatcher() {
+    var names = ['carplay'].concat(exists(TARGETS.aapd.target) ? ['aapd'] : []);
+    watch(names.map(function (n) {
+        var r = new Recovery({ target: TARGETS[n] });
+        r.before = function (go) {
+            var rec = inmem.readRecord(n);
+            if (rec && rec.needsPlan && rec.enabled === true) retryPlan(n, function () { go(); }, 120000, 60000, true, r);
+            else go();
+        };
+        r.after = function () {
+            whenCoding(120000, function () { if (codingMoved(n)) retryPlan(n, function () {}, 0, 60000, true, r); });
+        };
+        return r;
+    }));
+}
+
+/* Follows each Recovery of recs: its `before` first, then its boot
+ * decision, then a poll every TICK_MS, and its `after`. */
+function watch(recs) {
+    var timer = null, booting = 0, stopping = false, finished = false;
     /* A stop waits for a restore in progress, so / is not left writable. */
     function finish() {
+        if (finished) return;
+        finished = true;
         if (timer) clearInterval(timer);
-        each(function (r, cb) { r.whenRestored(function () { r.onShutdown(cb); }); }, function () { process.exit(0); });
+        var on = recs.filter(function (r) { return r.watching; }), left = on.length;
+        if (!left) process.exit(0);
+        on.forEach(function (r) { r.whenRestored(function () { r.onShutdown(function () { if (--left === 0) process.exit(0); }); }); });
     }
     recs.forEach(function (r) {
-        r.startBoot(function () {
-            if (--starting) return;
-            if (stopping) { finish(); return; }
-            /* Polled even with no patch to watch: the service stays up, since
-             * Restart=always would otherwise start it again every few seconds
-             * and the deploy tool's health check takes that for a crash loop. */
-            timer = setInterval(function () { recs.forEach(function (x) { x.tick(); }); }, TICK_MS);
+        (r.before || function (go) { go(); })(function () {
+            if (stopping) return;
+            booting++;
+            r.startBoot(function () {
+                booting--;
+                r.watching = true;
+                if (stopping) { if (!booting) finish(); return; }
+                if (r.after) r.after();
+            });
         });
     });
-    function stop() { if (stopping) return; stopping = true; if (!starting) finish(); }   /* else finish() runs when startBoot returns */
+    /* Polled even with no patch to watch: the service stays up, since
+     * Restart=always would otherwise start it again every few seconds and
+     * the deploy tool's health check takes that for a crash loop. */
+    timer = setInterval(function () { recs.forEach(function (x) { if (x.watching) x.tick(); }); }, TICK_MS);
+    function stop() { if (stopping) return; stopping = true; if (!booting) finish(); }   /* else finish() runs when startBoot returns */
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
 }

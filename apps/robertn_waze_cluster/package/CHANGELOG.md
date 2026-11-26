@@ -4,8 +4,11 @@
 
 The Status rows say Not supported only where the patch cannot be applied,
 and why: `Not supported on this head unit`, `Not supported — no cluster
-display` or `Not supported — this CarPlay version` (Android Auto
-version). A patch turned off with Remove patch reads `Removed`.
+display`, `Not supported — this cluster`, or `Not supported — this
+CarPlay version` (`this Android Auto version`). A patch turned off with
+Remove patch reads `Removed`, and a failure `Failed — press Patch to try
+again` where Patch can retry it. Neither section offers Patch where it is
+not supported.
 
 ## 0.6.17
 

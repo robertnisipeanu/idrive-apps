@@ -123,11 +123,12 @@ function writeWhole(file, data, mode) {
     try { fsyncPath(path.dirname(file)); } catch (e) {}
 }
 
-/* The record as written, or null. */
+/* The record as written (v 1, or v 2 for a plan releases before this one
+ * must not arm), or null. */
 function readRecord(name) {
     var r = null;
     try { r = JSON.parse(fs.readFileSync(paths(name).record, 'utf8')); } catch (e) { return null; }
-    return r && typeof r === 'object' && r.v === 1 ? r : null;
+    return r && typeof r === 'object' && (r.v === 1 || r.v === 2) ? r : null;
 }
 
 /* Whether the record describes the target and its inputs as they are now,
@@ -172,11 +173,18 @@ function refusal(words) {
     return /^refusing: /.test(words) || /in memory needs the pristine build/.test(words);
 }
 
-/* The conflict a refusal is reported as: a plan whose own check fails as a
- * build the patcher cannot patch, every other refusal in its own words. */
+/* The conflict a refusal is reported as, in patchd's status words: the
+ * head unit and the coding as not supported, aapd.conf as not usable, a
+ * file another tool changed in its own words, and every other refusal (a
+ * site the locator does not find or verify, a plan whose own check fails)
+ * as a build the patcher cannot patch. */
 function refusalConflict(words) {
-    var m = /^refusing: ((?:the edited image|the plan does not)[\s\S]*)$/.exec(words), n = /^refusing: (not supported on this car[\s\S]*)$/.exec(words);
-    return m ? 'not patchable: ' + m[1] : n ? n[1] : words;
+    var m = /^refusing: ([\s\S]*)$/.exec(words), r = m ? m[1] : null;
+    return !r ? words
+        : /^not supported on this (?:car|cluster)/.test(r) ? r
+        : /^head unit: /.test(r) ? 'not supported on this car (' + r + ')'
+        : /^\/\S*aapd\.conf: /.test(r) ? 'aapd.conf not usable: ' + r.replace(/^\S+: /, '')
+        : 'not patchable: ' + r;
 }
 
 /* Makes the plan for the target as it is on disk (its patcher's `plan`,
@@ -221,16 +229,21 @@ function makePlan(name, args, timeoutMs, cb) {
          * here records it proven (boot recovery). Proven carries over only
          * from a patch that ran healthy here and is on, or that the user
          * turned off (Remove patch); one boot recovery turned off goes on
-         * trial again. Whatever the coding: the patcher reports a coding it
-         * cannot read as such, and the plan stays on trial there until a
-         * healthy run too. */
+         * trial again. A plan made while the coding cannot be read starts
+         * on trial too. */
         var proven = sum.coding === 'ok' && same && prior.proven === true && prior.trial !== true &&
             (prior.enabled === true || prior.by === 'user');
-        var onTrial = !proven && sum.coding !== 'refused';
-        var rec = { v: 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
+        var onTrial = !proven;
+        /* v 2 (sum.record): a plan releases before this one must not arm,
+         * as their readRecord reads v 1 only. */
+        var rec = { v: sum.record === 2 ? 2 : 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
             build: sum.build, version: sum.version, planSha256: sum.planSha256, edits: sum.edits, writes: sum.writes, args: args,
             inputs: inputs, copies: copies, proven: proven, trial: onTrial, at: new Date().toISOString() };
         if (sum.rev) rec.rev = sum.rev;
+        /* The cluster coding it was made for: KI_KOMBI_VARIANT, or
+         * 'unreadable' (planned as 7; recovery.js codingMoved). */
+        if (typeof sum.variant === 'number') rec.coding = sum.variant;
+        else if (sum.coding === 'unreadable') rec.coding = 'unreadable';
         try {
             var text = fs.readFileSync(tmp);
             fsyncPath(tmp);

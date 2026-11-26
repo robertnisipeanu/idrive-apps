@@ -490,13 +490,13 @@ async function main() {
         [TGT + '.woc-orig', TGT + '.woc-orig.json', TGT + '.woc-running', record.recordPath(TGT)].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
     }
 
-    /* CarPlay's Patch button on any coding with a cluster display, or one
-     * that cannot be read: no conflict, patched in memory, on trial (boot
-     * recovery turns it off after one failed start until a healthy run); a
-     * car coded 4 gets its own slot remapped too. A car coded with no
-     * cluster display: the conflict, the button refused. */
+    /* CarPlay's Patch button on KI_KOMBI_VARIANT 7 or a coding that cannot
+     * be read: no conflict, patched in memory, on trial (boot recovery turns
+     * it off after one failed start until a healthy run). Any other coding:
+     * the conflict, the button plans nothing; a car recoded under a patch
+     * reports the conflict while carplay still runs it. */
     setRecmgr(['HBAdasMgu'], true);
-    var cases = [[9, undefined, null], [4, undefined, 'variant-4'], [7, 0x0b, null], [null, undefined, null], [7, undefined, null]];
+    var cases = [[7, 0x0b], [null, undefined], [7, undefined]];
     for (var q = 0; q < cases.length; q++) {
         var cq = cases[q], what = cq[0] === null ? 'no coding' : 'coding ' + cq[0] + (cq[1] !== undefined ? ' flags 0x' + cq[1].toString(16) : '');
         noInmem();
@@ -506,21 +506,27 @@ async function main() {
         ok(what + ': patchd reports no conflict', r.state === 'original' && !r.conflict, JSON.stringify(r));
         r = await op({ cmd: 'apply', panel: 'high', mode: 'avb' });
         rc = inmemRecord();
-        ok(what + ': CarPlay\'s Patch button patches it in memory, on trial' + (cq[2] ? ', with ' + cq[2] : ''), r.carplay === 'deferred' && onDisk().equals(SRCBUF) &&
-            !!rc && rc.enabled === true && rc.proven === false && rc.trial === true && armed() &&
-            (cq[2] ? rc.edits.indexOf(cq[2]) >= 0 : !rc.edits.some(function (e) { return /^variant-/.test(e); })), JSON.stringify([r, rc]));
+        ok(what + ': CarPlay\'s Patch button patches it in memory, on trial, the coding recorded', r.carplay === 'deferred' && onDisk().equals(SRCBUF) &&
+            !!rc && rc.enabled === true && rc.proven === false && rc.trial === true && armed() && rc.coding === (cq[1] === undefined && cq[0] !== null ? 7 : 'unreadable'), JSON.stringify([r, rc]));
         nextStart();
         r = await status();
         ok(what + ': after the start it reads patched, no conflict', r.state === 'patched' && !r.conflict, JSON.stringify(r));
         car.coding(7);
     }
-    noInmem();
-    nextStart();
-    car.coding(0);
+    car.coding(4);
     r = await status();
-    ok('coding 0: patchd reports it not supported (no cluster display)', r.state === 'original' && r.conflict === 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)', JSON.stringify(r));
-    r = await op({ cmd: 'apply', panel: 'high', mode: 'avb' });
-    ok('coding 0: CarPlay\'s Patch button plans nothing', !inmemRecord() && !armed() && onDisk().equals(SRCBUF), JSON.stringify(r));
+    ok('recoded 4 under a running patch: patched, with the conflict', r.state === 'patched' && /^not supported on this cluster \(KI_KOMBI_VARIANT 4;/.test(r.conflict || ''), JSON.stringify(r));
+    car.coding(7);
+    for (var cc of [[0, 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'], [9, 'not supported on this cluster (KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7)'],
+        [4, 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)'], [12, 'not supported on this cluster (KI_KOMBI_VARIANT 12; the map is made for KI_KOMBI_VARIANT 7)']]) {
+        noInmem();
+        nextStart();
+        car.coding(cc[0]);
+        r = await status();
+        ok('coding ' + cc[0] + ': patchd reports it not supported', r.state === 'original' && r.conflict === cc[1], JSON.stringify(r));
+        r = await op({ cmd: 'apply', panel: 'high', mode: 'avb' });
+        ok('coding ' + cc[0] + ': CarPlay\'s Patch button plans nothing', !inmemRecord() && !armed() && onDisk().equals(SRCBUF), JSON.stringify(r));
+    }
     car.coding(7);
     noInmem();
     nextStart();

@@ -1227,19 +1227,53 @@ test('a plan still to make waits for a readable coding at the boot step, and the
         inmem.planFailed('carplay', args, 'the coding was not published yet');
         let planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
         assert.deepStrictEqual([planned, inmem.readRecord('carplay').needsPlan], [false, true], 'boot step, no coding: not planned, still to plan');
-        headUnit.coding(4, 0);
+        headUnit.coding(7, 0);
         planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
         assert.deepStrictEqual([planned, inmem.readRecord('carplay').needsPlan], [false, true], 'boot step, a coding not yet valid: not planned, still to plan');
-        headUnit.coding(4);
+        headUnit.coding(7);
         planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
         const m = inmem.readRecord('carplay');
-        assert(planned && !m.needsPlan && m.enabled === true, 'boot step, coding 4: planned ' + JSON.stringify(m));
-        assert(/\bvariant-4\b/.test(fs.readFileSync(inmem.paths('carplay').plan, 'utf8')), 'the plan remaps coding 4\'s slot');
+        assert(planned && !m.needsPlan && m.enabled === true && m.coding === 7, 'boot step, coding 7: planned for it ' + JSON.stringify(m));
         clearInmem();
         headUnit.coding(null);
         inmem.planFailed('carplay', args, 'the coding was not published yet');
         planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000, true));
-        assert(planned && !inmem.readRecord('carplay').needsPlan, 'the watcher, no coding: planned');
+        assert(planned && !inmem.readRecord('carplay').needsPlan && inmem.readRecord('carplay').coding === 'unreadable', 'the watcher, no coding: planned, as 7');
+    } finally { headUnit.coding(7); clearInmem(); }
+});
+
+test('a plan records the coding it was made for; one made for another coding than the car reads is planned again for it, which refuses a coding the patch is not made for', async () => {
+    if (!fs.existsSync(CARPLAY_BIN)) { console.log('     (skipped: CARPLAY_BIN not set)'); return; }
+    makeWorld();
+    fs.writeFileSync(CARPLAY, fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
+    const args = ['--panel', 'high', '--coding', process.env.WOC_CODING];
+    const planned = (c) => { headUnit.coding(c); return new Promise((resolve) => inmem.makePlan('carplay', args, 60000, (e, rec) => resolve(e ? e.message : rec))); };
+    try {
+        let rec = await planned(7);
+        assert.strictEqual(rec.coding, 7, 'made for 7');
+        assert.strictEqual(recovery.codingMoved('carplay'), false, 'the car reads 7: kept');
+        headUnit.coding(null);
+        assert.strictEqual(recovery.codingMoved('carplay'), false, 'the coding unreadable: kept');
+        headUnit.coding(4);
+        assert.strictEqual(recovery.codingMoved('carplay'), true, 'the car reads 4: planned again');
+        let m = inmem.readRecord('carplay');
+        assert.deepStrictEqual([m.enabled, m.needsPlan, m.args, inmem.armed('carplay')], [true, true, args, false], 'a plan still to make, nothing armed');
+        const again = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
+        assert.deepStrictEqual([again, inmem.readRecord('carplay')], [false, null], 'coding 4: the plan refused, the record gone');
+        clearInmem();
+        rec = await planned(null);
+        assert.strictEqual(rec.coding, 'unreadable', 'made while the coding could not be read');
+        headUnit.coding(7);
+        assert.strictEqual(recovery.codingMoved('carplay'), false, 'then it reads 7: kept');
+        headUnit.coding(9);
+        assert.strictEqual(recovery.codingMoved('carplay'), true, 'then it reads 9: planned again');
+        clearInmem();
+        rec = await planned(7);
+        inmem.update('carplay', { coding: undefined });
+        assert.strictEqual(inmem.readRecord('carplay').coding, undefined, 'a record of a release that did not keep the coding');
+        headUnit.coding(10);
+        assert.strictEqual(recovery.codingMoved('carplay'), true, 'taken as made for 7: the car reads 10, planned again');
+        clearInmem();
     } finally { headUnit.coding(7); clearInmem(); }
 });
 

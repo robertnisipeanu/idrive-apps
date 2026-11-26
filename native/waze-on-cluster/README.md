@@ -21,9 +21,8 @@ Both send the cluster map only as H.264 video, with no map data, so this is
 a video pipeline:
 
 1. **Ungate the second display.** A patch of carplay, applied in its
-   memory at start while `/usr/bin/carplay` stays as it ships, makes the car's
-   `KI_KOMBI_VARIANT` resolve to a supported cluster variant, makes CarPlay
-   start the cluster stream itself, and
+   memory at start while `/usr/bin/carplay` stays as it ships, makes `KI_KOMBI_VARIANT` 7 resolve to a supported
+   cluster variant, makes CarPlay start the cluster stream itself, and
    advertises the size the map is shown at ([patch/PATCH.md](patch/PATCH.md)).
    Another, applied in aapd's memory while `/usr/bin/aapd` and
    `/etc/aapd.conf` stay as they ship, does the same for Android Auto
@@ -45,9 +44,9 @@ a video pipeline:
 The Store installs it with the app `robertn_waze_cluster`; it requires
 `cluster-render` and `mgu-deploy` (`component.json`, `"requires"`).
 
-**Install.** The deploy tool runs `patchd.js activate` as root. On any
-car with a coded cluster display, whatever its `KI_KOMBI_VARIANT` or when
-the coding cannot be read, with any carplay build whose edit sites the
+**Install.** The deploy tool runs `patchd.js activate` as root. On a car
+coded `KI_KOMBI_VARIANT` 7, or whose coding cannot be read (planned as 7),
+with any carplay build whose edit sites the
 patcher finds and verifies, it plans the patch in memory and arms
 CarPlay's next start, on trial until it has run healthy on that car (see
 Boot recovery), and never stops, kills or
@@ -61,9 +60,11 @@ it can plan: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
 goes back as they ship, and the patch is armed in aapd's memory. Where the
 sites are not found or not recognised, or another tool's change is found
 beside our own edits, it leaves everything as it is, and the app's Status
-says why; bytes away from the sites do not count. On a car coded with no
-cluster display (`KI_KOMBI_VARIANT` 0) it plans nothing and puts an earlier
-release's patch back as it ships. A car software update that replaces
+says why; bytes away from the sites do not count. On a car coded
+otherwise, the map's geometry is not known to fit its cluster: it plans
+nothing, drops a patch planned for another coding, puts an earlier
+release's patch back as it ships, and the app says `Not supported — this
+cluster` (or `— no cluster display`). A car software update that replaces
 CarPlay or aapd leaves them running as they ship until the next install
 or Patch. A patch you turned off with Remove patch stays off across
 updates, car software updates and restarts, until you press Patch

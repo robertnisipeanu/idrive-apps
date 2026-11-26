@@ -14,7 +14,7 @@
  *              (featureFlag && KombiVariant <= 1): the immediate 1 -> 2.
  *              aapd maps raw KI_KOMBI_VARIANT 9 -> 0, 10 -> 1, 1..8 and
  *              11 -> 2, 0 -> 3, so this admits every raw value of class 2;
- *              the plan refuses only raw 0, no cluster display.
+ *              the plan refuses every readable value but 7 (codingRefusal).
  *   selfstart  onNewNavigationStatus()'s call of setNaviStreamStatus
  *              retargeted to requestStream() (same `this`), and
  *              requestStream()'s opening test, `not streaming && focus mode
@@ -30,17 +30,17 @@
  *              or not a navigation status follows it (in memory only).
  *   screen     the KombiVariant -> screen-size helper's fall-through: class 2
  *              reads 12.3 as class 0 does, so aapd uses aapd.conf's 12.3
- *              geometry instead of its built-in 800x480 default. Class 1
- *              (raw 10) reads 10.25 as shipped: its geometry goes there.
+ *              geometry instead of its built-in 800x480 default.
  *   confpath   the path aapd reads its configuration from, /etc/aapd.conf,
  *              made /run/aapd.conf: a copy of aapd.conf with the cluster
  *              geometry, which boot recovery writes there for a start it
  *              arms (inmem.js).
  *
  * The sites are found in each build by aapd_locate.js; a build where any
- * of them but readystart is not found is refused, and any build where
- * those are found and verify is planned, with readystart where it is
- * found: no list of builds decides it. `plan` reads aapd on
+ * of them is not found is refused, and any build where all are found and
+ * verify is planned: no list of builds decides it. The one exception is a
+ * build without the ready start's site (the locator's `absent`): it is
+ * planned without it, at patch revision 2. `plan` reads aapd on
  * disk, which must be the pristine build (every site stock), and
  * aapd.conf, which must have the entries the geometry needs and hold none
  * of our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
@@ -106,13 +106,16 @@ var SITES = EDITS.concat([['confpath', 'confpath'], ['readystart', 'readystart']
  * the edits' bytes (gate 7, call 5, guard 16, screen at most 16), twice
  * over. */
 var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 16 + 16);
+/* binOther's words for a file a car software update replaced. */
+var REPLACED = /^its build-id differs$/;
 /* The patch's revision, kept in the plan's record (inmem.js) and in an
  * earlier release's patch record. Boot recovery keeps it when it turns a
  * patch off, and an install applies again a patch boot recovery turned off
  * only when this revision is newer than the turned-off one (patchd.js). 2:
  * requestStream goes ahead only while the phone's cluster display is set
  * up. 3: the stream is also asked for when the phone sets the display up
- * (readystart). */
+ * (readystart). A plan for a build without the ready start's site is
+ * revision 2. */
 var PATCH_REV = 3;
 
 /* /dev/shm/rawcodingdata, the coding image CodingShmApp publishes: a 0x2c
@@ -120,7 +123,7 @@ var PATCH_REV = 3;
  * and carplay's CodingKOMBI_HUD is the 150 bytes at block offset 0x75a;
  * KI_KOMBI_VARIANT is getBits(0, 0x7e, 1) of it. carplay_patch.js reads
  * it through readCoding too. */
-var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1 };
+var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1, want: 7 };
 
 var hashes = new WeakMap();
 function sha256(buf) {
@@ -142,16 +145,16 @@ function readCoding(p) {
 }
 
 /* Why the patch cannot work with a coding readCoding read ({variant} or
- * {err}), or null. Every coded cluster takes it: KI_KOMBI_VARIANT 0 codes
- * none (aapd's and carplay's NOT_ACTIVE). A coding that cannot be read is
- * no refusal: the patch is then planned for a variant-7 car, on trial. */
+ * {err}), or null. The map's slot, safe area and crop are those of the
+ * KI_KOMBI_VARIANT 7 cluster (high_4_1); 0 codes no cluster display, and
+ * every other value another cluster. A coding that cannot be read is
+ * planned as 7, on trial; boot recovery plans it again once it reads
+ * otherwise (recovery.js codingMoved). */
 function codingRefusal(cd) {
-    return !cd.err && cd.variant === 0 ? 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)' : null;
+    if (cd.err || cd.variant === CODING.want) return null;
+    return cd.variant === 0 ? 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'
+        : 'not supported on this cluster (KI_KOMBI_VARIANT ' + cd.variant + '; the map is made for KI_KOMBI_VARIANT ' + CODING.want + ')';
 }
-
-/* The KOMBI_DISPLAY screen size aapd looks the cluster up by for a coding
- * (its "screen" edit: 10.25 for KI_KOMBI_VARIANT 10, else 12.3). */
-function screenFor(cd) { return !cd.err && cd.variant === 10 ? '10.25' : '12.3'; }
 
 /* The located binary: { loc, size, sha256, bad: [why an edit is not
  * found] }, once per content. A locator failure is a reason like any
@@ -167,15 +170,16 @@ function classify(buf) {
         }
         if (!loc.elf) bad.push(loc.reason);
         else EDITS.forEach(function (e) { if (!loc[e[0]].ok && bad.indexOf(loc[e[0]].reason) < 0) bad.push(loc[e[0]].reason); });
-        /* inMem: why the patch in memory cannot be planned for it, the
-         * config path included. The ready start is planned where it is
-         * found and verifies; a build without it gets the other edits, as
-         * releases before it planned them (readyStart). */
+        /* inMem: why the patch in memory cannot be planned for it: the
+         * config path, and the ready start unless its site is absent from
+         * the build (readyStart). */
         var inMem = bad.slice();
-        if (loc.elf) ['confpath'].forEach(function (k) {
-            var why = !loc[k] ? k + ': not located' : !loc[k].ok ? loc[k].reason : null;
-            if (why && inMem.indexOf(why) < 0) inMem.push(why);
-        });
+        if (loc.elf) {
+            var cw = !loc.confpath ? 'confpath: not located' : !loc.confpath.ok ? loc.confpath.reason : null;
+            if (cw && inMem.indexOf(cw) < 0) inMem.push(cw);
+            var rs = loc.readystart;
+            if (rs && !rs.ok && !rs.absent && inMem.indexOf(rs.reason) < 0) inMem.push(rs.reason);
+        }
         classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem };
     }
     return classified[h];
@@ -217,9 +221,10 @@ function trusted(file) {
 }
 
 function binOther(cur, orig) {
-    if (cur.length !== orig.length) return 'its size differs';
     var a = buildId(cur), b = buildId(orig);
-    if (a && b) return a === b ? null : 'its build-id differs';
+    if (a && b && a !== b) return 'its build-id differs';
+    if (cur.length !== orig.length) return 'its size differs';
+    if (a && b) return null;
     for (var i = 0, n = 0; i < cur.length; i++) if (cur[i] !== orig[i] && ++n > SAME_BUILD_MAX_DIFF) return 'more than ' + SAME_BUILD_MAX_DIFF + ' bytes differ';
     return null;
 }
@@ -408,6 +413,10 @@ function cmdRevert(t, yes, force, dropBackup) {
     plans.forEach(function (x) {
         if (x.p && x.p.err) { left.push(x.p.err + '; ' + x.file + ' left as it is'); return; }
         if (!x.p || (x.cur && x.p.out.equals(x.cur) && !x.modeBad)) return;
+        /* Another build by its build-id (a car software update replaced
+         * it): with --drop-backup its backup, of a build no longer there,
+         * goes and the file stays. */
+        if (x.p.other && !force && dropBackup && REPLACED.test(x.p.other)) { process.stdout.write(x.file + ' is another build than its backup (' + x.p.other + '); left as it is\n'); return; }
         if (x.p.other && !force) { left.push(x.file + ' is another build than its backup (' + x.p.other + '); left as it is (--force overwrites it)'); return; }
         if (!yes) die('pass --yes to proceed');
         /* At its original already: only the mode and owner. */
@@ -443,7 +452,8 @@ function cmdRevert(t, yes, force, dropBackup) {
 function plans() { return require('./carplay_patch.js'); }
 
 /* The sites the plan of the classified image `c` edits: every site, the
- * ready start only where it is found and verifies (readyStart). */
+ * ready start where the build has it (readyStart; classify refuses one
+ * found but changed). */
 function readyStart(c) { return !!c.loc.readystart && c.loc.readystart.ok; }
 function planSites(c) { return SITES.filter(function (e) { return e[0] !== 'readystart' || readyStart(c); }); }
 var NAMES = { gate: 'gate', call: 'selfstart-call', guard: 'selfstart-guard', screen: 'screen', confpath: 'confpath', readystart: 'readystart' };
@@ -499,12 +509,12 @@ function cmdPlan(t, dpi, card, outFile, confOut) {
     var o = plans().overlay(buf, p.text);
     if (o.err || !o.buf.equals(out)) die('refusing: the plan does not reproduce the edited image (' + (o.err || 'bytes differ') + ')');
     var copy;
-    try { copy = Buffer.from(conf.transform(text.toString('utf8'), dpi, card, screenFor(cd)), 'utf8'); } catch (e) { die('refusing: ' + t.conf + ': ' + e.message); }
+    try { copy = Buffer.from(conf.transform(text.toString('utf8'), dpi, card), 'utf8'); } catch (e) { die('refusing: ' + t.conf + ': ' + e.message); }
     writeFileWhole(confOut, copy);
     writeFileWhole(outFile, p.text);
     process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: c.loc.version ? 'aapd ' + c.loc.version : label(c), sha256: c.sha256, size: buf.length, edits: p.edits,
-        coding: cd.err ? 'unreadable' : 'ok', writes: { dpi: dpi, card: card, crop: conf.srcCrop(card, dpi), screen: screenFor(cd) },
-        planSha256: sha256(Buffer.from(p.text)), rev: PATCH_REV, copies: { conf: sha256(copy) }, inputs: { conf: sha256(text) } }) + '\n');
+        coding: cd.err ? 'unreadable' : 'ok', variant: cd.err ? null : cd.variant, writes: { dpi: dpi, card: card, crop: conf.srcCrop(card, dpi) },
+        planSha256: sha256(Buffer.from(p.text)), rev: readyStart(c) ? PATCH_REV : 2, record: readyStart(c) ? 1 : 2, copies: { conf: sha256(copy) }, inputs: { conf: sha256(text) } }) + '\n');
 }
 
 /* `overlay`: the edit lines of `status` for aapd with the plan laid over it
@@ -586,7 +596,7 @@ function main() {
     else { process.stderr.write('usage: aapd_patch.js status|probe [<file>]|plan|overlay|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--out <plan>] [--conf-out <copy>] [--plan <plan>] [--conf-copy <copy>] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { CODING: CODING, SHIPPED: SHIPPED, PATCH_REV: PATCH_REV, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal, screenFor: screenFor,
+module.exports = { CODING: CODING, SHIPPED: SHIPPED, PATCH_REV: PATCH_REV, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal,
     foreignIn: foreignIn };
 
 if (require.main === module) main();
