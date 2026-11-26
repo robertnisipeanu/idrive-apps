@@ -795,7 +795,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     if (!spec.follows.empty())
         note_ahead(i);
     if (!spec.pairs_with.empty())
-        t.takeovers = 0;   /* its one take-over (take_over) */
+        t.takeovers = 0;   /* a new episode of its take-overs (take_over) */
     t.watch_ms = now_ms;
     port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);
@@ -1069,7 +1069,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     t_[i].lost_parked = false;
     t_[i].unmapped_ms = -1;
     if (!specs_[i].pairs_with.empty())
-        t_[i].takeovers = 0;   /* its one take-over (take_over) */
+        t_[i].takeovers = 0;   /* a new episode of its take-overs (take_over) */
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.remap = t.from_load = t.lock_takeover = false;
@@ -1170,10 +1170,15 @@ void SlotManager::take_over(int i, int64_t now_ms)
          * it over. */
         if (!takes(i, row->content) || row->klass != spec.content_class)
             return;
-        /* A small scene: one unmap, then the HMI maps it again behind ours;
-         * no more until ours is shown or asked for again. */
-        if (!spec.pairs_with.empty() && t.takeovers > 0)
-            return;
+        /* A small scene: once the KOMBI can show ours (small_ready_ms), an
+         * unmap, then the HMI maps it again behind ours; again, paced, while
+         * it is still or again in front, kSmallTakeOvers at most until ours
+         * is shown or asked for again. */
+        if (!spec.pairs_with.empty()) {
+            const int64_t ready = small_ready_ms(i, now_ms);
+            if (t.takeovers >= kSmallTakeOvers || ready < 0 || now_ms < ready)
+                return;
+        }
         for (const SlotInfo &s : slots_[spec.slot])
             if (s.map_status == 3 && holder_of(s.content, s.slot) == Holder::Stock && takes(i, s.content) &&
                 s.klass == spec.content_class)
@@ -1207,6 +1212,25 @@ void SlotManager::take_over(int i, int64_t now_ms)
         t.ahead.erase(s.content);   /* mapped again, it is behind ours */
         port_->take_over(spec, s.content);
     }
+}
+
+int64_t SlotManager::small_ready_ms(int i, int64_t now_ms) const
+{
+    const Target &t = t_[i];
+    if (t.status.state != TargetState::Parked)
+        return -1;
+    int64_t from = t.since_ms;
+    auto s = subs_.find(specs_[i].scene_id);
+    if (s != subs_.end() && !s->second.empty()) {
+        int64_t sub = INT64_MAX;
+        for (const auto &kv : s->second)
+            sub = std::min(sub, kv.second.since_ms);
+        from = std::max(from, sub);
+    } else if (sub_lines_ && watching(t, now_ms)) {
+        return -1;   /* its renderer not subscribed yet */
+    }
+    /* Not observable (no RAMSES console): parked is all there is to go by. */
+    return from + kSmallTakeOverSettleMs;
 }
 
 /* Released and asked for again as a loss (settle_loss): a lock keeps the
@@ -1913,8 +1937,11 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
                 at(t.since_ms + kStartTimeoutMs);
             break;
         case TargetState::Parked:
-            if (specs_[i].take_over_stock && t.contend)
+            if (specs_[i].take_over_stock && t.contend) {
                 at(t.takeover_ms);
+                if (!specs_[i].pairs_with.empty() && t.takeovers < kSmallTakeOvers)
+                    at(small_ready_ms((int)i, now_ms));
+            }
             at(slot_poll_ms_);
             break;
         case TargetState::Lingering: at(t.since_ms + specs_[i].linger_ms); break;

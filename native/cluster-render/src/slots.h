@@ -207,7 +207,9 @@
  *   and its top layout: the KOMBI shows whichever class the neighbour
  *   slots' state calls for. Either of the two shown, the other parked
  *   behind it is no loss and no take-over. The small one takes over at
- *   most once until it is shown or asked for again. A hold that has a
+ *   most kSmallTakeOvers times until it is shown or asked for again,
+ *   each once it has been parked and its renderer subscribed
+ *   kSmallTakeOverSettleMs, the 1.5 s spacing kept. A hold that has a
  *   small scene it may ask for does not yield to take_over_contents of
  *   the small one's class; one without (none, given up, refused) does.
  *
@@ -479,6 +481,15 @@ public:
      * first gap is then the least to the next. */
     static const int64_t kTakeOverMs[6];
     static const int64_t kTakeOverSettleMs = 10000;
+    /* A hold's small scene (TargetSpec::pairs_with) takes over only once it
+     * is parked and its renderer subscribed (when that can be read), this
+     * long after the later of the two, so the KOMBI can show ours when the
+     * HMI's goes; and at most kSmallTakeOvers times, on the kTakeOverMs[]
+     * steps, from being asked for until it is released or shown (car Test
+     * 5b, 26 Nov: unmaps sent within 60 ms of ours mapped did nothing, or
+     * the HMI's was mapped again in front). */
+    static const int64_t kSmallTakeOverSettleMs = 300;
+    static const int kSmallTakeOvers = 3;
     /* A report of a disabled slot holds its targets' requests this long at
      * most, in case the display never reports the slot again. */
     static const int64_t kLockTrustMs = 30000;
@@ -846,6 +857,9 @@ private:
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);
+    /* A small scene's take-over may go from then on (kSmallTakeOverSettleMs);
+     * -1: not yet (not parked, or its renderer not subscribed). */
+    int64_t small_ready_ms(int i, int64_t now_ms) const;
     /* Accepted, not mapped for kNotMappedMs: released and asked for again. */
     void not_mapped(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
