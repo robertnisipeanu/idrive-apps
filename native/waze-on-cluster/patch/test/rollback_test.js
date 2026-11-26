@@ -851,7 +851,8 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
         fs.writeFileSync(AC, AA_CONF, { mode: 0o644 });
         var nrPlan = aPlan(), nrNew = aKind(), nrRel = aKind(d), nrV = null;
         try { nrV = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-aapd.json'), 'utf8')).v; } catch (e) {}
-        ok(v + ' over this version\'s Android Auto plan of a build without the ready start: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
+        if (v === NEXT) ok(v + ' (this version) plans Android Auto for a build without the ready start, record v 2, and reads it', nrPlan === 'OK' && nrV === 2 && nrRel !== 'null', [nrPlan, nrV, nrRel].join(' | '));
+        else ok(v + ' over this version\'s Android Auto plan of a build without the ready start: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
             nrPlan === 'OK' && nrV === 2 && nrNew !== 'null' && nrRel === 'null', [nrPlan, nrV, nrNew, nrRel].join(' | '));
         aClear(); aClearInmem();
     }

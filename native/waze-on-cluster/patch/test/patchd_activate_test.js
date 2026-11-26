@@ -1134,6 +1134,7 @@ async function main() {
         earlierPatch();
         fs.writeFileSync(TGT + '.fw', buf, { mode: 0o755 });
         fs.renameSync(TGT + '.fw', TGT);
+        headUnitStart();   /* the update is in place when carplay starts */
     }
     updated(NEWER);
     st = await daemonStatus();
@@ -1141,8 +1142,8 @@ async function main() {
         fs.existsSync(BAK), JSON.stringify(st));
     r = hook('activate');
     ok('a car software update beside our backup: the install drops the backup, leaves carplay as it is and plans it', r.code === 0 && fs.readFileSync(TGT).equals(NEWER) &&
-        !fs.existsSync(BAK) && !!rec() && rec().enabled === true && armed() && !r.result.conflict && /map patch armed in memory/.test(r.result.status || '') && ro(),
-        JSON.stringify([r.result, rec()]));
+        !fs.existsSync(BAK) && !!rec() && rec().enabled === true && armed() && !r.result.conflict && /map patch armed in memory/.test(r.result.status || '') && ro() &&
+        !!marker() && marker().action === 'apply', JSON.stringify([r.result, marker(), ro()]));
     hook('deactivate');
     var NOID = Buffer.concat([SRCBUF, Buffer.from('appended')]);
     updated(NOID);

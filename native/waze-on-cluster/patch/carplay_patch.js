@@ -383,9 +383,11 @@ function cmdStatus(target, codingFile) {
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
     /* A backup the patch would refuse (another build's original, or
-     * not the original recorded) makes the build one this tool cannot patch. */
+     * not the original recorded) makes the build one this tool cannot patch,
+     * unless the target is another build by its build-id (a car software
+     * update replaced it: the backup goes when the patch is planned). */
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
-    if (hasBak && !bad.length) {
+    if (hasBak && !bad.length && !(p && p.b && p.b.other === 'its build-id differs')) {
         var b;
         try { b = checkedBackup(target, p.bc && !p.b.stock ? { buf: p.b.buf, c: p.bc } : null); } catch (e) { b = { err: e.message }; }
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
@@ -650,7 +652,7 @@ function cmdRevert(target, yes, force, dropBackup) {
      * with --drop-backup the backup, of a build no longer there, goes and
      * carplay stays. */
     if (b.other === 'its build-id differs' && !force && dropBackup) {
-        process.stdout.write('current ' + target + ' is another build than the backup (' + b.other + '); left as it is\n');
+        process.stdout.write('current ' + target + ' is another build than the backup (' + b.other + '); left as it is, nothing to do\n');
         drop();
         return;
     }

@@ -755,6 +755,12 @@ test('a conflict the install left alone is shown; CarPlay\'s Patch button stays 
             await until(text + ' ' + state, () => c.statusText() === text && !c.canEnable());
         }
     }
+    patch.conflict = null;
+    patch.announce('original', null, null);
+    await until('not patched', () => c.statusText() === 'Status: Not patched');
+    patch.conflict = 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)';
+    patch.announce('error', null, 'the patch in memory could not be planned (planned for KI_KOMBI_VARIANT 7, the car reads 4)');
+    await until('failed with an unsupported conflict', () => c.statusText() === 'Status: Not supported — this cluster' && !c.canEnable());
     patch.conflict = 'in-memory plan unusable: variant: slot 4 is not OTHER';
     patch.announce('unknown', null, null);
     await until('unusable plan', () => c.statusText() === 'Status: Failed — press Patch to try again' && c.canEnable());
@@ -920,6 +926,8 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D, removable: true, conflict: 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)' },
             'Status: Not supported — this cluster', [false, true, false, false]],
         [{ state: 'unknown', density: 180, densities: D, conflict: 'in-memory plan unusable: readystart: not located' }, 'Status: Failed — press Patch to try again', [true, true, false, false]],
+        [{ state: 'error', reason: 'the patch in memory could not be planned (planned for KI_KOMBI_VARIANT 7, the car reads 4)', density: 180, densities: D,
+            conflict: 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)' }, 'Status: Not supported — this cluster', [false, true, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.conf not usable: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS' }, 'Status: Changed by another tool', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)' }, 'Status: Changed by another tool', [false, false, false, false]],
         [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Status: Not supported on this head unit', [false, false, false, false]],

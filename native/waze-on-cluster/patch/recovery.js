@@ -1514,11 +1514,12 @@ function runBoot(name) {
 function retryPlan(name, cb, waitMs, planMs, anyCoding, counter) {
     var rec = inmem.readRecord(name);
     if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
-    /* A car software update replaced the service's binary since: it runs
+    /* A car software update replaced the service's binary since, or the
+     * record cannot tell (an earlier release's, with no build-id): it runs
      * as it ships until the next install or the Patch button plans it. */
     var now = inmem.buildOf(TARGETS[name].target);
-    if (rec.build && now !== rec.build) {
-        log(name + ': another build than the patch was to be planned for (a car software update): ' + name + ' runs as it ships until the next install or its Patch button');
+    if (!rec.build || now !== rec.build) {
+        log(name + ': ' + (rec.build ? 'another build than the patch was to be planned for (a car software update)' : 'the plan to make names no build') + ': ' + name + ' runs as it ships until the next install or its Patch button');
         try { inmem.remove(name); } catch (e) {}
         cb(false);
         return;

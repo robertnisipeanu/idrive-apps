@@ -868,6 +868,32 @@ function nextStart(t, pid) {
     ok('deactivate over an aapd a car software update replaced: exit 0, aapd left as it is, the backups dropped, aapd.conf as it ships', r.code === 0 && sha(fw4.bin) === sha(upd) &&
         sha(fw4.conf) === sha(SRCCONF) && !fs.existsSync(fw4.bin + '.woc-orig') && !fs.existsSync(fw4.conf + '.woc-orig'), r.out);
 
+    /* The same with aapd.conf another build than its backup too: a
+     * conflict, nothing dropped or planned. */
+    var fw5 = patchdUnit();
+    patcher(fw5, ['apply', '--yes']);
+    fs.writeFileSync(fw5.bin, upd);
+    fs.writeFileSync(fw5.conf, SRCCONF.toString('utf8') + '\n ');
+    var c5 = sha(fw5.conf);
+    r = hook(fw5, 'activate');
+    ok('activate over a replaced aapd and an aapd.conf changed beside our backups: a conflict, nothing dropped, planned or written', r.code === 0 &&
+        /another build than our backup|aapd\.conf/.test(JSON.stringify(r.result.aa)) && sha(fw5.bin) === sha(upd) && sha(fw5.conf) === c5 &&
+        fs.existsSync(fw5.bin + '.woc-orig') && noAaInmem(fw5), r.out);
+
+    /* A plan without the ready start that boot recovery turned off after a
+     * crash stays off at the next install: its revision, 2, is the one this
+     * version plans for that build. */
+    var nrr = patchdUnit(), nrbin = Buffer.from(SRC);
+    nrbin[LOC.readystart.offset - 6] = 0xdf;
+    fs.writeFileSync(nrr.bin, nrbin);
+    r = hook(nrr, 'activate');
+    var nrec = aaRecord(nrr);
+    ok('activate over a build without the ready start: planned, record v 2 at revision 2', r.code === 0 && !!nrec && nrec.v === 2 && nrec.rev === 2 && nrec.enabled === true, r.out);
+    fs.writeFileSync(path.join(nrr.d, 'var', 'inmem-aapd.json'), JSON.stringify(Object.assign(nrec, { enabled: false, by: 'recovery', fails: 1, why: 'crash' })) + '\n');
+    r = hook(nrr, 'activate');
+    ok('its plan boot recovery turned off after a crash stays off at the next install', r.code === 0 && aaRecord(nrr).enabled === false &&
+        /boot recovery removed the patch after the patched aapd crashed/.test(r.result.aa && r.result.aa.status), r.out);
+
     /* A removal passes only when nothing of Android Auto's is left to undo:
      * aapd restored but aapd.conf not is refused. */
     var half = patchdUnit();

@@ -754,7 +754,7 @@ next install of this tool, which plans it as any other build (on trial),
 or its Patch button. A record of a plan still to make (`needsPlan`) keeps
 the GNU build-id of the file it was for (`build`); the boot step and the
 watcher plan it again only for that build, and drop the record over
-another one. A patch turned off with Remove patch stays off across the
+another one or one that names none (an earlier release's). A patch turned off with Remove patch stays off across the
 update, until the Patch button; one boot recovery turned off stays off
 for the file it turned off, and the next install plans another build
 again, on trial.
@@ -1076,11 +1076,12 @@ reverted, does not offer the phone, and the ShowUI URL of the cluster
 stream that display would carry.
 
 On those paths a release from 0.13.0 on reads the patches in memory this
-version left. Its plans are theirs, except one: Android Auto's plan for an
-aapd build without the ready start's site, which those releases would not
-make. Its record is `v: 2`, which their `readRecord` does not read, so they
-find no patch to arm: aapd runs as it ships and their status reads it not
-patched (`rollback_test.js`).
+version left. A plan made for `KI_KOMBI_VARIANT` 7 is the plan they make.
+Two are plans they would not make: one made while the coding could not be
+read, and Android Auto's for an aapd build without the ready start's site.
+Their records are `v: 2`, which their `readRecord` does not read, so they
+find no patch to arm, the service runs as it ships and their status reads
+it not patched (`rollback_test.js`).
 
 **Android Auto.** Every release from 0.8.0 to 0.12.1 writes its Android
 Auto patch to aapd and aapd.conf, with backups; 0.8.0–0.10.10 the
@@ -1461,9 +1462,10 @@ reported in the hook's result (`"aa": {"status", "conflict"}`) and nothing
 is armed. A patch Remove patch turned off stays off for any aapd and
 aapd.conf, a firmware update's included, until the Patch button. A patch
 boot recovery turned off stays off, in memory or (an earlier release's) in
-the files, unless this version's `PATCH_REV` is newer than the turned-off
-one or a firmware update replaced aapd or aapd.conf (planned again, on
-trial); what a restore cut short left of it in the files is put back. When CarPlay's step fails, Android Auto's does not run.
+the files, unless the revision this version plans for that build
+(`PATCH_REV`, 2 for a build without the ready start's site) is newer than
+the turned-off one or a firmware update replaced aapd or aapd.conf
+(planned again, on trial); what a restore cut short left of it in the files is put back. When CarPlay's step fails, Android Auto's does not run.
 `deactivate` turns the patch in memory off (record, plan and copy deleted)
 and puts back an earlier release's patch left in the files.
 
@@ -1569,8 +1571,9 @@ and a failing patch is not tried again:
   next start 2 s again. A start that fails is tried again the same way.
 - **The patch stays off** while its record names the restore (the plan's
   record `by: "recovery"`, or an earlier release's patch record): an
-  install leaves it off, unless its patch revision (`aapd_patch.js`
-  `PATCH_REV`, kept in the record as `rev`, 1 when there is none) is
+  install leaves it off, unless the patch revision it plans for that
+  build (`aapd_patch.js` `PATCH_REV`, 2 for a build without the ready
+  start's site; kept in the record as `rev`, 1 when there is none) is
   newer than the removed patch's, or the plan's record no longer describes
   aapd and aapd.conf (a firmware update replaced one); Android Auto's Patch button applies it
   again. `patchd` reports the restore as `recovered` with

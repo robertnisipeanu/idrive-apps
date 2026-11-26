@@ -810,7 +810,7 @@ class WazeClusterControl extends EventEmitter {
             return this._lastPatchCmd === 'revert' ? t('Removing patch…') : t('Patching…');
         }
         if (ps.state === 'error') {
-            return failedText(ps, 'CarPlay', this.canEnable());
+            return unsupported(ps.conflict) ? conflictText(ps.conflict, 'CarPlay') : failedText(ps, 'CarPlay', this.canEnable());
         }
         if (ps.recovered && ps.state !== 'patched' && !unsupported(ps.conflict)) {
             return t('Removed — head unit kept restarting');
@@ -1021,7 +1021,7 @@ class WazeClusterControl extends EventEmitter {
             return aa.reason === 'reverting' ? t('Removing patch…') : t('Patching…');
         }
         if (aa.state === 'error' || aa.error) {
-            return failedText(aa, 'Android Auto', this.canEnableAa());
+            return unsupported(aa.conflict) ? conflictText(aa.conflict, 'Android Auto') : failedText(aa, 'Android Auto', this.canEnableAa());
         }
         if (aa.pending && !(aa.pending === 'apply' && unsupported(aa.conflict))) {
             return aa.pending === 'revert' ? t('Removed after restart') : t('Patched after restart');

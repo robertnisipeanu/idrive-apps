@@ -861,9 +861,9 @@ function readState(cb) {
         var hu = headUnit.refused();
         var conflict = hu ? notSupported(hu)
             : err && !text ? 'carplay status unreadable: ' + err.message
+            : other && !replaced ? 'carplay is another build than our backup'
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
-            : other && !replaced ? 'carplay is another build than our backup'
             : codingConflict(coding) || foreignStart(CP);
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -997,6 +997,10 @@ function recoveredAa() {
     return rec && rec.by === 'recovery' ? { why: rec.why === 'crash' ? 'crash' : 'boot', rev: rec.rev || 1 } : null;
 }
 var AA_PATCH_REV = require('./aapd_patch.js').PATCH_REV;
+/* The patch revision this version plans for the build a record of its own
+ * describes: 2 for a build without the ready start's site (the plan names
+ * no readystart), else AA_PATCH_REV. */
+function aaPlanRev(rec) { return Array.isArray(rec.edits) && rec.edits.indexOf('readystart') < 0 ? 2 : AA_PATCH_REV; }
 
 /* The Android Auto patch as aapd_patch.js status reads it: { state:
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
@@ -1052,7 +1056,7 @@ function readAaState(cb, fresh) {
         /* Our backups beside another aapd (a firmware update): not ours to
          * undo, so a removal leaves it, as carplay's does. */
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
-        st.replaced = st.otherBuild && /another build than its backup: its build-id differs/.test(get('restorable'));
+        st.replaced = st.otherBuild && /^no \([^;()]* is another build than its backup: its build-id differs\)$/.test(get('restorable'));
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
         else if (known) st.reason = 'partly patched; Android Auto\'s Patch button applies the rest';
@@ -1907,10 +1911,10 @@ function inmemApply(t, args, noRestart, done, run) {
             });
         } : function (cb) { cb(null); })(function (rErr) {
             if (rErr) { done(rErr, null, null); return; }
-            plan(before, drec, st.coding);
+            plan(before, drec);
         });
     });
-    function plan(before, drec, coding) {
+    function plan(before, drec) {
         var prior = inmem.readRecord(t.name);
         inmem.makePlan(t.name, args, tmo(60000), function (pErr, rec) {
             if (pErr) {
@@ -1920,7 +1924,7 @@ function inmemApply(t, args, noRestart, done, run) {
                 return;
             }
             var ran = false;
-            if (t === CP && before && drec && drec.patched === true && drec.proven === true && drec.trial !== true) {
+            if (t === CP && before && drec && drec.patched === true && drec.proven === true && drec.trial !== true && rec.coding !== 'unreadable') {
                 try {
                     var a = require('./carplay_patch.js').againstPlan(before, fs.readFileSync(TARGET), fs.readFileSync(inmem.paths('carplay').plan, 'utf8'));
                     ran = !a.err && a.onlyPlan && a.same;
@@ -2010,12 +2014,12 @@ function afterStart(t, action, cb, tries, planText) {
 
 /* An enabled patch in memory the coding keeps from working: its record,
  * plan and copies go, and nothing is armed. */
-function dropPlan(t) {
+function dropPlan(t, why) {
     var rec = inmem.readRecord(t.name);
     if (!rec || rec.enabled !== true) return;
     inmem.disarm(t.name);
     try { inmem.remove(t.name); } catch (e) { log(t.name + ': ' + e.message); }
-    log(t.name + ': the patch in memory goes: ' + codingConflict([null, String(require('./aapd_patch.js').readCoding(CODING).variant)]));
+    log(t.name + ': the patch in memory goes: ' + why);
 }
 
 /* The install hooks' step for carplay: cb(code, {status, conflict}). */
@@ -2061,7 +2065,7 @@ function inmemHook(which, cb) {
          * ours still goes back to stock (Remove patch semantics: nothing
          * else is written), and a plan made for another coding goes. */
         var cc = codingConflict(st.coding === null ? null : [null, String(st.coding)]), conflict = cc || foreignStart(CP);
-        if (cc) dropPlan(CP);
+        if (cc) dropPlan(CP, cc);
         if (conflict) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'carplay left as it is: ' + conflict, conflict); return; }
             revert(true, true, function (rErr) {
@@ -2136,7 +2140,7 @@ function aaHook(which, cb) {
          * off at this patch revision or a newer one, and another build, or
          * a newer revision, is planned again on trial. */
         if (!ours && rec && rec.enabled === false && (rec.by === 'user' ||
-            (rec.by === 'recovery' && inmem.describes('aapd', rec) && (rec.rev || 1) >= AA_PATCH_REV))) {
+            (rec.by === 'recovery' && inmem.describes('aapd', rec) && (rec.rev || 1) >= aaPlanRev(rec)))) {
             out(0, rec.by === 'recovery' ? recoveredWords(rec.fails, rec.why) : 'the patch was turned off; its Patch button applies it');
             return;
         }
@@ -2166,7 +2170,8 @@ function aaHook(which, cb) {
          * still goes back to stock. Any other build is planned, on trial
          * until it ran healthy on this car. */
         var conflict = st.conflict && !aaRetryable(st.conflict) ? st.conflict : null;
-        if (codingConflict(st.coding === null ? null : [null, String(st.coding)])) dropPlan(AA);
+        var acc = codingConflict(st.coding === null ? null : [null, String(st.coding)]);
+        if (acc) dropPlan(AA, acc);
         if (conflict) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'aapd left as it is: ' + conflict, conflict); return; }
             revertFile(AA, true, true, function (rErr) {

@@ -234,9 +234,10 @@ function makePlan(name, args, timeoutMs, cb) {
         var proven = sum.coding === 'ok' && same && prior.proven === true && prior.trial !== true &&
             (prior.enabled === true || prior.by === 'user');
         var onTrial = !proven;
-        /* v 2 (sum.record): a plan releases before this one must not arm,
-         * as their readRecord reads v 1 only. */
-        var rec = { v: sum.record === 2 ? 2 : 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
+        /* v 2: a plan releases before this one would not make (sum.record
+         * 2, or made while the coding could not be read), which they must
+         * not arm: their readRecord reads v 1 only. */
+        var rec = { v: sum.record === 2 || sum.coding === 'unreadable' ? 2 : 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
             build: sum.build, version: sum.version, planSha256: sum.planSha256, edits: sum.edits, writes: sum.writes, args: args,
             inputs: inputs, copies: copies, proven: proven, trial: onTrial, at: new Date().toISOString() };
         if (sum.rev) rec.rev = sum.rev;
