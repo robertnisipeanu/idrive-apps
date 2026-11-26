@@ -675,11 +675,9 @@ try {
     try { fs.readdirSync(dir).forEach(function (f) { fs.unlinkSync(path.join(dir, f)); }); fs.rmdirSync(dir); } catch (e) {}
 }
 
-/* The cluster-coding gate and the patch record: a car not coded
- * KI_KOMBI_VARIANT 7, or whose coding cannot be read, is planned only with
- * --unproven, the plan's summary saying how the coding read; a revert of an
- * earlier release's patch records whether it ran healthy, with the URLs and
- * the geometry it held. */
+/* The cluster coding and the patch record: the plan's summary says how the
+ * coding read; a revert of an earlier release's patch records whether it ran
+ * healthy, with the URLs and the geometry it held. */
 function codingAndRecord() {
     var r, ct = path.join(dir, 'carplay_coding');
     function fresh() {
