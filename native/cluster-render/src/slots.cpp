@@ -317,7 +317,9 @@ void SlotManager::follow(int64_t now_ms)
         const bool boxed = mapped || t.kept || (t.requested && t.box_ms >= 0 && now_ms - t.box_ms < kNotMappedMs);
         if (boxed != t.boxed && !small)
             log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
-                     boxed ? "the box is mapped: held while the map is shown" : "no box mapped: not held",
+                     boxed                              ? "the box is mapped: held while the map is shown"
+                     : specs_[i].table_slots.empty() ? "no box mapped: not held"
+                                                        : "no box mapped: held while the map is shown all the same",
                      (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
         t.boxed = boxed;
         /* While the map is kept through a lock or mapped again after it, a
@@ -330,7 +332,12 @@ void SlotManager::follow(int64_t now_ms)
             t.lock_hold = true;
         const bool lead_on = lead >= 0 && (t_[lead].status.state == TargetState::Shown ||
                                            (lead_kept && (t.kept || (t.requested && (t.lock_hold || locked(i))))));
-        const bool shown = lead_on && !declined && boxed;
+        /* A small scene, and a hold whose slot comes from the table, do not
+         * follow the box (car Test 5d, 15:53:21: the box mapped again
+         * before ours showed first): wanted while the map is shown and its
+         * layers let it hold, the box there or not. */
+        const bool shown =
+            lead_on && !declined && (boxed || small || (!specs_[i].table_slots.empty() && specs_[i].slot));
 
         SlotInfo row;
         const uint64_t y = small ? 0 : yield_to(i, &row);
@@ -365,9 +372,7 @@ void SlotManager::follow(int64_t now_ms)
         }
         if ((y || t.given_up) && (t.requested || t.kept))
             release(i, now_ms);
-        /* A small scene does not follow the box: wanted while the map is
-         * shown and its layers let it hold, the box there or not. */
-        want(i, (small ? lead_on && !declined : shown && !y) && !t.given_up, true);
+        want(i, shown && !y && !t.given_up, true);
     }
 }
 
@@ -480,21 +485,22 @@ void SlotManager::move_hold(int i, uint64_t slot, const std::string &why, int64_
 {
     Target &t = t_[i];
     TargetSpec &spec = specs_[i];
-    char was[48] = "no slot before";
+    char was[96] = "no slot before";
     if (spec.slot)
-        std::snprintf(was, sizeof was, "was slot 0x%llx%s", (unsigned long long)spec.slot,
-                      t.requested ? ", released there" : "");
+        std::snprintf(was, sizeof was, "was slot 0x%llx%s%s", (unsigned long long)spec.slot,
+                      t.box_seen ? "" : ", before the box was seen", t.requested ? ", released there" : "");
     log_info("target %s: hold moves to slot 0x%llx, %s (%s); ours 0x%llx; slot 0x%llx %s", spec.name.c_str(),
              (unsigned long long)slot, why.c_str(), was, (unsigned long long)spec.scene_id, (unsigned long long)slot,
              rows_text(slot).c_str());
-    if (spec.slot)
+    if (spec.slot && t.box_seen)
         note_loss(i, "moved with the box to another slot", now_ms, true);
+    t.box_seen = true;
     take_down(i, now_ms);
     spec.slot = slot;
     t.verdict = false;
     t.removed_ms = -1;
     t.not_ready = 0;
-    t.slot_away = t.lock_away = t.lock_seen = t.lost_parked = false;
+    t.slot_away = t.lock_away = t.lock_seen = t.lost_parked = t.refused_wait = false;
     t.ahead.clear();
     t.fresh_retry = false;
     const TargetStatus &st = t.status;
@@ -1306,9 +1312,11 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
         return;
     }
-    /* A small scene: asked for again when its slot's status changes, or
-     * when it moves; never on the ladder, never refused for good, no loss. */
-    if (!specs_[i].pairs_with.empty()) {
+    /* A small scene, or a hold from the table before the box is seen (in
+     * its first slot, part 4e): asked for again when its slot's status
+     * changes, or when it moves; never on the ladder, never refused for
+     * good, no loss. */
+    if (!specs_[i].pairs_with.empty() || (!specs_[i].table_slots.empty() && !t.box_seen)) {
         take_down(i, now_ms);
         t.refused_wait = true;
         t.refused_status = slot_status(specs_[i].slot);
@@ -1482,6 +1490,8 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         const uint64_t to = specs_[i].table_slots.empty() ? 0 : reported_slot((int)i, rows, &why);
         if (to && to != specs_[i].slot)
             moves[(int)i] = {to, why};
+        else if (to)
+            t_[i].box_seen = true;
     }
     /* The stock HMI's content newly parked in a requested take-over target's
      * slot: mapped again behind ours. (target, content, its map status

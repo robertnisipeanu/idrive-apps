@@ -141,7 +141,9 @@ Every client's layers on a target are drawn in that target's scene.
   shown and the stock HMI's CarPlay turn box (content 0x01000310) is in its
   slot (0x105 or 0x103, found by itself with `guide_slots = auto`), the
   service covers that slot with an empty scene, so the box is hidden while
-  the map shows. So is the box in its top layout (0x01000314), shown while
+  the map shows. With `guide_slots = auto` that scene is kept there the
+  whole time the map shows (0x103 until the box is seen), box or not, so
+  the box always comes behind it. So is the box in its top layout (0x01000314), shown while
   a warning disables slots 0x101/0x102 (`guide_take_over`), by a second
   empty scene (`guide_small_scene_id`) kept in the box's slot (0x103 until
   the box is seen) the whole time the map shows, so the top layout comes

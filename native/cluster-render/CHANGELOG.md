@@ -24,6 +24,14 @@ before the KOMBI shows it in the middle (it did for ~0.3 s): once per
 warning end, not a take-over, never a loss; shown anyway, it is taken
 over as before.
 
+With `guide_slots = auto` the hold's own scene no longer follows the box
+either: it stays mapped the whole time the map is shown with the hold
+allowed (in 0x103 until the box is seen, then in the box's slot; the
+first move is not a loss), so when Apple Maps restarts its route the box
+comes back parked behind it instead of showing for ~0.2 s in the middle.
+Refused before the box is seen, it is asked for again when the slot's
+status changes. A hold on a listed slot still follows the box.
+
 A hold that yields to BMW's own content in its slot (content not in
 `guide_take_over`) no longer counts that as a loss, so it no longer gives
 up over it. A hold that has given up is asked for again when the target

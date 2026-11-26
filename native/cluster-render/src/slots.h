@@ -559,7 +559,8 @@ public:
      * hold (none has guide_hold false), one of take_over_contents is mapped
      * in its slot (shown or parked; while it is requested, also within
      * kNotMappedMs of the last pass that saw one: a take-over's unmap and
-     * the HMI's map again come in separate reports), no content outside
+     * the HMI's map again come in separate reports; a hold with
+     * table_slots and a slot, box or not, part 4e), no content outside
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
@@ -688,6 +689,10 @@ private:
         /* A hold: its unmap at a warning slot's return went (on_slots);
          * again once one of them is reported disabled. */
         bool return_unmapped = false;
+        /* A hold from the table: its slot was where a report showed the
+         * box (before: its first slot, left with no loss, and a refusal
+         * there waits for a status change as a small scene's). */
+        bool box_seen = false;
         /* The last mapping event (on_availability); kNoMapping: none since
          * the last request, or logged already. */
         int64_t mapped_ms = kNoMapping;

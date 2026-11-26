@@ -1770,14 +1770,16 @@ static const uint64_t kBox = 0x01000310, kBoxAlt = 0x01000315, kBelt = 0x0100031
 static const std::vector<uint64_t> kDefaultTakes = {kBox, kBelt};
 
 /* The rig with a hold of kGuideSlot following the map (target 3); from_table:
- * its slot from the slot table instead (guide_slots = auto); takes: its
+ * its slot from the slot table instead (guide_slots = auto), first_slot
+ * until then (0: none; load_holds gives kSmallFirstSlot); takes: its
  * take_over_contents. */
 struct GuideRig : Rig {
     static const int kGuide = 3;
-    explicit GuideRig(bool from_table = false, const std::vector<uint64_t> &takes = {kBox, kBoxAlt})
+    explicit GuideRig(bool from_table = false, const std::vector<uint64_t> &takes = {kBox, kBoxAlt},
+                      uint64_t first_slot = 0)
     {
         TargetSpec g;
-        g.name = "guide"; g.slot = from_table ? 0 : kGuideSlot; g.scene_id = kGuideScene; g.width = g.height = 16;
+        g.name = "guide"; g.slot = from_table ? first_slot : kGuideSlot; g.scene_id = kGuideScene; g.width = g.height = 16;
         g.linger_ms = 0; g.take_over_stock = true; g.follows = "map"; g.take_over_contents = takes;
         if (from_table)
             g.table_slots = {0x105, 0x103};
@@ -2416,7 +2418,7 @@ static size_t count(const std::string &text, const std::string &what)
 static const uint64_t kSmallScene = 0x010004f9, kTopSlot = 0x103;
 struct PairRig : GuideRig {
     static const int kSmall = 4;
-    PairRig() : GuideRig(true, kDefaultTakes)
+    explicit PairRig(uint64_t first_slot = 0) : GuideRig(true, kDefaultTakes, first_slot)
     {
         TargetSpec s = m.targets()[kGuide];
         s.name = "guide_small"; s.scene_id = kSmallScene; s.content_class = 1024; s.table_slots.clear();
@@ -2707,6 +2709,95 @@ static void guide_warning_over()
     ok("guide_hold 0: the box never touched at the warning's end", joined().find("take over") == std::string::npos);
 }
 
+/* Issue 281, part 4e: the main hold stays ready too (car Test 5d,
+ * 15:53:16-15:53:22: the box gone 5 s, then mapped again and shown before
+ * ours). As load_holds gives it, its slot 0x103 until the box is seen:
+ * with the map shown, both of ours mapped there, box or not; the box back,
+ * parked behind ours, no take-over; Hide off, both released. */
+static void guide_hold_ready()
+{
+    PairRig r(kTopSlot);
+    r.crows(kTopSlot, 1, {});
+    logged();
+    r.show_map();
+    joined();
+    r.pass();
+    const std::string asked = joined();
+    ok("4e: the map shown, no route: both of ours asked for in 0x103",
+       asked.find("request guide;") != std::string::npos && asked.find("request guide_small") != std::string::npos &&
+           r.guide_slot() == kTopSlot && r.m.targets()[PairRig::kSmall].slot == kTopSlot);
+    r.table(3, 3, 0, 0);
+    r.m.on_parked(kGuideScene, r.now);
+    r.m.on_parked(kSmallScene, r.now);
+    r.pass();
+    r.table(1, 3, 0, 0);
+    r.m.on_shown(kGuideScene, r.now);
+    r.pass(30000);
+    ok("no route for 30 s: ours shown, the small one parked, no traffic, not given up",
+       unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Shown &&
+           r.state(PairRig::kSmall) == TargetState::Parked && logged().find("given up") == std::string::npos);
+    /* A route: the box and its top layout mapped behind ours, in 0x103. */
+    r.table(1, 3, 3, 3);
+    r.pass(10000);
+    const std::string route = logged();
+    ok("a route: the box parked behind ours, nothing asked for or taken over, no move, no loss",
+       unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Shown && r.guide_slot() == kTopSlot &&
+           route.find("moves") == std::string::npos && route.find("loss") == std::string::npos);
+    bool kept = true;
+    for (int k = 0; k < 3; k++) {
+        /* 15:53:16.96: the box gone 5 s; 15:53:21.96: back. */
+        r.table(1, 3, 0, 0);
+        r.pass(5000);
+        kept = kept && unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Shown;
+        r.table(1, 3, 3, 3);
+        r.pass(15000);
+        kept = kept && unpolled(joined()).empty() && r.state(GuideRig::kGuide) == TargetState::Shown;
+    }
+    const std::string apple = logged();
+    ok("t5d 15:53:16-22: the box gone 5 s and back three times: ours kept shown, the box parked behind it, no "
+       "take-over, no request, no release",
+       kept && apple.find("take-over") == std::string::npos && apple.find("given up") == std::string::npos);
+    r.m.want(0, true, true, false);
+    r.pass(100);
+    const std::string off = joined();
+    ok("Hide off: both released",
+       count(off, "release guide") == 2 && off.find("release guide_small") != std::string::npos &&
+           r.state(GuideRig::kGuide) == TargetState::Idle && r.state(PairRig::kSmall) == TargetState::Idle);
+
+    /* Refused in 0x103 before the box is seen: asked for again when the
+     * slot's status changes, not refused for good. */
+    PairRig n(kTopSlot);
+    n.crows(kTopSlot, 1, {{kSmallScene, 0, 1024}});
+    n.show_map();
+    n.pass();
+    joined();
+    logged();
+    n.m.on_refused(kGuideScene, Refusal::NoSlot, "E_DCSM_PRIOTOOLOW", n.now);
+    n.pass(3000);
+    const std::string waiting = unpolled(joined());
+    n.crows(kTopSlot, 2, {{kSmallScene, 0, 1024}});
+    n.pass();
+    ok("refused in 0x103 before the box is seen: asked for again when its status changes, not for good",
+       waiting == "release guide" && unpolled(joined()) == "request guide" &&
+           logged().find("not asked for again until cluster-render restarts") == std::string::npos);
+
+    /* The box first seen in 0x105: both move there, not a loss. */
+    PairRig q(kTopSlot);
+    q.show_map();
+    q.pass();
+    joined();
+    logged();
+    q.crows(0x105, 2, {{kBox, 1, 0}, {kBelt, 3, 1024}});
+    q.pass(1100);
+    const std::string moved = logged();
+    ok("the box first seen in 0x105: both of ours move there, not a loss",
+       q.guide_slot() == 0x105 && q.m.targets()[PairRig::kSmall].slot == 0x105 &&
+           moved.find("hold moves to slot 0x105, where the slot table reports 0x1000310 (class 0, map status 1) (was "
+                      "slot 0x103, before the box was seen, released there)") != std::string::npos &&
+           moved.find("moved with the box") == std::string::npos &&
+           joined().find("request guide") != std::string::npos);
+}
+
 /* Part 4b: a route while the warning disables 0x101/0x102, as at car Test
  * 5b (26 Nov 15:03:38): the box parked in 0x103, its top layout shown; both
  * of ours asked for, then parked (the small one 300 ms before the end of
@@ -2827,8 +2918,9 @@ static void guide_small_race()
     /* Part 4c, Apple Maps, parked car (car Test 5c, 15:24:31-15:24:59):
      * the HMI drops the box and its top layout every ~15-20 s for 6-8 s.
      * Ours stays mapped and shown through each gap (it does not follow the
-     * box); the box back, its top layout comes parked behind ours: no
-     * take-over, nothing of ours asked for again. */
+     * box), and so does the main hold, parked (part 4e); the box back, it
+     * and its top layout come parked behind ours: no take-over, nothing of
+     * ours asked for again. */
     PairRig e;
     small_parked(e, true);
     e.m.on_subscription(kSmallScene, true, false, kRenderer, e.now);
@@ -2842,31 +2934,24 @@ static void guide_small_race()
     logged();
     bool cycles = true;
     for (int k = 0; k < 4; k++) {
-        /* The box and its top layout gone 6-8 s; the main hold released. */
+        /* The box and its top layout gone 6-8 s; the main hold kept. */
         e.table(3, 1, 0, 0);
-        e.pass(3100);
-        e.table(0, 1, 0, 0);
-        e.pass(2900 + 1000 * (k % 3));
+        e.pass(6000 + 1000 * (k % 3));
         const std::string gap = joined();
-        const bool kept = gap.find("release guide_small") == std::string::npos &&
+        const bool kept = gap.find("release guide") == std::string::npos &&
                           e.state(PairRig::kSmall) == TargetState::Shown &&
-                          e.state(GuideRig::kGuide) == TargetState::Idle;
-        /* Back: the box and its top layout mapped, parked behind ours; the
-         * main hold asked for again, parked. */
-        e.table(0, 1, 3, 3);
-        e.pass(1100);
+                          e.state(GuideRig::kGuide) == TargetState::Parked;
+        /* Back: the box and its top layout mapped, parked behind ours. */
         e.table(3, 1, 3, 3);
-        e.m.on_parked(kGuideScene, e.now);
         e.pass(10000);
         const std::string back = joined();
-        cycles = cycles && kept && count(back, "take over") == 0 &&
-                 back.find("request guide_small") == std::string::npos &&
-                 back.find("release guide_small") == std::string::npos &&
-                 e.state(PairRig::kSmall) == TargetState::Shown;
+        cycles = cycles && kept && count(back, "take over") == 0 && back.find("request guide") == std::string::npos &&
+                 back.find("release guide") == std::string::npos && e.state(PairRig::kSmall) == TargetState::Shown &&
+                 e.state(GuideRig::kGuide) == TargetState::Parked;
     }
     const std::string apple = logged();
-    ok("5c: the box gone 6-8 s and back four times: ours kept shown, never released or asked for again, the top "
-       "layout parked behind it, no take-over",
+    ok("5c: the box gone 6-8 s and back four times: ours kept shown, the main hold kept parked, neither released or "
+       "asked for again, the box and its top layout parked behind ours, no take-over",
        cycles);
     ok("never a loss, never given up, no take-over by either",
        apple.find("given up") == std::string::npos && apple.find("loss") == std::string::npos &&
@@ -3859,6 +3944,23 @@ static void guide_box_comes_and_goes()
             ok((t + "the box gone: held under 3 s").c_str(), calls_are("") &&
                                                                r.state(GuideRig::kGuide) == TargetState::Shown);
             r.pass(200);
+            if (from_table) {
+                /* Part 4e: auto's hold does not follow the box. */
+                ok((t + "the box gone 3 s: still held while the map is shown, logged").c_str(),
+                   calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown &&
+                       logged().find("target guide: no box mapped: held while the map is shown all the same") !=
+                           std::string::npos);
+                r.rows(slot, 2, {{kGuideScene, 1}, {kBelt, 3}});
+                r.pass(30000);
+                ok((t + "then no box, the map still shown: held, no traffic, not given up").c_str(),
+                   calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown && r.guide_slot() == slot &&
+                       logged().find("given up") == std::string::npos);
+                r.rows(slot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
+                r.pass(10000);
+                ok((t + "the next route: the box parked behind ours, nothing asked for or taken over").c_str(),
+                   calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown);
+                continue;
+            }
             ok((t + "the box gone 3 s: released, logged").c_str(),
                calls_are("release guide") && r.state(GuideRig::kGuide) == TargetState::Idle &&
                    logged().find("target guide: no box mapped: not held") != std::string::npos);
@@ -5352,6 +5454,7 @@ int main()
     guide_top_card();
     guide_small_scene();
     guide_warning_over();
+    guide_hold_ready();
     guide_small_race();
     guide_small_ready();
     guide_given_up_held_again();

@@ -27,7 +27,8 @@ struct HoldSettings {
 
 /* Appends a hold per slot of slots unless hold is 0; hold other than 0 or 1
  * counts as 1, with *warn saying so. slots: auto, one hold guide_auto with
- * scene_id whose slot is 0x105 or 0x103 (TargetSpec::table_slots),
+ * scene_id whose slot is 0x105 or 0x103 (TargetSpec::table_slots;
+ * kSmallFirstSlot until the table names one),
  * neither another target's; or hex slot ids 0x1-0xfff, separated by commas
  * or spaces, each once and no other target's. Scene ids from scene_id up,
  * one per slot, each in allowed and no other target's.
@@ -37,7 +38,7 @@ struct HoldSettings {
  * small_scene_id: then each hold's small scene (TargetSpec::pairs_with,
  * <hold>_small, content class kSmallClass, 16x16), ids from it up, one per
  * hold, appended after the holds, each in its hold's slot (guide_slots
- * auto: kSmallFirstSlot until the hold has one). One that is not a number, not in
+ * auto: kSmallFirstSlot until the box is seen). One that is not a number, not in
  * allowed or another target's leaves the holds without small scenes, with
  * *warn saying why; true. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
@@ -48,9 +49,10 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
  * while a warning disables slots 0x101/0x102 (VERIFIED on the car). */
 const uint32_t kSmallClass = 1024;
 
-/* The small scene's slot under guide_slots auto before the box is seen in
- * one: the slot every car log shows the box and its top layout in (0x103;
- * 0x105 only ever seen empty). It moves with the hold (move_hold). */
+/* The hold's and its small scene's slot under guide_slots auto before the
+ * box is seen in one: the slot every car log shows the box and its top
+ * layout in (0x103; 0x105 only ever seen empty). Both move with the box
+ * (move_hold). */
 const uint64_t kSmallFirstSlot = 0x103;
 
 /* The HUD's slot and scene on iDrive 7 (README.md "The HUD"). */

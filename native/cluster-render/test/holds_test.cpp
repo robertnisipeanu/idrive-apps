@@ -157,7 +157,7 @@ int main()
                                        shipped("guide_content_class"), shipped("guide_take_over"),
                                        shipped("guide_small_scene_id")},
                           allowed, &s, &err) &&
-               s.size() == 3 && s[1].table_slots == std::vector<uint64_t>{0x105, 0x103} && s[1].slot == 0 &&
+               s.size() == 3 && s[1].table_slots == std::vector<uint64_t>{0x105, 0x103} && s[1].slot == 0x103 &&
                s[1].scene_id == 0x010004f1 &&
                err.empty());
         /* Issue 281, part 4: its small scene, class 1024, 0x10004f9, in the
@@ -204,9 +204,10 @@ int main()
            t[1].scene_id == 0x010004f1 && t[1].follows == "map" && t[1].take_over_stock && t[1].linger_ms == 0 &&
            t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310});
-    ok("auto: one hold whose slot is 0x105 or 0x103 from the slot table, with guide_scene_id, following the map",
+    ok("auto: one hold whose slot is 0x105 or 0x103 from the slot table (0x103 until then), with guide_scene_id, "
+       "following the map",
        load({"guide_hold=1", "guide_slots=auto"}, &t, &err) && t.size() == 2 && t[1].name == "guide_auto" &&
-           t[1].slot == 0 && t[1].table_slots == std::vector<uint64_t>{0x105, 0x103} &&
+           t[1].slot == 0x103 && t[1].table_slots == std::vector<uint64_t>{0x105, 0x103} &&
            t[1].scene_id == 0x010004f1 && t[1].follows == "map" &&
            t[1].take_over_stock &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310} && err.empty());

@@ -91,8 +91,10 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         if (!from_table && (!number(id, true, &t.slot) || t.slot < 1 || t.slot > 0xfff))
             return refuse(warn, "guide_slots: \"" + id + "\" is not a slot id from 0x1 to 0xfff");
         t.name = from_table ? "guide_auto" : "guide_" + hex(t.slot);
-        if (from_table)
+        if (from_table) {
             t.table_slots = kBoxSlots;
+            t.slot = kSmallFirstSlot;
+        }
         t.content_class = (uint32_t)klass;
         t.scene_id = scene + holds.size();
         t.width = t.height = 16;
