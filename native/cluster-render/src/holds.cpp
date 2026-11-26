@@ -124,6 +124,8 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
     for (const TargetSpec &h : small_id ? holds : std::vector<TargetSpec>()) {
         TargetSpec s = h;
         s.name = h.name + "_small";
+        if (!h.table_slots.empty())
+            s.slot = kSmallFirstSlot;
         s.table_slots.clear();
         s.content_class = kSmallClass;
         s.scene_id = small_id + smalls.size();

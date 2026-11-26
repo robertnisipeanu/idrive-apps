@@ -314,7 +314,7 @@ void SlotManager::follow(int64_t now_ms)
             t.box_ms = now_ms;
         /* Kept through a lock: the lock unmapped the box with ours. */
         const bool boxed = mapped || t.kept || (t.requested && t.box_ms >= 0 && now_ms - t.box_ms < kNotMappedMs);
-        if (boxed != t.boxed)
+        if (boxed != t.boxed && !small)
             log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
                      boxed ? "the box is mapped: held while the map is shown" : "no box mapped: not held",
                      (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
@@ -364,7 +364,9 @@ void SlotManager::follow(int64_t now_ms)
         }
         if ((y || t.given_up) && (t.requested || t.kept))
             release(i, now_ms);
-        want(i, (small ? p >= 0 && t_[p].wanted : shown && !y) && !t.given_up, true);
+        /* A small scene does not follow the box: wanted while the map is
+         * shown and its layers let it hold, the box there or not. */
+        want(i, (small ? lead_on && !declined : shown && !y) && !t.given_up, true);
     }
 }
 
@@ -504,7 +506,7 @@ void SlotManager::move_hold(int i, uint64_t slot, const std::string &why, int64_
     if (p >= 0 && specs_[p].slot != slot) {
         take_down(p, now_ms);
         specs_[p].slot = slot;
-        t_[p].verdict = t_[p].lost_parked = false;
+        t_[p].verdict = t_[p].lost_parked = t_[p].refused_wait = false;
         t_[p].removed_ms = -1;
         t_[p].ahead.clear();
         set(p, TargetState::Idle, Holder::None, "", now_ms);
@@ -707,6 +709,7 @@ void SlotManager::release(int i, int64_t now_ms)
     take_down(i, now_ms);
     t.ladder = 0;
     t.removed_ms = -1;
+    t.refused_wait = false;
     if (specs_[i].follows.empty()) {
         t.takeovers = 0;
         t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
@@ -783,6 +786,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     if (!prepare(i, now_ms))
         return;
     t.requested = true;
+    t.refused_wait = false;
     t.remapped = false;
     t.incident_asked = true;
     t.last_request_ms = t.mapped_ms = now_ms;
@@ -1299,6 +1303,17 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
                  (long long)kNotReadyRetryMs, t.not_ready, kNotReadyRetries);
         take_down(i, now_ms);
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
+        return;
+    }
+    /* A small scene: asked for again when its slot's status changes, or
+     * when it moves; never on the ladder, never refused for good, no loss. */
+    if (!specs_[i].pairs_with.empty()) {
+        take_down(i, now_ms);
+        t.refused_wait = true;
+        t.refused_status = slot_status(specs_[i].slot);
+        log_info("target %s: refused (%s): asked for again when slot 0x%llx's status changes (now %d)",
+                 specs_[i].name.c_str(), why.c_str(), (unsigned long long)specs_[i].slot, t.refused_status);
+        set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, -1);
         return;
     }
     if (r == Refusal::NoSlot && !specs_[i].follows.empty()) {
@@ -1865,7 +1880,12 @@ void SlotManager::tick(int64_t now_ms)
             }
             const int slot = slot_status(spec.slot);
             bool ready;
-            if (st.retry_ms >= 0) {
+            if (t.refused_wait && st.retry_ms < 0) {
+                /* A small scene refused: its slot's status changed. */
+                ready = slot != t.refused_status;
+                if (!ready)
+                    poll_slots = true;
+            } else if (st.retry_ms >= 0) {
                 if (t.wanted && now_ms >= st.retry_ms)
                     give_way(i, now_ms);
                 ready = now_ms >= st.retry_ms && !scene_busy(i) && (t.wanted || !loads(i) || !scene_wanted(i));

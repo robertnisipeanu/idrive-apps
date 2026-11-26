@@ -8,12 +8,16 @@ now `0x01000310,0x01000314`, and 0x01000314 is no longer refused there.
 While those slots are disabled the KOMBI shows only content of class 1024
 there, so the hold maps a second empty scene of that class in the same
 slot (`guide_small_scene_id`, 0x010004f9, added to `scene_ids_allowed`),
-asked for and released with the first. 0x01000314 is unmapped for it
+beside the first. 0x01000314 is unmapped for it
 only once ours is parked and its renderer subscribed 300 ms, and again
 1.5 s apart while it is still or again in front, at most 3 times until
 ours is shown, so it no longer blinks or stays, and the hold is not given
 up or slowed by it: after the warning the middle is clean at once. Without the small scene
-0x01000314 is never unmapped.
+0x01000314 is never unmapped. The small scene stays mapped the whole time
+the map is shown with the hold allowed, box or not (in 0x103 until the box
+is seen, then in the box's slot), so BMW's top layout no longer flashes
+when Apple Maps restarts its route; refused or its slot disabled, it is
+asked for again when the slot's status changes, never counted as a loss.
 
 A hold that yields to BMW's own content in its slot (content not in
 `guide_take_over`) no longer counts that as a loss, so it no longer gives

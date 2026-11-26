@@ -203,9 +203,12 @@
  *   for its slot (Refusal::NoSlot) is not asked for again until the service
  *   restarts. A hold's take-overs unmap only content of its own content
  *   class. A hold may have a small scene (TargetSpec::pairs_with), of
- *   another class, mapped with it in its slot as the HMI keeps its box
- *   and its top layout: the KOMBI shows whichever class the neighbour
- *   slots' state calls for. Either of the two shown, the other parked
+ *   another class, mapped in its slot as the HMI keeps its box and its
+ *   top layout: the KOMBI shows whichever class the neighbour slots'
+ *   state calls for. The small one stays mapped while the map is shown
+ *   and the hold allowed, through the box's gaps, so the HMI's top layout
+ *   maps behind it (car Test 5c); refused, it is asked for again when its
+ *   slot's status changes, never on the ladder. Either of the two shown, the other parked
  *   behind it is no loss and no take-over. The small one takes over at
  *   most kSmallTakeOvers times until it is shown or asked for again,
  *   each once it has been parked and its renderer subscribed
@@ -315,8 +318,9 @@ struct TargetSpec {
      * one is. */
     std::vector<uint64_t> table_slots;
     /* A hold's small scene (the guide hold's, content class 1024): the name
-     * of the hold it goes with. It is in that hold's slot, asked for and
-     * released with it, and the two are held while either is shown
+     * of the hold it goes with. It is in that hold's slot (moved with it),
+     * asked for while the map is shown and the hold allowed, the box mapped
+     * or not, and the two are held while either is shown
      * (SlotManager::follow). Empty: not one. */
     std::string pairs_with;
     /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
@@ -559,9 +563,11 @@ public:
      * withdrawn, and a give-up it alone caused undone). The give-up
      * lasts until cluster-render restarts or until the target it follows
      * lets it hold again (guide_hold false, then true). A hold's small
-     * scene (TargetSpec::pairs_with) is wanted exactly while its hold is
-     * and it has not given up; a park of either while the other is shown
-     * is no loss, and one counted before the other showed is withdrawn. */
+     * scene (TargetSpec::pairs_with) is wanted while the target its hold
+     * follows is shown, its wanting layers let it hold and it has not given
+     * up, whether the box is mapped or not (it does not follow the box);
+     * a park of either while the other is shown is no loss, and one counted
+     * before the other showed is withdrawn. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kNoMapping = INT64_MIN / 2;
@@ -664,6 +670,10 @@ private:
         bool yield = true;   /* no wanting layer has yield false (popup_blocks) */
         bool requested = false;
         bool refused = false;        /* a hold whose slot the display refused: not asked for again */
+        /* A small scene refused: Waiting until its slot's status (as
+         * slot_status() then) changes. */
+        bool refused_wait = false;
+        int refused_status = -1;
         bool declined = false;       /* a hold: the target it follows does not let it hold */
         /* The last mapping event (on_availability); kNoMapping: none since
          * the last request, or logged already. */

@@ -161,10 +161,11 @@ int main()
                s[1].scene_id == 0x010004f1 &&
                err.empty());
         /* Issue 281, part 4: its small scene, class 1024, 0x10004f9, in the
-         * shipped scene_ids_allowed. */
-        ok("shipped: the hold's small scene, class 1024, 0x10004f9, allowed, with the hold",
+         * shipped scene_ids_allowed; part 4c: in 0x103 before the box is
+         * seen. */
+        ok("shipped: the hold's small scene, class 1024, 0x10004f9, allowed, with the hold, in 0x103 at first",
            s.size() == 3 && s[2].name == "guide_auto_small" && s[2].pairs_with == "guide_auto" &&
-               s[2].scene_id == 0x010004f9 && s[2].content_class == 1024 && s[2].slot == 0 &&
+               s[2].scene_id == 0x010004f9 && s[2].content_class == 1024 && s[2].slot == 0x103 &&
                s[2].table_slots.empty() && s[2].follows == "map" && s[2].take_over_stock &&
                s[2].width == 16 && s[2].height == 16 && s[2].linger_ms == 0 &&
                s[2].take_over_contents == s[1].take_over_contents &&

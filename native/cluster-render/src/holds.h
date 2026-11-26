@@ -36,7 +36,8 @@ struct HoldSettings {
  * *warn naming it, and targets left as they were.
  * small_scene_id: then each hold's small scene (TargetSpec::pairs_with,
  * <hold>_small, content class kSmallClass, 16x16), ids from it up, one per
- * hold, appended after the holds. One that is not a number, not in
+ * hold, appended after the holds, each in its hold's slot (guide_slots
+ * auto: kSmallFirstSlot until the hold has one). One that is not a number, not in
  * allowed or another target's leaves the holds without small scenes, with
  * *warn saying why; true. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
@@ -46,6 +47,11 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
  * its top layout (0x01000314), which the KOMBI shows in the box's slot
  * while a warning disables slots 0x101/0x102 (VERIFIED on the car). */
 const uint32_t kSmallClass = 1024;
+
+/* The small scene's slot under guide_slots auto before the box is seen in
+ * one: the slot every car log shows the box and its top layout in (0x103;
+ * 0x105 only ever seen empty). It moves with the hold (move_hold). */
+const uint64_t kSmallFirstSlot = 0x103;
 
 /* The HUD's slot and scene on iDrive 7 (README.md "The HUD"). */
 const uint64_t kHudSlot = 0x323, kHudScene = 0x01000400;
