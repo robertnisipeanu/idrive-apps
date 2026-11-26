@@ -6,6 +6,12 @@ On a car not coded for the CarPlay cluster map, a map patch that CarPlay's
 Patch button applied with a release before 0.11.0 stays on after updating;
 it showed `Not supported on this car` until Patch was pressed again.
 
+A patch stays on when the head unit goes off with no shutdown record (a
+power cut, or a switch-off whose record was lost) and stays off 3 minutes
+or more, also after a short drive; a patch that keeps the head unit
+restarting is still removed. Save logs includes a log of how
+each head-unit start was counted, kept across restarts.
+
 ## 0.14.17
 
 While the map is not seen (the cluster showing other content in its

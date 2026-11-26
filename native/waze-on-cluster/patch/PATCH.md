@@ -826,7 +826,9 @@ is ("Boot recovery" below), with the same thresholds: 1 failed start or
 crash for a patch on trial or unproven, 2 for a proven one. One rule is
 stricter: a restart recmgr or crashhandler recorded counts even after a
 healthy run, since a reset that beats the shutdown mark leaves only that
-record. At the threshold the restore is: remove the env file, then turn the
+record, and a healthy run that ended with no record at all counts as a
+start with no record, unless the head unit was then off 3 minutes or more
+("Boot recovery", the time off). At the threshold the restore is: remove the env file, then turn the
 record off (`by: "recovery"`). Nothing is written to `/`, and the next
 start, in this boot or the next, runs carplay as it ships. A patch on
 trial becomes proven after a healthy run in which the running carplay's
@@ -1551,12 +1553,25 @@ and a failing patch is not tried again:
   - `unknown`: patched starts in a row since then that ended with no
     record;
   - `arm`: this start's record, `{boot, at, patch, crashes, ran, confirmed,
-    clean}`, written before a patched CarPlay starts; `at` is when (ms
-    since the epoch), `patch` is `proven`, `unproven` or `unknown`, `ran`
-    that the watcher saw CarPlay running;
+    seen, lastAt, crashKey, clean}`, written before a patched CarPlay
+    starts; `at` is when (ms since the epoch), `patch` is `proven`,
+    `unproven` or `unknown`, `ran` that the watcher saw CarPlay running,
+    `confirmed` that a run of the patch ran the healthy window without a
+    break, `seen` when the watcher last saw such a run healthy, `lastAt`
+    the later of the `seen` and `at` of the start before, `crashKey` recmgr's newest crash key at
+    the arm;
   - `prev`: the last start counted;
   - `starts`: the CarPlay starts made this boot;
-  - `ended`: the last CarPlay run whose end was handled.
+  - `ended`: the last CarPlay run whose end was handled;
+  - `log`: the newest 16 lines of what boot recovery did, each with the
+    time, the boot and its uptime: how each armed start ended as the boot
+    step read it (its shutdown mark as written, or none and whether a
+    restart record of it was found; what the watcher saw) and how it was
+    counted, each crash the watcher saw, a count set to 0 for a new patch,
+    and each restore, each line at most 240 characters. A save that fails
+    is tried once more without the log, so the log never keeps the count
+    from being saved. Save logs includes the file, Android Auto's
+    `aa-boot-recovery.json` and both shutdown records.
 - The shutdown record, `/var/opt/waze-on-cluster/shutdown`, written by
   `shutdown_mark.sh`, run by a drop-in for `var-opt-ro.service`
   (`50-waze-on-cluster.conf`) before `/var/opt` goes read-only: `<boot id>
@@ -1578,8 +1593,11 @@ oneshot wanted by `multi-user.target`, `Before=carplay.service`, which
 `late.target` starts after `multi-user.target`). It reads the state, the
 previous start's shutdown record, `restart-requested`, the other service's
 state, whether our backup exists, the patch record, a `stat` of the
-binary and, with no shutdown record, a `stat` of the two restart records,
-and nothing else; it reads the binary only to restore it.
+binary and, with no shutdown record, a `stat` of the two restart records
+and the boot's start time, and recmgr's newest crash key: when it arms a
+start, and when it counts one that ended with no record and a long enough
+time off (below). It reads nothing else, and the binary only to restore
+it.
 
 A start counts as failed only on evidence of a crash. The evidence is the
 restart record recmgr or crashhandler writes when it asks for a head-unit
@@ -1598,11 +1616,12 @@ The previous start, when it was armed, counts in this order:
 | How it ended | `fails` | `unknown` |
 |---|---|---|
 | CarPlay crashed in it (seen by the watcher, or the shutdown record says `failed`) | + its crashes (at least 1) | 0 |
-| otherwise, CarPlay ran healthy (60 s without a break) | 0 | 0 |
+| otherwise, CarPlay ran healthy (60 s without a break) and, patched in memory, the start ended in order (a switch-off, an NSM restart or a restart the user asked for, as below) | 0 | 0 |
 | CarPlay never ran in it (the shutdown record says `stopped` without ` ran`, the watcher never saw it running) | kept | kept |
 | Android Auto, patched in it, crashed in it | kept (counted for Android Auto) | 0 |
 | a restart recmgr or crashhandler recorded (` crash`, or its record with no mark) | + 1 | 0 |
 | a switch-off or an NSM restart after the healthy window (a shutdown record without ` crash` from a boot whose system uptime, `up`, is 60 s or more), or a restart the user asked for (`restart-requested` names it, or the watcher stopped while `shutdown.target` was queued) | kept | 0 |
+| no record, CarPlay patched in memory seen healthy in it, and the head unit off 3 minutes or more after it was last seen (below) | 0 | 0 |
 | no record: a power cut, a 12 V disconnect, a dealer tool, a restart whose records were lost, or a shutdown record without ` crash` from a boot shorter than the healthy window | kept, or + 1 when it is the second such start in a row | + 1, or 0 when it counted |
 
 A start with no record is unknown, not failed: one never removes a patch.
@@ -1610,7 +1629,39 @@ Two in a row count one failure, so a loop that leaves no record (a reset
 before `var-opt-ro.service` runs and before recmgr's record reaches the
 disk, or a record the shutdown record missed) is still caught: one start
 later than a loop with records for a patch on trial or unproven, two
-starts later for a proven one. The cost is accepted: two short boots in a
+starts later for a proven one.
+
+**The time off.** A loop's next start begins within seconds of its reset;
+a parked car stays off far longer. So while a run of the patch in memory
+is healthy, the watcher writes when it last saw it (`seen`, by the wall
+clock) at the healthy minute and every minute after, and at the next
+start the boot step takes the time from `seen` to this boot's start
+(`/proc/stat`'s `btime`). A start that ended with no record (no shutdown
+record and no restart record) and was followed by 3 minutes or more off
+ends in order. A loop's time off is at most the minute between two
+`seen` plus its restart, so a loop that resets the head unit at any point
+in a run and leaves no record counts one failure every two starts. The
+time off is not used, and the start counts as one with no record, when:
+
+- recmgr's crash table (`recmgr_stats.db`, read with the firmware's
+  `sqlite3` at the arm, and at the count only for such a start) has a
+  crash newer than its newest at the arm, or cannot be read at either
+  time. Its rows carry no time, so a crash early in the next boot, before
+  the boot step, counts too;
+- there is no `seen` (no run of the patch was seen healthy), or this
+  boot's start or the clock now cannot be read, or this boot's start is
+  before `seen` or after now;
+- the clock read before 2025 at the arm or at `seen`: the head unit starts
+  at its software's build time until its time is set;
+- the arm was written less than 2 minutes after the start before was
+  last seen or armed (`lastAt`): the head unit can start on the time it
+  kept from its last shutdown before it gets the real time, about when
+  the start before was last seen, and a boot that ran on that time
+  throughout would read its own run and the time since that shutdown as
+  time off. A clock wrong at the next start reads earlier than the real
+  time, which only shortens the time off.
+
+The cost is accepted: two short boots in a
 row with no record (two quick switch-offs, a dealer tool's or the IOC's
 resets) count one failure, which removes an unproven patch, or a proven
 one at the second such pair with no healthy boot between.

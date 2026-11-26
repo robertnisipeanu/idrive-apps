@@ -94,9 +94,12 @@ before CarPlay (or aapd) starts: after one failed start for a patch not yet
 proven on that car, after two for a proven one. CarPlay comes back without
 the map, its Status reads `Removed — head
 unit kept restarting`, and its Patch button applies the patch again
-(PATCH.md "Boot recovery"). Android Auto's patch is removed at the first
-crash of the patched aapd, and aapd is started again after every end, so
-Android Auto comes back without the cluster map; the patch stays off until
+(PATCH.md "Boot recovery"). A start that ended with no shutdown record,
+after which the head unit was off 3 minutes or more, counts as one that
+ended in order; a crash in it, or a quick restart after it, still counts.
+Android Auto's patch is removed at the first crash of the patched aapd,
+and aapd is started again after every end, so Android Auto comes back
+without the cluster map; the patch stays off until
 its Patch button applies it, an update brings a newer patch, or a car
 software update replaces aapd or aapd.conf (then it is tried again, on
 trial).
