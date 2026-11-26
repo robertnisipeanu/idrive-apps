@@ -109,6 +109,9 @@ struct FeedConfig {
     /* On the HUD: the map moved from its centred place, in the HUD scene's
      * pixels (+x right, +y down), held inside the HUD's scene. */
     int hud_offset_x = 0, hud_offset_y = 0;
+    /* On the HUD: the map's brightness, % (10-100), its layer's opacity over the
+     * HUD's black, so the map dims and BMW's own HUD content does not. */
+    unsigned hud_brightness_pct = 100;
     /* On the HUD: kept shown over the stock HMI's pop-ups (the layer's
      * yield 0); else it gives way to them (cluster-render's hud_yield_slots). */
     bool hud_keep_shown = false;
@@ -152,6 +155,7 @@ struct FeedStatus {
     std::string hud_state = "off";   /* off, disabled, or the HUD feed's state */
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
     int hud_offset_x = 0, hud_offset_y = 0;   /* and where it is moved to from the centre */
+    unsigned hud_brightness_pct = 100;   /* and how bright, % */
     bool hud_keep_shown = false;   /* the HUD map kept shown over the stock HMI's pop-ups */
 };
 
@@ -207,6 +211,8 @@ public:
     /* The HUD map kept shown over the stock HMI's pop-ups or not
      * (FeedConfig::hud_keep_shown), at once. */
     void set_hud_keep_shown(bool keep);
+    /* The HUD map's brightness (FeedConfig::hud_brightness_pct), at once. */
+    void set_hud_brightness(unsigned pct);
     /* A layer to take frames: made, and not reported disabled by
      * cluster-render. */
     bool takes_frames() const { return layer_ && !disabled(); }

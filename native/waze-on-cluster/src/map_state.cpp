@@ -13,8 +13,8 @@
 
 namespace woc {
 
-const char *const kMapStateKeys[6] = {"cluster",      "hud",          "hud_width_pct",
-                                      "hud_offset_x", "hud_offset_y", "hud_keep_shown"};
+const char *const kMapStateKeys[7] = {"cluster", "hud", "hud_width_pct", "hud_offset_x", "hud_offset_y",
+                                       "hud_brightness_pct", "hud_keep_shown"};
 
 namespace {
 
@@ -32,6 +32,8 @@ bool valid(const std::string &key, const std::string &value)
     const long v = std::strtol(value.c_str(), &end, 10);
     if (value.empty() || *end)
         return false;
+    if (key == "hud_brightness_pct")
+        return v >= 10 && v <= 100;
     if (key == "hud_width_pct")
         return v == 0 || (v >= 20 && v <= 100);
     if (key == "hud_offset_x" || key == "hud_offset_y")
