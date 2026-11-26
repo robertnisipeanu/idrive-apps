@@ -14,7 +14,7 @@
  *              (featureFlag && KombiVariant <= 1): the immediate 1 -> 2.
  *              aapd maps raw KI_KOMBI_VARIANT 9 -> 0, 10 -> 1, 1..8 and
  *              11 -> 2, 0 -> 3, so this admits every raw value of class 2;
- *              the plan refuses unless the coding is 7.
+ *              the plan refuses only raw 0, no cluster display.
  *   selfstart  onNewNavigationStatus()'s call of setNaviStreamStatus
  *              retargeted to requestStream() (same `this`), and
  *              requestStream()'s opening test, `not streaming && focus mode
@@ -30,15 +30,17 @@
  *              or not a navigation status follows it (in memory only).
  *   screen     the KombiVariant -> screen-size helper's fall-through: class 2
  *              reads 12.3 as class 0 does, so aapd uses aapd.conf's 12.3
- *              geometry instead of its built-in 800x480 default.
+ *              geometry instead of its built-in 800x480 default. Class 1
+ *              (raw 10) reads 10.25 as shipped: its geometry goes there.
  *   confpath   the path aapd reads its configuration from, /etc/aapd.conf,
  *              made /run/aapd.conf: a copy of aapd.conf with the cluster
  *              geometry, which boot recovery writes there for a start it
  *              arms (inmem.js).
  *
- * The sites are found in each build by aapd_locate.js; a build where any of
- * them is not found is refused, and any build where all are found and
- * verify is planned: no list of builds decides it. `plan` reads aapd on
+ * The sites are found in each build by aapd_locate.js; a build where any
+ * of them but readystart is not found is refused, and any build where
+ * those are found and verify is planned, with readystart where it is
+ * found: no list of builds decides it. `plan` reads aapd on
  * disk, which must be the pristine build (every site stock), and
  * aapd.conf, which must have the entries the geometry needs and hold none
  * of our geometries (aapd_conf.js check); it writes the plan libwocpatch.so

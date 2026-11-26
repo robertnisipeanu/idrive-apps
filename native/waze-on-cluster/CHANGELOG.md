@@ -13,8 +13,7 @@ as they ship until the next install or Patch.
 
 Android Auto's patch is planned again on aapd builds where the edit that
 asks for the stream when the phone sets the cluster display up is not
-found: the map then starts with the first navigation status, as before
-0.14.0.
+found: the map then starts with the first navigation status.
 
 ## 0.14.18
 

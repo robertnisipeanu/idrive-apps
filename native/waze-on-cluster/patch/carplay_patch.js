@@ -72,8 +72,8 @@
  * is refused. Any build whose sites are all found and verified is planned:
  * no list of builds decides it.
  * The edits are applied in carplay's memory (PATCH.md "In memory"): `plan`
- * reads the stock file, runs every check (the head unit, the coding, unless
- * --unproven, the locator) and writes the plan libwocpatch.so applies;
+ * reads the stock file, runs every check (the head unit, the coding, the
+ * locator) and writes the plan libwocpatch.so applies;
  * `overlay` reads the file with a plan laid over it.
  * This version writes carplay only to put back a patch an earlier release
  * wrote into the file (`revert`): the edits' regions or the whole verified
@@ -815,12 +815,14 @@ function overlay(buf, text) {
 /* `plan`: the patch, as a plan for libwocpatch.so, made from
  * the file on disk, which must be the pristine build (it is what the
  * process maps) and stays as it is. Checks: the head unit, the coding
- * (KI_KOMBI_VARIANT 7; --unproven, CarPlay's Patch button, plans on another
- * or an unreadable one too), the locator: every edit site found and
- * verified, on any build. Writes the plan to `outFile` by rename and prints
+ * (KI_KOMBI_VARIANT 0, no cluster display, is refused; another coding than
+ * 7 or 9 gets its own converter slot remapped too, `variant-<n>`; an
+ * unreadable one is planned as 7), the locator: every edit site found and
+ * verified, on any build. --unproven, which earlier releases' records
+ * pass, changes nothing. Writes the plan to `outFile` by rename and prints
  * one JSON line: build, version, sha256, size, edits, coding ('ok',
  * 'refused', 'unreadable'), writes, planSha256. */
-function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, outFile) {
+function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
     if (!outFile) die('plan needs --out <file>');
@@ -934,7 +936,7 @@ function main() {
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
-    else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, a.unproven, coding, a.out);
+    else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, coding, a.out);
     else if (cmd === 'overlay') { cmdOverlay(target, a.plan); line('end', 'complete'); }
     else { process.stderr.write('usage: carplay_patch.js status|probe|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }

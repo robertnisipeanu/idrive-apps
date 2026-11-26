@@ -1217,6 +1217,32 @@ test('a plan still to make is made again only for the build it was for: after a 
     clearInmem();
 });
 
+test('a plan still to make waits for a readable coding at the boot step, and the watcher plans it whatever the coding reads', async () => {
+    if (!fs.existsSync(CARPLAY_BIN)) { console.log('     (skipped: CARPLAY_BIN not set)'); return; }
+    makeWorld();
+    fs.writeFileSync(CARPLAY, fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
+    const args = ['--panel', 'high', '--coding', process.env.WOC_CODING];
+    try {
+        headUnit.coding(null);
+        inmem.planFailed('carplay', args, 'the coding was not published yet');
+        let planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
+        assert.deepStrictEqual([planned, inmem.readRecord('carplay').needsPlan], [false, true], 'boot step, no coding: not planned, still to plan');
+        headUnit.coding(4, 0);
+        planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
+        assert.deepStrictEqual([planned, inmem.readRecord('carplay').needsPlan], [false, true], 'boot step, a coding not yet valid: not planned, still to plan');
+        headUnit.coding(4);
+        planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000));
+        const m = inmem.readRecord('carplay');
+        assert(planned && !m.needsPlan && m.enabled === true, 'boot step, coding 4: planned ' + JSON.stringify(m));
+        assert(/\bvariant-4\b/.test(fs.readFileSync(inmem.paths('carplay').plan, 'utf8')), 'the plan remaps coding 4\'s slot');
+        clearInmem();
+        headUnit.coding(null);
+        inmem.planFailed('carplay', args, 'the coding was not published yet');
+        planned = await new Promise((resolve) => recovery.retryPlan('carplay', resolve, 0, 60000, true));
+        assert(planned && !inmem.readRecord('carplay').needsPlan, 'the watcher, no coding: planned');
+    } finally { headUnit.coding(7); clearInmem(); }
+});
+
 test('the original (Disable used) or no backup of ours: nothing armed, counted or restored', async () => {
     for (const kind of ['original', 'none']) {
         const w = makeWorld();

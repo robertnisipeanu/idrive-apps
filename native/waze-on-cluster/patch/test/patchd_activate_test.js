@@ -355,6 +355,8 @@ async function main() {
         !armed() && m.pending === 'revert' && m.carplay === 'deferred', JSON.stringify([m, rec()]));
     headUnitStart();
     ok('Remove patch: the next start runs carplay as it ships', mem() === 'stock');
+    st = await daemonStatus();
+    ok('Remove patch: patchd reports it removed by the user', st.state === 'original' && st.removed === 'user' && !st.pending, JSON.stringify(st));
     r = hook('activate');
     ok('reverted: activate leaves it off', r.code === 0 && disk() === sha(SRCBUF) && !r.result.reboot && !armed() && rec().enabled === false &&
         /turned off/.test(r.result.status), JSON.stringify(r.result));
@@ -517,6 +519,18 @@ async function main() {
     r = hook('activate');
     ok('boot recovery\'s restore: an install leaves the patch off, and says why', r.code === 0 && disk() === before && marker() === null && rec() === null &&
         /boot recovery removed the patch after 2 failed head-unit starts/.test(r.result.status || ''), JSON.stringify(r.result));
+
+    /* An earlier release's patch on disk the user turned off (the original,
+     * our backup beside it): patchd reports it removed by the user, and an
+     * install leaves it off. */
+    fresh(SRCBUF);
+    earlierPatch();
+    patcher(['revert', '--target', TGT, '--yes']);
+    ok('earlier release\'s Remove patch: the original, our backup beside it', disk() === sha(SRCBUF) && fs.existsSync(TGT + '.woc-orig'));
+    st = await daemonStatus();
+    ok('earlier release\'s Remove patch: patchd reports it removed by the user', st.state === 'original' && st.removed === 'user' && !st.recovered, JSON.stringify(st));
+    r = hook('activate');
+    ok('earlier release\'s Remove patch: an install leaves it off', r.code === 0 && disk() === sha(SRCBUF) && !armed() && /the patch was turned off/.test(r.result.status || ''), JSON.stringify(r.result));
 
     /* Boot recovery turned the patch in memory off at its threshold: patchd
      * reports it, and an install leaves it off. */

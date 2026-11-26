@@ -123,8 +123,8 @@
  *                    after n failed head-unit starts is on disk (also in aa,
  *                    with recoveredWhy: crash when the patched aapd
  *                    crashed, boot for failed head-unit starts)
- *                    removed: "user" while the patch in memory is turned off
- *                    by Remove patch for the binary as it is (also in aa)
+ *                    removed: "user" while Remove patch keeps the patch off
+ *                    (also in aa)
  *                    wifi: {band: "5" | "2.4", iface, freq (MHz)} while
  *                    CarPlay runs over Wi-Fi and its band is known, else
  *                    null (wifi_band.js); a status goes out when it changes
@@ -888,8 +888,13 @@ function readState(cb) {
 function inmemOverlay(t, st, cb) {
     var rec = inmem.readRecord(t.name), cur = inmem.current(t.name);
     /* A migration's record that has not adopted the file yet: the file's
-     * own state is what runs. */
-    if (!rec) { cb(); return; }
+     * own state is what runs. An earlier release's Remove patch left the
+     * original with our backup beside it (the install keeps it off). */
+    if (!rec) {
+        if (st.binary === 'original' && st.backup && !st.pending && !st.recovered && !st.otherBuild && !st.conflict) st.removed = 'user';
+        cb();
+        return;
+    }
     if (rec.needsPlan) {
         st.state = 'error'; st[t.svc] = null; st.pending = null;
         st.reason = 'the patch in memory could not be planned (' + (rec.error || 'no reason given') + '); it is tried again at the next head-unit start';

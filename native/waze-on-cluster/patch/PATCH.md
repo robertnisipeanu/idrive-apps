@@ -823,8 +823,8 @@ plan that is made but cannot be armed (the library or carplay.service's
 user missing, `/run` not writable) shows the error state with its reason
 too. A patch planned anew starts boot recovery's count at nothing.
 The plan keeps an earlier patch's proven state only where carplay held
-exactly the plan's bytes and its record says it ran healthy on this car
-coded 7; otherwise it starts on trial. After the migration carplay on disk
+exactly the plan's bytes and its record says it ran healthy on this car;
+otherwise it starts on trial. After the migration carplay on disk
 is the shipped file and the running carplay keeps the earlier patch until
 it ends; any later start of this boot (a crash restart included) is armed,
 so the map is never off between the two.
@@ -1112,8 +1112,8 @@ prints each site's offset, its bytes on disk and both forms, or why it is
 not found, the backup's and the running copy's SHA-256 and the patch
 record; Save logs includes it (`aapd-probe.txt`).
 
-**Any build is planned** whose sites are all found and pass every check,
-and counts as pristine when all its sites read stock: no list of builds
+**Any build is planned** whose sites, readystart aside, are all found
+and pass every check, and counts as pristine when all its sites read stock: no list of builds
 decides whether it is patched. An install arms it as any other, on trial
 until it ran healthy on this car ("Boot recovery"). `SHIPPED` in
 `aapd_patch.js` keeps the shipped SHA-256 and bytes of aapd 22.39.3, the
@@ -1209,8 +1209,7 @@ In aapd 22.39.3:
 - **readystart.** Planned where it is found and verifies; a build where
   it is not gets the other edits (the plan names no `readystart`, the
   overlay reads it `NOT APPLIED (<reason>)`), and its stream starts with
-  the first navigation status after the display is ready, as before this
-  edit. The selfstart edits start the stream on a navigation
+  the first navigation status after the display is ready. The selfstart edits start the stream on a navigation
   status that arrives while the cluster display is ready. On a later
   session in the same aapd run, the status the phone sends as it connects
   can come before the phone has set the cluster display up again: then

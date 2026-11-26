@@ -1504,9 +1504,11 @@ function runBoot(name) {
  * plan that failed, a put-back cut short, a patch in the file put back at
  * the start) is planned again: at the boot step, before carplay starts, so
  * this start applies it, and at the watcher's start if that did not get to
- * it. The cluster coding the plan reads is waited for up to waitMs.
- * cb(planned). */
-function retryPlan(name, cb, waitMs, planMs) {
+ * it. The cluster coding the plan reads is waited for up to waitMs; a
+ * coding still not readable then is planned for only when anyCoding is
+ * set (the watcher's try), since at the boot step it may be one not yet
+ * published and the plan is made for the coding it reads. cb(planned). */
+function retryPlan(name, cb, waitMs, planMs, anyCoding) {
     var rec = inmem.readRecord(name);
     if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
     /* A car software update replaced the service's binary since: it runs
@@ -1520,7 +1522,9 @@ function retryPlan(name, cb, waitMs, planMs) {
     }
     var until = Date.now() + (waitMs || 0);
     (function wait() {
-        if (!exists(CODING) && Date.now() < until) { setTimeout(wait, 1000); return; }
+        var cd = require('./aapd_patch.js').readCoding(CODING);
+        if (cd.err && Date.now() < until) { setTimeout(wait, 1000); return; }
+        if (cd.err && !anyCoding) { log(name + ': the cluster coding cannot be read yet (' + cd.err + '); the watcher plans the patch'); cb(false); return; }
         plan();
     })();
     function plan() {
@@ -1544,8 +1548,8 @@ function retryPlan(name, cb, waitMs, planMs) {
 function runWatcher() {
     retryPlan('carplay', function () {
         if (!exists(TARGETS.aapd.target)) { watch(); return; }
-        retryPlan('aapd', watch, 120000, 60000);
-    }, 120000, 60000);
+        retryPlan('aapd', watch, 120000, 60000, true);
+    }, 120000, 60000, true);
 }
 
 /* The watcher follows carplay, and aapd where the unit has it; each has its
