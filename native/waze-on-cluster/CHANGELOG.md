@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+CarPlay: Apple's turn card sits at the top of the cluster map instead of
+over its middle, so the road ahead stays in view. The safe area the patch
+gives the phone now starts 8 rows below the map's top (504x432 at 286,8,
+was 504x368 at 286,72); the width and the bottom are unchanged. A car
+patched before shows `Update needed` in the app; one press of CarPlay's
+Patch button and a head-unit restart move the card up.
+
 ## 0.14.19
 
 A car whose cluster coding cannot be read is patched as a car coded 7,

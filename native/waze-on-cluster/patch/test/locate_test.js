@@ -525,8 +525,8 @@ try {
 
     /* A file with the build-id of a build SHIPPED knows that is not that
      * shipped file: its bytes at the offsets SHIPPED lists are another
-     * build's, and its safe-area immediates hold this tool's safe area
-     * (504x368 at 286,72) over a stock geometry, as another tool's restore
+     * build's, and its safe-area immediates hold this tool's earlier default
+     * safe area (504x368 at 286,72) over a stock geometry, as another tool's restore
      * of its own backup leaves them. The locator's checks decide: every
      * site found and reading as stock, it is planned, the file untouched. */
     ['389c1d0536f8cc9283c156410f2f2634a9f952c0', '5de62156575d737391ea42254e778a97dbbb51f8'].forEach(function (id) {

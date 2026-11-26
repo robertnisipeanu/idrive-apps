@@ -304,7 +304,7 @@ change:
 | mm (→ `+0x10`) | `0x20ca32` | `ea000000 6e000000` (234x110) | `8a000000 3d000000` (138x61) |
 | px (→ `+0x08`, `+0x18`) | `0x20ca54` | `80070000 84030000` (1920x900) | `40040000 e0010000` (1088x480) |
 | view x,y (u16) + safe width | `0x20ca66` | `00000000 64020000` | `00000000 f8010000` |
-| safe height + safe x,y (u16) | `0x20ca74` | `0e020000 0202c000` | `70010000 1e014800` |
+| safe height + safe x,y (u16) | `0x20ca74` | `0e020000 0202c000` | `b0010000 1e010800` |
 
 The getters at `0x20ce00`–`0x20cf40` read these fields; the config built from
 them (`0x2078f1`) is what `SetVideoParams` and the view-area report carry.
@@ -331,9 +331,10 @@ through one-field getters: `+0x18` (pixel size), `+0x20`, `+0x22` (view x,
 y), `+0x24` (safe width and height), `+0x2c`, `+0x2e` (safe x, y).
 
 This tool's geometry has its 138x61 mm physical size, the view area at (0,0)
-and a safe area inside the frame, so the safe area 0.10.6 wrote (476x306
-at (306, 72): `dc010000` and `32010000 32014800`) reads as patched and an
-apply rewrites it. A stock geometry has another physical size and a
+and a safe area inside the frame, so the safe areas earlier releases wrote
+(the earlier default 504x368 at (286, 72): `70010000 1e014800`; 0.10.6's
+476x306 at (306, 72): `dc010000` and `32010000 32014800`) read as patched
+and an apply rewrites them. A stock geometry has another physical size and a
 safe area inside the frame; any other geometry is not recognised.
 `--res stock` and `--panel mid` write the backup's stock immediates back.
 
@@ -344,14 +345,25 @@ and keeps its UI, such as the manoeuvre banner, inside the safe area; a car
 capture of the stock geometry shows exactly that. With a full-frame safe area
 the banner lands in the top-left corner, under the cluster's gauge mask.
 
-The default safe area is **504x368 at (286, 72)** (x 286–790, y 72–440):
+The default safe area is **504x432 at (286, 8)** (x 286–790, y 8–440):
 
 - x: BMW's own IC_MID safe area (504x456 at (708, 153) on the panel) lies
   inside the map area at (422, 134); in map-area coordinates it spans
   x 286–790, between the native speed readout (to x ≈ 170) and consumption
   readout (from x ≈ 800).
-- y: below the native model badge, which covers the top of the area to
-  y ≈ 64.
+- y: from 8 rows below the map's top edge, so Apple's turn card sits at
+  the top of the map and the road ahead stays clear below it.
+
+Until this release the default was 504x368 at (286, 72): its top kept clear
+of the model badge (to y ≈ 64), which put Apple's turn card over the middle
+of the map. Only the top edge moved, from y 72 to y 8; the width, x and
+bottom are the same, and in the plan only the safe height and x,y
+immediate changes (`70010000 1e014800` to `b0010000 1e010800`). On a BMW
+G20 (iDrive 7 MGU, P18_23w44.2-1-3, carplay 22.28.3) with 504x432 at
+(286, 8) Apple's card sits at the top of the CarPlay map, inside the map's
+edges, with nothing over it. A unit patched with the earlier default reads
+as patched; the app shows `Update needed`, and one press of CarPlay's
+Patch button writes this one.
 
 A smaller safe area, such as 476x306 at (306, 72), makes Apple Maps show a
 black cluster map or its turn card alone.
@@ -1368,8 +1380,8 @@ original is unknown. The edit:
 
 - a 1280x720 stream with the UI in its top 1280x564 (margins 0x156 at
   0,0), the map slot's 2.27:1;
-- the safe area 592x432 at (336, 84): the CarPlay safe area of the map
-  slot, 504x368 at (286, 72), at the stream's scale, so the turn card stays
+- the safe area 592x432 at (336, 84): the earlier CarPlay safe area of
+  the map slot, 504x368 at (286, 72), at the stream's scale, so the turn card stays
   where the gauges leave the slot clear;
 - the density chosen (150–400 dpi in steps of 10, 180 by default; kept in
   `/var/opt/waze-on-cluster/aa-density`). A lower one makes the phone take
@@ -1613,7 +1625,7 @@ and a failing patch is not tried again:
   URL; earlier releases wrote `mapurl: true` for Edit 5's URL, the URL
   with ETA as a string, and no `showui`), and in `res` the geometry Edit 4
   advertised (pixel size, size in mm and safe area, as
-  `1088x480/138x61/504x368+286+72`; `false` for the stock one; releases
+  `1088x480/138x61/504x432+286+8`; `false` for the stock one; releases
   before 0.10.6 wrote none).
 - `/var/opt/waze-on-cluster/boot-recovery.json`, written whole: a
   temporary file, fsync'd, renamed over it, the folder fsync'd. A write
