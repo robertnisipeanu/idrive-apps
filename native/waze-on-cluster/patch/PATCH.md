@@ -98,15 +98,20 @@ whose map slot, safe area and crop this tool's geometry was measured on
 Android Auto patcher does (`aapd_patch.js` `readCoding`, "Builds and the
 coding" below) and `status` prints it (`coding: KI_KOMBI_VARIANT n`, or
 `unreadable (...)`). The plan refuses every other value, whatever the
-flags: 0 as `not supported on this car (KI_KOMBI_VARIANT 0: no cluster
-display is coded)`, any other as `not supported on this cluster
+flags: 9 and 10 (`ic_box_high`, `ic_box_mid`), whose clusters CarPlay and
+Android Auto stream the map to themselves, as `built in on this cluster
+(KI_KOMBI_VARIANT n: CarPlay and Android Auto stream the cluster map
+themselves)`; 0 as `not supported on this car (KI_KOMBI_VARIANT 0: no
+cluster display is coded)`; any other as `not supported on this cluster
 (KI_KOMBI_VARIANT n; the map is made for KI_KOMBI_VARIANT 7)`. `patchd`
 reports the same conflict for both patches, an install and the Patch
-buttons plan nothing, and the app shows `Status: Not supported — no
-cluster display` or `Status: Not supported — this cluster` with no Patch
-button. A coding that cannot be read is planned as 7, on trial ("Boot
-recovery"). `--unproven`, which earlier releases' records pass, is
-accepted and changes nothing.
+buttons plan nothing, an install puts an earlier patch of ours back as
+it ships (on 9 and 10 the cluster's own map then takes over), and the app
+shows `Status: Built in`, `Status: Not supported — no cluster display` or
+`Status: Not supported — this cluster` with no Patch button. A coding
+that cannot be read is planned as 7, on trial ("Boot recovery").
+`--unproven`, which earlier releases' records pass, is accepted and
+changes nothing.
 
 **The coding a plan is for.** A plan's record keeps the coding it was
 made for (`coding`: the value, or `unreadable`; a record without one, an
@@ -685,7 +690,7 @@ shows.
 | the pristine build (any build whose sites are found and verify), no backup of ours | plans the patch in memory and arms carplay's next start (pending), on trial until it ran healthy on this car ("Boot recovery") | nothing |
 | a patch of ours (an earlier release's), with our verified backup or, without one, on a build `SHIPPED` knows | puts the file back as it ships, drops our backup, then plans and arms as above; nothing pending where the running carplay holds the plan's bytes | puts the file back, drops our backup |
 | a patch of ours plus another tool's change elsewhere (`foreign: yes`) | nothing: a conflict, the file and its backup left as they are, nothing armed | puts our edits back, keeps theirs, drops our backup |
-| a car coded otherwise than `KI_KOMBI_VARIANT` 7 (a coding that cannot be read is planned as 7) | puts a patch of ours back as it ships and drops an enabled plan in memory; plans nothing: a conflict (`not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)`, `not supported on this cluster (KI_KOMBI_VARIANT n; …)`) | as on any car |
+| a car coded otherwise than `KI_KOMBI_VARIANT` 7 (a coding that cannot be read is planned as 7) | puts a patch of ours back as it ships and drops an enabled plan in memory; plans nothing: a conflict (`built in on this cluster (KI_KOMBI_VARIANT 9 or 10: …)`, `not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)`, `not supported on this cluster (KI_KOMBI_VARIANT n; …)`) | as on any car |
 | another build by its build-id beside our backup (a car software update replaced carplay after an earlier release patched it) | drops the backup of the build no longer there, leaves carplay as it is, then plans and arms as for the pristine build | drops our backup |
 | another build beside our backup that its build-id does not tell (the same build-id, another size, or no build-id) | nothing: a conflict (`carplay is another build than our backup`) | nothing |
 | the original with our backup (CarPlay's Remove patch button was used, or boot recovery removed the patch), or a patch in memory turned off (Remove patch: whatever carplay is, a firmware update's included; boot recovery: the carplay it turned off, another one is planned again on trial) | nothing: the map stays off; the first install on HIGH F applies it again ("Supported head units"), except where boot recovery removed the patch | drops our backup |
@@ -1173,10 +1178,11 @@ is `CodingBase(0x75a, 150)` of the coding image (`0x4f9e5b`; carplay
 `0x23ad70`) and the variant `getBits(0, 0x7e, 1)` of it (`0x4f9c88`), so
 byte `0x2c + 0x75a` of `/dev/shm/rawcodingdata` (4144 bytes, header flags
 at `0x28` reading `0x09`, valid coding), bits 1–6. A coding that cannot be
-read is planned as 7, on trial. `patchd` reports 0 as `not supported on this
-car (KI_KOMBI_VARIANT 0: no cluster display is coded)` and any other value
-as `not supported on this cluster (KI_KOMBI_VARIANT n; the map is made for
-KI_KOMBI_VARIANT 7)`, as CarPlay's ("The cluster coding").
+read is planned as 7, on trial. `patchd` reports 9 and 10 as `built in on
+this cluster (…)`, 0 as `not supported on this car (KI_KOMBI_VARIANT 0: no
+cluster display is coded)` and any other value as `not supported on this
+cluster (KI_KOMBI_VARIANT n; the map is made for KI_KOMBI_VARIANT 7)`, as
+CarPlay's ("The cluster coding").
 
 ### The edits
 
@@ -1335,10 +1341,11 @@ and the crop were measured on a `KI_KOMBI_VARIANT` 7 (`high_4_1`) cluster
 only. Raw 9 and 10 (`ic_box_high`, `ic_box_mid`) are other cluster
 hardware, which takes aapd's and carplay's own cluster stream at its own
 geometry (carplay: IC_HIGH 1920x900, IC_MID 1920x720), and nothing places
-this tool's map slot there; the other values name other clusters again.
-So the plan refuses every raw value but 7 (`not supported on this
-cluster`) and 0 (`not supported on this car (… no cluster display is
-coded)`), on every build; a coding that cannot be read is planned as 7.
+this tool's map slot there: aapd and carplay show the map on those
+clusters as they ship. The other values name other clusters again. So the
+plan refuses every raw value but 7, on every build: 9 and 10 as built in,
+0 as no cluster display, the rest as not supported on this cluster; a
+coding that cannot be read is planned as 7.
 
 ### The geometry
 

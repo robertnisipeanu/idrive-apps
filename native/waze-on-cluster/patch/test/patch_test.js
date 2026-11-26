@@ -723,7 +723,8 @@ function codingAndRecord() {
             car.coding(7);
         });
         [[0, 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'],
-         [9, 'not supported on this cluster (KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7)'],
+         [9, 'built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)'],
+         [10, 'built in on this cluster (KI_KOMBI_VARIANT 10: CarPlay and Android Auto stream the cluster map themselves)'],
          [4, 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)'],
          [12, 'not supported on this cluster (KI_KOMBI_VARIANT 12; the map is made for KI_KOMBI_VARIANT 7)']].forEach(function (c) {
             fresh();

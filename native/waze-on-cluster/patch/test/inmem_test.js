@@ -283,7 +283,8 @@ test('the patcher\'s refusals of a file are conflicts; a failure a later try may
     [['refusing: variant: not found', 'not patchable: variant: not found'],
      ['refusing: head unit: unknown variant is not supported', 'not supported on this car (head unit: unknown variant is not supported)'],
      ['refusing: not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)', 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'],
-     ['refusing: not supported on this cluster (KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7)', 'not supported on this cluster (KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7)'],
+     ['refusing: not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)', 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)'],
+     ['refusing: built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)', 'built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)'],
      ['refusing: /etc/aapd.conf: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS', 'aapd.conf not usable: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS'],
      ['in memory needs the pristine build on disk: variant edited', 'in memory needs the pristine build on disk: variant edited']].forEach((c) => assert.strictEqual(inmem.refusalConflict(c[0]), c[1], c[0]));
 });

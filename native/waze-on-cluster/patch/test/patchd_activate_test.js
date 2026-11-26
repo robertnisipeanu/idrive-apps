@@ -608,6 +608,12 @@ async function main() {
         /variant: slot 0 handler not a store$/.test(r.result.conflict || '') && !r.result.reboot, JSON.stringify(r.result));
     r = hook('deactivate');
     ok('unpatchable binary: deactivate leaves it, exit 0', r.code === 0 && disk() === sha(unknown), JSON.stringify(r.result));
+    /* On a car coded 9 or 10 the coding comes first: built in, not this build. */
+    headUnit.coding(9);
+    st = await daemonStatus();
+    ok('unpatchable binary on a car coded 9: patchd reports it built in', st.conflict === 'built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)',
+        JSON.stringify(st));
+    headUnit.coding(7);
 
     /* What an older release patched where the locator now refuses a site
      * (with its backup and record): activate leaves it, a conflict; the
@@ -1048,6 +1054,7 @@ async function main() {
      * plans nothing, the conflict; patchd says not supported. A plan made
      * for 7 goes once the car reads another coding. */
     var NOT = function (v) { return v === 0 ? 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'
+        : v === 9 || v === 10 ? 'built in on this cluster (KI_KOMBI_VARIANT ' + v + ': CarPlay and Android Auto stream the cluster map themselves)'
         : 'not supported on this cluster (KI_KOMBI_VARIANT ' + v + '; the map is made for KI_KOMBI_VARIANT 7)'; };
     for (var v of [0, 9, 10, 4, 12]) {
         fresh(SRCBUF);
@@ -1069,6 +1076,17 @@ async function main() {
     r = hook('activate');
     ok('recoded 4: the install drops the plan, nothing armed, not supported', r.code === 0 && rec() === null && !armed() && r.result.conflict === NOT(4) && ro(), JSON.stringify(r.result));
     headUnit.coding(7);
+    for (var bv of [9, 10]) {
+        fresh(SRCBUF);
+        hook('activate');
+        headUnitStart();
+        headUnit.coding(bv);
+        st = await daemonStatus();
+        ok('recoded ' + bv + ' under a patch made for 7: patchd reports it built in', st.conflict === NOT(bv), JSON.stringify(st));
+        r = hook('activate');
+        ok('recoded ' + bv + ': the install drops the plan, nothing armed, built in', r.code === 0 && rec() === null && !armed() && r.result.conflict === NOT(bv) && ro(), JSON.stringify(r.result));
+        headUnit.coding(7);
+    }
 
     /* An earlier release's patch of the file on a car coded otherwise
      * (its install's, recorded proven or on trial, or CarPlay's Patch
@@ -1091,15 +1109,18 @@ async function main() {
     [['its apply pending', false, true, { patched: true, proven: true }], ['carplay running the file it replaced, no marker', false, false, { patched: true, proven: true }],
      ['started', true, false, { patched: true, proven: true }], ['the Patch button\'s, started', true, false, { patched: true, proven: false }],
      ['an install\'s on trial', true, false, { patched: true, proven: false, trial: true }]].forEach(function (c) {
-        earlierOnDisk(c[1], c[2]);
-        record.write(TGT, c[3]);
-        headUnit.coding(9);
-        r = hook('activate');
-        var m = rec();
-        ok('coding 9, an earlier release\'s patch on disk (' + c[0] + '): put back as it ships, the backup dropped, nothing planned, not supported, / read-only',
-            r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && m === null && !armed() && r.result.conflict === NOT(9) && /put back as it ships/.test(r.result.status || '') && ro(),
-            JSON.stringify([r.result, m]));
-        hook('deactivate');
+        [9, 10, 4].forEach(function (v) {
+            earlierOnDisk(c[1], c[2]);
+            record.write(TGT, c[3]);
+            headUnit.coding(v);
+            r = hook('activate');
+            var m = rec();
+            ok('coding ' + v + ', an earlier release\'s patch on disk (' + c[0] + '): put back as it ships (' + (v === 4 ? 'not supported' : 'the cluster\'s own map takes over') +
+                '), the backup dropped, nothing planned, / read-only',
+                r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && m === null && !armed() && r.result.conflict === NOT(v) && /put back as it ships/.test(r.result.status || '') && ro(),
+                JSON.stringify([r.result, m]));
+            hook('deactivate');
+        });
     });
     earlierOnDisk(true, false);
     fs.mkdirSync(path.join(UNITS, 'carplay.service.d'), { recursive: true });

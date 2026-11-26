@@ -250,11 +250,12 @@ function headUnitRefused(conflict) {
 }
 
 /* A conflict no Patch can get past: a head unit that refuses our parts or
- * has no Android Auto, a cluster coding the patch is not made for, a build
- * whose edit sites the patcher cannot find or verify. It is shown whatever
- * the section's state, and Patch is not offered. */
+ * has no Android Auto, a cluster coding the patch is not made for (or one
+ * that streams the map itself, built in), a build whose edit sites the
+ * patcher cannot find or verify. It is shown whatever the section's state,
+ * and Patch is not offered. */
 function unsupported(conflict) {
-    return headUnitRefused(conflict) || /^(no Android Auto|not supported on this cluster|not patchable)/.test(conflict || '') ||
+    return headUnitRefused(conflict) || /^(no Android Auto|not supported on this cluster|built in on this cluster|not patchable)/.test(conflict || '') ||
         /no cluster display is coded/.test(conflict || '');
 }
 
@@ -272,6 +273,7 @@ function conflictText(conflict, product) {
     return headUnitRefused(conflict) || /^no Android Auto/.test(conflict) ? t('Not supported on this head unit')
         : /no cluster display is coded/.test(conflict) ? t('Not supported — no cluster display')
         : /^not supported on this cluster/.test(conflict) ? t('Not supported — this cluster')
+        : /^built in on this cluster/.test(conflict) ? t('Built in')
         : /^not patchable/.test(conflict) ? (product === 'CarPlay' ? t('Not supported — this CarPlay version') : t('Not supported — this Android Auto version'))
         : /unreadable/.test(conflict) ? t('Unavailable')
         : retryable(conflict) ? t('Failed — press Patch to try again')
@@ -285,7 +287,7 @@ function failedText(st, product, canPatch) {
     if (st.conflict && why && why.indexOf(st.conflict) >= 0) {
         return conflictText(st.conflict, product);
     }
-    if (why && /^(not supported|not patchable)/.test(why)) {
+    if (why && /^(not supported|not patchable|built in)/.test(why)) {
         return conflictText(why, product);
     }
     return canPatch ? t('Failed — press Patch to try again') : t('Failed');

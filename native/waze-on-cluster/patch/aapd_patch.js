@@ -144,15 +144,18 @@ function readCoding(p) {
     return { variant: (b[CODING.at] & CODING.mask) >> CODING.shift };
 }
 
-/* Why the patch cannot work with a coding readCoding read ({variant} or
- * {err}), or null. The map's slot, safe area and crop are those of the
- * KI_KOMBI_VARIANT 7 cluster (high_4_1); 0 codes no cluster display, and
- * every other value another cluster. A coding that cannot be read is
- * planned as 7, on trial; boot recovery plans it again once it reads
- * otherwise (recovery.js codingMoved). */
+/* Why the patch is not for a coding readCoding read ({variant} or {err}),
+ * or null. The map's slot, safe area and crop are those of the
+ * KI_KOMBI_VARIANT 7 cluster (high_4_1). 9 and 10 (ic_box_high, ic_box_mid)
+ * are clusters CarPlay and Android Auto stream the map to themselves; 0
+ * codes no cluster display, and every other value another cluster. A
+ * coding that cannot be read is planned as 7, on trial; boot recovery
+ * plans it again once it reads otherwise (recovery.js codingMoved). */
+var BUILT_IN = [9, 10];
 function codingRefusal(cd) {
     if (cd.err || cd.variant === CODING.want) return null;
     return cd.variant === 0 ? 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'
+        : BUILT_IN.indexOf(cd.variant) >= 0 ? 'built in on this cluster (KI_KOMBI_VARIANT ' + cd.variant + ': CarPlay and Android Auto stream the cluster map themselves)'
         : 'not supported on this cluster (KI_KOMBI_VARIANT ' + cd.variant + '; the map is made for KI_KOMBI_VARIANT ' + CODING.want + ')';
 }
 

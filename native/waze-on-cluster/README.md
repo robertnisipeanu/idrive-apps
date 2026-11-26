@@ -61,12 +61,14 @@ goes back as they ship, and the patch is armed in aapd's memory. Where the
 sites are not found or not recognised, or another tool's change is found
 beside our own edits, it leaves everything as it is, and the app's Status
 says why; bytes away from the sites do not count. On a car coded
-otherwise, the map's geometry is not known to fit its cluster: it plans
-nothing, drops a patch planned for another coding, puts an earlier
-release's patch back as it ships, and the app says `Not supported — this
-cluster` (or `— no cluster display`). A car software update that replaces
-CarPlay or aapd leaves them running as they ship until the next install
-or Patch. A patch you turned off with Remove patch stays off across
+otherwise it plans nothing, drops a patch planned for another coding and
+puts an earlier release's patch back as it ships. On a cluster coded 9 or
+10 CarPlay and Android Auto show the map themselves, and the app says
+`Built in`; on 0 (no cluster display) or any other coding the map's
+geometry is not known to fit, and it says `Not supported — no cluster
+display` or `Not supported — this cluster`. A car software update that
+replaces CarPlay or aapd leaves them running as they ship until the next
+install or Patch. A patch you turned off with Remove patch stays off across
 updates, car software updates and restarts, until you press Patch
 (PATCH.md "Install-time activation", "In memory").
 

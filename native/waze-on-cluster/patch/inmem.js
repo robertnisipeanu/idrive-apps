@@ -174,14 +174,15 @@ function refusal(words) {
 }
 
 /* The conflict a refusal is reported as, in patchd's status words: the
- * head unit and the coding as not supported, aapd.conf as not usable, a
+ * head unit and the coding as not supported (a cluster that streams the
+ * map itself as built in), aapd.conf as not usable, a
  * file another tool changed in its own words, and every other refusal (a
  * site the locator does not find or verify, a plan whose own check fails)
  * as a build the patcher cannot patch. */
 function refusalConflict(words) {
     var m = /^refusing: ([\s\S]*)$/.exec(words), r = m ? m[1] : null;
     return !r ? words
-        : /^not supported on this (?:car|cluster)/.test(r) ? r
+        : /^(?:not supported on this (?:car|cluster)|built in on this cluster)/.test(r) ? r
         : /^head unit: /.test(r) ? 'not supported on this car (' + r + ')'
         : /^\/\S*aapd\.conf: /.test(r) ? 'aapd.conf not usable: ' + r.replace(/^\S+: /, '')
         : 'not patchable: ' + r;

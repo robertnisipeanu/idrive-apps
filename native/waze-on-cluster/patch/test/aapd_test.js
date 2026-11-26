@@ -184,8 +184,8 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     });
     var r = plan(unit());
     ok('coding 7: planned, the summary names it', r.code === 0 && r.sum.coding === 'ok' && r.sum.variant === 7, r.out);
-    [[0, 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'], [9, 'not supported on this cluster (KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7)'],
-     [10, 'not supported on this cluster (KI_KOMBI_VARIANT 10; the map is made for KI_KOMBI_VARIANT 7)'], [4, 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)'],
+    [[0, 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'], [9, 'built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)'],
+     [10, 'built in on this cluster (KI_KOMBI_VARIANT 10: CarPlay and Android Auto stream the cluster map themselves)'], [4, 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)'],
      [12, 'not supported on this cluster (KI_KOMBI_VARIANT 12; the map is made for KI_KOMBI_VARIANT 7)'], [63, 'not supported on this cluster (KI_KOMBI_VARIANT 63; the map is made for KI_KOMBI_VARIANT 7)']].forEach(function (c) {
         var u = unit();
         fs.writeFileSync(u.coding, coding(c[0]));
@@ -736,7 +736,9 @@ function nextStart(t, pid) {
      * ever, except on a coding the patch is not made for, where CarPlay's
      * patch is left too, with the same conflict. */
     [['coding 0', function (u) { fs.writeFileSync(u.coding, coding(0)); }, /not supported on this car \(KI_KOMBI_VARIANT 0: no cluster display is coded\)/],
-     ['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /not supported on this cluster \(KI_KOMBI_VARIANT 9; the map is made for KI_KOMBI_VARIANT 7\)/],
+     ['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /built in on this cluster \(KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves\)/],
+     ['coding 10', function (u) { fs.writeFileSync(u.coding, coding(10)); }, /built in on this cluster \(KI_KOMBI_VARIANT 10: CarPlay and Android Auto stream the cluster map themselves\)/],
+     ['coding 4', function (u) { fs.writeFileSync(u.coding, coding(4)); }, /not supported on this cluster \(KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7\)/],
      ['an aapd the locator refuses', function (u) { var b = Buffer.from(SRC); b[LOC.gate.offset + 6] = 3; fs.writeFileSync(u.bin, b); }, /not patchable: gate: variant check not found/],
      ['an aapd without the config path', function (u) { var b = Buffer.from(SRC); b.write('/etc/aapd.cfg', LOC.confpath.offset, 'latin1'); fs.writeFileSync(u.bin, b); }, /not patchable: config path/],
      ['an aapd.conf without the 12.3" codec', function (u) { fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]')); }, /aapd\.conf not usable: no number/],

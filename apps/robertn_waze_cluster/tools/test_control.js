@@ -748,7 +748,9 @@ test('a conflict the install left alone is shown; CarPlay\'s Patch button stays 
     for (const [conflict, text] of [
         ['not patchable: self-start: onSuggestUi call not found', 'Status: Not supported — this CarPlay version'],
         ['not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)', 'Status: Not supported — no cluster display'],
-        ['not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)', 'Status: Not supported — this cluster']]) {
+        ['not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)', 'Status: Not supported — this cluster'],
+        ['built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)', 'Status: Built in'],
+        ['built in on this cluster (KI_KOMBI_VARIANT 10: CarPlay and Android Auto stream the cluster map themselves)', 'Status: Built in']]) {
         for (const state of ['unknown', 'original', 'patched']) {
             patch.conflict = conflict;
             patch.announce(state, state === 'patched' ? 'high' : null, null);
@@ -922,7 +924,9 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ state: 'original', density: 180, densities: D, removed: 'user' }, 'Status: Removed', [true, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)' }, 'Status: Not supported — no cluster display', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'not patchable: gate: variant check not found' }, 'Status: Not supported — this Android Auto version', [false, false, false, false]],
-        [{ state: 'original', density: 180, conflict: 'not supported on this cluster (KI_KOMBI_VARIANT 10; the map is made for KI_KOMBI_VARIANT 7)' }, 'Status: Not supported — this cluster', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'not supported on this cluster (KI_KOMBI_VARIANT 11; the map is made for KI_KOMBI_VARIANT 7)' }, 'Status: Not supported — this cluster', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'built in on this cluster (KI_KOMBI_VARIANT 9: CarPlay and Android Auto stream the cluster map themselves)' }, 'Status: Built in', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'built in on this cluster (KI_KOMBI_VARIANT 10: CarPlay and Android Auto stream the cluster map themselves)' }, 'Status: Built in', [false, false, false, false]],
         [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D, removable: true, conflict: 'not supported on this cluster (KI_KOMBI_VARIANT 4; the map is made for KI_KOMBI_VARIANT 7)' },
             'Status: Not supported — this cluster', [false, true, false, false]],
         [{ state: 'unknown', density: 180, densities: D, conflict: 'in-memory plan unusable: readystart: not located' }, 'Status: Failed — press Patch to try again', [true, true, false, false]],

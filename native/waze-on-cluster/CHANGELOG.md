@@ -4,12 +4,15 @@
 
 A car whose cluster coding cannot be read is patched as a car coded 7,
 on trial. A car coded otherwise is not patched and its Status says why:
-the map's slot is made for the cluster coded 7. A patch made for another
-coding than the car now reads is planned again at the next head-unit
-start, and on such a car it goes. After a car software update replaces
-CarPlay or aapd, they run as they ship until the next install or Patch,
-which drops an earlier release's backup of the replaced build and patches
-the new one.
+on a cluster coded 9 or 10 CarPlay and Android Auto show the map
+themselves (`Built in`; an earlier patch of ours goes back so theirs
+takes over), a car coded 0 has no cluster display, and on any other
+cluster the map's slot, made for the one coded 7, does not fit. A patch
+made for another coding than the car now reads is planned again at the
+next head-unit start, and on such a car it goes. After a car software
+update replaces CarPlay or aapd, they run as they ship until the next
+install or Patch, which drops an earlier release's backup of the
+replaced build and patches the new one.
 
 Android Auto is patched on aapd builds without the place where the map
 is asked for as the phone sets the cluster display up. There, the map
