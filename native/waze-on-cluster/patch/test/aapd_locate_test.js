@@ -30,7 +30,7 @@ var REF_SHA = '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89'
  * with and the sites it still finds. */
 var BUILDS = {};
 BUILDS[REF_SHA] = { name: 'aapd 22.39.3 (ID7 P18_23w44)', buildId: '2dfb9881706bff435b05f621486e8eb8b6c55984', version: '22.39.3',
-    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, confpath: 0x5008ec, readystart: 0x1d3bbf } };
+    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, readystart: 0x1d3bbf } };
 BUILDS.a7971d64fc0feb4e48942441dc76a67d6df282b56cb5d64e92248ff83f18d62e = { name: 'aapd 23.16.5 (ID8)', buildId: 'ef291b7185f210a24d8e68855d94d44e9f32cb62',
     version: '23.16.5', sites: { screen: 0x180c50 },
     refused: { gate: 'gate: variant check not found', call: 'self-start: onNewNavigationStatus string not found',
@@ -57,7 +57,7 @@ paths.forEach(function (p) {
             (loc.ok ? 'located' : 'refused: ' + loc.reason) + '\n');
         return;
     }
-    var bad = locator.EDITS.concat(['confpath', 'readystart'].filter(function (k) { return want.sites[k] !== undefined; })).filter(function (e) {
+    var bad = locator.EDITS.concat(['readystart'].filter(function (k) { return want.sites[k] !== undefined; })).filter(function (e) {
         var r = loc[e];
         if (want.sites[e] !== undefined) return !r.ok || r.offset !== want.sites[e] || r.state !== 'original';
         return r.ok || r.reason !== want.refused[e];
@@ -78,14 +78,12 @@ var LOC = locator.locate(REF);
 ok('reference: the stock and patched bytes of every edit', LOC.ok && json(locator.EDITS.map(function (e) { return [LOC[e].stock, LOC[e].patched]; })) === json([
     ['83bb1c02000001', '83bb1c02000002'], ['e800f8ffff', 'e840fbffff'], ['837b3802740a837b44020f848d000000', '807b4100740a837b38020f858d000000'],
     ['660fefc0ebe1662e0f1f840000000000', '83f802740b660fefc0ebdc0f1f440000']]), json(LOC));
-ok('reference: the config path /etc/aapd.conf, made /run/aapd.conf, read from 32 places', LOC.confpath.ok && LOC.confpath.offset === 0x5008ec &&
-    LOC.confpath.stock === Buffer.from('/etc/aapd.conf\0', 'latin1').toString('hex') && LOC.confpath.patched === Buffer.from('/run/aapd.conf\0', 'latin1').toString('hex') &&
-    LOC.confpath.refs === 32 && LOC.confpath.state === 'original', json(LOC.confpath));
+ok('reference: no site for the config path (the plan redirects aapd\'s reads of it)', !('confpath' in LOC) && locator.SITES.indexOf('confpath') < 0, json(locator.SITES));
 ok('reference: the ready start, onAlternateVideoReady\'s end made a tail jump to requestStream', LOC.readystart.ok && LOC.readystart.offset === 0x1d3bbf &&
     LOC.readystart.stock === '488b44240864483304252800000075074883c4185b5dc3' && LOC.readystart.patched === '4889ef4883c4185b5de9630300000f1f80000000006690' &&
     LOC.readystart.state === 'original', json(LOC.readystart));
 
-/* Every site the patch in memory writes, the config path included. */
+/* Every site the patch in memory writes. */
 function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc[e].patched, 'hex').copy(b, loc[e].offset); }); return b; }
 (function () {
     var p = patchAll(Buffer.from(REF), LOC), loc = locator.locate(p);
@@ -101,7 +99,7 @@ function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc
      * jmp, which reads outdated, with this release's stock and patched
      * bytes over the whole test. */
     var old = patchAll(Buffer.from(REF), LOC);
-    ['confpath', 'readystart'].forEach(function (k) { REF.copy(old, LOC[k].offset, LOC[k].offset, LOC[k].offset + LOC[k].len); });
+    REF.copy(old, LOC.readystart.offset, LOC.readystart.offset, LOC.readystart.offset + LOC.readystart.len);
     REF.copy(old, LOC.guard.offset, LOC.guard.offset, LOC.guard.offset + 10);
     Buffer.from('e98e00000090', 'hex').copy(old, LOC.guard.offset + 10);
     loc = locator.locate(old);
@@ -222,7 +220,7 @@ ok('mutation anchors found in the reference', [GATE_FN, SCREEN_FN, PREP, KOMBI, 
 
 var EXPECT = {}; locator.SITES.forEach(function (e) { EXPECT[e] = LOC[e].offset; });
 function sites(loc) { var s = {}; locator.SITES.forEach(function (e) { s[e] = loc[e].offset; }); return s; }
-var CONF = LOC.confpath.offset, CONF_LEAS = leasIn({ off: LOADS[0].off, end: LOADS[0].size }).filter(function (l) { return l.to === CONF; });
+var CONF = REF.indexOf(Buffer.from('\0/etc/aapd.conf\0', 'latin1')) + 1;
 function shifted(d) { var s = {}; Object.keys(EXPECT).forEach(function (k) { s[k] = EXPECT[k] + d; }); return s; }
 function moved(over) { var s = JSON.parse(json(EXPECT)); Object.keys(over).forEach(function (k) { s[k] = over[k]; }); return s; }
 function appendString(b, s) { return Buffer.concat([b, Buffer.from('\0' + s + '\0', 'latin1')]); }
@@ -351,13 +349,8 @@ var CASES = [
     ['prepareCinemoConfiguration no longer calls the gate', function (b) { b.fill(0x90, PREP_CALL, PREP_CALL + 5); }, ['refused']],
 
     /* self-start */
-    ['requestStream far from its siblings', function (b) {
-        var len = RS_FN.end - RS_FN.off, name = cstrStart('AlternateDisplays::requestStream()');
-        plant(b, RS_FN.off, len, VICTIM.off);
-        leasIn(RS_FN).filter(function (x) { return x.to === name; }).forEach(function (x) { setRel(b, x.at + 3, x.at + 7, cstrStart('AlternateDisplays::stopStream()')); });
-        setRel(b, CMD_CALL + 1, CMD_CALL + 5, VICTIM.off);
-    }, ['refused'], null, 'near'],
-    ['requestStream not called by onStreamCommandChanged', function (b) { setRel(b, CMD_CALL + 1, CMD_CALL + 5, SS); }, ['refused'], null, 'rs-called'],
+    /* cross-checks that protect no site the plan writes: not made */
+    ['requestStream not called by onStreamCommandChanged', function (b) { setRel(b, CMD_CALL + 1, CMD_CALL + 5, SS); }, ['correct']],
     ['a second guard in requestStream', function (b) {
         /* over 16 bytes of whole instructions (call ; mov ; call ; mov), its
          * first branch landing on the next instruction, its second on Ldo */
@@ -415,7 +408,7 @@ var CASES = [
         var at = cstrStart('AlternateDisplays19setNaviStreamStatus');
         b.write('aapd::navigation::AlternateDisplays::setNaviStreamStatus(int)\0', at, 'latin1');
         setRel(b, LOADER.lea + 3, LOADER.lea + 7, at);
-    }, ['refused'], null, 'ss-name'],
+    }, ['correct']],
     ['the guard compares with 3 first', function (b) { b[G + 3] = 3; }, ['refused']],
     ['the guard\'s first branch lands elsewhere', function (b) { b[G + 5] = 0x0c; }, ['refused']],
     ['the guard compares through another register second', function (b) { b[G + 7] = 0x7a; }, ['refused']],
@@ -434,7 +427,7 @@ var CASES = [
     ['onEndSession leaves the focus mode', function (b) { b[find('c7434402000000', END.off, END.end) + 3] = 1; }, ['refused'], null, 'end-resets'],
     ['the patched guard tests another flag than the ready flag', function (b) { patchAll(b, LOC); b[G + 2] = 0x40; }, ['refused'], null, 'guard-ready'],
     ['initAlternateDisplays tests another flag than the gate\'s', function (b) { b.writeUInt32LE(GATE_FLAG + 4, INIT_TEST + 2); }, ['refused'], null, 'gate-gates-alt'],
-    ['onNewNavigationStatus reached without a test of the gate\'s result', function (b) { b.writeUInt32LE(GATE_FLAG + 4, NAV_TEST + 2); }, ['refused'], null, 'onnav-gated'],
+    ['onNewNavigationStatus reached without a test of the gate\'s result', function (b) { b.writeUInt32LE(GATE_FLAG + 4, NAV_TEST + 2); }, ['correct']],
     ['setNaviStreamStatus stores the status elsewhere', function (b) { b[SS_STORE + 2] = 0x3c; }, ['refused'], null, 'ss-field'],
     ['requestStream passes another status than STREAMING', function (b) { b[STREAMING + 4] = 3; }, ['refused'], null, 'streaming'],
     ['requestStream marks another field', function (b) { b[MARK + 2] = 0x48; }, ['refused'], null, 'mark'],
@@ -442,7 +435,7 @@ var CASES = [
         var at = cstrStart('AlternateDisplays19setNaviStreamStatus');
         b.write('void aapd::navigation::AlternateDisplays::setNaviStreamStatus(const StreamTypes&)\0', at, 'latin1');
         setRel(b, LOADER.lea + 3, LOADER.lea + 7, at);
-    }, ['refused'], null, 'ss-name'],
+    }, ['correct']],
     ['onNewNavigationStatus calls setNaviStreamStatus twice', function (b) {
         var c = callsIn(ONNAV).filter(function (x) { return x.at < LOC.call.offset && x.to !== SS && Math.abs(x.to - RS) > 0x10000; });
         setRel(b, c[c.length - 1].at + 1, c[c.length - 1].at + 5, SS);
@@ -465,49 +458,31 @@ var CASES = [
         setRel(b, l[0].at + 3, l[0].at + 7, cstrStart('AlternateDisplays::stopStream()'));
     }, ['correct', 'refused']],
 
-    /* the config path */
-    ['the config path the tail of another string', function (b) { b[CONF - 1] = 0x78; }, ['refused'], null, 'conf-once'],
-    ['the config path twice', function (b) { return appendString(b, '/etc/aapd.conf'); }, ['refused']],
-    ['8 bytes of the config path in code', function (b) { b.write('/etc/aap', VICTIM.off + 0x80, 'latin1'); }, ['refused'], null, 'conf-inline'],
-    ['the config path not referenced', function (b) {
-        CONF_LEAS.forEach(function (l) { setRel(b, l.at + 3, l.at + 7, CONF + 15); });
-    }, ['refused'], null, 'conf-read'],
-    ['a lea into the middle of the config path', function (b) {
-        Buffer.from('488d0500000000', 'hex').copy(b, VICTIM.off + 0x80);
-        setRel(b, VICTIM.off + 0x83, VICTIM.off + 0x87, CONF + 5);
-    }, ['refused'], null, 'conf-whole'],
-    ['an absolute pointer into the middle of the config path', function (b) {
-        var rw = LOADS[1], at = rw.off + rw.size - 16;
-        b.writeUInt32LE(vaOf(CONF) + 5, at - (at % 8)); b.writeUInt32LE(0, at - (at % 8) + 4);
-    }, ['refused'], null, 'conf-whole'],
-    ['the config path in a writable segment', function (b) { var h = phdrs(b).filter(function (p) { return p.type === 1; })[0]; b.writeUInt32LE(7, h.hdr + 4); }, ['refused'], null, 'conf-ro'],
-    ['the config path in the relocated read-only data', function (b) {
-        var h = phdrs(b).filter(function (p) { return p.type === 0x6474e552; })[0];
-        b.writeUInt32LE(vaOf(CONF) - 0x10, h.hdr + 16); b.writeUInt32LE(0x100, h.hdr + 40);
-    }, ['refused'], null, 'conf-ro'],
-    ['a dynamic relocation over the config path', function (b) {
-        var shoff = b.readUInt32LE(0x28), n = b.readUInt16LE(0x3c);
-        for (var i = 0; i < n; i++) {
-            var o = shoff + i * 64;
-            if (b.readUInt32LE(o + 4) === 4) { b.writeUInt32LE(vaOf(CONF) + 4, b.readUInt32LE(o + 24)); return; }
-        }
-        throw new Error('no .rela section');
-    }, ['refused'], null, 'reloc'],
+    /* the config path: no site, so whatever the build does with its string
+     * (aapd 23.16.5 holds /etc/aapd.conf beside /etc/aapd_bmw_m.conf) is no
+     * reason to refuse it */
+    ['the config path twice', function (b) { return appendString(b, '/etc/aapd.conf'); }, ['correct']],
+    ['8 bytes of the config path in code', function (b) { b.write('/etc/aap', VICTIM.off + 0x80, 'latin1'); }, ['correct']],
+    ['the config path the head of a longer path', function (b) { return appendString(b, '/etc/aapd.conf.d/x'); }, ['correct']],
+    ['the config path the tail of another string', function (b) { b[CONF - 1] = 0x78; }, ['correct']],
 
     /* the ready start */
-    ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['refused'], null, 'ready-frame'],
-    ['onAlternateVideoReady without its subscribe call, the call the ready start follows', function (b) { b.fill(0x90, READY_SUB.at, READY_SUB.at + 5); }, ['refused']],
-    ['onAlternateVideoReady subscribing another object', function (b) { b[READY_SUB.at - 1] = 0xdf; }, ['refused'], null, 'ready-this'],
-    ['onAlternateVideoReady\'s stack check of another slot', function (b) { b[LOC.readystart.offset + 4] = 0x10; }, ['refused'], null, 'ready-tail'],
-    ['onAlternateVideoReady\'s stack check failing elsewhere', function (b) { b[LOC.readystart.offset + 23] = 0x90; }, ['refused'], null, 'ready-tail'],
+    ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['without ready start'], null, 'ready-frame'],
+    ['onAlternateVideoReady without its subscribe call (the guard\'s ready flag unconfirmed)', function (b) { b.fill(0x90, READY_SUB.at, READY_SUB.at + 5); }, ['refused']],
+    ['onAlternateVideoReady subscribing another object', function (b) { b[READY_SUB.at - 1] = 0xdf; }, ['without ready start'], null, 'ready-this'],
+    ['onAlternateVideoReady\'s stack check of another slot', function (b) { b[LOC.readystart.offset + 4] = 0x10; }, ['without ready start'], null, 'ready-tail'],
+    ['onAlternateVideoReady\'s stack check failing elsewhere', function (b) { b[LOC.readystart.offset + 23] = 0x90; }, ['without ready start'], null, 'ready-tail'],
     ['a branch into onAlternateVideoReady\'s end', function (b) {
         Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
         setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset + 9);
-    }, ['refused'], null, 'ready-into'],
+    }, ['without ready start'], null, 'ready-into'],
     ['a branch onto onAlternateVideoReady\'s end', function (b) {
         Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
         setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset);
-    }, ['refused'], null, 'ready-into'],
+    }, ['without ready start'], null, 'ready-into'],
+
+    ['onAlternateVideoReady\'s stack check by sub (a newer gcc)', function (b) { b[LOC.readystart.offset + 7] = 0x2b; }, ['without ready start'], null, 'ready-tail'],
+    ['onAlternateVideoReady\'s stack check jumping further', function (b) { b[LOC.readystart.offset + 15] = 0x09; }, ['without ready start'], null, 'ready-tail'],
 
     /* the build */
     ['a dynamic relocation over the gate', function (b) {
@@ -521,8 +496,16 @@ var CASES = [
     ['no function table', function (b) { var eh = phdrs(b).filter(function (p) { return p.type === 0x6474e550; })[0]; b[eh.off] = 2; }, ['refused']],
 ];
 
-var tally = { correct: 0, refused: 0, WRONG: 0 }, proved = {};
-function outcome(loc, want) { return !loc.ok ? 'refused' : json(sites(loc)) === json(want) ? 'correct' : 'WRONG'; }
+var tally = { correct: 0, 'without ready start': 0, refused: 0, WRONG: 0 }, proved = {};
+/* refused: an edit the plan needs not located; without ready start: the
+ * edits where they are and the ready start not located (planned without
+ * it); correct: every site where it is; WRONG: a site elsewhere. */
+function outcome(loc, want) {
+    if (locator.EDITS.some(function (e) { return !loc[e].ok; })) return 'refused';
+    var got = sites(loc);
+    if (!loc.readystart.ok) { got.readystart = want.readystart; return json(got) === json(want) ? 'without ready start' : 'WRONG'; }
+    return json(got) === json(want) ? 'correct' : 'WRONG';
+}
 CASES.forEach(function (t) {
     var b = Buffer.from(REF), out;
     try { out = t[1](b) || b; } catch (e) { ok(t[0] + ': mutation built', false, e.message); return; }
@@ -532,12 +515,12 @@ CASES.forEach(function (t) {
         'allowed ' + t[2].join('/') + (loc.ok ? '; got ' + json(sites(loc)) + ', want ' + json(want) : ''));
     if (!t[4]) return;
     var wloc = locator.locate(out, { off: [t[4]] }), without = outcome(wloc, want);
-    proved[t[4]] = proved[t[4]] || without !== 'refused';
-    ok('  with ' + t[4] + ' off: ' + (without === 'correct' ? 'patched' : without === 'WRONG' ? 'patched at the wrong sites' : 'refused (' + wloc.reason + ')'), without !== 'refused');
+    proved[t[4]] = proved[t[4]] || without !== got;
+    ok('  with ' + t[4] + ' off: ' + (without === 'refused' ? 'refused (' + wloc.reason + ')' : without === 'WRONG' ? 'patched at the wrong sites' : without), without !== got);
 });
 var unproved = locator.CHECKS.filter(function (c) { return !proved[c]; });
-ok('every cross-check alone refuses a mutation (' + locator.CHECKS.length + ' checks)', !unproved.length, 'unproved: ' + unproved.join(', '));
+ok('every check alone decides a mutation (' + locator.CHECKS.length + ' checks)', !unproved.length, 'unproved: ' + unproved.join(', '));
 ok('the reference with every check off: the same sites', json(sites(locator.locate(REF, { off: locator.CHECKS }))) === json(EXPECT));
-process.stdout.write('\n' + CASES.length + ' mutations: ' + tally.correct + ' located correctly, ' + tally.refused + ' refused, ' + tally.WRONG + ' located wrongly\n');
+process.stdout.write('\n' + CASES.length + ' mutations: ' + tally.correct + ' located correctly, ' + tally['without ready start'] + ' without the ready start, ' + tally.refused + ' refused, ' + tally.WRONG + ' located wrongly\n');
 process.stdout.write(fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n');
 process.exit(fails ? 1 : 0);

@@ -979,8 +979,8 @@ function cpOverlayState(text) {
 function aaOverlayState(text) {
     function get(k) { var m = new RegExp('^' + k + ':\\s+(.*)$', 'm').exec(text); return m ? m[1] : ''; }
     var g = /^PATCHED \((\d+) dpi, card (\w+)/.exec(get('geometry'));
-    var all = ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath'].every(function (k) { return get(k) === 'PATCHED'; }) &&
-        /^(PATCHED|NOT APPLIED)/.test(get('readystart'));
+    var all = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].every(function (k) { return get(k) === 'PATCHED'; }) &&
+        /^(PATCHED|NOT APPLIED)/.test(get('readystart')) && /^(REDIRECTED|PATCHED)/.test(get('redirect'));
     return { state: all && g ? 'patched' : 'unknown', mode: null, reason: all && g ? null : 'the plan does not read patched', show: { dpi: g ? Number(g[1]) : null, diskCard: g ? g[2] : null } };
 }
 
@@ -1004,7 +1004,7 @@ var AA_PATCH_REV = require('./aapd_patch.js').PATCH_REV;
  * version's own plan of a build without the ready start's site, else
  * AA_PATCH_REV, so an earlier release's record at revision 2 (0.13.x) is
  * planned again. */
-function aaPlanRev(rec) { return rec.v === 2 && Array.isArray(rec.edits) && rec.edits.indexOf('readystart') < 0 ? 2 : AA_PATCH_REV; }
+function aaPlanRev(rec) { return rec.v >= 2 && Array.isArray(rec.edits) && rec.edits.indexOf('readystart') < 0 ? 2 : AA_PATCH_REV; }
 
 /* The Android Auto patch as aapd_patch.js status reads it: { state:
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
@@ -1047,9 +1047,6 @@ function readAaState(cb, fresh) {
         var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
         var unknownWhy = /^NO — (.*)$/.exec(get('known')), confWhy = /^UNKNOWN \((.*)\)$/.exec(geom);
-        /* The config path the patch in memory also edits: a build without it
-         * is not patchable either. */
-        var planWhy = /^no \((.*)\)$/.exec(get('planable'));
         st.foreign = get('foreign') === 'yes';
         st.coding = coding ? Number(coding[1]) : null;
         st.dpi = dpi ? Number(dpi[1]) : null;
@@ -1069,7 +1066,6 @@ function readAaState(cb, fresh) {
         st.conflict = hu ? notSupported(hu) : codingConflict(coding) || (
               st.otherBuild && !st.replaced ? 'aapd is another build than our backup'
             : !known && !backup ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
-            : planWhy && !st.ours && !backup ? 'not patchable: ' + planWhy[1]
             : !backup && !pristine ? AA.modified
             : confWhy && !backup ? 'aapd.conf not usable: ' + confWhy[1]
             : foreignStart(AA));

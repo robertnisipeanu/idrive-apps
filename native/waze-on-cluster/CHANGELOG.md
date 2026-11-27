@@ -9,6 +9,17 @@ was 504x368 at 286,72); the width and the bottom are unchanged. A car
 patched before shows `Update needed` in the app; one press of CarPlay's
 Patch button and a head-unit restart move the card up.
 
+## 0.14.20
+
+Android Auto reads the copy of aapd.conf with the cluster geometry in
+place of `/etc/aapd.conf` without a change to aapd's code, so an aapd
+build whose path to that file looks different is no longer refused.
+Android Auto is refused only where a part the map needs is not found;
+an aapd build whose place to ask for the map again on reconnect is in a
+form the patch does not know is patched without it. A downgrade to an
+earlier release leaves Android Auto as it ships until that release plans
+its own patch.
+
 ## 0.14.19
 
 A car whose cluster coding cannot be read is patched as a car coded 7,

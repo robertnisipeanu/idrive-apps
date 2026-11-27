@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Robert Nisipeanu
 # libwocpatch.so against a test program (target.c): all or nothing, only the
-# plan's program, the result file. Run by `make test-preload` in the unit's
+# plan's program, the result file, the redirects. Run by `make test-preload` in the unit's
 # toolchain image: preload_test.sh <libwocpatch.so> <target> <work dir>
 set -eu
 LIB=$1 BIN=$2 W=$3
@@ -20,9 +20,10 @@ plan() {   # plan <file> <build-id> <answer stock> [extra line]
       echo "edit message $mva $mstock $mpatched"; echo "edit answer $ava $3 $apatched"
       [ -n "${4:-}" ] && echo "$4"; echo "end ${5:-2}"; } > "$1"
 }
-run() {   # run <plan> -> stdout of the target; result in $W/result
+run() {   # run <plan> [args] -> stdout of the target; result in $W/result
     : > "$W/result"
-    WOC_PATCH_PLAN=$1 WOC_PATCH_RESULT=$W/result LD_PRELOAD=$LIB "$BIN" 2> "$W/err"
+    p=$1; shift
+    WOC_PATCH_PLAN=$p WOC_PATCH_RESULT=$W/result LD_PRELOAD=$LIB "$BIN" "$@" 2> "$W/err"
 }
 stock="stock message!! 41414141"
 
@@ -85,6 +86,52 @@ rm -f "$W/result"
 WOC_PATCH_PLAN=$W/p1 WOC_PATCH_RESULT=$W/result LD_PRELOAD=$LIB "$BIN" >/dev/null 2>&1
 [ ! -e "$W/result" ] && ok "a missing result file is not created" || bad "result created"
 
-# Only the linker's own symbols (_init, _fini, the section bounds).
-nm -D --defined-only "$LIB" | grep -v -E ' (__bss_start|_edata|_end|_init|_fini)$' | grep -q . && bad "exports: $(nm -D --defined-only "$LIB")" || ok "exports nothing"
+# A plan's redirect: once applied, a read of <from> opens <to>, by fopen,
+# open and openat alike; a write opens <from> itself. Not applied (a site
+# not stock), or in another program, nothing is redirected.
+echo "the original" > "$W/from"; echo "the copy" > "$W/to"
+plan "$W/p8" "$id" "$astock" "redirect $W/from $W/to"
+out=$(run "$W/p8" read "$W/from")
+[ "$out" = "patched message 2a
+fopen the copy
+open the copy
+openat the copy
+write itself" ] && grep -q '"applied":true' "$W/result" && ok "redirect: reads open the copy once applied, writes the file itself" || bad "redirect: '$out' $(cat "$W/err")"
+plan "$W/p9" "$id" 00000000 "redirect $W/from $W/to"
+out=$(run "$W/p9" read "$W/from")
+[ "$out" = "$stock
+fopen the original
+open the original
+openat the original
+write itself" ] && grep -q '"applied":false' "$W/result" && ok "redirect: nothing redirected when the edits are not applied" || bad "redirect, not applied: '$out'"
+plan "$W/p10" 0000000000000000000000000000000000000000 "$astock" "redirect $W/from $W/to"
+out=$(run "$W/p10" read "$W/from")
+[ "$(echo "$out" | sed -n 2p)" = "fopen the original" ] && ok "redirect: another program's plan redirects nothing" || bad "redirect, other build: '$out'"
+out=$(run "$W/p8" read "$W/to")
+[ "$(echo "$out" | sed -n 2p)" = "fopen the copy" ] && ok "redirect: other paths open as they are" || bad "redirect, other path: '$out'"
+plan "$W/p13" "$id" "$astock" "redirect $W/from $W/missing"
+out=$(run "$W/p13" read "$W/from")
+[ "$out" = "patched message 2a
+fopen the original
+open the original
+openat the original
+write itself" ] && grep -q '"applied":true' "$W/result" && ok "redirect: a target that does not exist leaves the open as it is, errno too" || bad "redirect, no target: '$out'"
+plan "$W/p11" "$id" "$astock" "redirect from $W/to"
+out=$(run "$W/p11" read "$W/from")
+[ "$(echo "$out" | sed -n 2p)" = "fopen the original" ] && grep -q 'bad redirect line' "$W/err" && ok "redirect: a relative path refuses the plan" || bad "redirect, relative: '$out' $(cat "$W/err")"
+
+# std::ifstream, as aapd reads its configuration: redirected too. The plan
+# names the test program's ELF header, unchanged, as its one edit.
+IFS_BIN=$(dirname "$BIN")/ifstream
+ifs_id=$(readelf -n "$IFS_BIN" | sed -n 's/.*Build ID: *\([0-9a-f]*\).*/\1/p')
+{ echo "wocplan 1"; echo "build-id $ifs_id"; echo "edit header 0 7f454c46 7f454c46"; echo "redirect $W/from $W/to"; echo "end 1"; } > "$W/p12"
+: > "$W/result"
+out=$(WOC_PATCH_PLAN=$W/p12 WOC_PATCH_RESULT=$W/result LD_PRELOAD=$LIB "$IFS_BIN" "$W/from" 2> "$W/err")
+[ "$out" = "ifstream the copy" ] && grep -q '"applied":true' "$W/result" && ok "redirect: std::ifstream reads the copy" || bad "ifstream: '$out' $(cat "$W/err" "$W/result")"
+
+# Only the linker's own symbols (_init, _fini, the section bounds) and the
+# open functions the redirects take.
+OPENS='open|open64|openat|openat64|__open_2|__open64_2|__openat_2|__openat64_2|fopen|fopen64|freopen|freopen64'
+nm -D --defined-only "$LIB" | grep -v -E " (__bss_start|_edata|_end|_init|_fini|$OPENS)\$" | grep -q . && bad "exports: $(nm -D --defined-only "$LIB")" || ok "exports the open functions only"
+[ "$(nm -D --defined-only "$LIB" | grep -c -E " T ($OPENS)\$")" -eq 12 ] && ok "exports each open function" || bad "open functions: $(nm -D --defined-only "$LIB")"
 [ $fails -eq 0 ] && echo "preload_test: all passed" || { echo "preload_test: $fails failed"; exit 1; }

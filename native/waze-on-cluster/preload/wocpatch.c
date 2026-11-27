@@ -26,6 +26,19 @@
  *     file-backed part and outside PT_GNU_RELRO, and read exactly its stock
  *     bytes.
  *
+ * A plan may also name files the program reads in place of others
+ * (`redirect <from> <to>`: aapd reads the copy of aapd.conf with the
+ * cluster geometry in place of /etc/aapd.conf). Once every edit is applied,
+ * and only then, each open of `from` for reading, by its exact path, opens
+ * `to`: open, open64, openat, openat64, their _FORTIFY_SOURCE forms, fopen,
+ * fopen64, freopen and freopen64, which the library exports for that,
+ * while `to` exists (an open of `from` goes through as it is otherwise).
+ * Every other call, and every call in a process the plan was not applied
+ * to, goes to the C library unchanged. The C library's own functions are
+ * looked up (dlsym) as the library starts, before the program's code runs;
+ * a call another library's constructor makes before that looks its
+ * function up then. One the C library lacks ends the process (abort).
+ *
  * A plan that cannot be read or parsed names no program: it is reported on
  * stderr only, and the result file is left as it is.
  * Then each page is made writable, the bytes written, the page given its
@@ -44,10 +57,12 @@
  * file the boot step created for the service's user; never created here) and
  * to stderr, the journal.
  *
- * Built with the unit's toolchain (gcc 7.5, glibc 2.27). Exports nothing.
+ * Built with the unit's toolchain (gcc 7.5, glibc 2.27). Exports the open
+ * functions above and nothing else.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
+#include <dlfcn.h>
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -66,6 +81,13 @@
 #define NAME_MAX_ 32
 #define ID_MAX 64
 #define PAGES_MAX (EDITS_MAX * 2)
+#define REDIRECTS_MAX 4
+#define PATH_MAX_ 128
+
+struct redirect {
+    char from[PATH_MAX_];
+    char to[PATH_MAX_];
+};
 
 struct edit {
     char name[NAME_MAX_];
@@ -82,7 +104,14 @@ struct plan {
     size_t build_id_len;
     struct edit edits[EDITS_MAX];
     int n;
+    struct redirect redirects[REDIRECTS_MAX];
+    int nr;
 };
+
+/* The redirects in force: set once, by the constructor, after every edit
+ * is applied; read by the open functions of every thread. */
+static struct redirect active[REDIRECTS_MAX];
+static int nactive;
 
 struct image {
     uintptr_t base;
@@ -169,6 +198,9 @@ static int is(const char *s, size_t len, const char *word) { return len == strle
  *   wocplan 1
  *   build-id <hex>
  *   edit <name> <vaddr hex> <stock hex> <patched hex>     (one per region)
+ *   redirect <from> <to>                                  (any number up to
+ *                                                          REDIRECTS_MAX;
+ *                                                          absolute paths)
  *   end <edit count>
  * Any other line, kind or version refuses the plan. */
 static int parse_plan(const char *text, size_t size) {
@@ -210,6 +242,18 @@ static int parse_plan(const char *text, size_t size) {
             e->vaddr = v;
             e->len = (size_t)ns;
             plan.n++;
+        } else if (is(k, l1, "redirect")) {
+            if (plan.nr >= REDIRECTS_MAX) { because("plan: more than %d redirects", REDIRECTS_MAX); return -1; }
+            struct redirect *r = &plan.redirects[plan.nr];
+            const char *from = field(&p, nl, &l2), *to = field(&p, nl, &l3);
+            if (!from || !to || field(&p, nl, &l4) || l2 >= PATH_MAX_ || l3 >= PATH_MAX_ || from[0] != '/' || to[0] != '/' ||
+                memchr(from, 0, l2) || memchr(to, 0, l3)) {
+                because("plan: bad redirect line %d", lines);
+                return -1;
+            }
+            memcpy(r->from, from, l2);
+            memcpy(r->to, to, l3);
+            plan.nr++;
         } else if (is(k, l1, "end")) {
             const char *v = field(&p, nl, &l2);
             char num[16];
@@ -411,8 +455,100 @@ static void report(int applied) {
     if (l > 0) (void)!write(2, line, (size_t)(l < (int)sizeof line ? l : (int)sizeof line - 1));
 }
 
+/* ---- the redirects ------------------------------------------------------ */
+
+/* The file to open in place of `path` for a read: its redirect's target
+ * while that exists, else `path` itself. */
+static const char *redirected(const char *path, int reading) {
+    int n = __atomic_load_n(&nactive, __ATOMIC_ACQUIRE);
+    if (!reading || !path) return path;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(path, active[i].from) != 0) continue;
+        int saved = errno, there = access(active[i].to, F_OK) == 0;
+        errno = saved;
+        return there ? active[i].to : path;
+    }
+    return path;
+}
+
+static int reads(int flags) { return (flags & O_ACCMODE) == O_RDONLY && !(flags & (O_CREAT | O_TRUNC)); }
+static int reads_mode(const char *mode) { return mode && mode[0] == 'r' && !strchr(mode, '+'); }
+/* open's mode argument: given with O_CREAT or O_TMPFILE only. */
+static int wants_mode(int flags) { return (flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE; }
+
+/* The C library's function `name`, looked up once. */
+static void *next(void **slot, const char *name) {
+    void *f = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+    if (!f) {
+        f = dlsym(RTLD_NEXT, name);
+        if (!f) { static const char msg[] = "wocpatch: no next open function; aborting\n"; (void)!write(2, msg, sizeof msg - 1); abort(); }
+        __atomic_store_n(slot, f, __ATOMIC_RELEASE);
+    }
+    return f;
+}
+
+/* Each function is defined under its own name with an asm label, which
+ * keeps it clear of the C library's _FORTIFY_SOURCE inline of open. */
+#define EXPORT __attribute__((visibility("default")))
+#define OPEN_LIKE(fn, sym)                                                                     \
+    static void *real_##fn;                                                                  \
+    EXPORT int fn(const char *path, int flags, ...) __asm__(sym);                              \
+    int fn(const char *path, int flags, ...) {                                                 \
+        mode_t mode = 0;                                                                       \
+        if (wants_mode(flags)) { va_list ap; va_start(ap, flags); mode = va_arg(ap, mode_t); va_end(ap); } \
+        return ((int (*)(const char *, int, ...))next(&real_##fn, sym))(redirected(path, reads(flags)), flags, mode); \
+    }
+#define OPENAT_LIKE(fn, sym)                                                                   \
+    static void *real_##fn;                                                                  \
+    EXPORT int fn(int dir, const char *path, int flags, ...) __asm__(sym);                     \
+    int fn(int dir, const char *path, int flags, ...) {                                        \
+        mode_t mode = 0;                                                                       \
+        if (wants_mode(flags)) { va_list ap; va_start(ap, flags); mode = va_arg(ap, mode_t); va_end(ap); } \
+        return ((int (*)(int, const char *, int, ...))next(&real_##fn, sym))(dir, redirected(path, reads(flags)), flags, mode); \
+    }
+#define OPEN2_LIKE(fn, sym)                                                                    \
+    static void *real_##fn;                                                                  \
+    EXPORT int fn(const char *path, int flags) __asm__(sym);                                   \
+    int fn(const char *path, int flags) {                                                      \
+        return ((int (*)(const char *, int))next(&real_##fn, sym))(redirected(path, reads(flags)), flags); \
+    }
+#define OPENAT2_LIKE(fn, sym)                                                                  \
+    static void *real_##fn;                                                                  \
+    EXPORT int fn(int dir, const char *path, int flags) __asm__(sym);                          \
+    int fn(int dir, const char *path, int flags) {                                             \
+        return ((int (*)(int, const char *, int))next(&real_##fn, sym))(dir, redirected(path, reads(flags)), flags); \
+    }
+#define FOPEN_LIKE(fn, sym)                                                                    \
+    static void *real_##fn;                                                                  \
+    EXPORT FILE *fn(const char *path, const char *mode) __asm__(sym);                          \
+    FILE *fn(const char *path, const char *mode) {                                             \
+        return ((FILE *(*)(const char *, const char *))next(&real_##fn, sym))(redirected(path, reads_mode(mode)), mode); \
+    }
+#define FREOPEN_LIKE(fn, sym)                                                                  \
+    static void *real_##fn;                                                                  \
+    EXPORT FILE *fn(const char *path, const char *mode, FILE *f) __asm__(sym);                 \
+    FILE *fn(const char *path, const char *mode, FILE *f) {                                    \
+        return ((FILE *(*)(const char *, const char *, FILE *))next(&real_##fn, sym))(redirected(path, reads_mode(mode)), mode, f); \
+    }
+
+#define INTERPOSERS(X)                                                                         \
+    X(OPEN_LIKE, woc_open, "open") X(OPEN_LIKE, woc_open64, "open64")                          \
+    X(OPENAT_LIKE, woc_openat, "openat") X(OPENAT_LIKE, woc_openat64, "openat64")              \
+    X(OPEN2_LIKE, woc_open_2, "__open_2") X(OPEN2_LIKE, woc_open64_2, "__open64_2")            \
+    X(OPENAT2_LIKE, woc_openat_2, "__openat_2") X(OPENAT2_LIKE, woc_openat64_2, "__openat64_2") \
+    X(FOPEN_LIKE, woc_fopen, "fopen") X(FOPEN_LIKE, woc_fopen64, "fopen64")                    \
+    X(FREOPEN_LIKE, woc_freopen, "freopen") X(FREOPEN_LIKE, woc_freopen64, "freopen64")
+#define DEFINE(kind, fn, sym) kind(fn, sym)
+INTERPOSERS(DEFINE)
+
+/* Every one of them looked up now, so no call after this one looks one up
+ * (dlsym is not safe in a signal handler or a child of fork). */
+#define RESOLVE(kind, fn, sym) next(&real_##fn, sym);
+static void resolve_all(void) { INTERPOSERS(RESOLVE) }
+
 __attribute__((constructor)) static void wocpatch_init(void) {
     static char text[PLAN_MAX];
+    resolve_all();
     const char *path = getenv("WOC_PATCH_PLAN");
     if (!path) return;
     struct image img = { 0 };
@@ -438,6 +574,8 @@ __attribute__((constructor)) static void wocpatch_init(void) {
     }
     if (build_id(&img, &id, &idlen) < 0 || idlen != plan.build_id_len || memcmp(id, plan.build_id, idlen) != 0) return;
     if (place(&img) < 0 || apply() < 0) { report(0); return; }
+    memcpy(active, plan.redirects, sizeof active);
+    __atomic_store_n(&nactive, plan.nr, __ATOMIC_RELEASE);
     report(1);
 #ifdef WOC_TEST_CRASH
     /* Test builds only (make test-preload): an armed start that crashes. */
