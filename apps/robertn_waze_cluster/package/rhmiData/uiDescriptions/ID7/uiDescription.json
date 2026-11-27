@@ -95,6 +95,32 @@
             }
           ]
         },
+        "94": {
+          "type": "checkBox",
+          "name": "wocRoute",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Only during a route",
+                "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": false,
+                "type": "Bool"
+              }
+            }
+          ]
+        },
         "63": {
           "type": "checkBox",
           "name": "wocProfile",

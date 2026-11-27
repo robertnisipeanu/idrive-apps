@@ -102,6 +102,8 @@
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten.",
     "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer",
     "Driver profile can't be read": "Fahrerprofil kann nicht gelesen werden",
-    "Keep HUD map over BMW's pop-ups": "Karte im HUD vor BMW-Pop-ups behalten"
+    "Keep HUD map over BMW's pop-ups": "Karte im HUD vor BMW-Pop-ups behalten",
+    "Only during a route": "Nur während einer Route",
+    "Waiting for a route": "Warten auf eine Route"
   }
 }

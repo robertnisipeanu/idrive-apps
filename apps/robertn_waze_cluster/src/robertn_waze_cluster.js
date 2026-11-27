@@ -7,7 +7,9 @@
  *
  * The main page, one LT_State_Wide list in four sections, each under a
  * header row: General, HUD, CarPlay, Android Auto, then the restart's two
- * rows. General: Show on (a drop-down of Cluster, HUD, both and Off), the Own
+ * rows. General: Show on (a drop-down of Cluster, HUD, both and Off), the
+ * Only during a route checkbox (route_gate.js: the map held back while the
+ * phone guides no route; greyed where the head unit tells no route), the Own
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
@@ -72,6 +74,7 @@ const { WazeClusterControl, ZOOM_STEP, SHOWN_ON } = require('./waze_cluster_cont
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
 const { ProfileSync, sessionReader } = require('./profile_sync.js');
+const { RouteGate } = require('./route_gate.js');
 
 const logger = logging.getSDKLogger();
 
@@ -97,6 +100,7 @@ const HEAD_HUD_NAME = 'wocHeadHud';
 const HUD_NAME = 'wocHud';
 const HUD_KEEP_NAME = 'wocHudKeep';
 const SHOW_ON_NAME = 'wocShowOn';
+const ROUTE_NAME = 'wocRoute';
 const PROFILE_NAME = 'wocProfile';
 const PROFILE_STATUS_NAME = 'wocProfileStatus';
 const HUD_SIZE_NAME = 'wocHudSize';
@@ -155,6 +159,10 @@ class WazeClusterApp extends OnlineApp {
         this._profiles.on('change', () => this._render());
         this._control.setWriteTarget(() => this._profiles.writeTarget(), (w) => this._profiles.confirmWrite(w),
             () => this._profiles.loading());
+        /* the Only during a route checkbox, page shown or not */
+        this._route = new RouteGate({ someipBuilders, log: logger });
+        this._control.setGate(this._route);
+        this._route.on('change', () => this._render());
         this._control.on('refused', () => this._profiles.load());
         this._control.patch.on('connect', () => this._profiles.load());
 
@@ -175,6 +183,7 @@ class WazeClusterApp extends OnlineApp {
     _appInitialized() {
         logger.info(`robertn_waze_cluster ${this.getAppId()} v${this._packageJson.version} starting`);
         this._profiles.start();
+        this._route.start();
         if (!this.rhmiApplication) {
             logger.info('no RhmiApplication for this start reason; initializing without a screen');
             return this.initialized();
@@ -220,7 +229,7 @@ class WazeClusterApp extends OnlineApp {
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
             AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
-            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, PROFILE_STATUS_NAME, HUD_NAME, HUD_KEEP_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
+            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, ROUTE_NAME, PROFILE_NAME, PROFILE_STATUS_NAME, HUD_NAME, HUD_KEEP_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
                 LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL], LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
@@ -250,6 +259,12 @@ class WazeClusterApp extends OnlineApp {
             /* as for the turn box: the render's answer decides the tick */
             delete this._written[`selected:${HUD_KEEP_NAME}`];
             this._control.toggleHudKeep();
+            this._render();
+        });
+        this._bind(ROUTE_NAME, () => {
+            /* the gate's state decides the tick */
+            delete this._written[`selected:${ROUTE_NAME}`];
+            this._route.setRouteOnly(!this._route.routeOnly());
             this._render();
         });
         this._bind(PROFILE_NAME, () => {
@@ -575,6 +590,10 @@ class WazeClusterApp extends OnlineApp {
             this._writeCell(SHOW_ON_NAME, 'ItemText', row === 0 && shownOn < 0 ? '—' : text, 'Text', row));
         this._writeCell(SHOW_ON_NAME, 'SelectedItem', Math.max(shownOn, 0), 'UInt');
         this._setEnabled(SHOW_ON_NAME, c.canChooseShownOn());
+        /* greyed where the head unit tells no route (neither CarPlay's nor Android Auto's) */
+        this._write(ROUTE_NAME, t('Only during a route'));
+        this._setSelected(ROUTE_NAME, this._route.routeOnly());
+        this._setEnabled(ROUTE_NAME, !this._route.unreadable());
         const profiles = this._profiles;
         this._write(PROFILE_NAME, t('Own settings for this driver'));
         this._setSelected(PROFILE_NAME, profiles.ownShown());
@@ -685,6 +704,7 @@ class WazeClusterApp extends OnlineApp {
         this._control.close();
         this._logs.close();
         this._profiles.stop();
+        this._route.stop();
         if (this._qr.file) {
             try {
                 fs.unlinkSync(this._qr.file);

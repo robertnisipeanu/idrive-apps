@@ -102,6 +102,8 @@
     "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi.",
     "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče",
     "Driver profile can't be read": "Profil řidiče nelze načíst",
-    "Keep HUD map over BMW's pop-ups": "Ponechat mapu na HUD přes vyskakovací okna BMW"
+    "Keep HUD map over BMW's pop-ups": "Ponechat mapu na HUD přes vyskakovací okna BMW",
+    "Only during a route": "Jen během trasy",
+    "Waiting for a route": "Čeká se na trasu"
   }
 }
