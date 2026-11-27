@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 // Copyright (C) 2026 mlurker@gmail.com
-/* aapd_patch.js — the Android Auto patch: six edits to the Android Auto
- * Projected Daemon (/usr/bin/aapd), its config path and its ready start
- * among them, and the cluster geometry of its aapd.conf (aapd_conf.js),
- * which together make Google Maps send its cluster view to the stream
- * waze-on-cluster shows (PATCH.md "Android Auto"). They are applied in
- * aapd's memory (PATCH.md "In memory"): /usr/bin/aapd and /etc/aapd.conf
- * stay as they ship.
+/* aapd_patch.js — the Android Auto patch: five edits to the Android Auto
+ * Projected Daemon (/usr/bin/aapd), its ready start among them, and the
+ * cluster geometry of a copy of its aapd.conf (aapd_conf.js), which together
+ * make Google Maps send its cluster view to the stream waze-on-cluster shows
+ * (PATCH.md "Android Auto"). They are applied in aapd's memory (PATCH.md
+ * "In memory"): /usr/bin/aapd and /etc/aapd.conf stay as they ship.
  *
  *   gate       `cmp dword [rbx+0x21c],1 ; setbe al` in secondVideoEnabled()
  *              (featureFlag && KombiVariant <= 1): the immediate 1 -> 2.
@@ -31,20 +30,23 @@
  *   screen     the KombiVariant -> screen-size helper's fall-through: class 2
  *              reads 12.3 as class 0 does, so aapd uses aapd.conf's 12.3
  *              geometry instead of its built-in 800x480 default.
- *   confpath   the path aapd reads its configuration from, /etc/aapd.conf,
- *              made /run/aapd.conf: a copy of aapd.conf with the cluster
- *              geometry, which boot recovery writes there for a start it
- *              arms (inmem.js).
+ *
+ * The plan also redirects aapd's reads of /etc/aapd.conf to /run/aapd.conf
+ * (REDIRECT): a copy of aapd.conf with the cluster geometry, which boot
+ * recovery writes there for a start it arms (inmem.js). libwocpatch.so
+ * redirects them once it has applied the edits; no site in aapd is needed
+ * for it.
  *
  * The sites are found in each build by aapd_locate.js; a build where any
- * of them is not found is refused, and any build where all are found and
- * verify is planned: no list of builds decides it. The one exception is a
- * build without the ready start's site (the locator's `absent`): it is
- * planned without it, at patch revision 2. `plan` reads aapd on
+ * of the four edits' sites is not found is refused, and any build where
+ * they are all found and verify is planned: no list of builds decides it.
+ * A build without the ready start's site (the locator's `absent`) is
+ * planned without it, at patch revision 2; one whose ready start is there
+ * but changed is refused. `plan` reads aapd on
  * disk, which must be the pristine build (every site stock), and
  * aapd.conf, which must have the entries the geometry needs and hold none
  * of our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
- * applies and the copy of aapd.conf the plan points aapd at. `overlay`
+ * applies and the copy of aapd.conf the plan redirects aapd to. `overlay`
  * reads aapd with a plan laid over it. This version writes aapd and
  * aapd.conf only to put back a patch an earlier release wrote into them
  * (`revert`): from backups trusted by the recorded SHA-256, or, without
@@ -98,10 +100,19 @@ var SHIPPED = {
 };
 
 /* The locator's edits and their names on the status lines: the four an
- * earlier release also wrote to the file, then the config path and the
- * ready start, which only the patch in memory writes. */
+ * earlier release also wrote to the file, then the ready start, which only
+ * the patch in memory writes. */
 var EDITS = [['gate', 'gate'], ['call', 'selfstart call'], ['guard', 'selfstart guard'], ['screen', 'screen']];
-var SITES = EDITS.concat([['confpath', 'confpath'], ['readystart', 'readystart']]);
+var SITES = EDITS.concat([['readystart', 'readystart']]);
+/* The file aapd reads its configuration from, and the copy with the
+ * cluster geometry a start the plan is applied to reads in its place
+ * (inmem.js writes it there when it arms the start). */
+var CONF_STOCK = '/etc/aapd.conf', CONF_RUN = process.env.WOC_AAPD_RUN_CONF || '/run/aapd.conf';
+var REDIRECT = [CONF_STOCK, CONF_RUN];
+/* The record version of a plan this version makes: the redirect needs this
+ * version's libwocpatch.so, so releases that read only versions 1 and 2
+ * arm nothing of it (inmem.js). */
+var RECORD = 3;
 /* A site's name on the status lines and in the plan. */
 function siteName(e) { return e[1].replace(' ', '-'); }
 /* The most bytes aapd may differ in from its backup and still be its build:
@@ -174,12 +185,10 @@ function classify(buf) {
         if (!loc.elf) bad.push(loc.reason);
         else EDITS.forEach(function (e) { if (!loc[e[0]].ok && bad.indexOf(loc[e[0]].reason) < 0) bad.push(loc[e[0]].reason); });
         /* inMem: why the patch in memory cannot be planned for it: the
-         * config path, and the ready start unless its site is absent from
-         * the build (readyStart). */
+         * ready start's site found but changed (a build without it is
+         * planned without it, readyStart). */
         var inMem = bad.slice();
         if (loc.elf) {
-            var cw = !loc.confpath ? 'confpath: not located' : !loc.confpath.ok ? loc.confpath.reason : null;
-            if (cw && inMem.indexOf(cw) < 0) inMem.push(cw);
             var rs = loc.readystart;
             if (rs && !rs.ok && !rs.absent && inMem.indexOf(rs.reason) < 0) inMem.push(rs.reason);
         }
@@ -476,13 +485,14 @@ function writeFileWhole(file, data) {
 
 /* `plan`: the patch, as a plan for libwocpatch.so, made from aapd on disk,
  * which must be the pristine build (it is what the process maps), and the
- * copy of aapd.conf with the cluster geometry the plan's config path points
- * aapd at, made from /etc/aapd.conf, which must hold none of our
- * geometries. Neither file is written. Checks: the head unit, the coding,
- * the locator (every site found and verified, on any build), aapd.conf.
- * Writes the plan to `outFile` and the copy to `confOut`, each by rename,
- * and prints one JSON line: build, version, sha256, size, edits, coding, writes
- * ({dpi, card, crop}), planSha256, rev, copies ({conf: the copy's SHA-256}),
+ * copy of aapd.conf with the cluster geometry the plan redirects aapd's
+ * reads of /etc/aapd.conf to, made from /etc/aapd.conf, which must hold
+ * none of our geometries. Neither file is written. Checks: the head unit,
+ * the coding, the locator (every edit's site found and verified, on any
+ * build), aapd.conf. Writes the plan to `outFile` and the copy to
+ * `confOut`, each by rename, and prints one JSON line: build, version,
+ * sha256, size, edits, coding, writes ({dpi, card, crop}), planSha256, rev,
+ * record (the record version, RECORD), copies ({conf: the copy's SHA-256}),
  * inputs ({conf: aapd.conf's SHA-256}). */
 function cmdPlan(t, dpi, card, outFile, confOut) {
     var hu = headUnit.refused();
@@ -496,8 +506,7 @@ function cmdPlan(t, dpi, card, outFile, confOut) {
     if (!buf) die('cannot read ' + t.target);
     var c = classify(buf);
     if (c.inMem.length) die('refusing: ' + c.inMem.join('; '));
-    var why = notPristine(c) || ['confpath', 'readystart'].filter(function (k) { return (k !== 'readystart' || readyStart(c)) && c.loc[k].state !== 'original'; })
-        .map(function (k) { return k + ' edited'; })[0] || null;
+    var why = notPristine(c) || (readyStart(c) && c.loc.readystart.state !== 'original' ? 'readystart edited' : null);
     if (why) die('in memory needs the pristine build on disk: ' + why);
     var text = readOr(t.conf);
     if (!text) die('cannot read ' + t.conf);
@@ -506,10 +515,10 @@ function cmdPlan(t, dpi, card, outFile, confOut) {
     var out = Buffer.from(buf), sites = planSites(c);
     sites.forEach(function (e) { Buffer.from(c.loc[e[0]].patched, 'hex').copy(out, c.loc[e[0]].offset); });
     var oc = classify(out);
-    if (!sameBuild(c, oc) || sites.some(function (e) { return e[0] === 'confpath' || e[0] === 'readystart' ? oc.loc[e[0]].offset !== c.loc[e[0]].offset : false; }) ||
+    if (!sameBuild(c, oc) || sites.some(function (e) { return e[0] === 'readystart' ? oc.loc[e[0]].offset !== c.loc[e[0]].offset : false; }) ||
         sites.some(function (e) { return !oc.loc[e[0]].ok || oc.loc[e[0]].state !== 'patched'; }))
         die('refusing: the edited image does not verify');
-    var p = plans().planOf(buf, out, planRegions(c), planNames(c), c.loc.buildId);
+    var p = plans().planOf(buf, out, planRegions(c), planNames(c), c.loc.buildId, [REDIRECT]);
     if (p.err) die('refusing: ' + p.err);
     var o = plans().overlay(buf, p.text);
     if (o.err || !o.buf.equals(out)) die('refusing: the plan does not reproduce the edited image (' + (o.err || 'bytes differ') + ')');
@@ -519,13 +528,15 @@ function cmdPlan(t, dpi, card, outFile, confOut) {
     writeFileWhole(outFile, p.text);
     process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: c.loc.version ? 'aapd ' + c.loc.version : label(c), sha256: c.sha256, size: buf.length, edits: p.edits,
         coding: cd.err ? 'unreadable' : 'ok', variant: cd.err ? null : cd.variant, writes: { dpi: dpi, card: card, crop: conf.srcCrop(card, dpi) },
-        planSha256: sha256(Buffer.from(p.text)), rev: readyStart(c) ? PATCH_REV : 2, record: readyStart(c) ? 1 : 2, copies: { conf: sha256(copy) }, inputs: { conf: sha256(text) } }) + '\n');
+        planSha256: sha256(Buffer.from(p.text)), rev: readyStart(c) ? PATCH_REV : 2, record: RECORD, copies: { conf: sha256(copy) }, inputs: { conf: sha256(text) } }) + '\n');
 }
 
 /* `overlay`: the edit lines of `status` for aapd with the plan laid over it
- * (what a process the plan was applied to runs), `geometry:` the copy of
- * aapd.conf it reads (`confCopy`) against /etc/aapd.conf, then `overlay:
- * ok` or `overlay: NO — why`. Read-only. */
+ * (what a process the plan was applied to runs), `redirect:` how it reads
+ * the copy of aapd.conf (REDIRECTED: the plan's redirect; PATCHED: an
+ * earlier release's plan, which wrote the copy's path over the stock one
+ * with an edit named confpath), `geometry:` that copy (`confCopy`) against
+ * /etc/aapd.conf, then `overlay: ok` or `overlay: NO — why`. Read-only. */
 function cmdOverlay(t, planFile, confCopy) {
     var buf = readOr(t.target), text;
     if (!buf) { line('overlay', 'NO — cannot read ' + t.target); return; }
@@ -540,6 +551,10 @@ function cmdOverlay(t, planFile, confCopy) {
         line(siteName(e), x && x.ok ? x.state.toUpperCase() : 'UNKNOWN (' + (x ? x.reason : 'not located') + ')');
         if (!x || !x.ok || x.state !== 'patched') bad.push(e[1] + ' not patched');
     });
+    var redirected = (o.redirects || []).some(function (r) { return r[0] === REDIRECT[0] && r[1] === REDIRECT[1]; });
+    var conf0 = redirected ? 'REDIRECTED (' + REDIRECT.join(' -> ') + ')' : o.edits.indexOf('confpath') >= 0 ? 'PATCHED (confpath)' : 'NONE';
+    line('redirect', conf0);
+    if (conf0 === 'NONE') bad.push('aapd does not read the copy of aapd.conf');
     var orig = readOr(t.conf), copy = confCopy ? readOr(confCopy) : null, g = orig && copy ? conf.edited(orig.toString('utf8'), copy.toString('utf8')) : null;
     line('geometry', !copy ? 'MISSING' : g ? 'PATCHED (' + g.dpi + ' dpi, card ' + g.card + ', crop ' + conf.srcCrop(g.card, g.dpi) + ')' : 'UNKNOWN (not our edit of ' + t.conf + ')');
     if (!g) bad.push('the copy of aapd.conf is not our edit of ' + t.conf);
@@ -601,7 +616,7 @@ function main() {
     else { process.stderr.write('usage: aapd_patch.js status|probe [<file>]|plan|overlay|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--out <plan>] [--conf-out <copy>] [--plan <plan>] [--conf-copy <copy>] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { CODING: CODING, SHIPPED: SHIPPED, PATCH_REV: PATCH_REV, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal,
+module.exports = { CODING: CODING, SHIPPED: SHIPPED, PATCH_REV: PATCH_REV, REDIRECT: REDIRECT, RECORD: RECORD, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal,
     foreignIn: foreignIn };
 
 if (require.main === module) main();

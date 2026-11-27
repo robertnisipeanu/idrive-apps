@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Android Auto reads the copy of aapd.conf with the cluster geometry in
+place of `/etc/aapd.conf` without a change to aapd's code, so an aapd
+build whose path to that file looks different is no longer refused.
+Android Auto is refused only where a part the map needs is not found,
+and the app's Status names it. A downgrade to an earlier release leaves
+Android Auto as it ships until that release plans its own patch.
+
 ## 0.14.19
 
 A car whose cluster coding cannot be read is patched as a car coded 7,

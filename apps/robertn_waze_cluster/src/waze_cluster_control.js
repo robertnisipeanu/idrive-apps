@@ -274,10 +274,24 @@ function conflictText(conflict, product) {
         : /no cluster display is coded/.test(conflict) ? t('Not supported — no cluster display')
         : /^not supported on this cluster/.test(conflict) ? t('Not supported — this cluster')
         : /^built in on this cluster/.test(conflict) ? t('Built in')
-        : /^not patchable/.test(conflict) ? (product === 'CarPlay' ? t('Not supported — this CarPlay version') : t('Not supported — this Android Auto version'))
+        : /^not patchable/.test(conflict) ? (product === 'CarPlay' ? t('Not supported — this CarPlay version') : aaNotPatchable(conflict))
         : /unreadable/.test(conflict) ? t('Unavailable')
         : retryable(conflict) ? t('Failed — press Patch to try again')
         : t('Changed by another tool');
+}
+
+/* An aapd build the patcher cannot patch, with the part of the patch it
+ * lacks (the reason patchd's conflict carries after "not patchable: "
+ * starts with it: aapd_locate.js): the cluster display's switch (the gate,
+ * or the variant mapping it and the screen size rely on), the screen size
+ * (whose reason the gate's carries when the gate cannot be confirmed
+ * without it), or the place where the map is started. */
+function aaNotPatchable(conflict) {
+    const part = /^not patchable: (?:gate: the variant getter is not confirmed \()?(gate|variant|screen|self-start):/.exec(conflict);
+    return !part ? t('Not supported — this Android Auto version')
+        : part[1] === 'screen' ? t('Not supported — this Android Auto version (screen size not found)')
+        : part[1] === 'self-start' ? t('Not supported — this Android Auto version (map start not found)')
+        : t('Not supported — this Android Auto version (display switch not found)');
 }
 
 /* A change that failed: the conflict that refused it in the words both

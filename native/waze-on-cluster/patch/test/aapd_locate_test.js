@@ -30,7 +30,7 @@ var REF_SHA = '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89'
  * with and the sites it still finds. */
 var BUILDS = {};
 BUILDS[REF_SHA] = { name: 'aapd 22.39.3 (ID7 P18_23w44)', buildId: '2dfb9881706bff435b05f621486e8eb8b6c55984', version: '22.39.3',
-    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, confpath: 0x5008ec, readystart: 0x1d3bbf } };
+    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, readystart: 0x1d3bbf } };
 BUILDS.a7971d64fc0feb4e48942441dc76a67d6df282b56cb5d64e92248ff83f18d62e = { name: 'aapd 23.16.5 (ID8)', buildId: 'ef291b7185f210a24d8e68855d94d44e9f32cb62',
     version: '23.16.5', sites: { screen: 0x180c50 },
     refused: { gate: 'gate: variant check not found', call: 'self-start: onNewNavigationStatus string not found',
@@ -57,7 +57,7 @@ paths.forEach(function (p) {
             (loc.ok ? 'located' : 'refused: ' + loc.reason) + '\n');
         return;
     }
-    var bad = locator.EDITS.concat(['confpath', 'readystart'].filter(function (k) { return want.sites[k] !== undefined; })).filter(function (e) {
+    var bad = locator.EDITS.concat(['readystart'].filter(function (k) { return want.sites[k] !== undefined; })).filter(function (e) {
         var r = loc[e];
         if (want.sites[e] !== undefined) return !r.ok || r.offset !== want.sites[e] || r.state !== 'original';
         return r.ok || r.reason !== want.refused[e];
@@ -78,14 +78,12 @@ var LOC = locator.locate(REF);
 ok('reference: the stock and patched bytes of every edit', LOC.ok && json(locator.EDITS.map(function (e) { return [LOC[e].stock, LOC[e].patched]; })) === json([
     ['83bb1c02000001', '83bb1c02000002'], ['e800f8ffff', 'e840fbffff'], ['837b3802740a837b44020f848d000000', '807b4100740a837b38020f858d000000'],
     ['660fefc0ebe1662e0f1f840000000000', '83f802740b660fefc0ebdc0f1f440000']]), json(LOC));
-ok('reference: the config path /etc/aapd.conf, made /run/aapd.conf, read from 32 places', LOC.confpath.ok && LOC.confpath.offset === 0x5008ec &&
-    LOC.confpath.stock === Buffer.from('/etc/aapd.conf\0', 'latin1').toString('hex') && LOC.confpath.patched === Buffer.from('/run/aapd.conf\0', 'latin1').toString('hex') &&
-    LOC.confpath.refs === 32 && LOC.confpath.state === 'original', json(LOC.confpath));
+ok('reference: no site for the config path (the plan redirects aapd\'s reads of it)', !('confpath' in LOC) && locator.SITES.indexOf('confpath') < 0, json(locator.SITES));
 ok('reference: the ready start, onAlternateVideoReady\'s end made a tail jump to requestStream', LOC.readystart.ok && LOC.readystart.offset === 0x1d3bbf &&
     LOC.readystart.stock === '488b44240864483304252800000075074883c4185b5dc3' && LOC.readystart.patched === '4889ef4883c4185b5de9630300000f1f80000000006690' &&
     LOC.readystart.state === 'original', json(LOC.readystart));
 
-/* Every site the patch in memory writes, the config path included. */
+/* Every site the patch in memory writes. */
 function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc[e].patched, 'hex').copy(b, loc[e].offset); }); return b; }
 (function () {
     var p = patchAll(Buffer.from(REF), LOC), loc = locator.locate(p);
@@ -101,7 +99,7 @@ function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc
      * jmp, which reads outdated, with this release's stock and patched
      * bytes over the whole test. */
     var old = patchAll(Buffer.from(REF), LOC);
-    ['confpath', 'readystart'].forEach(function (k) { REF.copy(old, LOC[k].offset, LOC[k].offset, LOC[k].offset + LOC[k].len); });
+    REF.copy(old, LOC.readystart.offset, LOC.readystart.offset, LOC.readystart.offset + LOC.readystart.len);
     REF.copy(old, LOC.guard.offset, LOC.guard.offset, LOC.guard.offset + 10);
     Buffer.from('e98e00000090', 'hex').copy(old, LOC.guard.offset + 10);
     loc = locator.locate(old);
@@ -222,7 +220,7 @@ ok('mutation anchors found in the reference', [GATE_FN, SCREEN_FN, PREP, KOMBI, 
 
 var EXPECT = {}; locator.SITES.forEach(function (e) { EXPECT[e] = LOC[e].offset; });
 function sites(loc) { var s = {}; locator.SITES.forEach(function (e) { s[e] = loc[e].offset; }); return s; }
-var CONF = LOC.confpath.offset, CONF_LEAS = leasIn({ off: LOADS[0].off, end: LOADS[0].size }).filter(function (l) { return l.to === CONF; });
+var CONF = REF.indexOf(Buffer.from('\0/etc/aapd.conf\0', 'latin1')) + 1;
 function shifted(d) { var s = {}; Object.keys(EXPECT).forEach(function (k) { s[k] = EXPECT[k] + d; }); return s; }
 function moved(over) { var s = JSON.parse(json(EXPECT)); Object.keys(over).forEach(function (k) { s[k] = over[k]; }); return s; }
 function appendString(b, s) { return Buffer.concat([b, Buffer.from('\0' + s + '\0', 'latin1')]); }
@@ -465,34 +463,13 @@ var CASES = [
         setRel(b, l[0].at + 3, l[0].at + 7, cstrStart('AlternateDisplays::stopStream()'));
     }, ['correct', 'refused']],
 
-    /* the config path */
-    ['the config path the tail of another string', function (b) { b[CONF - 1] = 0x78; }, ['refused'], null, 'conf-once'],
-    ['the config path twice', function (b) { return appendString(b, '/etc/aapd.conf'); }, ['refused']],
-    ['8 bytes of the config path in code', function (b) { b.write('/etc/aap', VICTIM.off + 0x80, 'latin1'); }, ['refused'], null, 'conf-inline'],
-    ['the config path not referenced', function (b) {
-        CONF_LEAS.forEach(function (l) { setRel(b, l.at + 3, l.at + 7, CONF + 15); });
-    }, ['refused'], null, 'conf-read'],
-    ['a lea into the middle of the config path', function (b) {
-        Buffer.from('488d0500000000', 'hex').copy(b, VICTIM.off + 0x80);
-        setRel(b, VICTIM.off + 0x83, VICTIM.off + 0x87, CONF + 5);
-    }, ['refused'], null, 'conf-whole'],
-    ['an absolute pointer into the middle of the config path', function (b) {
-        var rw = LOADS[1], at = rw.off + rw.size - 16;
-        b.writeUInt32LE(vaOf(CONF) + 5, at - (at % 8)); b.writeUInt32LE(0, at - (at % 8) + 4);
-    }, ['refused'], null, 'conf-whole'],
-    ['the config path in a writable segment', function (b) { var h = phdrs(b).filter(function (p) { return p.type === 1; })[0]; b.writeUInt32LE(7, h.hdr + 4); }, ['refused'], null, 'conf-ro'],
-    ['the config path in the relocated read-only data', function (b) {
-        var h = phdrs(b).filter(function (p) { return p.type === 0x6474e552; })[0];
-        b.writeUInt32LE(vaOf(CONF) - 0x10, h.hdr + 16); b.writeUInt32LE(0x100, h.hdr + 40);
-    }, ['refused'], null, 'conf-ro'],
-    ['a dynamic relocation over the config path', function (b) {
-        var shoff = b.readUInt32LE(0x28), n = b.readUInt16LE(0x3c);
-        for (var i = 0; i < n; i++) {
-            var o = shoff + i * 64;
-            if (b.readUInt32LE(o + 4) === 4) { b.writeUInt32LE(vaOf(CONF) + 4, b.readUInt32LE(o + 24)); return; }
-        }
-        throw new Error('no .rela section');
-    }, ['refused'], null, 'reloc'],
+    /* the config path: no site, so whatever the build does with its string
+     * (aapd 23.16.5 holds /etc/aapd.conf beside /etc/aapd_bmw_m.conf) is no
+     * reason to refuse it */
+    ['the config path twice', function (b) { return appendString(b, '/etc/aapd.conf'); }, ['correct']],
+    ['8 bytes of the config path in code', function (b) { b.write('/etc/aap', VICTIM.off + 0x80, 'latin1'); }, ['correct']],
+    ['the config path the head of a longer path', function (b) { return appendString(b, '/etc/aapd.conf.d/x'); }, ['correct']],
+    ['the config path the tail of another string', function (b) { b[CONF - 1] = 0x78; }, ['correct']],
 
     /* the ready start */
     ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['refused'], null, 'ready-frame'],

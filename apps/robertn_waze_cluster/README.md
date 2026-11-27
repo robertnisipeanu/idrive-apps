@@ -110,6 +110,7 @@ want first, then restart once.
 | `Status: Built in` | Your car's cluster shows the CarPlay or Android Auto map by itself. Nothing to patch. |
 | `Status: Not supported — this cluster` | The map is made for another cluster than your car's. |
 | `Status: Not supported — this CarPlay version` or `this Android Auto version` | The map can't be added to your car's version of CarPlay or Android Auto. A car software update may change that. [Report it](#logs-and-reporting-a-problem) with your logs. |
+| `Status: Not supported — this Android Auto version (display switch not found)`, `(screen size not found)` or `(map start not found)` | The map can't be added to your car's version of Android Auto: the part named isn't in it in a form the patch knows. [Report it](#logs-and-reporting-a-problem) with your logs. |
 | `Status: Unavailable` | If it stays once the head unit has fully started, [report it](#logs-and-reporting-a-problem). |
 | `Status: Failed — press Patch to try again` | Press **Patch**. If it fails again, [report it](#logs-and-reporting-a-problem). |
 | `Status: Failed`, `Partly patched` or `Changed by another tool` | [Report it](#logs-and-reporting-a-problem). |
