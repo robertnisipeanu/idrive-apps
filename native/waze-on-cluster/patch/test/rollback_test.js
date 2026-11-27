@@ -28,7 +28,8 @@
  *                  knows F's URL too
  *   H 0.10.4-0.10.12 G, writing F's URL again, and the ShowUI URL edit;
  *                  0.10.6 writes the safe area 476x306 at 306,72, every
- *                  other release and this version's plan 504x368 at 286,72
+ *                  other release 504x368 at 286,72 (this version's plan
+ *                  504x432 at 286,8)
  *   I 0.11.0-      as this version: the patch planned in memory, carplay
  *                  stock on disk; an earlier patch in the file put back
  * Groups A-D know four edits, E-G five, H, I and this version six. E and F
@@ -312,11 +313,17 @@ var APP_PATCH = snapshot();
 /* The patch 0.10.4-0.10.5 wrote, as run on the car (carplay 22.28.3). */
 var CAR_PATCH_SHA = 'a241b0e9af9ac1eada5c5ebcf9fab06669a155376b0a5c70cd85f3c1459a88b5';
 if (BIN) ok('that patch is byte for byte the one 0.10.4-0.10.5 wrote', require('crypto').createHash('sha256').update(APP_PATCH['']).digest('hex') === CAR_PATCH_SHA);
+/* The safe height and x,y of the earlier default safe area (504x368 at
+ * 286,72), which every release but 0.10.6 wrote, and of this version's
+ * (504x432 at 286,8): this version's patch is the app's patch with its own. */
+var SAFE2_OLD = Buffer.from('700100001e014800', 'hex'), SAFE2_NEW = Buffer.from('b00100001e010800', 'hex');
+ok('the app\'s patch carries the earlier default safe area, 504x368 at 286,72', APP_PATCH[''].slice(LOC.res.safe2, LOC.res.safe2 + 8).equals(SAFE2_OLD));
+var NEW_PATCH = Buffer.from(APP_PATCH['']); SAFE2_NEW.copy(NEW_PATCH, LOC.res.safe2);
 clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
 (function () {
     var mp = makePlan(), laid = null;
     try { laid = require(path.join(NEW, 'carplay_patch.js')).overlay(STOCK, fs.readFileSync(path.join(SD, 'inmem-carplay.plan'), 'utf8')); } catch (e) { laid = { err: e.message }; }
-    ok('this version\'s plan of the app\'s patch laid over stock is that patch, carplay untouched', mp === 'OK' && !laid.err && laid.buf.equals(APP_PATCH['']) && holds() === 'stock',
+    ok('this version\'s plan of the app\'s patch laid over stock is that patch with the safe area 504x432 at 286,8, carplay untouched', mp === 'OK' && !laid.err && laid.buf.equals(NEW_PATCH) && holds() === 'stock',
         mp + ' ' + (laid.err || ''));
     clearInmem();
 })();
@@ -412,7 +419,9 @@ function inMemRelease(v, d) {
     live = plannedBy(d) === 'planned' && live; r = uninstall(d); var unH = r.code ? 'refused-' + holds() : holds(), unKind = inmemKind(d);
     var laid = null;
     try { laid = require(path.join(d, 'carplay_patch.js')).overlay(STOCK, relPlan); } catch (e) { laid = { err: e.message }; }
-    var isApp = !!laid && !laid.err && laid.buf.equals(APP_PATCH['']);
+    /* A release before this version's safe area plans the app's patch; this version as NEXT, and
+     * a release from it on, the same with this version's safe area. */
+    var isApp = !!laid && !laid.err && (laid.buf.equals(NEW_PATCH) || (v !== NEXT && laid.buf.equals(APP_PATCH[''])));
     ok(v + ' (I) after this version\'s deactivate: its activate plans the app\'s patch in memory over stock carplay; its file restore, revert and removal leave carplay stock and the plan in place',
         up === 'planned' && isApp && live && relKind !== 'null' && recH === 'stock' && recKind !== 'null' && /stock$/.test(rmH) && rmKind !== 'null' && /stock$/.test(unH) && unKind !== 'null',
         [up, laid && laid.err || isApp, live, relKind, rec, recH, recKind, rmH, rmKind, unH, unKind].join(' '));
@@ -629,7 +638,7 @@ REPS.forEach(function (p) { unit(function () {
 
 /* 6b. carplay 22.28.3's build-id with other bytes than the shipped file:
  * where no segment loads them (another firmware image's .gnu_debuglink),
- * and this tool's safe area (504x368 at 286,72) in the two safe-area
+ * and this tool's earlier default safe area (504x368 at 286,72) in the two safe-area
  * immediates of a stock geometry, which another tool's restore of its own
  * backup leaves after this tool put carplay back as it ships. Every release
  * before the variant's first planning release refuses to patch or plan it,

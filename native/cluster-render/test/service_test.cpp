@@ -21,7 +21,7 @@
  * as parked behind the stock HMI, and is shown when the stock content goes.
  * A hold of the guidance slot (slots.h): no client's target; held, with
  * the box taken over and parked behind it, while the map is shown, and with
- * the seat-belt panel parked there; released with the map and at stop; the
+ * the top layout parked there; released with the map and at stop; the
  * map's layer choosing it with guide_hold, and a client without the field
  * getting it. Cluster restarts right after the hold's mapping, again and
  * again: the map and the hold shown again after each. A video frame repeated: a few bytes
@@ -357,17 +357,22 @@ static void take_over_and_fall_back()
     ok("the stock content gone: shown", ea.target["panel"] == "shown");
 }
 
-static const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kGuide = 0x010004f1;
+static const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kGuide = 0x010004f1, kSmall = 0x010004f9;
 
 /* The rig with a hold of the guidance slot following the map (slots.h), on
- * a KOMBI that shows the HMI's map and its turn-by-turn box. */
-static void hold_rig(Rig &r)
+ * a KOMBI that shows the HMI's map and its turn-by-turn box; small: with
+ * its small scene (class 1024, kSmall), as guide_small_scene_id gives. */
+static void hold_rig(Rig &r, const std::vector<uint64_t> &takes = {kBox}, bool small = false)
 {
     r.sc.targets[0].linger_ms = 0;
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
-    g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
+    g.take_over_stock = true; g.follows = "map"; g.take_over_contents = takes;
     r.sc.targets.push_back(g);
+    if (small) {
+        g.name = "guide_0x105_small"; g.scene_id = kSmall; g.content_class = 1024; g.pairs_with = "guide_0x105";
+        r.sc.targets.push_back(g);
+    }
     r.start();
     r.port.stock_map(0x100, kHmiMap);
     r.port.stock_map(0x105, kBox);
@@ -445,10 +450,10 @@ static void guide_hold()
     r.pump(4000);
     ours = r.port.row(0x105, kGuide);
     ok("the map back: held again", ea.target["map"] == "shown" && ours && ours->map_status == 1);
-    r.port.stock_map(0x105, kBelt);   /* the seat-belt panel parked behind ours, as the HMI keeps it */
+    r.port.stock_map(0x105, kBelt);   /* the top layout parked behind ours, as the HMI keeps it */
     r.pump(20);
     ours = r.port.row(0x105, kGuide);
-    ok("the seat-belt panel parked there: still held, the panel never taken over",
+    ok("the top layout parked there: still held, the panel never taken over",
        ea.target["map"] == "shown" && ours && ours->map_status == 1 &&
            r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kHmiMap, kBox});
     r.svc->shutdown(r.now);
@@ -505,6 +510,98 @@ static void guide_hold_choice()
     ours = r.port.row(0x105, kGuide);
     ok("a client that never sends guide_hold: the map shown and held",
        r.svc->slots().status(0).state == TargetState::Shown && ours && ours->map_status == 1 && box_status(r) == 3);
+}
+
+/* Issue 281, parts 3 and 4, with the shipped guide_take_over and the
+ * small scene: BMW's turn box in its top layout (0x1000314, class 1024)
+ * shown while a warning disables slots 0x101/0x102, the box parked behind
+ * it. Hide off leaves it and both of ours alone; Hide on maps both of ours,
+ * and the top layout is unmapped once, by the small scene (this KOMBI shows
+ * by the order of mapping, not by class). */
+static void guide_hold_top_card()
+{
+    const uint64_t kTop = 0x01000314;
+    Rig r;
+    hold_rig(r, {kBox, kTop}, true);
+    r.port.stock_unmap(0x105, kBox);
+    r.port.stock_map(0x105, kTop, 1024);
+    r.port.stock_map(0x105, kBox);
+    cr::Client a("waze", r.path);
+    Events ea;
+    ea.wire(a);
+    r.clients = {&a};
+    r.pump(50);
+    cr::LayerOptions lo;
+    lo.target = "map";
+    lo.contend = true;
+    lo.guide_hold = false;
+    const uint32_t map = show_map(r, a, lo);
+    r.pump(40000);
+    const SlotInfo *top = r.port.row(0x105, kTop);
+    ok("guide_hold 0: the top layout shown, never taken over, neither of ours asked for",
+       ea.target["map"] == "shown" && top && top->map_status == 1 && top->klass == 1024 &&
+           !r.port.row(0x105, kGuide) && !r.port.row(0x105, kSmall) &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap});
+
+    lo.guide_hold = true;
+    a.set(map, lo);
+    r.pump(4000);
+    const SlotInfo *ours = r.port.row(0x105, kGuide), *small = r.port.row(0x105, kSmall);
+    top = r.port.row(0x105, kTop);
+    ok("guide_hold 1: both of ours mapped, ours shown, the top layout unmapped once and parked behind",
+       ours && ours->map_status == 1 && small && small->map_status == 3 && small->klass == 1024 && top &&
+           top->map_status == 3 && box_status(r) == 3 &&
+           std::count(r.port.taken_over.begin(), r.port.taken_over.end(), kTop) == 1);
+    r.pump(40000);
+    ok("held 40 s more: no more take-overs", r.port.taken_over.size() == 3 && r.port.row(0x105, kSmall));
+
+    lo.guide_hold = false;
+    a.set(map, lo);
+    r.pump(400);
+    ok("guide_hold 0 again: both of ours released", !r.port.row(0x105, kGuide) && !r.port.row(0x105, kSmall));
+}
+
+/* Issue 281, part 4f (car Test 5e, 16:19:52.747): the KOMBI removes the
+ * hold's shown blank scene with its slot not locked. It uploads nothing:
+ * the cap stays 5500 and nothing is remembered. The map removed the same
+ * way lowers the cap to 5000 and remembers it, as before. */
+static void guide_removal_keeps_cap()
+{
+    char tmpl[] = "/tmp/crs-ceiling.XXXXXX";
+    const std::string dir = mkdtemp(tmpl) ? tmpl : "/tmp";
+    const std::string file = dir + "/upload-ceiling";
+    {
+        Rig r(5500 * 1024);
+        r.sc.ceiling.path = file;
+        hold_rig(r);
+        cr::Client a("waze", r.path);
+        r.clients = {&a};
+        r.pump(50);
+        cr::LayerOptions lo;
+        lo.target = "map";
+        lo.contend = true;
+        show_map(r, a, lo);
+        r.pump(4000);
+        const SlotInfo *ours = r.port.row(0x105, kGuide);
+        Governor &gov = r.svc->compositor().governor();
+        gov.activity(r.now);
+        r.svc->slots().on_lost(kGuide, "fetch removed", r.now);
+        r.pump(1100);
+        ok("t5e: the hold's shown blank scene removed: the cap stays 5500, nothing remembered",
+           ours && ours->map_status == 1 && gov.cap() == 5500u * 1024 && !std::ifstream(file).good());
+        r.port.stock_unmap(0x100, kHmiMap);   /* the slot shows only ours */
+        r.pump(50);
+        gov.activity(r.now);
+        r.svc->slots().on_lost(0x010004f0, "fetch removed", r.now);
+        r.pump(1100);
+        std::ifstream in(file);
+        std::string first;
+        std::getline(in, first);
+        ok("the shown map removed: the cap lowered to 5000 and remembered, as before",
+           gov.cap() == 5000u * 1024 && first == "ceiling_kb 5000");
+    }
+    if (std::system(("rm -rf " + dir).c_str()) != 0)
+        std::printf("cleanup failed\n");
 }
 
 /* The KOMBI restarting: our mappings dropped and the display service gone,
@@ -4498,6 +4595,8 @@ int main()
     take_over_and_fall_back();
     guide_hold();
     guide_hold_choice();
+    guide_hold_top_card();
+    guide_removal_keeps_cap();
     hud_yield_choice();
     display_drops();
     repeats();

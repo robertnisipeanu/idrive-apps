@@ -201,7 +201,26 @@
  *   (move_hold): released there first if requested, so it never holds two
  *   slots; a wait on the ladder carries over. A hold the display refuses
  *   for its slot (Refusal::NoSlot) is not asked for again until the service
- *   restarts.
+ *   restarts. A hold's take-overs unmap only content of its own content
+ *   class. A hold may have a small scene (TargetSpec::pairs_with), of
+ *   another class, mapped in its slot as the HMI keeps its box and its
+ *   top layout: the KOMBI shows whichever class the neighbour slots'
+ *   state calls for. The small one stays mapped while the map is shown
+ *   and the hold allowed, through the box's gaps, so the HMI's top layout
+ *   maps behind it (car Test 5c); refused, it is asked for again when its
+ *   slot's status changes, never on the ladder. Either of the two shown, the other parked
+ *   behind it is no loss and no take-over. The small one takes over at
+ *   most kSmallTakeOvers times until it is shown or asked for again,
+ *   each once it has been parked and its renderer subscribed
+ *   kSmallTakeOverSettleMs, the 1.5 s spacing kept. A hold that has a
+ *   small scene it may ask for does not yield to take_over_contents of
+ *   the small one's class; one without (none, given up, refused) does.
+ *   When the first of kWarningSlots comes back (status 0 to 1) while a
+ *   hold is parked in its slot, its take_over_contents of its class parked
+ *   there too are unmapped as the HMI at once, before the KOMBI shows them
+ *   (car Test 5d): once per return, no take-over counted, the ladder and
+ *   its spacing untouched, never a loss; one shown anyway is taken over
+ *   as before.
  *
  * - Preload: while a layer on the target has preload 1, visible or not, and
  *   the port can keep a fetch with no map (Port::preloads), the target's
@@ -304,6 +323,12 @@ struct TargetSpec {
      * take_over_contents mapped in (SlotManager::on_slots); slot 0 until
      * one is. */
     std::vector<uint64_t> table_slots;
+    /* A hold's small scene (the guide hold's, content class 1024): the name
+     * of the hold it goes with. It is in that hold's slot (moved with it),
+     * asked for while the map is shown and the hold allowed, the box mapped
+     * or not, and the two are held while either is shown
+     * (SlotManager::follow). Empty: not one. */
+    std::string pairs_with;
     /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
      * falls back to when the display refuses its own, scene_id
      * (SlotManager::fall_back). */
@@ -466,6 +491,19 @@ public:
      * first gap is then the least to the next. */
     static const int64_t kTakeOverMs[6];
     static const int64_t kTakeOverSettleMs = 10000;
+    /* A hold's small scene (TargetSpec::pairs_with) takes over only once it
+     * is parked and its renderer subscribed (when that can be read), this
+     * long after the later of the two, so the KOMBI can show ours when the
+     * HMI's goes; and at most kSmallTakeOvers times, on the kTakeOverMs[]
+     * steps, from being asked for until it is released or shown (car Test
+     * 5b, 26 Nov: unmaps sent within 60 ms of ours mapped did nothing, or
+     * the HMI's was mapped again in front). */
+    static const int64_t kSmallTakeOverSettleMs = 300;
+    static const int kSmallTakeOvers = 3;
+    /* The slots a warning (the rear seat belt) disables, 0x101/0x102 on
+     * iDrive 7: the first back unmaps the box parked beside a parked hold
+     * at once (on_slots; car Test 5d). */
+    static const uint64_t kWarningSlots[2];
     /* A report of a disabled slot holds its targets' requests this long at
      * most, in case the display never reports the slot again. */
     static const int64_t kLockTrustMs = 30000;
@@ -521,17 +559,26 @@ public:
      * hold (none has guide_hold false), one of take_over_contents is mapped
      * in its slot (shown or parked; while it is requested, also within
      * kNotMappedMs of the last pass that saw one: a take-over's unmap and
-     * the HMI's map again come in separate reports), no content outside
+     * the HMI's map again come in separate reports; a hold with
+     * table_slots and a slot, box or not, part 4e), no content outside
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
      * once. A take-over of a hold unmaps only take_over_contents: the one
      * shown in its slot and those that can be parked ahead of ours
-     * (Target::ahead). A hold gives up for the rest of the process when its
-     * scene is lost (removed, unmapped, parked again behind other content,
-     * or released to yield) with the slot not locked, or moves to another
-     * slot (TargetSpec::table_slots), more than kHoldLosses times within
-     * kHoldLossMs. */
+     * (Target::ahead). A hold gives up when its scene is lost (removed,
+     * unmapped, parked again behind other content) with the slot not locked,
+     * or moves to another slot (TargetSpec::table_slots), more than
+     * kHoldLosses times within kHoldLossMs; a yield is no loss, nor is a
+     * park that turns into one before ours is shown again (the loss is
+     * withdrawn, and a give-up it alone caused undone). The give-up
+     * lasts until cluster-render restarts or until the target it follows
+     * lets it hold again (guide_hold false, then true). A hold's small
+     * scene (TargetSpec::pairs_with) is wanted while the target its hold
+     * follows is shown, its wanting layers let it hold and it has not given
+     * up, whether the box is mapped or not (it does not follow the box);
+     * a park of either while the other is shown is no loss, and one counted
+     * before the other showed is withdrawn. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kNoMapping = INT64_MIN / 2;
@@ -634,7 +681,18 @@ private:
         bool yield = true;   /* no wanting layer has yield false (popup_blocks) */
         bool requested = false;
         bool refused = false;        /* a hold whose slot the display refused: not asked for again */
+        /* A small scene refused: Waiting until its slot's status (as
+         * slot_status() then) changes. */
+        bool refused_wait = false;
+        int refused_status = -1;
         bool declined = false;       /* a hold: the target it follows does not let it hold */
+        /* A hold: its unmap at a warning slot's return went (on_slots);
+         * again once one of them is reported disabled. */
+        bool return_unmapped = false;
+        /* A hold from the table: its slot was where a report showed the
+         * box (before: its first slot, left with no loss, and a refusal
+         * there waits for a status change as a small scene's). */
+        bool box_seen = false;
         /* The last mapping event (on_availability); kNoMapping: none since
          * the last request, or logged already. */
         int64_t mapped_ms = kNoMapping;
@@ -691,6 +749,8 @@ private:
         std::vector<int64_t> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
+        int64_t lost_parked_ms = -1;    /* that loss: when */
+        bool parked_gave_up = false;    /* that loss gave the hold up */
         /* A hold: the box counts as mapped in its slot (follow()), and the
          * last pass that saw it mapped (-1: none). */
         bool boxed = false;
@@ -820,11 +880,15 @@ private:
      * route guidance never counts (is_guidance). */
     bool popup_blocks(int i, int64_t now_ms);
     /* A shown scene the display removed: evidence for the governor, a
-     * share target's only logged. */
+     * share target's or a hold's (its blank scene uploads nothing) only
+     * logged. */
     void removal_evidence(int i, const std::string &why, int64_t ms);
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);
+    /* A small scene's take-over may go from then on (kSmallTakeOverSettleMs);
+     * -1: not yet (not parked, or its renderer not subscribed). */
+    int64_t small_ready_ms(int i, int64_t now_ms) const;
     /* Accepted, not mapped for kNotMappedMs: released and asked for again. */
     void not_mapped(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
@@ -847,9 +911,14 @@ private:
     /* One of the hold's take_over_contents is mapped (shown or parked) in
      * its slot, by the latest report naming the slot. */
     bool box_mapped(int i) const;
+    /* The hold paired with hold i (TargetSpec::pairs_with, either way); -1:
+     * none. */
+    int pair_of(int i) const;
+    /* Hold i's pair is shown. */
+    bool pair_shown(int i) const;
     /* A hold's scene lost while its slot is not locked, or (move) its move
-     * to another slot, locked or not. */
-    void note_loss(int i, const char *how, int64_t now_ms, bool move = false);
+     * to another slot, locked or not. True: counted. */
+    bool note_loss(int i, const char *how, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
      * disabled (shown first, then its own slot, then 0x105); *why says

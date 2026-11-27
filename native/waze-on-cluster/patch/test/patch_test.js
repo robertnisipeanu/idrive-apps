@@ -41,8 +41,11 @@ function callBytes(buf) { return buf.slice(CALL, CALL + CALL_LEN).toString('hex'
 var RES_OFFS = [0x20ca30, 0x20ca52, 0x20ca64, 0x20ca72];
 function resImmediates(buf) { return RES_OFFS.map(function (o) { return buf.slice(o, o + 10).toString('hex'); }); }
 var RES_STOCK = ['48baea0000006e000000', '48b88007000084030000', '48b80000000064020000', '48b80e0200000202c000'];
-/* 1088x480 at 138x61 mm, view offset (0,0), safe 504x368 at (286,72). */
+/* 1088x480 at 138x61 mm, view offset (0,0), safe 504x368 at (286,72): the
+ * default geometry of every release that patched the file. */
 var RES_DEFAULT = ['48ba8a0000003d000000', '48b840040000e0010000', '48b800000000f8010000', '48b8700100001e014800'];
+/* This version's default safe height and x,y: 504x432 at (286,8). */
+var RES_PLAN_SAFE2 = '48b8b00100001e010800';
 /* The geometry 0.10.6 wrote: the same with safe 476x306 at (306,72). */
 var RES_0106 = ['48ba8a0000003d000000', '48b840040000e0010000', '48b800000000dc010000', '48b83201000032014800'];
 /* The patch record's key of each (carplay_patch.js resKey). */
@@ -160,15 +163,19 @@ try {
 
     /* The app's patch (high, stock AVB sink, default geometry): this
      * version's plan laid over stock is byte for byte the patch 0.10.4-0.10.5
-     * wrote, as run on the car; that without the ShowUI URL edit, the patch
+     * wrote, as run on the car, but for this version's default safe area
+     * (504x432 at 286,8, where that patch has 504x368 at 286,72); that patch without the ShowUI URL edit, the patch
      * 0.9.11-0.10.1 wrote, with the URL with ETA in place of the map URL, the
      * one 0.10.2-0.10.3 wrote, and with the safe area 476x306, the one 0.10.6
      * wrote. */
     function shaOf(b) { return crypto.createHash('sha256').update(b).digest('hex'); }
     r = plan(tgt, ['--panel', 'high']);
     var appPatch = r.plan ? require('../carplay_patch.js').overlay(SRCBUF, fs.readFileSync(r.plan, 'utf8')) : { err: 'no plan' };
-    ok('the app\'s plan laid over stock: the patch 0.10.4-0.10.5 wrote, the file untouched', r.code === 0 && !appPatch.err &&
-        shaOf(appPatch.buf) === 'a241b0e9af9ac1eada5c5ebcf9fab06669a155376b0a5c70cd85f3c1459a88b5' && sha256(tgt) === ORIG_SHA, r.out + (appPatch.err || ''));
+    var appOldSafe = appPatch.err ? null : Buffer.from(appPatch.buf);
+    if (appOldSafe) Buffer.from(RES_DEFAULT[3].slice(4), 'hex').copy(appOldSafe, RES_OFFS[3] + 2);
+    ok('the app\'s plan laid over stock: the patch 0.10.4-0.10.5 wrote but for the safe area 504x432 at 286,8, the file untouched', r.code === 0 && !appPatch.err &&
+        appPatch.buf.slice(RES_OFFS[3], RES_OFFS[3] + 10).toString('hex') === RES_PLAN_SAFE2 &&
+        shaOf(appOldSafe) === 'a241b0e9af9ac1eada5c5ebcf9fab06669a155376b0a5c70cd85f3c1459a88b5' && sha256(tgt) === ORIG_SHA, r.out + (appPatch.err || ''));
 
     /* An earlier release's patch of the file: the same bytes. */
     r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
@@ -532,7 +539,7 @@ try {
     r = overlaid(pt, ['--panel', 'mid']);
     ok('plan mid: the stock geometry', r.code === 0 && /res:\s+ORIGINAL/.test(r.out), r.out);
     r = overlaid(pt, ['--panel', 'high', '--res', '800x360']);
-    ok('plan --res 800x360: at 138x61mm with the safe area scaled', r.code === 0 && /res:\s+PATCHED \(IC_HIGH advertises 800x360 at 138x61mm, safe 371x276 at 210,54\)/.test(r.out), r.out);
+    ok('plan --res 800x360: at 138x61mm with the safe area scaled', r.code === 0 && /res:\s+PATCHED \(IC_HIGH advertises 800x360 at 138x61mm, safe 371x324 at 210,6\)/.test(r.out), r.out);
     r = overlaid(pt, ['--panel', 'high', '--res', '1920x1080']);
     ok('plan --res 1920x1080: labelled by its size, not stock', r.code === 0 && /res:\s+PATCHED \(IC_HIGH advertises 1920x1080 at 138x61mm/.test(r.out), r.out);
     r = overlaid(pt, ['--panel', 'high', '--safe', 'full']);

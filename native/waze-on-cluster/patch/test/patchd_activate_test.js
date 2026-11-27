@@ -225,6 +225,17 @@ function fresh(buf) {
 /* The patch an earlier release's install wrote to the file (IC_HIGH, the
  * stock AVB sink), with our backup and its record. */
 function earlierPatch() { patcher(['apply', '--target', TGT, '--panel', 'high', '--coding', headUnit.CODING, '--yes']); }
+/* The safe height and x,y of this version's default safe area (504x432 at
+ * 286,8); earlier releases wrote 504x368 at 286,72. */
+var SAFE2_NEW = Buffer.from('b00100001e010800', 'hex');
+/* An earlier release's patch with this version's default safe area: the
+ * bytes this version's plan holds, its record kept. */
+function earlierPatchAsThis() {
+    earlierPatch();
+    var record = require('../patch_record.js'), rc = JSON.parse(fs.readFileSync(record.recordPath(TGT), 'utf8')), b = fs.readFileSync(TGT);
+    SAFE2_NEW.copy(b, 0x20ca74); fs.writeFileSync(TGT, b);
+    record.write(TGT, { patched: rc.patched, proven: rc.proven });
+}
 
 /* patchd started (as at a head-unit start), and its first status. */
 function daemonStatus() { return daemonCommand(null, function (m) { return m.ev === 'status'; }); }
@@ -400,12 +411,12 @@ async function main() {
     ok('another tool\'s edit away from the sites: a later install arms the patch in memory, the file untouched', r.code === 0 && disk() === before &&
         !!rec() && rec().sha256 === before && !r.result.conflict, JSON.stringify(r.result));
 
-    /* An earlier release's patch on disk, with our backup, carplay running
-     * it: the file reverted from the backup, the backup dropped, the plan
-     * armed; the running carplay's memory holds the plan's bytes, so
-     * nothing is pending. */
+    /* An earlier release's patch on disk with this version's safe area,
+     * with our backup, carplay running it: the file reverted from the
+     * backup, the backup dropped, the plan armed; the running carplay's
+     * memory holds the plan's bytes, so nothing is pending. */
     fresh(SRCBUF);
-    earlierPatch();
+    earlierPatchAsThis();
     headUnitStart();
     patchedIno = ino(TGT);
     r = hook('activate');
@@ -871,7 +882,8 @@ async function main() {
     r = hook('activate');
     ok('coding 7: an install keeps a proven plan proven', r.code === 0 && !r.result.reboot &&
         JSON.stringify(trial()) === JSON.stringify({ enabled: true, proven: true, trial: false }), JSON.stringify([r.result, trial()]));
-    var current = Buffer.from(full);
+    /* This version's patch: the earlier release's with this version's safe area. */
+    var current = Buffer.from(full); SAFE2_NEW.copy(current, 0x20ca74);
     /* An earlier release's patch recorded proven, its file as given. */
     function earlierRelease(buf) {
         fresh(SRCBUF);
@@ -926,6 +938,7 @@ async function main() {
     /* The safe area 0.10.6 wrote (476x306 at 306,72), in place of this version's. */
     function safe0106(b) { Buffer.from('00000000dc010000', 'hex').copy(b, 0x20ca66); Buffer.from('3201000032014800', 'hex').copy(b, 0x20ca74); return b; }
     var olderPatches = [['an older patch with the URL edits and the stock geometry', function () { return olderRelease(URLS); }],
+        ['an earlier release\'s patch with the earlier default safe area 504x368', function () { return earlierRelease(Buffer.from(full)); }],
         ['0.10.6\'s patch', function () { return earlierRelease(safe0106(Buffer.from(current))); }],
         ['a patch without the URL edits', function () { return olderRelease(RES); }],
         ['0.9.11\'s patch', function () { return olderRelease(RES.concat(URLS.slice(0, 2))); }]];

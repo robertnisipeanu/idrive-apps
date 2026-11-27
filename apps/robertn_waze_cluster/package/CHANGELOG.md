@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+CarPlay: Apple's turn card sits at the top of the cluster map instead of
+over its middle. A car patched before shows `Update needed`; pressing
+CarPlay's Patch button moves the card up after the head-unit restart.
+Requires the next waze-on-cluster.
+
 ## 0.6.18
 
 The Status rows say Not supported only where the patch cannot be applied,

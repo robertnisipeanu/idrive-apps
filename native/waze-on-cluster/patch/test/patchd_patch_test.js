@@ -360,7 +360,7 @@ async function main() {
     r = await status();
     ok('status: carplay\'s memory holds the plan: patched, res 1088x480', r.state === 'patched' && r.mode === 'udp' && r.res === '1088x480' && !r.reason && !r.pending &&
         !r.carplay, JSON.stringify(r));
-    ok('status: the plan\'s default safe area', r.safe === '504x368+286+72', JSON.stringify(r));
+    ok('status: the plan\'s default safe area', r.safe === '504x432+286+8', JSON.stringify(r));
 
     /* No main PID: an apply that needs a restart is an error, and carplay is
      * neither started nor restarted; its next start is armed. */

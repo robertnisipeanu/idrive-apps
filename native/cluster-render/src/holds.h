@@ -22,20 +22,38 @@ namespace crs {
 /* The settings as written. */
 struct HoldSettings {
     std::string hold, slots, scene_id, content_class, take_over;   /* guide_hold, guide_slots, ... */
+    std::string small_scene_id;   /* guide_small_scene_id; empty: no small scene */
 };
 
 /* Appends a hold per slot of slots unless hold is 0; hold other than 0 or 1
  * counts as 1, with *warn saying so. slots: auto, one hold guide_auto with
- * scene_id whose slot is 0x105 or 0x103 (TargetSpec::table_slots),
+ * scene_id whose slot is 0x105 or 0x103 (TargetSpec::table_slots;
+ * kSmallFirstSlot until the table names one),
  * neither another target's; or hex slot ids 0x1-0xfff, separated by commas
  * or spaces, each once and no other target's. Scene ids from scene_id up,
  * one per slot, each in allowed and no other target's.
  * take_over: the hex content ids the holds' take-overs may unmap, at least
- * one, separated the same way, never 0x01000314 (the seat-belt-warning
- * panel). Anything else adds no hold: false, with *warn naming it, and
- * targets left as they were. */
+ * one, separated the same way. Anything else adds no hold: false, with
+ * *warn naming it, and targets left as they were.
+ * small_scene_id: then each hold's small scene (TargetSpec::pairs_with,
+ * <hold>_small, content class kSmallClass, 16x16), ids from it up, one per
+ * hold, appended after the holds, each in its hold's slot (guide_slots
+ * auto: kSmallFirstSlot until the box is seen). One that is not a number, not in
+ * allowed or another target's leaves the holds without small scenes, with
+ * *warn saying why; true. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
                 std::string *warn);
+
+/* The content class of a hold's small scene: the class of the HMI's box in
+ * its top layout (0x01000314), which the KOMBI shows in the box's slot
+ * while a warning disables slots 0x101/0x102 (VERIFIED on the car). */
+const uint32_t kSmallClass = 1024;
+
+/* The hold's and its small scene's slot under guide_slots auto before the
+ * box is seen in one: the slot every car log shows the box and its top
+ * layout in (0x103; 0x105 only ever seen empty). Both move with the box
+ * (move_hold). */
+const uint64_t kSmallFirstSlot = 0x103;
 
 /* The HUD's slot and scene on iDrive 7 (README.md "The HUD"). */
 const uint64_t kHudSlot = 0x323, kHudScene = 0x01000400;

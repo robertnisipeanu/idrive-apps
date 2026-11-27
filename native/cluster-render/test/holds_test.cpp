@@ -50,7 +50,7 @@ static std::string shipped(const std::string &key)
  * the shipped defaults (key=value). */
 static bool load(const std::vector<std::string> &pairs, std::vector<TargetSpec> *t, std::string *err)
 {
-    HoldSettings h{shipped("guide_hold"), "0x105", "0x010004f1", "0", "0x01000310"};
+    HoldSettings h{shipped("guide_hold"), "0x105", "0x010004f1", "0", "0x01000310", ""};
     for (const std::string &p : pairs) {
         const std::string k = p.substr(0, p.find('=')), v = p.substr(p.find('=') + 1);
         (k == "guide_hold"       ? h.hold
@@ -154,11 +154,48 @@ int main()
            "0x10004f1",
            std::find(allowed.begin(), allowed.end(), 0x010004f1) != allowed.end() &&
                load_holds(HoldSettings{shipped("guide_hold"), shipped("guide_slots"), shipped("guide_scene_id"),
-                                       shipped("guide_content_class"), shipped("guide_take_over")},
+                                       shipped("guide_content_class"), shipped("guide_take_over"),
+                                       shipped("guide_small_scene_id")},
                           allowed, &s, &err) &&
-               s.size() == 2 && s[1].table_slots == std::vector<uint64_t>{0x105, 0x103} && s[1].slot == 0 &&
+               s.size() == 3 && s[1].table_slots == std::vector<uint64_t>{0x105, 0x103} && s[1].slot == 0x103 &&
                s[1].scene_id == 0x010004f1 &&
                err.empty());
+        /* Issue 281, part 4: its small scene, class 1024, 0x10004f9, in the
+         * shipped scene_ids_allowed; part 4c: in 0x103 before the box is
+         * seen. */
+        ok("shipped: the hold's small scene, class 1024, 0x10004f9, allowed, with the hold, in 0x103 at first",
+           s.size() == 3 && s[2].name == "guide_auto_small" && s[2].pairs_with == "guide_auto" &&
+               s[2].scene_id == 0x010004f9 && s[2].content_class == 1024 && s[2].slot == 0x103 &&
+               s[2].table_slots.empty() && s[2].follows == "map" && s[2].take_over_stock &&
+               s[2].width == 16 && s[2].height == 16 && s[2].linger_ms == 0 &&
+               s[2].take_over_contents == s[1].take_over_contents &&
+               std::find(allowed.begin(), allowed.end(), 0x010004f9) != allowed.end());
+        std::vector<uint64_t> old_allowed = {0x010004f0, 0x01000400, 0x010004f1, 0x010004f8};
+        s = {map};
+        ok("a scene_ids_allowed without 0x10004f9: the hold kept, no small scene, logged",
+           load_holds(HoldSettings{"1", "auto", "0x010004f1", "0", "0x01000310,0x01000314", "0x010004f9"},
+                      old_allowed, &s, &err) &&
+               s.size() == 2 && s[1].name == "guide_auto" &&
+               err == "guide_small_scene_id: guide_auto_small's scene id 0x10004f9 is not in scene_ids_allowed: no "
+                      "small scene");
+        s = {map};
+        ok("the small scene's id the hold's or not a number: the hold kept, no small scene, logged",
+           load_holds(HoldSettings{"1", "auto", "0x010004f1", "0", "0x01000310", "0x010004f1"}, allowed, &s, &err) &&
+               s.size() == 2 && err.find("is target guide_auto's: no small scene") != std::string::npos &&
+               (s = {map}, load_holds(HoldSettings{"1", "auto", "0x010004f1", "0", "0x01000310", "x"}, allowed, &s,
+                                      &err)) &&
+               s.size() == 2 && err.find("guide_small_scene_id must be a number") != std::string::npos);
+        s = {map};
+        ok("two slots: a small scene each, the next id, in its hold's slot, after the holds",
+           load_holds(HoldSettings{"1", "0x105 0x103", "0x010004f1", "0", "0x01000310", "0x010004f3"},
+                      {0x010004f1, 0x010004f2, 0x010004f3, 0x010004f4}, &s, &err) &&
+               s.size() == 5 && s[1].name == "guide_0x105" && s[2].name == "guide_0x103" &&
+               s[3].pairs_with == "guide_0x105" && s[3].slot == 0x105 && s[3].scene_id == 0x010004f3 &&
+               s[4].pairs_with == "guide_0x103" && s[4].slot == 0x103 && s[4].scene_id == 0x010004f4 && err.empty());
+        s = {map};
+        ok("guide_hold 0: neither scene",
+           load_holds(HoldSettings{"0", "auto", "0x010004f1", "0", "0x01000310", "0x010004f9"}, allowed, &s, &err) &&
+               s.size() == 1);
     }
     ok("off with 0: no hold", load({"guide_hold=0"}, &t, &err) && t.size() == 1 && err.empty());
 
@@ -167,9 +204,10 @@ int main()
            t[1].scene_id == 0x010004f1 && t[1].follows == "map" && t[1].take_over_stock && t[1].linger_ms == 0 &&
            t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310});
-    ok("auto: one hold whose slot is 0x105 or 0x103 from the slot table, with guide_scene_id, following the map",
+    ok("auto: one hold whose slot is 0x105 or 0x103 from the slot table (0x103 until then), with guide_scene_id, "
+       "following the map",
        load({"guide_hold=1", "guide_slots=auto"}, &t, &err) && t.size() == 2 && t[1].name == "guide_auto" &&
-           t[1].slot == 0 && t[1].table_slots == std::vector<uint64_t>{0x105, 0x103} &&
+           t[1].slot == 0x103 && t[1].table_slots == std::vector<uint64_t>{0x105, 0x103} &&
            t[1].scene_id == 0x010004f1 && t[1].follows == "map" &&
            t[1].take_over_stock &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310} && err.empty());
@@ -184,7 +222,7 @@ int main()
         panel.scene_id = 0x010004f2;
         std::vector<TargetSpec> v = {map, panel};
         ok("auto with another target in 0x105: refused",
-           !load_holds(HoldSettings{"1", "auto", "0x010004f1", "0", "0x01000310"}, kAllowed, &v, &err) &&
+           !load_holds(HoldSettings{"1", "auto", "0x010004f1", "0", "0x01000310", ""}, kAllowed, &v, &err) &&
                v.size() == 2 && err == "guide_slots: slot 0x105 is target panel's");
     }
     ok("auto with slot ids: refused",
@@ -200,8 +238,13 @@ int main()
        refused({"guide_hold=1", "guide_take_over=0x1000310x"}, "\"0x1000310x\" is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over=16777744"}, "is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over= "}, "guide_take_over names no content"));
-    ok("the seat-belt-warning panel in guide_take_over: refused",
-       refused({"guide_hold=1", "guide_take_over=0x01000310,0x01000314"}, "0x1000314 is the seat-belt-warning panel"));
+    ok("BMW's turn box in its top layout (0x1000314) in guide_take_over: accepted",
+       load({"guide_hold=1", "guide_take_over=0x01000310,0x01000314"}, &t, &err) && t.size() == 2 && err.empty() &&
+           t[1].take_over_contents == std::vector<uint64_t>{0x01000310, 0x01000314});
+    ok("shipped guide_take_over: the box and its top layout",
+       shipped("guide_take_over") == "0x01000310,0x01000314" &&
+           load({"guide_hold=1", "guide_take_over=" + shipped("guide_take_over")}, &t, &err) && err.empty() &&
+           t[1].take_over_contents == std::vector<uint64_t>{0x01000310, 0x01000314});
     ok("two slots, by comma or space: the next scene id each",
        load({"guide_hold=1", "guide_slots=0x105, 0x103"}, &t, &err) && t.size() == 3 && t[2].slot == 0x103 &&
            t[2].scene_id == 0x010004f2 && load({"guide_hold=1", "guide_slots=0x105 0x103"}, &t, &err) &&
@@ -233,7 +276,7 @@ int main()
     ok("no slot: refused", refused({"guide_hold=1", "guide_slots= , "}, "guide_slots names no slot"));
     std::vector<TargetSpec> none;
     ok("no map to follow: refused",
-       !load_holds(HoldSettings{"1", "0x105", "0x010004f1", "0", "0x01000310"}, kAllowed, &none, &err) &&
+       !load_holds(HoldSettings{"1", "0x105", "0x010004f1", "0", "0x01000310", ""}, kAllowed, &none, &err) &&
                                        err.find("no map target") != std::string::npos);
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

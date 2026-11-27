@@ -32,8 +32,8 @@
  *            displayed size (1088x480 px at 138x61 mm, view area the full
  *            frame) and the phone renders its cluster map at that size. The
  *            safe area, where the phone keeps its guidance UI, is the part of
- *            the frame the gauges and native readouts leave visible (504x368
- *            at 286,72). `--res WxH` picks another pixel size at the same
+ *            the frame the gauges leave visible, from 8 rows below the top
+ *            (504x432 at 286,8). `--res WxH` picks another pixel size at the same
  *            physical size, `--safe` another safe area; `--res stock`, and
  *            `--panel mid`, keep the build's stock geometry.
  *
@@ -146,11 +146,12 @@ var SHIPPED = {
  * it from a build's stock geometry. */
 var RES_DEFAULT = { w: 1088, h: 480, mmw: 138, mmh: 61 };
 /* The default safe area in the 1088x480 frame (PATCH.md "Safe area"): x
- * from BMW's own IC_MID safe area (which lies inside the map area), y from
- * below the native model badge. Other --res sizes scale it. The
- * safe area 0.10.6 wrote (476x306 at 306,72) reads as patched, and the patch
- * rewrites it. */
-var SAFE_DEFAULT = { x: 286, y: 72, w: 504, h: 368 };
+ * from BMW's own IC_MID safe area (which lies inside the map area), the top
+ * 8 rows below the map's top edge, so Apple's turn card sits at the top of
+ * the map. Other --res sizes scale it. The safe areas earlier releases wrote
+ * (504x368 at 286,72; 0.10.6's 476x306 at 306,72) read as patched, and the
+ * patch rewrites them. */
+var SAFE_DEFAULT = { x: 286, y: 8, w: 504, h: 432 };
 var EDITS = ['variant', 'sink', 'selfstart', 'res'];
 var URL_EDITS = ['mapurl', 'showui'];
 
@@ -466,7 +467,7 @@ function resFor(panel, res, safe) {
         g.safew = w; g.safeh = h; g.safex = 0; g.safey = 0;
     } else if (safe !== undefined) {
         var sm = /^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$/.exec(safe || '');
-        if (!sm) die('--safe needs WxH+X+Y (e.g. 504x368+286+72) or "full"');
+        if (!sm) die('--safe needs WxH+X+Y (e.g. 504x432+286+8) or "full"');
         g.safew = parseInt(sm[1], 10); g.safeh = parseInt(sm[2], 10);
         g.safex = parseInt(sm[3], 10); g.safey = parseInt(sm[4], 10);
         if (g.safew < 16 || g.safeh < 16 || g.safex + g.safew > w || g.safey + g.safeh > h)

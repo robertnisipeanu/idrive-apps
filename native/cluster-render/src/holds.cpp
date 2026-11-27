@@ -77,8 +77,6 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         uint64_t v = 0;
         if (!number(c, true, &v) || !v)
             return refuse(warn, "guide_take_over: \"" + c + "\" is not a hex content id");
-        if (v == 0x01000314)
-            return refuse(warn, "guide_take_over: 0x1000314 is the seat-belt-warning panel, never taken over");
         takes.push_back(v);
     }
     if (takes.empty())
@@ -93,8 +91,10 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         if (!from_table && (!number(id, true, &t.slot) || t.slot < 1 || t.slot > 0xfff))
             return refuse(warn, "guide_slots: \"" + id + "\" is not a slot id from 0x1 to 0xfff");
         t.name = from_table ? "guide_auto" : "guide_" + hex(t.slot);
-        if (from_table)
+        if (from_table) {
             t.table_slots = kBoxSlots;
+            t.slot = kSmallFirstSlot;
+        }
         t.content_class = (uint32_t)klass;
         t.scene_id = scene + holds.size();
         t.width = t.height = 16;
@@ -119,7 +119,37 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
     }
     if (holds.empty())
         return refuse(warn, "guide_hold: guide_slots names no slot");
+    std::vector<TargetSpec> smalls;
+    uint64_t small_id = 0;
+    if (!cfg.small_scene_id.empty() && !number(cfg.small_scene_id, false, &small_id))
+        refuse(warn, "guide_small_scene_id must be a number, not \"" + cfg.small_scene_id + "\": no small scene");
+    for (const TargetSpec &h : small_id ? holds : std::vector<TargetSpec>()) {
+        TargetSpec s = h;
+        s.name = h.name + "_small";
+        if (!h.table_slots.empty())
+            s.slot = kSmallFirstSlot;
+        s.table_slots.clear();
+        s.content_class = kSmallClass;
+        s.scene_id = small_id + smalls.size();
+        s.pairs_with = h.name;
+        std::string clash;
+        const std::vector<TargetSpec> *seen[] = {targets, &holds, &smalls};
+        for (const std::vector<TargetSpec> *v : seen)
+            for (const TargetSpec &o : *v)
+                if (o.scene_id == s.scene_id)
+                    clash = " is target " + o.name + "'s";
+        if (clash.empty() && std::find(allowed.begin(), allowed.end(), s.scene_id) == allowed.end())
+            clash = " is not in scene_ids_allowed";
+        if (!clash.empty()) {
+            refuse(warn, "guide_small_scene_id: " + s.name + "'s scene id " + hex(s.scene_id) + clash +
+                             ": no small scene");
+            smalls.clear();
+            break;
+        }
+        smalls.push_back(s);
+    }
     targets->insert(targets->end(), holds.begin(), holds.end());
+    targets->insert(targets->end(), smalls.begin(), smalls.end());
     return true;
 }
 
