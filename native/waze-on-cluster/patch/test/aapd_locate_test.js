@@ -349,13 +349,8 @@ var CASES = [
     ['prepareCinemoConfiguration no longer calls the gate', function (b) { b.fill(0x90, PREP_CALL, PREP_CALL + 5); }, ['refused']],
 
     /* self-start */
-    ['requestStream far from its siblings', function (b) {
-        var len = RS_FN.end - RS_FN.off, name = cstrStart('AlternateDisplays::requestStream()');
-        plant(b, RS_FN.off, len, VICTIM.off);
-        leasIn(RS_FN).filter(function (x) { return x.to === name; }).forEach(function (x) { setRel(b, x.at + 3, x.at + 7, cstrStart('AlternateDisplays::stopStream()')); });
-        setRel(b, CMD_CALL + 1, CMD_CALL + 5, VICTIM.off);
-    }, ['refused'], null, 'near'],
-    ['requestStream not called by onStreamCommandChanged', function (b) { setRel(b, CMD_CALL + 1, CMD_CALL + 5, SS); }, ['refused'], null, 'rs-called'],
+    /* cross-checks that protect no site the plan writes: not made */
+    ['requestStream not called by onStreamCommandChanged', function (b) { setRel(b, CMD_CALL + 1, CMD_CALL + 5, SS); }, ['correct']],
     ['a second guard in requestStream', function (b) {
         /* over 16 bytes of whole instructions (call ; mov ; call ; mov), its
          * first branch landing on the next instruction, its second on Ldo */
@@ -432,7 +427,7 @@ var CASES = [
     ['onEndSession leaves the focus mode', function (b) { b[find('c7434402000000', END.off, END.end) + 3] = 1; }, ['refused'], null, 'end-resets'],
     ['the patched guard tests another flag than the ready flag', function (b) { patchAll(b, LOC); b[G + 2] = 0x40; }, ['refused'], null, 'guard-ready'],
     ['initAlternateDisplays tests another flag than the gate\'s', function (b) { b.writeUInt32LE(GATE_FLAG + 4, INIT_TEST + 2); }, ['refused'], null, 'gate-gates-alt'],
-    ['onNewNavigationStatus reached without a test of the gate\'s result', function (b) { b.writeUInt32LE(GATE_FLAG + 4, NAV_TEST + 2); }, ['refused'], null, 'onnav-gated'],
+    ['onNewNavigationStatus reached without a test of the gate\'s result', function (b) { b.writeUInt32LE(GATE_FLAG + 4, NAV_TEST + 2); }, ['correct']],
     ['setNaviStreamStatus stores the status elsewhere', function (b) { b[SS_STORE + 2] = 0x3c; }, ['refused'], null, 'ss-field'],
     ['requestStream passes another status than STREAMING', function (b) { b[STREAMING + 4] = 3; }, ['refused'], null, 'streaming'],
     ['requestStream marks another field', function (b) { b[MARK + 2] = 0x48; }, ['refused'], null, 'mark'],
@@ -472,19 +467,22 @@ var CASES = [
     ['the config path the tail of another string', function (b) { b[CONF - 1] = 0x78; }, ['correct']],
 
     /* the ready start */
-    ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['refused'], null, 'ready-frame'],
-    ['onAlternateVideoReady without its subscribe call, the call the ready start follows', function (b) { b.fill(0x90, READY_SUB.at, READY_SUB.at + 5); }, ['refused']],
-    ['onAlternateVideoReady subscribing another object', function (b) { b[READY_SUB.at - 1] = 0xdf; }, ['refused'], null, 'ready-this'],
-    ['onAlternateVideoReady\'s stack check of another slot', function (b) { b[LOC.readystart.offset + 4] = 0x10; }, ['refused'], null, 'ready-tail'],
-    ['onAlternateVideoReady\'s stack check failing elsewhere', function (b) { b[LOC.readystart.offset + 23] = 0x90; }, ['refused'], null, 'ready-tail'],
+    ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['without ready start'], null, 'ready-frame'],
+    ['onAlternateVideoReady without its subscribe call (the guard\'s ready flag unconfirmed)', function (b) { b.fill(0x90, READY_SUB.at, READY_SUB.at + 5); }, ['refused']],
+    ['onAlternateVideoReady subscribing another object', function (b) { b[READY_SUB.at - 1] = 0xdf; }, ['without ready start'], null, 'ready-this'],
+    ['onAlternateVideoReady\'s stack check of another slot', function (b) { b[LOC.readystart.offset + 4] = 0x10; }, ['without ready start'], null, 'ready-tail'],
+    ['onAlternateVideoReady\'s stack check failing elsewhere', function (b) { b[LOC.readystart.offset + 23] = 0x90; }, ['without ready start'], null, 'ready-tail'],
     ['a branch into onAlternateVideoReady\'s end', function (b) {
         Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
         setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset + 9);
-    }, ['refused'], null, 'ready-into'],
+    }, ['without ready start'], null, 'ready-into'],
     ['a branch onto onAlternateVideoReady\'s end', function (b) {
         Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
         setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset);
-    }, ['refused'], null, 'ready-into'],
+    }, ['without ready start'], null, 'ready-into'],
+
+    ['onAlternateVideoReady\'s stack check by sub (a newer gcc)', function (b) { b[LOC.readystart.offset + 7] = 0x2b; }, ['without ready start'], null, 'ready-tail'],
+    ['onAlternateVideoReady\'s stack check jumping further', function (b) { b[LOC.readystart.offset + 15] = 0x09; }, ['without ready start'], null, 'ready-tail'],
 
     /* the build */
     ['a dynamic relocation over the gate', function (b) {
@@ -498,8 +496,16 @@ var CASES = [
     ['no function table', function (b) { var eh = phdrs(b).filter(function (p) { return p.type === 0x6474e550; })[0]; b[eh.off] = 2; }, ['refused']],
 ];
 
-var tally = { correct: 0, refused: 0, WRONG: 0 }, proved = {};
-function outcome(loc, want) { return !loc.ok ? 'refused' : json(sites(loc)) === json(want) ? 'correct' : 'WRONG'; }
+var tally = { correct: 0, 'without ready start': 0, refused: 0, WRONG: 0 }, proved = {};
+/* refused: an edit the plan needs not located; without ready start: the
+ * edits where they are and the ready start not located (planned without
+ * it); correct: every site where it is; WRONG: a site elsewhere. */
+function outcome(loc, want) {
+    if (locator.EDITS.some(function (e) { return !loc[e].ok; })) return 'refused';
+    var got = sites(loc);
+    if (!loc.readystart.ok) { got.readystart = want.readystart; return json(got) === json(want) ? 'without ready start' : 'WRONG'; }
+    return json(got) === json(want) ? 'correct' : 'WRONG';
+}
 CASES.forEach(function (t) {
     var b = Buffer.from(REF), out;
     try { out = t[1](b) || b; } catch (e) { ok(t[0] + ': mutation built', false, e.message); return; }
@@ -509,12 +515,12 @@ CASES.forEach(function (t) {
         'allowed ' + t[2].join('/') + (loc.ok ? '; got ' + json(sites(loc)) + ', want ' + json(want) : ''));
     if (!t[4]) return;
     var wloc = locator.locate(out, { off: [t[4]] }), without = outcome(wloc, want);
-    proved[t[4]] = proved[t[4]] || without !== 'refused';
-    ok('  with ' + t[4] + ' off: ' + (without === 'correct' ? 'patched' : without === 'WRONG' ? 'patched at the wrong sites' : 'refused (' + wloc.reason + ')'), without !== 'refused');
+    proved[t[4]] = proved[t[4]] || without !== got;
+    ok('  with ' + t[4] + ' off: ' + (without === 'refused' ? 'refused (' + wloc.reason + ')' : without === 'WRONG' ? 'patched at the wrong sites' : without), without !== got);
 });
 var unproved = locator.CHECKS.filter(function (c) { return !proved[c]; });
-ok('every cross-check alone refuses a mutation (' + locator.CHECKS.length + ' checks)', !unproved.length, 'unproved: ' + unproved.join(', '));
+ok('every check alone decides a mutation (' + locator.CHECKS.length + ' checks)', !unproved.length, 'unproved: ' + unproved.join(', '));
 ok('the reference with every check off: the same sites', json(sites(locator.locate(REF, { off: locator.CHECKS }))) === json(EXPECT));
-process.stdout.write('\n' + CASES.length + ' mutations: ' + tally.correct + ' located correctly, ' + tally.refused + ' refused, ' + tally.WRONG + ' located wrongly\n');
+process.stdout.write('\n' + CASES.length + ' mutations: ' + tally.correct + ' located correctly, ' + tally['without ready start'] + ' without the ready start, ' + tally.refused + ' refused, ' + tally.WRONG + ' located wrongly\n');
 process.stdout.write(fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n');
 process.exit(fails ? 1 : 0);

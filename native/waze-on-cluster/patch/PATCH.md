@@ -798,7 +798,8 @@ the library never creates one) and to the journal.
 
 **Redirects.** A plan may also hold `redirect <from> <to>` lines (absolute
 paths, up to four): once every edit is applied, and only then, each open of
-`from` for reading, by that exact path, opens `to`. The library exports
+`from` for reading, by that exact path, opens `to` while `to` exists (one
+access check per such open; without `to` the open goes through as it is). The library exports
 `open`, `open64`, `openat`, `openat64`, their `_FORTIFY_SOURCE` forms
 (`__open_2` …), `fopen`, `fopen64`, `freopen` and `freopen64` for that;
 each hands every call to the C library's own (`dlsym(RTLD_NEXT)`, looked up
@@ -1133,21 +1134,24 @@ each edit's "Found by" below says, in their stock or patched form, with
 `carplay_locate.js`'s ELF reading: function bounds from the `.eh_frame_hdr`
 search table, functions by the name strings their logging prologues load
 (each string once, loaded by one function only, within 0x80 bytes of its
-start), a site a dynamic relocation covers refused. A build where a site is
+start), a site a dynamic relocation covers not taken. A build where a site is
 not found, is found more than once or fails a check is refused with the
 reason; `patchd` reports it as `not patchable: <reason>` (`Status: Not
-supported — this Android Auto version` in the app, with the part not
-found: `(display switch not found)` for the gate or the variant mapping,
-`(screen size not found)`, or `(map start not found)` for the self-start;
-the locator's own words go to patchd's log and `aapd-probe.txt`). A build
-without the ready start's site is planned without it ("readystart" below);
-one whose ready start is found but changed is refused. Each check has a
+supported — this Android Auto version` in the app; the locator's own words
+go to patchd's log and `aapd-probe.txt`). A build whose ready start is not
+found or does not verify is planned without it ("readystart" below): the
+plan writes nothing there. Each check has a
 name in `aapd_locate.js` (`CHECKS`), and `aapd_locate_test.js` shows for
-each one a changed build that it alone refuses. The checks tie the sites to
-each other, not to a build: the gate's kept result must be the flag that
-turns the cluster display code on, the self-start's fields must be those
-the session start and end set, and its opening test must read the object
-its function was called with. No list of builds decides it: a build of
+each one a changed build whose outcome it alone decides. Every check
+protects a site the plan writes: that the bytes there are the instruction
+the edit replaces, and that the edited code is safe. The gate's kept result
+must be the flag that turns the cluster display code on; the self-start's
+guard must read the ready flag the phone's display setup sets and the
+session end clears (`ready-flag`, `ready-subscribe`, `end-resets`,
+`guard-ready`), since a request before that setup, or after the session
+ended, makes aapd abort; its fields must be those the session start and
+end set, and its opening test must read the object its function was
+called with. No list of builds decides it: a build of
 another version patches when its code has the same shape. `plan`
 locates its own edited image again, and writes no plan unless every site
 reads patched at the same offsets and the plan laid over the file gives
@@ -1177,11 +1181,11 @@ What a build must have for the map, and what it may lack:
 | gate | aapd builds no cluster display for a car coded 7 | refused |
 | screen | aapd skips aapd.conf and sends an 800x480 stream of another shape | refused |
 | selfstart call and guard | the stream never starts (the car never asks for it); the call without the guard lets a request reach `SetVideoFocus` before the phone's display is set up, and aapd aborts | refused |
-| readystart | the map waits for a navigation status after a reconnect | planned without it (revision 2) |
+| readystart | the map waits for a navigation status after a reconnect | planned without it (revision 2), as is one that does not verify |
 | aapd.conf | — | needs no site: the plan redirects its reads |
 
-A part found but changed (by another tool, or an end the ready start does
-not know) is refused like one not found.
+An edit's site found but changed (by another tool) is refused like one not
+found; a ready start in any form it does not know is left out of the plan.
 
 | | |
 |---|---|
@@ -1291,9 +1295,11 @@ In aapd 22.39.3:
   differ: the locator's `absent`) is planned without it: the plan names no
   `readystart` and its record keeps `rev: 2` (`PATCH_REV`, the patch
   without it); the overlay reads it `NOT APPLIED (<reason>)`.
+  A ready start whose end is neither form (a newer compiler's `sub`
+  stack check, another `jne` distance, another tool's bytes), with a
+  branch into it, or under a dynamic relocation is left out the same way.
   On such a build the map does not come back after the phone reconnects
-  until a navigation status starts the stream (a route). A site found with
-  another end, or a branch into it, is a change and is refused.
+  until a navigation status starts the stream (a route).
 
 **Found by.**
 
@@ -1316,8 +1322,7 @@ In aapd 22.39.3:
   `test al,al ; je +10 ; cmp dword [reg+field],1|2 ; setbe al` and keeps
   its result as a byte of its object. No other code compares the field with
   1 or 2.
-- *selfstart*: `requestStream()`, which `onStreamCommandChanged()` calls,
-  copies `rdi` (its `this`) into the register its opening test reads and
+- *selfstart*: `requestStream()` copies `rdi` (its `this`) into the register its opening test reads and
   opens with `cmp [this+A],2 ; je +10 ; cmp [this+B],2 ; je Ldo`, or the
   patched `cmp byte [this+F],0 ; je +10 ; cmp [this+A],2 ; jne Ldo`, or
   the outdated `... ; jmp Ldo ; nop`; before `Ldo` it logs `Ignoring
@@ -1330,8 +1335,7 @@ In aapd 22.39.3:
   `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`;
   where the build has its name string, it is the function loading it.
   The gate's kept result (a byte of the Application) is tested by
-  `initAlternateDisplays()`, which builds the cluster display, and before
-  every branch into `onNewNavigationStatus()` (within 0x40 bytes of it).
+  `initAlternateDisplays()`, which builds the cluster display.
   `onNewNavigationStatus()` calls `setNaviStreamStatus` (stock) or
   `requestStream` (patched) exactly once: that call. On every path to it,
   `rsi` holds `rsp+B`, its value followed through the function by
@@ -1351,8 +1355,10 @@ In aapd 22.39.3:
   the UNAVAILABLE (0) status at `[rsp+B+X]` right before that tail,
   falling into it, and the
   AVAILABLE (1) status in the same slot by the one store that jumps to the
-  tail; STREAMING in `requestStream()` is stored the same way. The three
-  functions lie within 64 KiB of each other. 22.39.3 has no
+  tail; STREAMING in `requestStream()` is stored the same way.
+  `setNaviStreamStatus` is the one function within 64 KiB of
+  `onNewNavigationStatus()` that `requestStream()` calls after the request.
+  22.39.3 has no
   `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
   argument and field checks identify it.
 

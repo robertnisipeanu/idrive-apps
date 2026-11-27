@@ -216,14 +216,17 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
         /^redirect:\s+REDIRECTED \(\/etc\/aapd\.conf -> /m.test(nro) && /^overlay:\s+ok$/m.test(nro), nro);
     r = plan(unit());
     ok('a build with the ready start: revision 3, record 3', r.code === 0 && r.sum.rev === 3 && r.sum.record === 3, r.out);
-    /* Its end changed (another tool's edit there): refused as ever. */
-    var rc = unit(), rcb = Buffer.from(SRC);
-    rcb[LOC.readystart.offset] ^= 0xff;
-    fs.writeFileSync(rc.bin, rcb);
-    var rl = LOCATOR.locate(rcb).readystart;
-    r = plan(rc);
-    ok('the ready start changed: not absent, the plan refused with the reason, nothing written', !rl.ok && !rl.absent && r.code === 1 &&
-        /^error: refusing: .*onAlternateVideoReady ends neither as it ships nor as the ready start writes it/m.test(r.out) && !fs.existsSync(r.plan), r.out);
+    /* Its end in a form the ready start does not know (a newer gcc's `sub`
+     * stack check, another `jne` distance, another tool's bytes): the plan
+     * writes nothing there, so it is planned without it, the end as it is. */
+    [['a sub stack check', 7, 0x2b], ['another jne distance', 15, 0x09], ['other bytes', 0, null]].forEach(function (m) {
+        var u = unit(), b = Buffer.from(SRC);
+        b[LOC.readystart.offset + m[1]] = m[2] === null ? b[LOC.readystart.offset + m[1]] ^ 0xff : m[2];
+        fs.writeFileSync(u.bin, b);
+        var x = plan(u), text = x.code === 0 ? fs.readFileSync(x.plan, 'utf8') : '';
+        ok('the ready start with ' + m[0] + ': planned without it at revision 2, nothing written there', x.code === 0 && x.sum.rev === 2 &&
+            !/\nedit readystart /.test(text) && /\nedit selfstart-guard /.test(text) && sha(u.bin) === sha(b), x.out);
+    });
 
     /* A site the locator does not find (aapd_locate_test.js perturbs each):
      * refused with the reason, nothing written. */

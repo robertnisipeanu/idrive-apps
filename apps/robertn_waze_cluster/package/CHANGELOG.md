@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-When the map can't be added to your car's version of Android Auto, the
-Status says which part was not found: `(display switch not found)`,
-`(screen size not found)` or `(map start not found)`.
-
 ## 0.6.18
 
 The Status rows say Not supported only where the patch cannot be applied,

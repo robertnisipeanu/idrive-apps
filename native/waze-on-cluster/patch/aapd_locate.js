@@ -3,12 +3,13 @@
 /* aapd_locate.js — finds the five Android Auto edit sites (PATCH.md "Android
  * Auto") in an aapd build by code and data structure, in their stock or
  * patched form. Each site has to be found exactly once and pass every
- * cross-check; otherwise that edit carries ok:false and a short reason
- * naming what was not found. The functions are found by the name strings
+ * check; otherwise that edit carries ok:false and a short reason naming
+ * what was not found (the ready start's also absent: true, planned
+ * without). The functions are found by the name strings
  * their logging prologues load, function bounds come from the .eh_frame_hdr
  * search table, aapd's raw KI_KOMBI_VARIANT -> class mapping must be the
  * one the edits rely on, and a site a dynamic relocation would rewrite at
- * load is refused (carplay_locate.js's ELF reading). It only reads the
+ * load is not taken (carplay_locate.js's ELF reading). It only reads the
  * buffer.
  *
  * Each cross-check has a name (CHECKS); locate(buf, { off: [names] }) skips
@@ -36,8 +37,6 @@ var NAMES = {
     onNav: ['AlternateDisplays::onNewNavigationStatus(',
         /^void (?:\w+::)*AlternateDisplays::onNewNavigationStatus\(CINEMO_ANDROIDAUTO_NAVIGATION_STATUS\)$/, 'self-start: onNewNavigationStatus'],
     rs: ['AlternateDisplays::requestStream()', /^void (?:\w+::)*AlternateDisplays::requestStream\(\)$/, 'self-start: requestStream'],
-    cmd: ['AlternateDisplays::onStreamCommandChanged(',
-        /^void (?:\w+::)*AlternateDisplays::onStreamCommandChanged\(const (?:\w+::)*ProjectedModeStreamCommand&\)$/, 'self-start: onStreamCommandChanged'],
     received: ['Request Stream Command event received', /^Request Stream Command event received$/, 'self-start: request log'],
     already: ['Ignoring event. Already streaming', /^Ignoring event\. Already streaming\.\.\.$/, 'self-start: already-streaming log'],
     ready: ['AlternateDisplays::onAlternateVideoReady()', /^void (?:\w+::)*AlternateDisplays::onAlternateVideoReady\(\)$/, 'self-start: onAlternateVideoReady'],
@@ -59,8 +58,8 @@ var CHECKS = [
     'conv-copy', 'conv-switch-once', 'conv-mapping',
     'getter-shared', 'getter-once', 'helper-arg',
     'helper-once', 'size-1', 'size-0', 'class0-shape', 'room', 'fall-through',
-    'gate-field', 'gate-flag', 'gate-once', 'gate-kept', 'gate-unique', 'gate-gates-alt', 'onnav-gated',
-    'near', 'rs-called', 'guard-once', 'guard-form', 'guard-this', 'ready-flag', 'ready-subscribe', 'end-resets', 'guard-ready', 'already-log', 'request-log', 'request-log-once',
+    'gate-field', 'gate-flag', 'gate-once', 'gate-kept', 'gate-unique', 'gate-gates-alt',
+    'guard-once', 'guard-form', 'guard-this', 'ready-flag', 'ready-subscribe', 'end-resets', 'guard-ready', 'already-log', 'request-log', 'request-log-once',
     'ss-call-once', 'ss-field', 'ss-field-once', 'streaming', 'mark', 'ss-name', 'onnav-once', 'arg-pointer', 'arg-frame',
     'status-unavailable', 'status-available',
     'ready-frame', 'ready-this', 'ready-tail', 'ready-into',
@@ -312,21 +311,12 @@ function flagTests(buf, from, to, flag) {
 }
 
 /* The gate's kept result is the flag that turns the AlternateDisplays code
- * on: initAlternateDisplays tests it before it builds the cluster display,
- * and every branch into onNewNavigationStatus (the navigation-status
- * callback's) is taken only after a test of it. Why not, or null. */
-function gateGatesAlt(im, str, refs, flag, onNav) {
+ * on: initAlternateDisplays tests it before it builds the cluster display.
+ * Why not, or null. */
+function gateGatesAlt(im, str, refs, flag) {
     var buf = im.buf, init = entryFunc(im, refs, str, 'initAlt');
     if (init.err) return init.err;
-    if (on('gate-gates-alt') && !flagTests(buf, init.off, init.end, flag).length) return 'gate: initAlternateDisplays does not test the gate\'s result';
-    if (!on('onnav-gated')) return null;
-    var into = [];
-    for (var p = im.exec.off; p + 5 <= im.exec.end; p++) {
-        if ((buf[p] === 0xe8 || buf[p] === 0xe9) && im.rel(p + 1, p + 5) === onNav) into.push(p);
-    }
-    if (!into.length) return 'self-start: nothing branches into onNewNavigationStatus';
-    var open = into.filter(function (p) { return !flagTests(buf, Math.max(im.exec.off, p - 0x40), p, flag).length; });
-    return open.length ? 'self-start: onNewNavigationStatus reached without a test of the gate\'s result' : null;
+    return on('gate-gates-alt') && !flagTests(buf, init.off, init.end, flag).length ? 'gate: initAlternateDisplays does not test the gate\'s result' : null;
 }
 
 /* ---- Edit: selfstart (onNewNavigationStatus's call, requestStream's guard) */
@@ -429,10 +419,8 @@ function statusStores(buf, from, to, v, d) {
  *                form, the stock jne landing on the call right after them
  *                (the stack-check failure);
  *   ready-into   no branch lands on or inside them.
- * A function whose frame, flag-and-call or own `this` differ is a build
- * without the site (absent: true; the patch in memory is planned without
- * the ready start); an end that is neither form, or a branch into it, is
- * a site changed (refused). */
+ * The plan writes nothing at a ready start that fails any of them: it is
+ * planned without it (absent: true), as for a build that lacks it. */
 function absent(reason) { return { ok: false, reason: reason, absent: true }; }
 var READY_STOCK = '488b442408' + '644833042528000000' + '7507' + '4883c418' + '5b5dc3', READY_LEN = 23;
 function readyStart(im, ready, F, rs) {
@@ -446,8 +434,8 @@ function readyStart(im, ready, F, rs) {
     var at = h + 12, cur = buf.toString('hex', at, at + READY_LEN);
     var patched = '4889ef' + '4883c418' + '5b5d' + 'e9' + E.hex32(im.va(rs.off) - im.va(at + 14)) + '0f1f8000000000' + '6690';
     var state = cur === READY_STOCK ? 'original' : cur === patched ? 'patched' : null;
-    if (!state && on('ready-tail')) return fail('self-start: onAlternateVideoReady ends neither as it ships nor as the ready start writes it');
-    if (on('ready-tail') && state === 'original' && buf[at + READY_LEN] !== 0xe8) return fail('self-start: onAlternateVideoReady\'s stack check fails elsewhere');
+    if (!state && on('ready-tail')) return absent('self-start: onAlternateVideoReady ends neither as it ships nor as the ready start writes it');
+    if (on('ready-tail') && state === 'original' && buf[at + READY_LEN] !== 0xe8) return absent('self-start: onAlternateVideoReady\'s stack check fails elsewhere');
     if (on('ready-into')) {
         var into = im.branchesInto(at, at + READY_LEN - 1).filter(function (b) { return b.at < at || b.at >= at + READY_LEN; });
         for (var p = ready.off; p + 2 <= ready.end; p++) {
@@ -456,12 +444,12 @@ function readyStart(im, ready, F, rs) {
                 if (t >= at && t < at + READY_LEN) into.push({ at: p });
             }
         }
-        if (into.length) return fail('self-start: a branch lands on or inside onAlternateVideoReady\'s end (at 0x' + into[0].at.toString(16) + ')');
+        if (into.length) return absent('self-start: a branch lands on or inside onAlternateVideoReady\'s end (at 0x' + into[0].at.toString(16) + ')');
     }
     return { ok: true, offset: at, len: READY_LEN, state: state || 'original', stock: READY_STOCK, patched: patched };
 }
 
-/* requestStream (called by onStreamCommandChanged) opens with one of
+/* requestStream opens with one of
  * guardAt's forms, L1 logging that it is streaming already, Ldo logging the request and
  * calling setNaviStreamStatus(STREAMING), then setting B to 1.
  * setNaviStreamStatus (named so where the build has its name string) copies
@@ -470,11 +458,9 @@ function readyStart(im, ready, F, rs) {
  * falls into and the AVAILABLE one jumps to, both built in the argument the
  * call passes. */
 function locateSelfstart(im, str, refs) {
-    var buf = im.buf, rs = entryFunc(im, refs, str, 'rs'), onNav = entryFunc(im, refs, str, 'onNav'), cmd = entryFunc(im, refs, str, 'cmd');
-    var err = rs.err || onNav.err || cmd.err || str.received.err || str.already.err;
+    var buf = im.buf, rs = entryFunc(im, refs, str, 'rs'), onNav = entryFunc(im, refs, str, 'onNav');
+    var err = rs.err || onNav.err || str.received.err || str.already.err;
     if (err) return fail(err);
-    if (on('near') && Math.max(rs.off, onNav.off, cmd.off) - Math.min(rs.off, onNav.off, cmd.off) > NEAR) return fail('self-start: AlternateDisplays functions far apart');
-    if (on('rs-called') && !im.calls(cmd.off, cmd.end).some(function (c) { return c.to === rs.off; })) return fail('self-start: onStreamCommandChanged does not call requestStream');
     var gs = [];
     for (var p = rs.off; p + 16 <= Math.min(rs.end, rs.off + ENTRY); p++) { var x = guardAt(buf, p); if (x) gs.push(x); }
     var gd = one(gs, 'guard-once');
@@ -602,13 +588,13 @@ function locate(buf, opts) {
         out.call = ssr.ok === false ? ssr : ssr.call;
         out.guard = ssr.ok === false ? ssr : ssr.guard;
         out.readystart = ssr.ok === false ? ssr : ssr.ready;
-        var gg = out.gate.ok && out.call.ok && out.gate.flag !== null ? gateGatesAlt(im, str, refs, out.gate.flag, out.call.onNav) : null;
-        if (gg) out.gate = out.call = out.guard = out.readystart = fail(gg);
+        var gg = out.gate.ok && out.gate.flag !== null ? gateGatesAlt(im, str, refs, out.gate.flag) : null;
+        if (gg) out.gate = fail(gg);
     }
     var hit = on('reloc') ? E.relocated(im, SITES.filter(function (e) { return out[e].ok; }).map(function (e) { return [e, out[e].offset, out[e].len]; }))
         : { all: null, edits: [] };
     SITES.forEach(function (e) {
-        if (out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0)) out[e] = fail(LABEL[e] + ': ' + (hit.all || 'a dynamic relocation over the edit'));
+        if (out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0)) out[e] = (e === 'readystart' ? absent : fail)(LABEL[e] + ': ' + (hit.all || 'a dynamic relocation over the edit'));
     });
     var failed = SITES.filter(function (e) { return !out[e].ok; }).map(function (e) { return out[e].reason; });
     out.ok = failed.length === 0;

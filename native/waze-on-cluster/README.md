@@ -346,9 +346,9 @@ Their edits go into a plan that `preload/wocpatch.c` (`libwocpatch.so`,
 preloaded into carplay or aapd) applies in memory; aapd's reads of
 `/etc/aapd.conf` open a copy of it with the cluster geometry, in `/run`,
 which needs no site in aapd. Android Auto needs the four sites that turn
-the cluster display on, size it and start the map; a build without the
-place where the map is asked for again as the phone reconnects is patched
-without it. Neither file on `/` is
+the cluster display on, size it and start the map; a build where the
+place the map is asked for again as the phone reconnects is missing or in
+a form the patch does not know is patched without it. Neither file on `/` is
 written but to put back a patch an earlier release wrote, from verified
 backups, by atomic rename. The install patches any build whose sites are
 all found and verify, on trial until it has run healthy on that car; no

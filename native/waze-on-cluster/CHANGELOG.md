@@ -5,9 +5,11 @@
 Android Auto reads the copy of aapd.conf with the cluster geometry in
 place of `/etc/aapd.conf` without a change to aapd's code, so an aapd
 build whose path to that file looks different is no longer refused.
-Android Auto is refused only where a part the map needs is not found,
-and the app's Status names it. A downgrade to an earlier release leaves
-Android Auto as it ships until that release plans its own patch.
+Android Auto is refused only where a part the map needs is not found;
+an aapd build whose place to ask for the map again on reconnect is in a
+form the patch does not know is patched without it. A downgrade to an
+earlier release leaves Android Auto as it ships until that release plans
+its own patch.
 
 ## 0.14.19
 

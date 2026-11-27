@@ -40,9 +40,9 @@
  * The sites are found in each build by aapd_locate.js; a build where any
  * of the four edits' sites is not found is refused, and any build where
  * they are all found and verify is planned: no list of builds decides it.
- * A build without the ready start's site (the locator's `absent`) is
- * planned without it, at patch revision 2; one whose ready start is there
- * but changed is refused. `plan` reads aapd on
+ * A build whose ready start is not found or does not verify is planned
+ * without it, at patch revision 2: the plan writes nothing there. `plan`
+ * reads aapd on
  * disk, which must be the pristine build (every site stock), and
  * aapd.conf, which must have the entries the geometry needs and hold none
  * of our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
@@ -125,8 +125,7 @@ var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 16 + 16);
  * only when this revision is newer than the turned-off one (patchd.js). 2:
  * requestStream goes ahead only while the phone's cluster display is set
  * up. 3: the stream is also asked for when the phone sets the display up
- * (readystart). A plan for a build without the ready start's site is
- * revision 2. */
+ * (readystart). A plan without the ready start is revision 2. */
 var PATCH_REV = 3;
 
 /* /dev/shm/rawcodingdata, the coding image CodingShmApp publishes: a 0x2c
@@ -184,15 +183,9 @@ function classify(buf) {
         }
         if (!loc.elf) bad.push(loc.reason);
         else EDITS.forEach(function (e) { if (!loc[e[0]].ok && bad.indexOf(loc[e[0]].reason) < 0) bad.push(loc[e[0]].reason); });
-        /* inMem: why the patch in memory cannot be planned for it: the
-         * ready start's site found but changed (a build without it is
-         * planned without it, readyStart). */
-        var inMem = bad.slice();
-        if (loc.elf) {
-            var rs = loc.readystart;
-            if (rs && !rs.ok && !rs.absent && inMem.indexOf(rs.reason) < 0) inMem.push(rs.reason);
-        }
-        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem };
+        /* inMem: why the patch in memory cannot be planned for it; a ready
+         * start not found or not verified is planned without (readyStart). */
+        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: bad };
     }
     return classified[h];
 }
@@ -467,8 +460,7 @@ function cmdRevert(t, yes, force, dropBackup) {
 function plans() { return require('./carplay_patch.js'); }
 
 /* The sites the plan of the classified image `c` edits: every site, the
- * ready start where the build has it (readyStart; classify refuses one
- * found but changed). */
+ * ready start where the locator finds and verifies it (readyStart). */
 function readyStart(c) { return !!c.loc.readystart && c.loc.readystart.ok; }
 function planSites(c) { return SITES.filter(function (e) { return e[0] !== 'readystart' || readyStart(c); }); }
 /* The plan's regions of `c` ([[offset, length]]) and their names. */

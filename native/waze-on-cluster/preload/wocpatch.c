@@ -31,7 +31,8 @@
  * cluster geometry in place of /etc/aapd.conf). Once every edit is applied,
  * and only then, each open of `from` for reading, by its exact path, opens
  * `to`: open, open64, openat, openat64, their _FORTIFY_SOURCE forms, fopen,
- * fopen64, freopen and freopen64, which the library exports for that.
+ * fopen64, freopen and freopen64, which the library exports for that,
+ * while `to` exists (an open of `from` goes through as it is otherwise).
  * Every other call, and every call in a process the plan was not applied
  * to, goes to the C library unchanged. The C library's own functions are
  * looked up (dlsym) as the library starts, before the program's code runs;
@@ -456,16 +457,17 @@ static void report(int applied) {
 
 /* ---- the redirects ------------------------------------------------------ */
 
-/* The file to open in place of `path` for a read, or `path` itself. */
+/* The file to open in place of `path` for a read: its redirect's target
+ * while that exists, else `path` itself. */
 static const char *redirected(const char *path, int reading) {
     int n = __atomic_load_n(&nactive, __ATOMIC_ACQUIRE);
     if (!reading || !path) return path;
-    for (int i = 0; i < n; i++) if (strcmp(path, active[i].from) == 0) return active[i].to;
+    for (int i = 0; i < n; i++)
+        if (strcmp(path, active[i].from) == 0) return access(active[i].to, F_OK) == 0 ? active[i].to : path;
     return path;
 }
 
 static int reads(int flags) { return (flags & O_ACCMODE) == O_RDONLY && !(flags & (O_CREAT | O_TRUNC)); }
-/* fopen's mode: "r", with no "+". */
 static int reads_mode(const char *mode) { return mode && mode[0] == 'r' && !strchr(mode, '+'); }
 /* open's mode argument: given with O_CREAT or O_TMPFILE only. */
 static int wants_mode(int flags) { return (flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE; }
@@ -525,29 +527,20 @@ static void *next(void **slot, const char *name) {
         return ((FILE *(*)(const char *, const char *, FILE *))next(&real_##fn, sym))(redirected(path, reads_mode(mode)), mode, f); \
     }
 
-OPEN_LIKE(woc_open, "open")
-OPEN_LIKE(woc_open64, "open64")
-OPENAT_LIKE(woc_openat, "openat")
-OPENAT_LIKE(woc_openat64, "openat64")
-OPEN2_LIKE(woc_open_2, "__open_2")
-OPEN2_LIKE(woc_open64_2, "__open64_2")
-OPENAT2_LIKE(woc_openat_2, "__openat_2")
-OPENAT2_LIKE(woc_openat64_2, "__openat64_2")
-FOPEN_LIKE(woc_fopen, "fopen")
-FOPEN_LIKE(woc_fopen64, "fopen64")
-FREOPEN_LIKE(woc_freopen, "freopen")
-FREOPEN_LIKE(woc_freopen64, "freopen64")
+#define INTERPOSERS(X)                                                                         \
+    X(OPEN_LIKE, woc_open, "open") X(OPEN_LIKE, woc_open64, "open64")                          \
+    X(OPENAT_LIKE, woc_openat, "openat") X(OPENAT_LIKE, woc_openat64, "openat64")              \
+    X(OPEN2_LIKE, woc_open_2, "__open_2") X(OPEN2_LIKE, woc_open64_2, "__open64_2")            \
+    X(OPENAT2_LIKE, woc_openat_2, "__openat_2") X(OPENAT2_LIKE, woc_openat64_2, "__openat64_2") \
+    X(FOPEN_LIKE, woc_fopen, "fopen") X(FOPEN_LIKE, woc_fopen64, "fopen64")                    \
+    X(FREOPEN_LIKE, woc_freopen, "freopen") X(FREOPEN_LIKE, woc_freopen64, "freopen64")
+#define DEFINE(kind, fn, sym) kind(fn, sym)
+INTERPOSERS(DEFINE)
 
 /* Every one of them looked up now, so no call after this one looks one up
  * (dlsym is not safe in a signal handler or a child of fork). */
-static void resolve_all(void) {
-    next(&real_woc_open, "open"); next(&real_woc_open64, "open64");
-    next(&real_woc_openat, "openat"); next(&real_woc_openat64, "openat64");
-    next(&real_woc_open_2, "__open_2"); next(&real_woc_open64_2, "__open64_2");
-    next(&real_woc_openat_2, "__openat_2"); next(&real_woc_openat64_2, "__openat64_2");
-    next(&real_woc_fopen, "fopen"); next(&real_woc_fopen64, "fopen64");
-    next(&real_woc_freopen, "freopen"); next(&real_woc_freopen64, "freopen64");
-}
+#define RESOLVE(kind, fn, sym) next(&real_##fn, sym);
+static void resolve_all(void) { INTERPOSERS(RESOLVE) }
 
 __attribute__((constructor)) static void wocpatch_init(void) {
     static char text[PLAN_MAX];
