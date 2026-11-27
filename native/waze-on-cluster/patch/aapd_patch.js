@@ -183,9 +183,7 @@ function classify(buf) {
         }
         if (!loc.elf) bad.push(loc.reason);
         else EDITS.forEach(function (e) { if (!loc[e[0]].ok && bad.indexOf(loc[e[0]].reason) < 0) bad.push(loc[e[0]].reason); });
-        /* inMem: why the patch in memory cannot be planned for it; a ready
-         * start not found or not verified is planned without (readyStart). */
-        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: bad };
+        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad };
     }
     return classified[h];
 }
@@ -373,7 +371,6 @@ function cmdStatus(t) {
     line('geometry', geometryText(us[1].cur, us[1].b));
     var fo = foreignIn(t);
     line('foreign', fo === null ? 'unknown' : fo ? 'yes' : 'no');
-    line('planable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     line('backup', (bak ? backupPath(t.target) + (bak.err ? ' (' + bak.err + ')' : '') : 'none') +
         (fs.existsSync(backupPath(t.conf)) ? ', ' + backupPath(t.conf) : ''));
 }
@@ -395,7 +392,6 @@ function cmdProbe(t, file) {
     var d = SHIPPED[c.loc.buildId] && cpLocate.partsDiffering(SHIPPED[c.loc.buildId], buf);
     if (d && d.length) line('differs', d.join(', '));
     line('patch-rev', String(PATCH_REV));
-    line('patchable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     SITES.forEach(function (e) {
         var s = c.loc[e[0]], k = siteName(e);
         if (!s || !s.ok) { line(k, 'not found (' + (s ? s.reason : 'not located') + ')'); return; }
@@ -497,7 +493,7 @@ function cmdPlan(t, dpi, card, outFile, confOut) {
     var buf = readOr(t.target);
     if (!buf) die('cannot read ' + t.target);
     var c = classify(buf);
-    if (c.inMem.length) die('refusing: ' + c.inMem.join('; '));
+    if (c.bad.length) die('refusing: ' + c.bad.join('; '));
     var why = notPristine(c) || (readyStart(c) && c.loc.readystart.state !== 'original' ? 'readystart edited' : null);
     if (why) die('in memory needs the pristine build on disk: ' + why);
     var text = readOr(t.conf);

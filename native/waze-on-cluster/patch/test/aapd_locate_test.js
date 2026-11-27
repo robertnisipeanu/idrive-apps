@@ -408,7 +408,7 @@ var CASES = [
         var at = cstrStart('AlternateDisplays19setNaviStreamStatus');
         b.write('aapd::navigation::AlternateDisplays::setNaviStreamStatus(int)\0', at, 'latin1');
         setRel(b, LOADER.lea + 3, LOADER.lea + 7, at);
-    }, ['refused'], null, 'ss-name'],
+    }, ['correct']],
     ['the guard compares with 3 first', function (b) { b[G + 3] = 3; }, ['refused']],
     ['the guard\'s first branch lands elsewhere', function (b) { b[G + 5] = 0x0c; }, ['refused']],
     ['the guard compares through another register second', function (b) { b[G + 7] = 0x7a; }, ['refused']],
@@ -435,7 +435,7 @@ var CASES = [
         var at = cstrStart('AlternateDisplays19setNaviStreamStatus');
         b.write('void aapd::navigation::AlternateDisplays::setNaviStreamStatus(const StreamTypes&)\0', at, 'latin1');
         setRel(b, LOADER.lea + 3, LOADER.lea + 7, at);
-    }, ['refused'], null, 'ss-name'],
+    }, ['correct']],
     ['onNewNavigationStatus calls setNaviStreamStatus twice', function (b) {
         var c = callsIn(ONNAV).filter(function (x) { return x.at < LOC.call.offset && x.to !== SS && Math.abs(x.to - RS) > 0x10000; });
         setRel(b, c[c.length - 1].at + 1, c[c.length - 1].at + 5, SS);

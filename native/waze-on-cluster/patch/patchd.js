@@ -1047,8 +1047,6 @@ function readAaState(cb, fresh) {
         var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
         var unknownWhy = /^NO — (.*)$/.exec(get('known')), confWhy = /^UNKNOWN \((.*)\)$/.exec(geom);
-        /* The ready start's site found but changed: not patchable either. */
-        var planWhy = /^no \((.*)\)$/.exec(get('planable'));
         st.foreign = get('foreign') === 'yes';
         st.coding = coding ? Number(coding[1]) : null;
         st.dpi = dpi ? Number(dpi[1]) : null;
@@ -1068,7 +1066,6 @@ function readAaState(cb, fresh) {
         st.conflict = hu ? notSupported(hu) : codingConflict(coding) || (
               st.otherBuild && !st.replaced ? 'aapd is another build than our backup'
             : !known && !backup ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
-            : planWhy && !st.ours && !backup ? 'not patchable: ' + planWhy[1]
             : !backup && !pristine ? AA.modified
             : confWhy && !backup ? 'aapd.conf not usable: ' + confWhy[1]
             : foreignStart(AA));

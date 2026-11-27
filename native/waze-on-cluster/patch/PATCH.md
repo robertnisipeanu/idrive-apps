@@ -1171,8 +1171,9 @@ CarPlay's, each needing the whole file to be the shipped one; the
 locator's checks decide whether a file is pristine. `probe`
 prints `differs:` as CarPlay's does. `--unproven`, which earlier
 releases' Patch button passed, changes nothing. `status` prints the
-build-id, the version its debug source paths name, `planable:` and
-`foreign:` (our edits beside another change in either file).
+build-id, the version its debug source paths name, `known:` (every
+edit's site found, or the first reason one is not) and `foreign:` (our
+edits beside another change in either file).
 
 What a build must have for the map, and what it may lack:
 
@@ -1181,7 +1182,7 @@ What a build must have for the map, and what it may lack:
 | gate | aapd builds no cluster display for a car coded 7 | refused |
 | screen | aapd skips aapd.conf and sends an 800x480 stream of another shape | refused |
 | selfstart call and guard | the stream never starts (the car never asks for it); the call without the guard lets a request reach `SetVideoFocus` before the phone's display is set up, and aapd aborts | refused |
-| readystart | the map waits for a navigation status after a reconnect | planned without it (revision 2), as is one that does not verify |
+| readystart | the map waits for a navigation status after a reconnect | planned without it (revision 2), as is one that does not verify; `onAlternateVideoReady()` itself must be there, since the guard's ready flag is the one it sets |
 | aapd.conf | — | needs no site: the plan redirects its reads |
 
 An edit's site found but changed (by another tool) is refused like one not
@@ -1292,7 +1293,7 @@ In aapd 22.39.3:
   still clears the ready flag and the stream status, so each session starts
   its stream again. A build whose `onAlternateVideoReady()` lacks the site
   (its frame, its one call after the ready flag or that call's own `this`
-  differ: the locator's `absent`) is planned without it: the plan names no
+  differ) is planned without it: the plan names no
   `readystart` and its record keeps `rev: 2` (`PATCH_REV`, the patch
   without it); the overlay reads it `NOT APPLIED (<reason>)`.
   A ready start whose end is neither form (a newer compiler's `sub`
@@ -1332,8 +1333,7 @@ In aapd 22.39.3:
   `subscribeEvents()`; `onEndSession()` sets `F` to 0, `A` to 0 and `B`
   to 2; the patched test must read that `F`, and in the patched form `B` is
   the field set to 1 after the call that `onEndSession()` sets to 2.
-  `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`;
-  where the build has its name string, it is the function loading it.
+  `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`.
   The gate's kept result (a byte of the Application) is tested by
   `initAlternateDisplays()`, which builds the cluster display.
   `onNewNavigationStatus()` calls `setNaviStreamStatus` (stock) or
@@ -1357,10 +1357,9 @@ In aapd 22.39.3:
   AVAILABLE (1) status in the same slot by the one store that jumps to the
   tail; STREAMING in `requestStream()` is stored the same way.
   `setNaviStreamStatus` is the one function within 64 KiB of
-  `onNewNavigationStatus()` that `requestStream()` calls after the request.
-  22.39.3 has no
-  `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
-  argument and field checks identify it.
+  `onNewNavigationStatus()` that `requestStream()` calls after the request;
+  the STREAMING, argument and field checks identify it (22.39.3 has no
+  name string for it).
 
 *readystart*: in `onAlternateVideoReady()` (by its name string), opening
 `push rbp ; mov rbp,rdi ; push rbx` and `sub rsp,0x18` (the frame its end

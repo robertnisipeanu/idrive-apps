@@ -115,7 +115,7 @@ out=$(run "$W/p13" read "$W/from")
 fopen the original
 open the original
 openat the original
-write itself" ] && grep -q '"applied":true' "$W/result" && ok "redirect: a target that does not exist leaves the open as it is" || bad "redirect, no target: '$out'"
+write itself" ] && grep -q '"applied":true' "$W/result" && ok "redirect: a target that does not exist leaves the open as it is, errno too" || bad "redirect, no target: '$out'"
 plan "$W/p11" "$id" "$astock" "redirect from $W/to"
 out=$(run "$W/p11" read "$W/from")
 [ "$(echo "$out" | sed -n 2p)" = "fopen the original" ] && grep -q 'bad redirect line' "$W/err" && ok "redirect: a relative path refuses the plan" || bad "redirect, relative: '$out' $(cat "$W/err")"

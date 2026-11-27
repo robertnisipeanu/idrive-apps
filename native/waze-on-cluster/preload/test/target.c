@@ -7,9 +7,11 @@
  *                 (sh -c), which inherits LD_PRELOAD
  *   target read <file>
  *                 "<message> <answer()>", then the first line of <file>
- *                 as fopen, open and openat each read it, and whether an
+ *                 as fopen, open and openat each read it (and errno when a
+ *                 successful open left one), and whether an
  *                 open of it for writing names <file> itself */
 #define _GNU_SOURCE
+#include <errno.h>
 #include <fcntl.h>
 #include <link.h>
 #include <stdio.h>
@@ -46,7 +48,10 @@ static void read_all(const char *file) {
     if (f && fgets(b, sizeof b, f)) b[strcspn(b, "\n")] = 0;
     if (f) fclose(f);
     printf("fopen %s\n", b[0] ? b : "-");
-    line_of("open", open(file, O_RDONLY));
+    errno = 0;
+    int ofd = open(file, O_RDONLY), oerr = errno;
+    line_of("open", ofd);
+    if (ofd >= 0 && oerr) printf("errno %d\n", oerr);
     line_of("openat", openat(AT_FDCWD, file, O_RDONLY | O_CLOEXEC));
     /* For writing: the file itself, whatever the plan says. */
     int fd = open(file, O_WRONLY | O_APPEND);

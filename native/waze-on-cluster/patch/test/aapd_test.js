@@ -169,8 +169,8 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
 (function patcherTests() {
     var t = unit();
     var s = status(t);
-    ok('status: the pristine build, coding 7, nothing to restore, planable, nothing foreign, no list of builds named', /known:\s+yes, pristine build 2dfb9881/.test(s) && !/^proven:/m.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
-        /restorable:\s+no/.test(s) && /geometry:\s+ORIGINAL/.test(s) && !/^confpath:/m.test(s) && /^planable:\s+yes$/m.test(s) && /^foreign:\s+no$/m.test(s), s);
+    ok('status: the pristine build, coding 7, nothing to restore, nothing foreign, no list of builds named', /known:\s+yes, pristine build 2dfb9881/.test(s) && !/^proven:/m.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
+        /restorable:\s+no/.test(s) && /geometry:\s+ORIGINAL/.test(s) && !/^confpath:/m.test(s) && !/^planable:/m.test(s) && /^foreign:\s+no$/m.test(s), s);
 
     /* KI_KOMBI_VARIANT 7 is planned, and a coding that cannot be read as
      * 7 (its record says so); 0 (no cluster display) and every other
@@ -205,9 +205,9 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     nrb[LOC.readystart.offset - 6] = 0xdf;
     fs.writeFileSync(nr.bin, nrb);
     var nl = LOCATOR.locate(nrb).readystart;
-    ok('no ready start: the locator reads the site as absent', !nl.ok && nl.absent === true, JSON.stringify(nl));
+    ok('no ready start: the locator does not find the site', !nl.ok, JSON.stringify(nl));
     var nrs = status(nr);
-    ok('no ready start: status names why, planable', /^readystart:\s+UNKNOWN \(/m.test(nrs) && /^planable:\s+yes$/m.test(nrs), nrs);
+    ok('no ready start: status names why, the build known', /^readystart:\s+UNKNOWN \(/m.test(nrs) && /^known:\s+yes/m.test(nrs), nrs);
     r = plan(nr);
     ok('no ready start: planned without it, the other edits all there, revision 2, record 3', r.code === 0 && r.sum && JSON.stringify(r.sum.edits) === JSON.stringify(['gate', 'selfstart-call', 'selfstart-guard', 'screen']) &&
         r.sum.rev === 2 && r.sum.record === 3 && sha(nr.bin) === sha(nrb), r.out);
@@ -216,12 +216,30 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
         /^redirect:\s+REDIRECTED \(\/etc\/aapd\.conf -> /m.test(nro) && /^overlay:\s+ok$/m.test(nro), nro);
     r = plan(unit());
     ok('a build with the ready start: revision 3, record 3', r.code === 0 && r.sum.rev === 3 && r.sum.record === 3, r.out);
+    /* A dynamic relocation over the ready start: the first .rela entry's
+     * offset moved there. */
+    function relocOverReady(b) {
+        var shoff = b.readUInt32LE(0x28), n = b.readUInt16LE(0x3c), at = LOC.readystart.offset;
+        var loads = [];
+        for (var i = 0; i < b.readUInt16LE(0x38); i++) {
+            var o = b.readUInt32LE(0x20) + i * 56;
+            if (b.readUInt32LE(o) === 1) loads.push({ off: b.readUInt32LE(o + 8), va: b.readUInt32LE(o + 16), size: b.readUInt32LE(o + 32) });
+        }
+        var l = loads.filter(function (x) { return at >= x.off && at < x.off + x.size; })[0];
+        for (var j = 0; j < n; j++) {
+            var sh = shoff + j * 64;
+            if (b.readUInt32LE(sh + 4) === 4) { b.writeUInt32LE(l.va + at - l.off + 4, b.readUInt32LE(sh + 24)); return; }
+        }
+        throw new Error('no .rela section');
+    }
     /* Its end in a form the ready start does not know (a newer gcc's `sub`
-     * stack check, another `jne` distance, another tool's bytes): the plan
-     * writes nothing there, so it is planned without it, the end as it is. */
-    [['a sub stack check', 7, 0x2b], ['another jne distance', 15, 0x09], ['other bytes', 0, null]].forEach(function (m) {
+     * stack check, another `jne` distance, another tool's bytes) or under a
+     * relocation: the plan writes nothing there, so it is planned without
+     * it, the end as it is. */
+    [['a sub stack check', 7, 0x2b], ['another jne distance', 15, 0x09], ['other bytes', 0, null], ['a relocation over it', 0, relocOverReady]].forEach(function (m) {
         var u = unit(), b = Buffer.from(SRC);
-        b[LOC.readystart.offset + m[1]] = m[2] === null ? b[LOC.readystart.offset + m[1]] ^ 0xff : m[2];
+        if (typeof m[2] === 'function') m[2](b);
+        else b[LOC.readystart.offset + m[1]] = m[2] === null ? b[LOC.readystart.offset + m[1]] ^ 0xff : m[2];
         fs.writeFileSync(u.bin, b);
         var x = plan(u), text = x.code === 0 ? fs.readFileSync(x.plan, 'utf8') : '';
         ok('the ready start with ' + m[0] + ': planned without it at revision 2, nothing written there', x.code === 0 && x.sum.rev === 2 &&
@@ -245,7 +263,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
         var u = unit(m[1](Buffer.from(SRC)));
         r = plan(u, ['--unproven']);
         s = status(u);
-        ok('the config path string ' + m[0] + ': planned with the redirect, status planable', CONF_AT > 0 && r.code === 0 && /^planable:\s+yes$/m.test(s) &&
+        ok('the config path string ' + m[0] + ': planned with the redirect, the build known', CONF_AT > 0 && r.code === 0 && /^known:\s+yes/m.test(s) &&
             /\nredirect \/etc\/aapd\.conf \/run\/aapd\.conf\n/.test(fs.readFileSync(r.plan, 'utf8')), r.out + s);
     });
     /* aapd 22.39.3's build-id with other bytes away from the sites: the
@@ -455,7 +473,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     }
     r = throwing(['status']);
     ok('a throwing locator: status prints every line, restorable, the backup named', r.code === 0 &&
-        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'replaced', 'undo', 'known', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
+        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'replaced', 'undo', 'known', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'readystart', 'geometry', 'foreign', 'backup']
             .every(function (k2) { return new RegExp('^' + k2 + ':', 'm').test(r.out); }) &&
         /^restorable:\s+yes$/m.test(r.out) && /^known:\s+NO — locator failed: boom$/m.test(r.out) && /^gate:\s+UNKNOWN \(locator failed: boom\)$/m.test(r.out) &&
         r.out.split('\n').some(function (l) { return /^backup:/.test(l) && l.indexOf(th.bin + '.woc-orig') > 0; }), r.out);

@@ -462,8 +462,12 @@ static void report(int applied) {
 static const char *redirected(const char *path, int reading) {
     int n = __atomic_load_n(&nactive, __ATOMIC_ACQUIRE);
     if (!reading || !path) return path;
-    for (int i = 0; i < n; i++)
-        if (strcmp(path, active[i].from) == 0) return access(active[i].to, F_OK) == 0 ? active[i].to : path;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(path, active[i].from) != 0) continue;
+        int saved = errno, there = access(active[i].to, F_OK) == 0;
+        errno = saved;
+        return there ? active[i].to : path;
+    }
     return path;
 }
 

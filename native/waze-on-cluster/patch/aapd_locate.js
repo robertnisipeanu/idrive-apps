@@ -4,7 +4,7 @@
  * Auto") in an aapd build by code and data structure, in their stock or
  * patched form. Each site has to be found exactly once and pass every
  * check; otherwise that edit carries ok:false and a short reason naming
- * what was not found (the ready start's also absent: true, planned
+ * what was not found (a ready start not found is planned
  * without). The functions are found by the name strings
  * their logging prologues load, function bounds come from the .eh_frame_hdr
  * search table, aapd's raw KI_KOMBI_VARIANT -> class mapping must be the
@@ -43,8 +43,6 @@ var NAMES = {
     endSession: ['AlternateDisplays::onEndSession()', /^void (?:\w+::)*AlternateDisplays::onEndSession\(\)$/, 'self-start: onEndSession'],
     subscribe: ['AlternateDisplays::subscribeEvents()', /^void (?:\w+::)*AlternateDisplays::subscribeEvents\(\)$/, 'self-start: subscribeEvents'],
     initAlt: ['Application::initAlternateDisplays()', /^void (?:\w+::)*Application::initAlternateDisplays\(\)$/, 'gate: initAlternateDisplays'],
-    /* not in every build: checked whenever a string names it */
-    ss: ['AlternateDisplays::setNaviStreamStatus(', /AlternateDisplays::setNaviStreamStatus\(/, 'self-start: setNaviStreamStatus'],
 };
 var EDITS = ['gate', 'call', 'guard', 'screen'];
 /* The part of the patch each edit belongs to, for reasons. */
@@ -60,7 +58,7 @@ var CHECKS = [
     'helper-once', 'size-1', 'size-0', 'class0-shape', 'room', 'fall-through',
     'gate-field', 'gate-flag', 'gate-once', 'gate-kept', 'gate-unique', 'gate-gates-alt',
     'guard-once', 'guard-form', 'guard-this', 'ready-flag', 'ready-subscribe', 'end-resets', 'guard-ready', 'already-log', 'request-log', 'request-log-once',
-    'ss-call-once', 'ss-field', 'ss-field-once', 'streaming', 'mark', 'ss-name', 'onnav-once', 'arg-pointer', 'arg-frame',
+    'ss-call-once', 'ss-field', 'ss-field-once', 'streaming', 'mark', 'onnav-once', 'arg-pointer', 'arg-frame',
     'status-unavailable', 'status-available',
     'ready-frame', 'ready-this', 'ready-tail', 'ready-into',
     'reloc',
@@ -420,22 +418,21 @@ function statusStores(buf, from, to, v, d) {
  *                (the stack-check failure);
  *   ready-into   no branch lands on or inside them.
  * The plan writes nothing at a ready start that fails any of them: it is
- * planned without it (absent: true), as for a build that lacks it. */
-function absent(reason) { return { ok: false, reason: reason, absent: true }; }
+ * planned without it, as for a build that lacks it. */
 var READY_STOCK = '488b442408' + '644833042528000000' + '7507' + '4883c418' + '5b5dc3', READY_LEN = 23;
 function readyStart(im, ready, F, rs) {
     var buf = im.buf;
     if (on('ready-frame') && !(buf.toString('hex', ready.off, ready.off + 5) === '554889fd53' &&
         E.scan(buf, ready.off + 5, Math.min(ready.end, ready.off + 0x10), [0x48, 0x83, 0xec, 0x18]).length === 1))
-        return absent('self-start: onAlternateVideoReady\'s frame is not the one the ready start returns from');
+        return fail('self-start: onAlternateVideoReady\'s frame is not the one the ready start returns from');
     var hits = E.scan(buf, ready.off, ready.end, [0xc6, 0x45, F, 0x01, null, null, null, 0xe8]), h = hits[0];
-    if (hits.length !== 1) return absent(count(hits, 'self-start: onAlternateVideoReady\'s call after its ready flag'));
-    if (on('ready-this') && buf.toString('hex', h + 4, h + 7) !== '4889ef') return absent('self-start: onAlternateVideoReady subscribes another object than its own');
+    if (hits.length !== 1) return fail(count(hits, 'self-start: onAlternateVideoReady\'s call after its ready flag'));
+    if (on('ready-this') && buf.toString('hex', h + 4, h + 7) !== '4889ef') return fail('self-start: onAlternateVideoReady subscribes another object than its own');
     var at = h + 12, cur = buf.toString('hex', at, at + READY_LEN);
     var patched = '4889ef' + '4883c418' + '5b5d' + 'e9' + E.hex32(im.va(rs.off) - im.va(at + 14)) + '0f1f8000000000' + '6690';
     var state = cur === READY_STOCK ? 'original' : cur === patched ? 'patched' : null;
-    if (!state && on('ready-tail')) return absent('self-start: onAlternateVideoReady ends neither as it ships nor as the ready start writes it');
-    if (on('ready-tail') && state === 'original' && buf[at + READY_LEN] !== 0xe8) return absent('self-start: onAlternateVideoReady\'s stack check fails elsewhere');
+    if (!state && on('ready-tail')) return fail('self-start: onAlternateVideoReady ends neither as it ships nor as the ready start writes it');
+    if (on('ready-tail') && state === 'original' && buf[at + READY_LEN] !== 0xe8) return fail('self-start: onAlternateVideoReady\'s stack check fails elsewhere');
     if (on('ready-into')) {
         var into = im.branchesInto(at, at + READY_LEN - 1).filter(function (b) { return b.at < at || b.at >= at + READY_LEN; });
         for (var p = ready.off; p + 2 <= ready.end; p++) {
@@ -444,16 +441,15 @@ function readyStart(im, ready, F, rs) {
                 if (t >= at && t < at + READY_LEN) into.push({ at: p });
             }
         }
-        if (into.length) return absent('self-start: a branch lands on or inside onAlternateVideoReady\'s end (at 0x' + into[0].at.toString(16) + ')');
+        if (into.length) return fail('self-start: a branch lands on or inside onAlternateVideoReady\'s end (at 0x' + into[0].at.toString(16) + ')');
     }
     return { ok: true, offset: at, len: READY_LEN, state: state || 'original', stock: READY_STOCK, patched: patched };
 }
 
-/* requestStream opens with one of
- * guardAt's forms, L1 logging that it is streaming already, Ldo logging the request and
- * calling setNaviStreamStatus(STREAMING), then setting B to 1.
- * setNaviStreamStatus (named so where the build has its name string) copies
- * the status argument's value into A. onNewNavigationStatus calls it
+/* requestStream opens with one of guardAt's forms, L1 logging that it is
+ * streaming already, Ldo logging the request and calling
+ * setNaviStreamStatus(STREAMING), then setting B to 1. setNaviStreamStatus
+ * copies the status argument's value into A. onNewNavigationStatus calls it
  * (stock) or requestStream (patched) once, in a tail the UNAVAILABLE status
  * falls into and the AVAILABLE one jumps to, both built in the argument the
  * call passes. */
@@ -517,10 +513,6 @@ function locateSelfstart(im, str, refs) {
     if (on('end-resets') && (byteStores(buf, endS, 0).indexOf(F) < 0 || dwordStores(buf, endS.off, endS.end, 0).indexOf(gd.a) < 0 || endTwo.indexOf(B) < 0))
         return fail('self-start: onEndSession does not reset the ready flag, the stream status and the focus mode requestStream tests');
     if (on('guard-ready') && gState === 'patched' && gd.f !== F) return fail('self-start: requestStream tests another flag than the ready flag');
-    if (on('ss-name') && !/not found$/.test(str.ss.err || '')) {
-        var named = entryFunc(im, refs, str, 'ss');
-        if (named.err || named.off !== ss) return fail(named.err || 'self-start: requestStream calls another function than setNaviStreamStatus');
-    }
     var sites = im.calls(onNav.off, onNav.end).filter(function (c) { return c.to === ss || c.to === rs.off; });
     var site = one(sites, 'onnav-once');
     if (!site) return fail(count(sites, 'self-start: onNewNavigationStatus call'));
@@ -594,7 +586,7 @@ function locate(buf, opts) {
     var hit = on('reloc') ? E.relocated(im, SITES.filter(function (e) { return out[e].ok; }).map(function (e) { return [e, out[e].offset, out[e].len]; }))
         : { all: null, edits: [] };
     SITES.forEach(function (e) {
-        if (out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0)) out[e] = (e === 'readystart' ? absent : fail)(LABEL[e] + ': ' + (hit.all || 'a dynamic relocation over the edit'));
+        if (out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0)) out[e] = fail(LABEL[e] + ': ' + (hit.all || 'a dynamic relocation over the edit'));
     });
     var failed = SITES.filter(function (e) { return !out[e].ok; }).map(function (e) { return out[e].reason; });
     out.ok = failed.length === 0;
