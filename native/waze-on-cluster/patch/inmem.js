@@ -66,7 +66,8 @@ var TARGETS = {
                inputs: [], copies: [] },
     aapd: { name: 'aapd', unit: 'aapd.service', target: process.env.WOC_AAPD || '/usr/bin/aapd', patcher: 'aapd_patch.js',
             inputs: [process.env.WOC_AAPD_CONF || '/etc/aapd.conf'],
-            /* the path the plan's confpath edit names (aapd_locate.js CONF_RUN) */
+            /* the path the plan redirects aapd's reads of /etc/aapd.conf to
+             * (aapd_patch.js CONF_RUN) */
             copies: [{ key: 'conf', run: process.env.WOC_AAPD_RUN_CONF || '/run/aapd.conf' }] },
 };
 
@@ -123,12 +124,13 @@ function writeWhole(file, data, mode) {
     try { fsyncPath(path.dirname(file)); } catch (e) {}
 }
 
-/* The record as written (v 1, or v 2 for a plan releases before this one
- * must not arm), or null. */
+/* The record as written (v 1; v 2 for a plan releases before 0.14.19 must
+ * not arm; v 3 for one releases before this one must not arm: an aapd plan
+ * with a redirect), or null. */
 function readRecord(name) {
     var r = null;
     try { r = JSON.parse(fs.readFileSync(paths(name).record, 'utf8')); } catch (e) { return null; }
-    return r && typeof r === 'object' && (r.v === 1 || r.v === 2) ? r : null;
+    return r && typeof r === 'object' && (r.v === 1 || r.v === 2 || r.v === 3) ? r : null;
 }
 
 /* Whether the record describes the target and its inputs as they are now,
@@ -235,10 +237,11 @@ function makePlan(name, args, timeoutMs, cb) {
         var proven = sum.coding === 'ok' && same && prior.proven === true && prior.trial !== true &&
             (prior.enabled === true || prior.by === 'user');
         var onTrial = !proven;
-        /* v 2: a plan releases before this one would not make (sum.record
-         * 2, or made while the coding could not be read), which they must
-         * not arm: their readRecord reads v 1 only. */
-        var rec = { v: sum.record === 2 || sum.coding === 'unreadable' ? 2 : 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
+        /* v 3 (sum.record 3, every aapd plan): a plan only this release's
+         * library applies whole, which no earlier release reads. v 2: a
+         * plan made while the coding could not be read, which releases
+         * before 0.14.19 must not arm: their readRecord reads v 1 only. */
+        var rec = { v: sum.record === 3 ? 3 : sum.coding === 'unreadable' ? 2 : 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
             build: sum.build, version: sum.version, planSha256: sum.planSha256, edits: sum.edits, writes: sum.writes, args: args,
             inputs: inputs, copies: copies, proven: proven, trial: onTrial, at: new Date().toISOString() };
         if (sum.rev) rec.rev = sum.rev;

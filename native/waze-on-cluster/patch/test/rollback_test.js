@@ -129,6 +129,8 @@ function group(v) {
 /* The first release whose patchers decide a build they know by its edit
  * sites alone, bytes elsewhere in the file left out (parts 6b and 7). */
 var SITES_DECIDE = '0.14.3';
+/* The first release that reads a v 2 record (inmem.js readRecord). */
+var READS_V2 = '0.14.19';
 /* The first release whose patchers use none of a known build's shipped
  * bytes at its sites to decide: the locator's checks alone (part 6b). */
 var LOCATOR_DECIDES = '0.14.7';
@@ -423,11 +425,12 @@ function inMemRelease(v, d) {
         nRecH === 'stock' && nRecKind !== 'null' && /stock$/.test(nRmH) && nRmKind !== 'null' && nUp === 'planned',
         [live, ours, newKind, backKind, rec, nRecH, nRecKind, nRmH, nRmKind, nUp].join(' '));
     /* This version's plan made while the coding could not be read (record
-     * v 2): the release reads no patch there, so it arms nothing; this
-     * version reads it. */
+     * v 2): a release before READS_V2 reads no patch there, so it arms
+     * nothing; this version and the releases from READS_V2 on read it. */
     clearInmem();
     var un = makePlanUnreadable(), unRel = inmemKind(d), unNew = inmemKind();
-    if (v === NEXT) ok(v + ' (I, this version) plans CarPlay with the coding unreadable, record v 2, and reads it', un === 'OK v2' && unRel !== 'null', [un, unRel].join(' '));
+    if (v === NEXT || cmp(v, READS_V2) >= 0) ok(v + ' (I' + (v === NEXT ? ', this version' : '') + ') over this version\'s CarPlay plan made with the coding unreadable: record v 2, which it reads',
+        un === 'OK v2' && unRel !== 'null' && unNew !== 'null', [un, unRel, unNew].join(' '));
     else ok(v + ' (I) over this version\'s CarPlay plan made with the coding unreadable: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
         un === 'OK v2' && unRel === 'null' && unNew !== 'null', [un, unRel, unNew].join(' '));
     clearInmem();
@@ -836,9 +839,10 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
     /* A release that patches Android Auto in memory (0.13.0 on), as this
      * version does. Its patcher's revert and boot recovery's file restore
      * leave the plan alone (turning the plan off at Remove patch, a removal
-     * or a crash loop is patchd's and recovery_test.js's to test); the
-     * records are read across versions, the plans are not compared (this
-     * version's has its own edits). Neither writes the files. */
+     * or a crash loop is patchd's and recovery_test.js's to test); this
+     * version reads the release's records, the release none of this
+     * version's (v 3), and the plans are not compared (this version's has
+     * its own edits). Neither writes the files. */
     function aaInMemRelease(v, d) {
         var up = aPlannedBy(d), relKind = aKind(d), newKind = aKind();
         var rec = aRecover(d), recH = aHolds(), recKind = aKind(d);
@@ -854,11 +858,14 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             live && newKind !== 'null' && nRecH === 'stock' && nRecKind !== 'null' && /stock$/.test(nRmH) && nRmKind !== 'null' && nUp === 'planned',
             [live, newKind, rec, nRecH, nRecKind, nRmH, nRmKind, nUp].join(' | '));
         live = fresh(); var backKind = aKind(d), lUp = aActivate(d), lKind = aKind();
-        ok(v + ' over this version\'s Android Auto patch in memory: it reads this version\'s record, its activate plans again over stock files, which this version reads as its patch',
-            live && backKind !== 'null' && lUp === 'planned' && lKind !== 'null', [live, backKind, lUp, lKind].join(' | '));
+        /* This version's record is v 3 (its plan redirects aapd.conf, which
+         * only this version's library applies): the release reads no patch
+         * there, so it arms nothing, and its activate plans its own. */
+        ok(v + ' over this version\'s Android Auto patch in memory: its record v 3, which it reads as no patch; its activate plans again over stock files, which this version reads as its patch',
+            live && (v === NEXT ? backKind !== 'null' : backKind === 'null') && lUp === 'planned' && lKind !== 'null', [live, backKind, lUp, lKind].join(' | '));
         /* This version's plan for a build without the ready start's site
-         * (its record v 2): the release reads no patch there, so its boot
-         * recovery arms nothing and aapd runs as it ships; this version
+         * (its record v 3 too): the release reads no patch there, so its
+         * boot recovery arms nothing and aapd runs as it ships; this version
          * reads it. */
         aClear(); aClearInmem();
         var rs = require(path.join(NEW, 'aapd_locate.js')).locate(AA_STOCK).readystart, noReady = Buffer.from(AA_STOCK);
@@ -867,9 +874,9 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
         fs.writeFileSync(AC, AA_CONF, { mode: 0o644 });
         var nrPlan = aPlan(), nrNew = aKind(), nrRel = aKind(d), nrV = null;
         try { nrV = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-aapd.json'), 'utf8')).v; } catch (e) {}
-        if (v === NEXT) ok(v + ' (this version) plans Android Auto for a build without the ready start, record v 2, and reads it', nrPlan === 'OK' && nrV === 2 && nrRel !== 'null', [nrPlan, nrV, nrRel].join(' | '));
-        else ok(v + ' over this version\'s Android Auto plan of a build without the ready start: record v 2, which it reads as no patch, so it arms nothing; this version reads it',
-            nrPlan === 'OK' && nrV === 2 && nrNew !== 'null' && nrRel === 'null', [nrPlan, nrV, nrNew, nrRel].join(' | '));
+        if (v === NEXT) ok(v + ' (this version) plans Android Auto for a build without the ready start, record v 3, and reads it', nrPlan === 'OK' && nrV === 3 && nrRel !== 'null', [nrPlan, nrV, nrRel].join(' | '));
+        else ok(v + ' over this version\'s Android Auto plan of a build without the ready start: record v 3, which it reads as no patch, so it arms nothing; this version reads it',
+            nrPlan === 'OK' && nrV === 3 && nrNew !== 'null' && nrRel === 'null', [nrPlan, nrV, nrNew, nrRel].join(' | '));
         aClear(); aClearInmem();
     }
 })();

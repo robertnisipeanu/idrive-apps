@@ -764,7 +764,8 @@ update, until the Patch button; one boot recovery turned off stays off
 for the file it turned off, and the next install plans another build
 again, on trial.
 
-**The library.** `libwocpatch.so` (C, libc only, exports nothing) runs as
+**The library.** `libwocpatch.so` (C, libc and libdl only, exporting only
+the open functions its redirects take, below) runs as
 a constructor of a preloaded library, after the libraries' own
 constructors and before carplay's: its static initialisers (Edit 5's site
 is one) and `main` have not run. It reads the plan and applies every edit
@@ -794,6 +795,21 @@ put the stock bytes back. A region inside `PT_GNU_RELRO` refuses the plan. A pla
 be read or parsed is reported on stderr only. The result goes to `/run/woc-preload/carplay.result`
 (`{pid, applied, edits, why}`, a file the boot step made for carplay's user;
 the library never creates one) and to the journal.
+
+**Redirects.** A plan may also hold `redirect <from> <to>` lines (absolute
+paths, up to four): once every edit is applied, and only then, each open of
+`from` for reading, by that exact path, opens `to` while `to` exists (one
+access check per such open; without `to` the open goes through as it is). The library exports
+`open`, `open64`, `openat`, `openat64`, their `_FORTIFY_SOURCE` forms
+(`__open_2` …), `fopen`, `fopen64`, `freopen` and `freopen64` for that;
+each hands every call to the C library's own (`dlsym(RTLD_NEXT)`, looked up
+as the library starts; one the C library lacks ends the process), the path
+replaced only for a read of a redirected file in a process the plan was
+applied to. A write, any other path, a process the plan names no build of
+and one where the plan was not applied go through unchanged. Android
+Auto's plan redirects `/etc/aapd.conf` ("Android Auto in memory"); carplay's
+has none. A library of an earlier release refuses a plan with a redirect
+whole (a kind of line it does not know), so the program runs as it ships.
 
 **Arming.** The tool's drop-in for `carplay.service` has
 `EnvironmentFile=-/run/woc-preload/carplay.env`. Without that file carplay
@@ -904,7 +920,8 @@ read.
 aapd's patch is planned and armed as carplay's (`inmem.js` target
 `aapd`, `aapd_patch.js plan` and `overlay`), and `/usr/bin/aapd` and
 `/etc/aapd.conf` stay as they ship. Its plan holds the four edits of
-"Android Auto: the edits", the config path and the ready start:
+"Android Auto: the edits", the ready start, and the redirect of aapd's
+configuration file:
 
 ```
 wocplan 1
@@ -913,30 +930,22 @@ edit gate 998bd 83bb1c02000001 83bb1c02000002
 edit selfstart-call 1d43eb e800f8ffff e840fbffff
 edit selfstart-guard 1d3f53 837b3802740a837b44020f848d000000 807b4100740a837b38020f858d000000
 edit screen 15b440 660fefc0ebe1662e0f1f840000000000 83f802740b660fefc0ebdc0f1f440000
-edit confpath 5008ec 2f6574632f616170642e636f6e6600 2f72756e2f616170642e636f6e6600
 edit readystart 1d3bbf 488b44240864483304252800000075074883c4185b5dc3 4889ef4883c4185b5de9630300000f1f80000000006690
-end 6
+redirect /etc/aapd.conf /run/aapd.conf
+end 5
 ```
 
 **aapd.conf in memory too.** aapd reads its cluster geometry from
-`/etc/aapd.conf`, which earlier releases edited in place. Its path is one
-string in aapd's read-only data, `/etc/aapd.conf` at `0x5008ec`, which 32
-static initialisers copy into `std::string`s before `main` (each with the
-string's address, by `strlen`). The plan rewrites those 15 bytes to
-`/run/aapd.conf`, the same length, and boot recovery writes there, for a
-start it arms, a copy of aapd.conf with the geometry (`aapd_conf.js`
-applied to `/etc/aapd.conf` as it is): every path aapd opens its
-configuration by is the copy, and no file of `/` is written. The library
-runs before those initialisers, so no copy of the stock path is made
-first. The locator takes the string only when rewriting it changes those
-paths and nothing else (`aapd_locate.js` `conf-*` checks): the whole
-string once, NUL before and after; no 8 of its bytes anywhere else (a copy
-built from immediates or a literal pool would keep the stock path); loaded
-with a rip-relative `lea`; no rip-relative `lea`, `mov` or SSE load,
-absolute pointer or relocation addend into its middle (another string
-merged into its tail); in a `PT_LOAD` without write permission, outside
-`PT_GNU_RELRO`; and no dynamic relocation over it. `/etc/aapd.conf` itself is
-read by aapd alone on the unit.
+`/etc/aapd.conf`, which earlier releases edited in place. Boot recovery
+writes, for a start it arms, a copy of aapd.conf with the geometry to
+`/run/aapd.conf` (`aapd_conf.js` applied to `/etc/aapd.conf` as it is), and
+the library opens that copy for each of aapd's reads of `/etc/aapd.conf`
+("Redirects" above; aapd reads it with `std::ifstream`, which opens it with
+`fopen`). No site in aapd is needed for it, so whatever a build does with
+the path string (32 static initialisers copy it into `std::string`s in
+22.39.3; 23.16.5 holds `/etc/aapd_bmw_m.conf` beside it) does not matter,
+and no file of `/` is written. Only reads are redirected; aapd writes
+neither file.
 
 The plan's record also names its inputs and copies: `/etc/aapd.conf`'s
 inode, size, modification time and SHA-256 (a firmware update that
@@ -1081,13 +1090,16 @@ log texts, the initial URL of a cluster display that CarPlay, with Edit 1
 reverted, does not offer the phone, and the ShowUI URL of the cluster
 stream that display would carry.
 
-On those paths a release from 0.13.0 on reads the patches in memory this
-version left. A plan made for `KI_KOMBI_VARIANT` 7 is the plan they make.
-Two are plans they would not make: one made while the coding could not be
-read, and Android Auto's for an aapd build without the ready start's site.
-Their records are `v: 2`, which their `readRecord` does not read, so they
-find no patch to arm, the service runs as it ships and their status reads
-it not patched (`rollback_test.js`).
+On those paths a release from 0.13.0 on reads the CarPlay patch in memory
+this version left. A plan made for `KI_KOMBI_VARIANT` 7 is the plan they
+make. CarPlay's plan made while the coding could not be read is one
+releases before 0.14.19 would not make: its record is `v: 2`, which their
+`readRecord` does not read. Android Auto's plan redirects aapd.conf, which
+only this version's library applies: its record is `v: 3`, which no earlier
+release reads. A release that reads no record finds no patch to arm, the
+service runs as it ships, its status reads it not patched, and its
+`activate` plans its own patch over the same record and plan files
+(`rollback_test.js`).
 
 **Android Auto.** Every release from 0.8.0 to 0.12.1 writes its Android
 Auto patch to aapd and aapd.conf, with backups; 0.8.0–0.10.10 the
@@ -1108,31 +1120,38 @@ this version reads theirs (parts 1 and 2).
 The same pipeline shows Android Auto's cluster view: Google Maps renders it
 for the display aapd declares to the phone as Android Auto's cluster display,
 and aapd sends it to the same AVB stream 15. `aapd_patch.js` plans four
-edits to aapd and its config path, and the geometry of a copy of
-`/etc/aapd.conf` (`aapd_conf.js`), applied in aapd's memory ("Android Auto in
-memory"); `patchd` runs it for the app and the install hooks. Releases up to
+edits to aapd and its ready start, and the geometry of a copy of
+`/etc/aapd.conf` (`aapd_conf.js`) that aapd reads in its place, applied in
+aapd's memory ("Android Auto in memory"); `patchd` runs it for the app and
+the install hooks. Releases up to
 0.12.1 wrote the same edits to `/usr/bin/aapd` and `/etc/aapd.conf`; this
 version puts such a patch back ("Backups and undo").
 
 ### Builds and the coding
 
-`aapd_locate.js` finds the six edit sites in each build by its code, as
+`aapd_locate.js` finds the five edit sites in each build by its code, as
 each edit's "Found by" below says, in their stock or patched form, with
 `carplay_locate.js`'s ELF reading: function bounds from the `.eh_frame_hdr`
 search table, functions by the name strings their logging prologues load
 (each string once, loaded by one function only, within 0x80 bytes of its
-start), a site a dynamic relocation covers refused. A build where a site is
+start), a site a dynamic relocation covers not taken. A build where a site is
 not found, is found more than once or fails a check is refused with the
 reason; `patchd` reports it as `not patchable: <reason>` (`Status: Not
-supported — this Android Auto version` in the app). A build whose config
-path is not found ("Android Auto in memory") is not patchable either; one
-without the ready start's site is planned without it ("readystart" below). Each check has a
+supported — this Android Auto version` in the app; the locator's own words
+go to patchd's log and `aapd-probe.txt`). A build whose ready start is not
+found or does not verify is planned without it ("readystart" below): the
+plan writes nothing there. Each check has a
 name in `aapd_locate.js` (`CHECKS`), and `aapd_locate_test.js` shows for
-each one a changed build that it alone refuses. The checks tie the sites to
-each other, not to a build: the gate's kept result must be the flag that
-turns the cluster display code on, the self-start's fields must be those
-the session start and end set, and its opening test must read the object
-its function was called with. No list of builds decides it: a build of
+each one a changed build whose outcome it alone decides. Every check
+protects a site the plan writes: that the bytes there are the instruction
+the edit replaces, and that the edited code is safe. The gate's kept result
+must be the flag that turns the cluster display code on; the self-start's
+guard must read the ready flag the phone's display setup sets and the
+session end clears (`ready-flag`, `ready-subscribe`, `end-resets`,
+`guard-ready`), since a request before that setup, or after the session
+ended, makes aapd abort; its fields must be those the session start and
+end set, and its opening test must read the object its function was
+called with. No list of builds decides it: a build of
 another version patches when its code has the same shape. `plan`
 locates its own edited image again, and writes no plan unless every site
 reads patched at the same offsets and the plan laid over the file gives
@@ -1152,8 +1171,22 @@ CarPlay's, each needing the whole file to be the shipped one; the
 locator's checks decide whether a file is pristine. `probe`
 prints `differs:` as CarPlay's does. `--unproven`, which earlier
 releases' Patch button passed, changes nothing. `status` prints the
-build-id, the version its debug source paths name, `planable:` and
-`foreign:` (our edits beside another change in either file).
+build-id, the version its debug source paths name, `known:` (every
+edit's site found, or the first reason one is not) and `foreign:` (our
+edits beside another change in either file).
+
+What a build must have for the map, and what it may lack:
+
+| Part | Without it | A build without it |
+|---|---|---|
+| gate | aapd builds no cluster display for a car coded 7 | refused |
+| screen | aapd skips aapd.conf and sends an 800x480 stream of another shape | refused |
+| selfstart call and guard | the stream never starts (the car never asks for it); the call without the guard lets a request reach `SetVideoFocus` before the phone's display is set up, and aapd aborts | refused |
+| readystart | the map waits for a navigation status after a reconnect | planned without it (revision 2), as is one that does not verify; `onAlternateVideoReady()` itself must be there, since the guard's ready flag is the one it sets |
+| aapd.conf | — | needs no site: the plan redirects its reads |
+
+An edit's site found but changed (by another tool) is refused like one not
+found; a ready start in any form it does not know is left out of the plan.
 
 | | |
 |---|---|
@@ -1195,7 +1228,6 @@ In aapd 22.39.3:
 | selfstart call | `0x1d43eb` | `e800f8ffff` (`call setNaviStreamStatus`) | `e840fbffff` (`call requestStream`) |
 | selfstart guard | `0x1d3f53` | `837b3802 740a 837b4402 0f848d000000` (`cmp dword [rbx+0x38],2 ; je L1 ; cmp dword [rbx+0x44],2 ; je 0x1d3ff0`) | `807b4100 740a 837b3802 0f858d000000` (`cmp byte [rbx+0x41],0 ; je L1 ; cmp dword [rbx+0x38],2 ; jne 0x1d3ff0`) |
 | screen | `0x15b440` | `660fefc0 ebe1 662e0f1f840000000000` | `83f802 740b 660fefc0 ebdc 0f1f440000` |
-| confpath (in memory only) | `0x5008ec` | `/etc/aapd.conf\0` | `/run/aapd.conf\0` |
 | readystart (in memory only) | `0x1d3bbf` | `488b442408 644833042528000000 7507 4883c418 5b 5d c3` (`mov rax,[rsp+8] ; xor rax,fs:[0x28] ; jne Lfail ; add rsp,0x18 ; pop rbx ; pop rbp ; ret`) | `4889ef 4883c418 5b 5d e963030000 0f1f8000000000 6690` (`mov rdi,rbp ; add rsp,0x18 ; pop rbx ; pop rbp ; jmp requestStream ; nop ; nop`) |
 
 - **gate.** `Application::secondVideoEnabled()` returns `featureFlag &&
@@ -1233,9 +1265,13 @@ In aapd 22.39.3:
   in its top 800x300. The fall-through's 16 bytes (10 of them padding)
   become `cmp eax,2 ; je <the 12.3 load> ; pxor xmm0,xmm0 ; jmp <return>`:
   class 2 reads 12.3, every other class as before.
-- **confpath.** The path aapd reads aapd.conf by, pointed at the copy with
-  the geometry ("Android Auto in memory"). Releases up to 0.12.1 edited
-  `/etc/aapd.conf` itself instead and had no such edit.
+- **aapd.conf.** No edit: the plan redirects aapd's reads of
+  `/etc/aapd.conf` to the copy with the geometry ("Android Auto in
+  memory"). Releases up to 0.12.1 edited `/etc/aapd.conf` itself; 0.13.0 to
+  0.14.19 rewrote the path string in aapd's memory (an edit named
+  `confpath`), which needed that string once and alone in the build.
+  `overlay` reads such a plan's `confpath` as aapd reading the copy
+  (`redirect: PATCHED (confpath)`).
 - **readystart.** The selfstart edits start the stream on a navigation
   status that arrives while the cluster display is ready. On a later
   session in the same aapd run, the status the phone sends as it connects
@@ -1257,13 +1293,14 @@ In aapd 22.39.3:
   still clears the ready flag and the stream status, so each session starts
   its stream again. A build whose `onAlternateVideoReady()` lacks the site
   (its frame, its one call after the ready flag or that call's own `this`
-  differ: the locator's `absent`) is planned without it: the plan names no
-  `readystart`, its record keeps `rev: 2` (`PATCH_REV`, the patch without
-  it) and `v: 2`, which releases before this one do not read, so they arm
-  nothing of it ("Rollback"); the overlay reads it `NOT APPLIED (<reason>)`.
+  differ) is planned without it: the plan names no
+  `readystart` and its record keeps `rev: 2` (`PATCH_REV`, the patch
+  without it); the overlay reads it `NOT APPLIED (<reason>)`.
+  A ready start whose end is neither form (a newer compiler's `sub`
+  stack check, another `jne` distance, another tool's bytes), with a
+  branch into it, or under a dynamic relocation is left out the same way.
   On such a build the map does not come back after the phone reconnects
-  until a navigation status starts the stream (a route). A site found with
-  another end, or a branch into it, is a change and is refused.
+  until a navigation status starts the stream (a route).
 
 **Found by.**
 
@@ -1286,8 +1323,7 @@ In aapd 22.39.3:
   `test al,al ; je +10 ; cmp dword [reg+field],1|2 ; setbe al` and keeps
   its result as a byte of its object. No other code compares the field with
   1 or 2.
-- *selfstart*: `requestStream()`, which `onStreamCommandChanged()` calls,
-  copies `rdi` (its `this`) into the register its opening test reads and
+- *selfstart*: `requestStream()` copies `rdi` (its `this`) into the register its opening test reads and
   opens with `cmp [this+A],2 ; je +10 ; cmp [this+B],2 ; je Ldo`, or the
   patched `cmp byte [this+F],0 ; je +10 ; cmp [this+A],2 ; jne Ldo`, or
   the outdated `... ; jmp Ldo ; nop`; before `Ldo` it logs `Ignoring
@@ -1297,11 +1333,9 @@ In aapd 22.39.3:
   `subscribeEvents()`; `onEndSession()` sets `F` to 0, `A` to 0 and `B`
   to 2; the patched test must read that `F`, and in the patched form `B` is
   the field set to 1 after the call that `onEndSession()` sets to 2.
-  `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`;
-  where the build has its name string, it is the function loading it.
+  `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`.
   The gate's kept result (a byte of the Application) is tested by
-  `initAlternateDisplays()`, which builds the cluster display, and before
-  every branch into `onNewNavigationStatus()` (within 0x40 bytes of it).
+  `initAlternateDisplays()`, which builds the cluster display.
   `onNewNavigationStatus()` calls `setNaviStreamStatus` (stock) or
   `requestStream` (patched) exactly once: that call. On every path to it,
   `rsi` holds `rsp+B`, its value followed through the function by
@@ -1321,10 +1355,11 @@ In aapd 22.39.3:
   the UNAVAILABLE (0) status at `[rsp+B+X]` right before that tail,
   falling into it, and the
   AVAILABLE (1) status in the same slot by the one store that jumps to the
-  tail; STREAMING in `requestStream()` is stored the same way. The three
-  functions lie within 64 KiB of each other. 22.39.3 has no
-  `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
-  argument and field checks identify it.
+  tail; STREAMING in `requestStream()` is stored the same way.
+  `setNaviStreamStatus` is the one function within 64 KiB of
+  `onNewNavigationStatus()` that `requestStream()` calls after the request;
+  the STREAMING, argument and field checks identify it (22.39.3 has no
+  name string for it).
 
 *readystart*: in `onAlternateVideoReady()` (by its name string), opening
 `push rbp ; mov rbp,rdi ; push rbx` and `sub rsp,0x18` (the frame its end
