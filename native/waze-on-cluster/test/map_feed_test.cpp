@@ -129,13 +129,10 @@ static void ok(const char *name, bool cond)
 static int rigs;
 static const uint64_t kBox = 0x01000310, kGuide = 0x010004f1;
 
-/* The feed's worker is still scaling a frame, or has one to take: the feed
- * then asks to be woken in kScaleWaitMs however much later it is asked,
- * while a frame due in kScaleWaitMs asks for a millisecond less a
- * millisecond later. */
-template <class Feed> static bool scaling(const Feed &feed, int64_t now)
+/* The feed's worker is still scaling a frame, or has one to take. */
+template <class Feed> static bool scaling(const Feed &feed, int64_t)
 {
-    return feed.wake_in_ms(now) == MapFeed::kScaleWaitMs && feed.wake_in_ms(now + 1) == MapFeed::kScaleWaitMs;
+    return feed.scaling_busy();
 }
 
 struct Rig {
@@ -783,8 +780,9 @@ static void hosted_wake()
     pump(200, nullptr);   /* the worker's last frame taken, the next one due */
     spare = f2;
     feeds.offer(&spare, (uint64_t)r.now, r.now);
-    ok("hosted cluster map: a frame with its worker wakes the service's loop to take it",
-       scaling(*feeds.cluster(), r.now) && feeds.wake_in_ms(r.now) == MapFeed::kScaleWaitMs);
+    ok("hosted cluster map: a frame with its worker signals its scale_fd without 5 ms polling",
+       scaling(*feeds.cluster(), r.now) && feeds.cluster()->scale_fd() >= 0 &&
+           feeds.wake_in_ms(r.now) != MapFeed::kScaleWaitMs);
     pump(500, nullptr);
     bool with = false;
     ok("hosted cluster map: that frame's part drawn", r.drawing("panel", crop_of(f2, 264, 40, 560, 400), &with) && with);

@@ -231,9 +231,10 @@ var REBOOT_SPACING_MS = 10 * 60 * 1000;
 var HOOK_DEADLINE_MS = parseInt(process.env.WOC_HOOK_DEADLINE_MS, 10) || 105000;
 var RO_RESERVE_MS = 22000;
 var AA_HOOK_MIN_MS = 40000;
+function monoMs() { var h = process.hrtime(); return h[0] * 1000 + Math.floor(h[1] / 1e6); }
 var hookDeadline = 0;
-function tmo(ms) { return hookDeadline ? Math.max(1000, Math.min(ms, hookDeadline - Date.now() - RO_RESERVE_MS)) : ms; }
-function roTmo(ms) { return hookDeadline ? Math.max(1000, Math.min(ms, hookDeadline - Date.now())) : ms; }
+function tmo(ms) { return hookDeadline ? Math.max(1000, Math.min(ms, hookDeadline - monoMs() - RO_RESERVE_MS)) : ms; }
+function roTmo(ms) { return hookDeadline ? Math.max(1000, Math.min(ms, hookDeadline - monoMs())) : ms; }
 /* A user's change waits this long for the shared remount lock, then gives
  * up: nothing writes / without it. */
 var OP_LOCK_WAIT_MS = parseInt(process.env.WOC_OP_LOCK_WAIT_MS, 10) || 15000;
@@ -821,12 +822,48 @@ function editState(text, known) {
              ours: !!(variant || selfstart || resMatch || sinkRedirected) };
 }
 
+var cpCache = null;          /* { st, key, pid } */
+var aaCache = null;          /* { st, key, pid } */
+function invalidateStatusCache(t) {
+    if (!t || t === CP) cpCache = null;
+    if (!t || t === AA) aaCache = null;
+}
+function statKey(files) {
+    return files.map(function (f) {
+        if (!f) return '-';
+        try { var s = fs.statSync(f); return s.ino + ':' + s.size + ':' + s.mtime.getTime(); }
+        catch (e) { return '-'; }
+    }).join('|');
+}
+function statusStatKey(t) {
+    var ip = inmem.paths(t.name);
+    var files = [t.target, t.target + '.woc-orig', record.recordPath(t.target), CODING, t.pending,
+        ip.record, ip.plan, ip.env, ip.result, ip.err];
+    if (t === AA) {
+        files.push(AAPD_CONF, AAPD_CONF + '.woc-orig', AA_DPI_FILE, AA_CARD_FILE, AA_CROP_ENV);
+        if (ip.copies && ip.copies[0]) files.push(ip.copies[0].state, ip.copies[0].run);
+    }
+    return statKey(files);
+}
+function cacheHit(t, entry) {
+    if (!entry || entry.st.unreadable) return null;
+    if (!(entry.pid > 0) || !fs.existsSync(path.join(PROC_DIR, String(entry.pid)))) return null;
+    if (entry.key !== statusStatKey(t)) return null;
+    return entry.st;
+}
+
 /* Read the patcher's state of the target binary. Only one hashing subprocess
  * runs at a time; a caller that arrives while one is in flight gets that
- * read's state. */
-function readState(cb) {
+ * read's state. When `fresh` is false, a cached read whose watched files and
+ * running PID have not changed is returned without spawning a subprocess. */
+function readState(cb, fresh) {
+    if (fresh === false) {
+        var hit = cacheHit(CP, cpCache);
+        if (hit) { cb(hit); return; }
+    }
     if (statusWaiters) { statusWaiters.push(cb); return; }
     statusWaiters = [cb];
+    var keyBefore = statusStatKey(CP);
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET, '--coding', CODING], { timeout: tmo(15000) }, function (err, out) {
         var text = (out || '') + '';
         var known = /known:\s+NO/.test(text) ? false : true;
@@ -878,9 +915,10 @@ function readState(cb) {
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, recovered: recovered(TARGET),
                         otherBuild: !!other, replaced: replaced,
                         ours: es.ours, foreign: foreign, unreadable: !!(err && !text),
-                        complete: !err && /^end:\s+complete$/m.test(text) };
+                        complete: !err && /^end:\s+complete$/m.test(text), _pid: 0 };
         st.diskConflict = conflict;
         inmemOverlay(CP, st, function () {
+            if (!st.unreadable && statusStatKey(CP) === keyBefore) cpCache = { st: st, key: keyBefore, pid: st._pid || 0 };
             var waiters = statusWaiters;
             statusWaiters = null;
             waiters.forEach(function (w) { w(st); });
@@ -914,6 +952,7 @@ function inmemOverlay(t, st, cb) {
         return;
     }
     memOf(t, function (pid, mem) {
+        st._pid = pid || 0;
         if (!cur) {
             if (rec.enabled === false && rec.by === 'user') st.removed = 'user';
             if (rec.by === 'recovery' && inmem.describes(t.name, rec)) {
@@ -1016,14 +1055,21 @@ var aaState = { state: 'unknown', density: aaDensity(), card: aaCard() };
 var aaInFlight = false;
 var aaFresh = [];     /* callers waiting for a read that starts after the one in flight */
 function readAaState(cb, fresh) {
+    if (fresh === false) {
+        var hit = cacheHit(AA, aaCache);
+        if (hit) { cb(hit); return; }
+    }
     if (aaInFlight) {
         if (fresh) aaFresh.push(cb); else cb(aaState);
         return;
     }
     aaInFlight = true;
+    var keyBefore = statusStatKey(AA);
     function done(st) {
         aaInFlight = false;
-        aaState = st; cb(st);
+        aaState = st;
+        if (!st.unreadable && statusStatKey(AA) === keyBefore) aaCache = { st: st, key: keyBefore, pid: st._pid || 0 };
+        cb(st);
         var waiting = aaFresh.splice(0);
         if (waiting.length) readAaState(function (next) { waiting.forEach(function (w) { w(next); }); }, true);
     }
@@ -1089,7 +1135,7 @@ function readAaState(cb, fresh) {
  * (aapd_patch.js codingRefusal): every coding but KI_KOMBI_VARIANT 7 has
  * one; an unreadable coding has none and is patched as 7. */
 function codingConflict(coding) {
-    return coding ? require('./aapd_patch.js').codingRefusal({ variant: Number(coding[1]) }) : null;
+    return coding ? require('./coding.js').codingRefusal({ variant: Number(coding[1]) }) : null;
 }
 
 /* The conflict of a head unit that refuses our parts, in the words the
@@ -1131,7 +1177,9 @@ function restartMsg() {
     return m;
 }
 
-function status(extra, aaExtra) {
+function status(extra, aaExtra, opts) {
+    var fresh = opts && opts.fresh === true ? true : false;
+    var sock = opts && opts.sock ? opts.sock : null;
     readState(function (st) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
@@ -1148,9 +1196,9 @@ function status(extra, aaExtra) {
             if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
             msg.wifi = wifi ? wifi.current() : null;
             msg.own_settings = ownSettings();
-            send(msg);
-        });
-    });
+            if (sock) reply(sock, msg); else send(msg);
+        }, fresh);
+    }, fresh);
 }
 
 function remount(rw, cb) {
@@ -1177,7 +1225,7 @@ function rootIsReadOnly() {
 function remountRo(tries, cb) {
     remount(false, function () {
         if (rootIsReadOnly()) { cb(null); return; }
-        if (tries > 0 && (!hookDeadline || Date.now() < hookDeadline)) { setTimeout(function () { remountRo(tries - 1, cb); }, 500); return; }
+        if (tries > 0 && (!hookDeadline || monoMs() < hookDeadline)) { setTimeout(function () { remountRo(tries - 1, cb); }, 500); return; }
         cb(new Error('/ is still read-write after remount'));
     });
 }
@@ -1366,6 +1414,7 @@ var DLT_FAIL_LOG_AFTER = 3;
 var dlt = { state: 'starting', runs: 0, failed_runs: 0, run: null, last_exit: null };
 var dltEverReceived = false;
 var dltRetryTimer = null;      /* the pending dlt-receive restart */
+var dltProc = null;            /* the running dlt-receive child */
 var dltStreakLogged = false;   /* a failure streak was logged; log the recovery */
 function isDltClientMsg(line) { return /^\[[\d. ]+\]~DLT~/.test(line) || line.indexOf('DLT| ') === 0; }
 function dltMessage(run, s) { run.messages = own((run.messages + s).slice(-DLT_TAIL)); }
@@ -1425,6 +1474,7 @@ function followDlt() {
         dlt.state = 'stopped';
         return;
     }
+    dltProc = j;
     var buf = '';
     j.stderr.setEncoding('utf8');
     j.stderr.on('data', function (d) { dltMessage(run, d); });
@@ -1454,7 +1504,9 @@ function followDlt() {
         }
     });
     j.on('close', function (code, signal) {
+        if (dltProc === j) dltProc = null;
         dltEnded(run, code, signal);
+        if (quitting) { dlt.state = 'stopped'; return; }
         dlt.state = 'retrying';
         dltRetryTimer = setTimeout(function () { dltRetryTimer = null; followDlt(); }, dltRetryDelay());
     });
@@ -1530,6 +1582,11 @@ function captureLog(line) {
 function captureCheck() {
     if (quitting) return;
     var installed = fs.existsSync(CAPTURE_UNIT);
+    if (capture && !installed && capture.ownsSocket() !== false) {
+        captureWhere = 'here';
+        setTimeout(captureCheck, CAPTURE_RECHECK_MS);
+        return;
+    }
     cp.execFile(SYSTEMCTL, ['is-active', path.basename(CAPTURE_UNIT)], { timeout: 15000 }, function (err, out) {
         if (quitting) return;
         var unitState = String(out || '').trim();
@@ -1561,6 +1618,8 @@ function captureCheck() {
 function quit() {
     if (quitting) return;
     quitting = true;
+    if (dltRetryTimer) { clearTimeout(dltRetryTimer); dltRetryTimer = null; }
+    if (dltProc) { try { dltProc.kill('SIGTERM'); } catch (e) {} }
     flushMapSettings();
     if (capture) {
         var c = capture;
@@ -1887,8 +1946,9 @@ function readFresh(t, cb) { if (t === AA) readAaState(cb, true); else readState(
  * release's patch running its bytes) needs nothing; else the change waits
  * for the next start. done(err, roErr, activation, conflict, why). run:
  * Android Auto's {dpi, card} running until then, for a pending marker. */
-function inmemApply(t, args, noRestart, done, run) {
-    readFresh(t, function (st) {
+function inmemApply(t, args, noRestart, done, run, preSt) {
+    invalidateStatusCache(t);
+    (preSt ? function (cb) { cb(preSt); } : function (cb) { readFresh(t, cb); })(function (st) {
         if (t === AA && st.state === 'absent') { done(null, null, null, st.conflict); return; }
         if (!st.known) { done(null, null, null, st.conflict || 'not patchable'); return; }
         if (st.foreign) { done(null, null, null, t.name + ' holds another change besides our earlier patch'); return; }
@@ -1954,6 +2014,7 @@ function inmemApply(t, args, noRestart, done, run) {
  * release wrote to the files is put back too. done(err, roErr,
  * activation). */
 function inmemRevert(t, noRestart, removal, done, run) {
+    invalidateStatusCache(t);
     /* The plan as it was, for the memory check after it goes. */
     var planText = inmem.readRecord(t.name) ? readText(inmem.paths(t.name).plan) : null;
     inmem.disarm(t.name);
@@ -2090,7 +2151,7 @@ function inmemHook(which, cb) {
             if (why) { out(0, why); return; }
             settle();
             out(0, activation === 'deferred' ? 'map patch armed in memory; takes effect at the next carplay start' : 'map patch armed in memory; carplay runs it already', null, reset);
-        });
+        }, undefined, st);
     });
 }
 
@@ -2191,7 +2252,7 @@ function aaHook(which, cb) {
             if (why) { out(0, why); return; }
             settle();
             out(0, activation === 'deferred' ? 'Android Auto patch armed in memory; takes effect at the next aapd start' : 'Android Auto patch armed in memory; aapd runs it already', null, reset);
-        });
+        }, st);
     }, true);
 }
 
@@ -2209,10 +2270,10 @@ function setCrop(text) {
  * arrived and before the change writes anything: a pending marker's run
  * (undefined when the marker has none), else the patch it runs, null
  * without one. A status read later in the change cannot alter it. */
-function aaRunning(cb) {
-    readAaState(function (st) {
-        cb(st.pending ? st.run : st.state === 'patched' ? { dpi: st.dpi, card: st.diskCard } : null);
-    }, true);
+function aaRunning(cb, preSt) {
+    (preSt ? function (f) { f(preSt); } : function (f) { readAaState(f, true); })(function (st) {
+        cb(st.pending ? st.run : st.state === 'patched' ? { dpi: st.dpi, card: st.diskCard } : null, st);
+    });
 }
 
 /* The crop override the running render read at its start: its
@@ -2236,10 +2297,10 @@ function renderCrop(cb) {
  * otherwise the change takes effect as any other. done(err, roErr,
  * activation, conflict, why, run): run, what aapd runs, for a marker the
  * caller writes. */
-function aaApply(noRestart, done) {
+function aaApply(noRestart, done, preSt) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
-    aaRunning(function (run) {
+    aaRunning(function (run, st) {
         inmemApply(AA, aaPlanArgs(), noRestart || cropChange, function (pErr, roErr, activation, conflict, why) {
             if (pErr || conflict || why) { done(pErr, roErr, activation, conflict, why, run); return; }
             var changed;
@@ -2252,8 +2313,8 @@ function aaApply(noRestart, done) {
                 if (waits && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
                 done(null, roErr, activation, conflict, why, run);
             });
-        }, run);
-    });
+        }, run, st);
+    }, preSt);
 }
 
 /* A conflict a new plan may clear: a plan the library or the overlay
@@ -2266,7 +2327,7 @@ function aaRetryable(conflict) { return /^(not applied in memory|in-memory plan 
 function aaEnable(done) {
     readAaState(function (st) {
         if (st.conflict && !aaRetryable(st.conflict)) { done(new Error(st.conflict)); return; }
-        aaApply(false, function (e, r, a, conflict, why) { done(e || (conflict || why ? new Error(conflict || why) : null), r, a); });
+        aaApply(false, function (e, r, a, conflict, why) { done(e || (conflict || why ? new Error(conflict || why) : null), r, a); }, st);
     }, true);
 }
 
@@ -2372,19 +2433,20 @@ function operate(target, label, fn) {
         fn(function (pErr, roErr, activation) {
             lock.release();
             busy = null;
+            invalidateStatusCache();
             if (roErr) log('WARNING: ' + roErr.message + ' — run: mount -o remount,ro /');
             var t = target === 'aa' ? AA : CP;
             if (pErr || roErr) {
                 var reason = [pErr && pErr.message, roErr && roErr.message].filter(Boolean).join('; ');
                 log(label + ' failed: ' + reason);
-                if (target === 'aa') { aaError = reason; status(null, { state: 'error', reason: reason }); }
-                else status({ state: 'error', reason: reason });
+                if (target === 'aa') { aaError = reason; status(null, { state: 'error', reason: reason }, { fresh: true }); }
+                else status({ state: 'error', reason: reason }, null, { fresh: true });
             } else {
                 if (target === 'aa') aaError = null;
                 var pend = activation === 'deferred' ? readPending(t) : null;
                 log(label + ' done' + (activation === 'restarted' ? '' : activation === 'deferred' ? ' (' + (pend ? pend.reason : t.reasons.apply) + ')' : ' (no change)'));
-                if (target === 'aa') status(null, activation ? { aapd: activation } : null);
-                else status(activation ? { carplay: activation } : {});
+                if (target === 'aa') status(null, activation ? { aapd: activation } : null, { fresh: true });
+                else status(activation ? { carplay: activation } : {}, null, { fresh: true });
             }
             quitWhenIdle();
         });
@@ -2409,8 +2471,8 @@ function logsReply(sock) {
             readAaState(function (aa) {
                 reply(sock, Object.assign(logsRings(), { dlt: dlt, patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
                                                          mapurl: st.mapurl, aa: aaMsg(aa) }));
-            });
-        });
+            }, false);
+        }, false);
     });
 }
 
@@ -2441,7 +2503,7 @@ function handle(line, sock) {
     var msg;
     try { msg = JSON.parse(line); } catch (e) { return; }
     if (!msg || !msg.cmd) return;
-    if (msg.cmd === 'status') { status(); return; }
+    if (msg.cmd === 'status') { status(null, null, { fresh: true }); return; }
     if (msg.cmd === 'logs') { logsReply(sock); return; }
     if (quitting && msg.cmd === 'capture-start') return;
     if (msg.cmd === 'capture-start' || msg.cmd === 'capture-stop' || msg.cmd === 'capture-status') {
@@ -2546,8 +2608,12 @@ function handle(line, sock) {
                 return;
             }
             log('Android Auto: ' + (density ? 'density ' + v + ' dpi' : 'turn card ' + v) + ' chosen');
+            invalidateStatusCache(AA);
             var arec = inmem.readRecord('aapd');
-            if ((arec && arec.enabled === true) || aa.state === 'patched' || aa.binary === 'patched' || aa.pending === 'apply') { operate('aa', 'applying', aaEnable); return; }
+            if ((arec && arec.enabled === true) || aa.state === 'patched' || aa.binary === 'patched' || aa.pending === 'apply') {
+                operate('aa', 'applying', aaEnable);
+                return;
+            }
             idle();
         }, true);
     }
@@ -2571,7 +2637,7 @@ function accept(sock) {
     sock.on('close', function () { clients = clients.filter(function (c) { return c !== sock; }); });
     /* The backlog, then the current state. */
     logLines.forEach(function (l) { reply(sock, { ev: 'log', line: l }); });
-    status();
+    status(null, null, { sock: sock });
 }
 
 /* Make the socket's directory exist and be a real directory this process's
@@ -2655,14 +2721,14 @@ function incomplete(st, name) { return st.unreadable ? st.conflict : name + ' st
  * boot recovery that guards it stays. */
 function oneShot(which) {
     var result = {};
-    hookDeadline = Date.now() + HOOK_DEADLINE_MS;
+    hookDeadline = monoMs() + HOOK_DEADLINE_MS;
     function finish(code) {
         lock.release();
         /* After the removal nothing of this tool is left to remove the links:
          * one that holds nothing goes now; one left (a process runs it, or
          * dropping it failed) goes to the deploy tool, which removes it once
          * nothing runs it. A target's own file is not a link to hand over. */
-        (which === 'deactivate' && Date.now() < hookDeadline - RO_RESERVE_MS ? dropUnusedRunning : function (cb) { cb(); })(function () {
+        (which === 'deactivate' && monoMs() < hookDeadline - RO_RESERVE_MS ? dropUnusedRunning : function (cb) { cb(); })(function () {
             [CP, AA].forEach(function (t) {
                 var p = readPending(t);
                 if (p && !result.reboot) result.reboot = p.reason;
@@ -2702,7 +2768,7 @@ function oneShot(which) {
             if (r.conflict) result.conflict = r.conflict;
             if (r.reset) result.reset = true;
             if (code) { finish(code); return; }
-            if (hookDeadline - Date.now() < AA_HOOK_MIN_MS) {
+            if (hookDeadline - monoMs() < AA_HOOK_MIN_MS) {
                 result.aa = { status: which === 'deactivate' ? 'Android Auto not undone: out of time; the tool stays to guard it'
                     : 'Android Auto left as it is: out of time; the next install or Android Auto\'s Patch button applies it' };
                 log(which + ': ' + result.aa.status);

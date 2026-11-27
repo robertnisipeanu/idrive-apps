@@ -27,6 +27,31 @@ var path = require('path');
 
 var LOCK = process.env.WOC_REMOUNT_LOCK || '/dev/shm/waze-on-cluster/remount.lock';
 var STALE_MS = parseInt(process.env.WOC_REMOUNT_LOCK_STALE_MS, 10) || 120000;
+var PROC = process.env.WOC_PROC || '/proc';
+
+function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
+/* Process start time (field 22 of /proc/<pid>/stat), or null when unavailable. */
+function procStartTime(pid) {
+    try {
+        var stat = fs.readFileSync(path.join(PROC, String(pid), 'stat'), 'utf8');
+        var rp = stat.lastIndexOf(')');
+        if (rp < 0) return null;
+        var field22 = stat.slice(rp + 2).split(' ')[19];
+        return field22 && /^\d+$/.test(field22) ? field22 : null;
+    } catch (e) { return null; }
+}
+function pidAlive(pid, expectedStart) {
+    var alive;
+    try { process.kill(pid, 0); alive = true; }
+    catch (e) { alive = e.code === 'EPERM'; }
+    if (!alive) return false;
+    if (expectedStart) {
+        var curStart = procStartTime(pid);
+        if (curStart !== null) return curStart === expectedStart;
+        if (procStartTime(process.pid) !== null) return false;
+    }
+    return true;
+}
 
 function ensureDir(dir) {
     try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
@@ -36,7 +61,8 @@ function tryAcquire() {
     var fd;
     try {
         fd = fs.openSync(LOCK, 'wx');
-        fs.writeSync(fd, process.pid + ' ' + new Date().toISOString() + '\n');
+        var start = procStartTime(process.pid);
+        fs.writeSync(fd, process.pid + (start ? ' ' + start : '') + ' ' + new Date().toISOString() + '\n');
         fs.closeSync(fd);
         return true;
     } catch (e) {
@@ -44,6 +70,17 @@ function tryAcquire() {
         if (e.code !== 'EEXIST') return false;
         try {
             var st = fs.statSync(LOCK);
+            var text = fs.readFileSync(LOCK, 'utf8');
+            var parts = text.trim().split(/\s+/);
+            var pid = parseInt((parts[0] || ''), 10);
+            var lockStart = /^\d+$/.test(parts[1] || '') ? parts[1] : null;
+            if (pid > 0) {
+                /* A live holder's lock is never broken on a wall-clock jump; a dead or reused PID is immediately stale. */
+                if (pidAlive(pid, lockStart)) return false;
+                var st1 = fs.statSync(LOCK);
+                if (st1.ino === st.ino && fs.readFileSync(LOCK, 'utf8') === text) fs.unlinkSync(LOCK);
+                return tryAcquire();
+            }
             if (Date.now() - st.mtime.getTime() > STALE_MS) { fs.unlinkSync(LOCK); return tryAcquire(); }
         } catch (e3) {}
         return false;
@@ -52,10 +89,10 @@ function tryAcquire() {
 
 /* acquire within timeoutMs, polling; cb(true) on success, cb(false) on timeout. */
 function acquire(timeoutMs, cb) {
-    var deadline = Date.now() + timeoutMs;
+    var deadline = monoMs() + timeoutMs;
     (function attempt() {
         if (tryAcquire()) { cb(true); return; }
-        if (Date.now() >= deadline) { cb(false); return; }
+        if (monoMs() >= deadline) { cb(false); return; }
         setTimeout(attempt, 100);
     })();
 }
@@ -64,11 +101,14 @@ function acquire(timeoutMs, cb) {
  * cannot delete the holder's lock. */
 function release() {
     try {
-        if ((fs.readFileSync(LOCK, 'utf8').split(' ')[0] || '') === String(process.pid)) fs.unlinkSync(LOCK);
+        var parts = fs.readFileSync(LOCK, 'utf8').trim().split(/\s+/);
+        if (parts[0] !== String(process.pid)) return;
+        var selfStart = procStartTime(process.pid);
+        if (selfStart && /^\d+$/.test(parts[1] || '') && parts[1] !== selfStart) return;
+        fs.unlinkSync(LOCK);
     } catch (e) {}
 }
 
-var PROC = process.env.WOC_PROC || '/proc';
 function hex2(n) { return (n < 16 ? '0' : '') + n.toString(16); }
 /* A process runs the inode `st` (a stat of it, the file maybe unlinked
  * since): its exe is the inode, or it maps it, as a binary translator

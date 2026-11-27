@@ -125,6 +125,7 @@ public:
      * no u_sdf. */
     TextLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect,
               std::shared_ptr<const Font> font, uint32_t capacity, bool derivatives, int64_t now_ms);
+    LayerKind layer_kind() const override { return LayerKind::Text; }
     const char *kind() const override { return "text"; }
 
     uint32_t capacity() const { return capacity_; }

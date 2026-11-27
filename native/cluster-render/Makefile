@@ -205,7 +205,7 @@ $(H)/head_unit_test: $(O)/test/head_unit_test.o $(O)/src/head_unit.o $(O)/client
 
 # The launcher on the host: what it does before it starts a generation's service.
 $(H)/cluster-render: $(addprefix $(O)/,$(LAUNCH_SRC:.cpp=.o))
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/refused_test: $(O)/test/refused_test.o $(O)/client/protocol.o $(H)/cluster-render
 	$(CXX) $(CXXFLAGS) -o $@ $(O)/test/refused_test.o $(O)/client/protocol.o
@@ -282,9 +282,10 @@ STUBS = $(T)/stub/$(RAMSES_SONAME) $(T)/stub/libvsomeip3.so.3
 # Each binary's sources compile in a folder of their own, with that binary's
 # flags and their header dependencies (-MD: the -isystem RAMSES and vsomeip
 # headers too).
-LAUNCH_FLAGS  = $(CXXFLAGS) $(HOSTINC) -pthread
-IDRIVE7_FLAGS = $(CXXFLAGS) $(CPPFLAGS) -DCR_VERSION='"$(VERSION)"' -pthread
-IDRIVE8_FLAGS = $(CXXFLAGS) $(CPPFLAGS27) -DCR_VERSION='"$(VERSION)"' -pthread
+TARGET_CXXFLAGS = $(filter-out -g,$(CXXFLAGS)) -g0
+LAUNCH_FLAGS  = $(TARGET_CXXFLAGS) $(HOSTINC) -pthread
+IDRIVE7_FLAGS = $(TARGET_CXXFLAGS) $(CPPFLAGS) -DCR_VERSION='"$(VERSION)"' -pthread
+IDRIVE8_FLAGS = $(TARGET_CXXFLAGS) $(CPPFLAGS27) -DCR_VERSION='"$(VERSION)"' -pthread
 LD_UNIT       = -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2
 
 $(T)/launch/%.o: %.cpp
@@ -305,6 +306,7 @@ $(T)/idrive8/%.o: %.cpp component.json
 # libramses.
 $(T)/cluster-render: $(addprefix $(T)/launch/,$(LAUNCH_SRC:.cpp=.o))
 	g++ $(LAUNCH_FLAGS) $(LD_UNIT) -o $@ $^
+	strip $@
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 
 # Exports dlt_register_log_level_changed_callback for libramses to bind to
@@ -312,12 +314,14 @@ $(T)/cluster-render: $(addprefix $(T)/launch/,$(LAUNCH_SRC:.cpp=.o))
 $(T)/cluster-render-idrive7: $(addprefix $(T)/idrive7/,$(CORE_SRC:.cpp=.o) $(KIT_SRC:.cpp=.o) $(UNIT_SRC:.cpp=.o)) $(STUBS) \
 		src/ramses_dlt.list
 	g++ $(IDRIVE7_FLAGS) $(LD_UNIT) -Wl,--dynamic-list=src/ramses_dlt.list -o $@ $(filter-out %.list,$^) -ldl
+	strip $@
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 	$(PYTHON) dcsm/tools/abi.py check $@ dcsm/abi/libvsomeip3.so.3.symbols
 
 $(T)/cluster-render-idrive8: $(addprefix $(T)/idrive8/,$(CORE_SRC:.cpp=.o) $(KIT_SRC:.cpp=.o) $(UNIT8_SRC:.cpp=.o)) \
 		$(T)/stub/$(RAMSES27_SONAME)
 	g++ $(IDRIVE8_FLAGS) $(LD_UNIT) -o $@ $^
+	strip $@
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses27.symbols
 
 # Every layer kind on the unit's own libramses (TCP, no renderer).

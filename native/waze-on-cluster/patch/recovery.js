@@ -288,7 +288,7 @@ var SEEN_MS = parseInt(process.env.WOC_RECOVERY_SEEN_MS, 10) || 60000;
  * at least this long before the next start began, ended as a parked car's
  * does. A loop's reset comes at most SEEN_MS after the last seen time, and
  * its next start seconds after the reset (offOf). */
-var OFF_MS = parseInt(process.env.WOC_RECOVERY_OFF_MS, 10) || 3 * 60000;
+var OFF_MS = parseInt(process.env.WOC_RECOVERY_OFF_MS, 10) || (SEEN_MS + 2 * 60000);
 /* The time the head unit keeps from its last shutdown, which it can start
  * on before it gets the real time, is no later than this after the last
  * time a start before was seen or armed: a heartbeat, the shutdown after
@@ -869,15 +869,16 @@ var SLEEPER = null;
 try { SLEEPER = new Int32Array(new SharedArrayBuffer(4)); } catch (e) {}
 function sleepMs(ms) {
     if (SLEEPER) { try { Atomics.wait(SLEEPER, 0, 0, ms); return; } catch (e) {} }
-    var end = Date.now() + ms;
-    while (Date.now() < end) { /* no Atomics.wait: spin */ }
+    var end = monoMs() + ms;
+    while (monoMs() < end) { /* no Atomics.wait: spin */ }
 }
 function alive(pid) {
     try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 Recovery.prototype._stateLock = function () {
     if (this._stateLocked) return;
-    var file = this.statePath + '.lock', deadline = Date.now() + LOCK_WAIT_MS, self = this;
+    var file = this.statePath + '.lock', deadline = monoMs() + LOCK_WAIT_MS, self = this;
+    var blankIno = null, blankSince = 0;
     for (;;) {
         try {
             var fd = fs.openSync(file, 'wx', 0o644), wrote = false;
@@ -896,14 +897,22 @@ Recovery.prototype._stateLock = function () {
              * since), and past the wait only once per wait. */
             var st0, holder = parseInt(readText(file), 10), blank = !(holder > 0);
             try { st0 = fs.statSync(file); } catch (e4) { continue; }
-            var stale = holder === process.pid || (blank && Date.now() - st0.mtime.getTime() > 1000) || (!blank && !alive(holder)), late = Date.now() >= deadline;
+            var nowMono = monoMs();
+            if (blank) {
+                if (blankIno !== st0.ino) { blankIno = st0.ino; blankSince = nowMono; }
+            } else {
+                blankIno = null;
+            }
+            var blankStale = blank && (nowMono - blankSince > 1000 || Date.now() - st0.mtime.getTime() > 1000);
+            var stale = holder === process.pid || blankStale || (!blank && !alive(holder)), late = nowMono >= deadline;
             if (stale || late) {
                 if (late && !stale) this._log(path.basename(file) + ' held by ' + holder + ' for ' + LOCK_WAIT_MS + ' ms: taken over');
                 try {
                     var st1 = fs.statSync(file), now = parseInt(readText(file), 10);
                     if (st1.ino === st0.ino && st1.mtime.getTime() === st0.mtime.getTime() && (blank ? !(now > 0) : now === holder)) fs.unlinkSync(file);
                 } catch (e3) { if (e3.code !== 'ENOENT') return; }   /* a lock that cannot be removed: none to be had */
-                if (late) deadline = Date.now() + LOCK_WAIT_MS;
+                if (late) deadline = monoMs() + LOCK_WAIT_MS;
+                blankIno = null;
                 continue;
             }
             sleepMs(10);
@@ -934,11 +943,8 @@ Recovery.prototype._load = function () {
     return { fails: 0, unknown: 0, arm: null, prev: null, starts: null, ended: null, log: [], read: read };
 };
 
-/* Persist durably: the state must survive the reboot a crash can cause the
- * moment after, so it is on disk, renamed into place, before this returns. A
- * write that fails leaves the previous state whole, and is tried once more
- * without the log, so the log never keeps the count from being saved.
- * quiet: no line for it. false when it failed. */
+/* Persist state atomically with full fsync durability on file and parent
+ * directory. quiet: no line for it. false on error. */
 Recovery.prototype._save = function (st, quiet) {
     this._stateLock();
     /* The boot step, the watcher and patchd each write it: a temporary
@@ -969,8 +975,6 @@ Recovery.prototype._save = function (st, quiet) {
         this._saveError = e.code;
         return false;
     }
-    /* The state is written; a folder that cannot be synced (a file system
-     * without it) leaves only the rename's timing open. */
     try { fsyncPath(dir); } catch (e) { this._log('could not sync ' + dir + ': ' + e.message); }
     return true;
 };
@@ -1460,10 +1464,12 @@ module.exports = {
 function runBoot(name) {
     var t = TARGETS[name || 'carplay'];
     if (!t) { log('unknown service ' + name); process.exit(0); }
+    var rec = null;
+    function exitBoot() { if (rec) rec._stateUnlock(); process.exit(0); }
     setTimeout(function () {
         log(t.name + ' boot check: out of time after ' + BOOT_BOUND_MS + ' ms; ' + t.name + ' starts as it is');
-        setTimeout(function () { process.exit(0); }, BOOT_EXIT_MS - BOOT_BOUND_MS).unref();
-        abandonRestore(function () { process.exit(0); });
+        setTimeout(exitBoot, BOOT_EXIT_MS - BOOT_BOUND_MS).unref();
+        abandonRestore(exitBoot);
     }, BOOT_BOUND_MS).unref();
     var t0 = monoMs();
     if (t.name === 'carplay') {
@@ -1472,13 +1478,13 @@ function runBoot(name) {
             if (kept) log('kept ' + kept + ' restart record' + (kept === 1 ? '' : 's') + ' in ' + RECORDS);
         } catch (e) { log('restart records not kept: ' + e.message); }
     }
-    var rec = new Recovery({ target: t, bootStep: true, restore: function (fails, cb, why) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS, why); },
+    rec = new Recovery({ target: t, bootStep: true, restore: function (fails, cb, why) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS, why); },
         repairModes: function (cb) { repairModes(t, BOOT_LOCK_WAIT_MS, cb); } });
     function done(r) {
         log(t.name + ' boot check: ' + r.action + (r.patch ? ' (' + r.patch + ' patch, ' + r.fails + ' failed)' : '') +
             (r.repaired ? ', mode and owner set on ' + r.repaired + ' file' + (r.repaired === 1 ? '' : 's') : '') +
             ' in ' + Math.round(monoMs() - t0) + ' ms, ' + Math.round(process.uptime() * 1000) + ' ms since node started');
-        process.exit(0);
+        exitBoot();
     }
     /* A plan made for another coding than the car reads becomes a plan
      * still to make (codingMoved). A plan still to make is made first
@@ -1499,7 +1505,7 @@ function runBoot(name) {
         });
     });
     /* A stop mid-restore lets the restore finish (it exits then). */
-    process.on('SIGTERM', function () { rec.whenRestored(function () { process.exit(0); }); });
+    process.on('SIGTERM', function () { rec.whenRestored(exitBoot); });
 }
 
 /* A patch in memory whose plan is still to be made (inmem.js planFailed: a
@@ -1524,10 +1530,10 @@ function retryPlan(name, cb, waitMs, planMs, anyCoding, counter) {
         cb(false);
         return;
     }
-    var until = Date.now() + (waitMs || 0);
+    var until = monoMs() + (waitMs || 0);
     (function wait() {
-        var cd = require('./aapd_patch.js').readCoding(CODING);
-        if (cd.err && Date.now() < until) { setTimeout(wait, 1000); return; }
+        var cd = require('./coding.js').readCoding(CODING);
+        if (cd.err && monoMs() < until) { setTimeout(wait, 1000); return; }
         if (cd.err && !anyCoding) { log(name + ': the cluster coding cannot be read yet (' + cd.err + '); the watcher plans the patch'); cb(false); return; }
         plan();
     })();
@@ -1557,7 +1563,7 @@ function retryPlan(name, cb, waitMs, planMs, anyCoding, counter) {
 function codingMoved(name) {
     var rec = inmem.readRecord(name);
     if (!rec || rec.enabled !== true || rec.needsPlan || !inmem.describes(name, rec)) return false;
-    var cd = require('./aapd_patch.js').readCoding(CODING), was = typeof rec.coding === 'number' ? rec.coding : 7;
+    var cd = require('./coding.js').readCoding(CODING), was = typeof rec.coding === 'number' ? rec.coding : 7;
     if (cd.err || cd.variant === was) return false;
     log(name + ': the patch was planned for KI_KOMBI_VARIANT ' + was + ' and the car reads ' + cd.variant + ': planned again for it');
     try {
@@ -1570,10 +1576,10 @@ function codingMoved(name) {
 /* cb() once the cluster coding reads, polled every second for up to ms;
  * never when it does not. */
 function whenCoding(ms, cb) {
-    var until = Date.now() + ms;
+    var until = monoMs() + ms;
     (function poll() {
-        if (!require('./aapd_patch.js').readCoding(CODING).err) { cb(); return; }
-        if (Date.now() < until) setTimeout(poll, 1000);
+        if (!require('./coding.js').readCoding(CODING).err) { cb(); return; }
+        if (monoMs() < until) setTimeout(poll, 1000);
     })();
 }
 
@@ -1608,9 +1614,10 @@ function watch(recs) {
         if (finished) return;
         finished = true;
         if (timer) clearInterval(timer);
+        function exitAll() { recs.forEach(function (r) { r._stateUnlock(); }); process.exit(0); }
         var on = recs.filter(function (r) { return r.watching; }), left = on.length;
-        if (!left) process.exit(0);
-        on.forEach(function (r) { r.whenRestored(function () { r.onShutdown(function () { if (--left === 0) process.exit(0); }); }); });
+        if (!left) exitAll();
+        on.forEach(function (r) { r.whenRestored(function () { r.onShutdown(function () { if (--left === 0) exitAll(); }); }); });
     }
     recs.forEach(function (r) {
         (r.before || function (go) { go(); })(function () {

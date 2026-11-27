@@ -475,11 +475,6 @@ bool layer_params(const cr::Json &j, LayerParams *p, std::string *err)
     return true;
 }
 
-std::string state_line(LayerState s, const std::string &reason)
-{
-    return std::string(layer_state_name(s)) + "\n" + reason;
-}
-
 }  // namespace
 
 Server::Server(Compositor *comp, SlotManager *slots, const std::string &backend)
@@ -712,11 +707,11 @@ bool Server::apply(Layer *l, const cr::Json &j, std::string *err)
         return false;
     /* An effect layer's render state; on other layers its fields are
      * ignored (a mesh part's is set by its part message). */
-    EffectLayer *fx = std::string(l->kind()) == "effect" ? static_cast<EffectLayer *>(l) : nullptr;
+    EffectLayer *fx = l->layer_kind() == LayerKind::Effect ? static_cast<EffectLayer *>(l) : nullptr;
     PartLook look = fx ? fx->look() : PartLook();
     if (fx && !look_fields(j, true, &look, err, stencil_ok(l->params)))
         return false;
-    MeshLayer *m = std::string(l->kind()) == "mesh" ? static_cast<MeshLayer *>(l) : nullptr;
+    MeshLayer *m = l->layer_kind() == LayerKind::Mesh ? static_cast<MeshLayer *>(l) : nullptr;
     MeshParams mp;
     if (m) {
         mp = m->mesh;
@@ -1023,7 +1018,7 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
         return;
     }
     if (op == "repeat") {
-        const bool video = l && std::string(l->kind()) == "video";
+        const bool video = l && l->layer_kind() == LayerKind::Video;
         if (video)
             static_cast<VideoLayer *>(l)->repeat(now_ms);
         /* Answered at most once per ref, as frames are (on_frame). */
@@ -1098,7 +1093,7 @@ void Server::op_shm(Client &c, uint32_t ref, Layer *l, const cr::Json &j)
         fd = c.fds.front();
         c.fds.pop_front();
     }
-    const bool video = l && std::string(l->kind()) == "video";
+    const bool video = l && l->layer_kind() == LayerKind::Video;
     const unsigned slots = (unsigned)std::strtoul(str(j, "slots").c_str(), nullptr, 10);
     const size_t slot_bytes = video ? static_cast<VideoLayer *>(l)->frame_bytes() : 0;
     const size_t size = cr::kShmHeader + (size_t)slots * slot_bytes;
@@ -1149,7 +1144,7 @@ void Server::op_slot(Client &c, uint32_t ref, Layer *l, const cr::Json &j, int64
     auto m = c.shm.find(ref);
     const unsigned k = (unsigned)std::strtoul(str(j, "slot").c_str(), nullptr, 10);
     std::string why;
-    if (m == c.shm.end() || !l || std::string(l->kind()) != "video")
+    if (m == c.shm.end() || !l || l->layer_kind() != LayerKind::Video)
         why = "no shared frames for this layer";
     else if (k >= m->second.slots)
         why = "no such slot";
@@ -1574,9 +1569,9 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
         return;
     }
     const uint32_t part = (uint32_t)part_d;
-    const bool mesh = std::string(l->kind()) == "mesh";
+    const bool mesh = l->layer_kind() == LayerKind::Mesh;
     if (op == "text") {
-        if (std::string(l->kind()) != "text") {
+        if (l->layer_kind() != LayerKind::Text) {
             error(c, op, ref, "only a text layer takes text");
             return;
         }
@@ -1685,20 +1680,20 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
 void Server::op_uniform(Client &c, uint32_t ref, Layer *l, const cr::Json &j)
 {
     const std::string op = "uniform";
-    const std::string kind = l->kind();
+    const LayerKind kind = l->layer_kind();
     double part_d = 0;
     std::string err;
     num(j, "part", 0, 4294967295.0, &part_d, &err);
     const uint32_t part = (uint32_t)part_d;
-    if (kind != "effect" && kind != "mesh") {
+    if (kind != LayerKind::Effect && kind != LayerKind::Mesh) {
         error(c, op, ref, "uniforms are for effect layers and mesh parts");
         return;
     }
-    if (kind == "effect" && part) {
+    if (kind == LayerKind::Effect && part) {
         error(c, op, ref, "effect layers have no parts");
         return;
     }
-    MeshLayer *m = kind == "mesh" ? static_cast<MeshLayer *>(l) : nullptr;
+    MeshLayer *m = kind == LayerKind::Mesh ? static_cast<MeshLayer *>(l) : nullptr;
     if (m && !m->has_part(part)) {
         error(c, op, ref, "no such part");
         return;
@@ -1769,13 +1764,13 @@ void Server::on_frame(Client &c, const char *body, size_t n, int64_t now_ms)
         asset->update(rects, h.pixels, h.pixel_bytes, &err);
     } else if (!l) {
         err = "no such layer";
-    } else if (std::string(l->kind()) == "video") {
+    } else if (l->layer_kind() == LayerKind::Video) {
         VideoLayer *v = static_cast<VideoLayer *>(l);
         if (!h.rects.empty() || h.pixel_bytes != v->frame_bytes())
             err = "a video frame is one whole atlas of " + std::to_string(v->frame_bytes()) + " bytes";
         else
             v->offer(h.pixels, now_ms);
-    } else if (std::string(l->kind()) == "image") {
+    } else if (l->layer_kind() == LayerKind::Image) {
         std::vector<crk::PixelRect> rects;
         for (const cr::FrameRect &r : h.rects)
             rects.push_back(crk::PixelRect{r.x, r.y, r.w, r.h});
@@ -1865,18 +1860,31 @@ void Server::report(int64_t now_ms)
     }
     /* others_fps (PROTOCOL.md): who holds the others' videos, logged as it
      * changes. */
-    std::string requests;
-    for (const Compositor::FpsRequest &r : comp_->fps_requests())
-        requests += (requests.empty() ? "" : ", ") + app_of(r.owner) + " layer " + std::to_string(r.layer) + " " +
-                    std::to_string(r.fps);
-    if (requests != fps_requests_) {
-        if (requests.empty())
-            log_info("others_fps: no layer asks; every video at its own rate");
-        else
-            log_info("others_fps: shown with it: %s; the other clients' videos at most that a second",
-                     requests.c_str());
-        fps_requests_ = requests;
+    const std::vector<Compositor::FpsRequest> &cur_fps = comp_->fps_requests();
+    const bool fps_changed =
+        cur_fps.size() != fps_requests_last_.size() ||
+        !std::equal(cur_fps.begin(), cur_fps.end(), fps_requests_last_.begin(),
+                    [](const Compositor::FpsRequest &a, const Compositor::FpsRequest &b) {
+                        return a.owner == b.owner && a.layer == b.layer && a.fps == b.fps;
+                    });
+    if (fps_changed) {
+        fps_requests_last_ = cur_fps;
+        std::string requests;
+        for (const Compositor::FpsRequest &r : cur_fps)
+            requests += (requests.empty() ? "" : ", ") + app_of(r.owner) + " layer " + std::to_string(r.layer) + " " +
+                        std::to_string(r.fps);
+        if (requests != fps_requests_) {
+            if (requests.empty())
+                log_info("others_fps: no layer asks; every video at its own rate");
+            else
+                log_info("others_fps: shown with it: %s; the other clients' videos at most that a second",
+                         requests.c_str());
+            fps_requests_ = std::move(requests);
+        }
     }
+    const size_t ntargets = slots_->targets().size();
+    const Governor &gov = comp_->governor();
+    std::string reason;
     for (Client &c : clients_) {
         if (c.closing || c.app.empty())
             continue;
@@ -1929,17 +1937,22 @@ void Server::report(int64_t now_ms)
                     send(c, sent = ev);
             }
         }
-        for (size_t t = 0; t < slots_->targets().size(); t++) {
+        if (c.target_sent.size() < ntargets)
+            c.target_sent.resize(ntargets);
+        for (size_t t = 0; t < ntargets; t++) {
             if (!slots_->targets()[t].follows.empty())
                 continue;   /* a hold: no client's target */
             const TargetStatus &s = slots_->status((int)t);
-            const std::string line = std::string(target_state_name(s.state)) + "\n" + holder_name(s.holder) + "\n" +
-                                     s.reason + "\n" + std::to_string(s.retry_ms) + "\n" +
-                                     rendering_name(s.rendering);
-            std::string &sent = c.target_sent[slots_->targets()[t].name];
-            if (line == sent)
+            Client::TargetSent &sent = c.target_sent[t];
+            if (sent.valid && sent.state == s.state && sent.holder == s.holder && sent.rendering == s.rendering &&
+                sent.retry_ms == s.retry_ms && sent.reason == s.reason)
                 continue;
-            sent = line;
+            sent.valid = true;
+            sent.state = s.state;
+            sent.holder = s.holder;
+            sent.rendering = s.rendering;
+            sent.retry_ms = s.retry_ms;
+            sent.reason = s.reason;
             send(c, cr::json_object({{"ev", cr::json_quote("target")},
                                      {"target", cr::json_quote(slots_->targets()[t].name)},
                                      {"state", cr::json_quote(target_state_name(s.state))},
@@ -1952,10 +1965,10 @@ void Server::report(int64_t now_ms)
                                      {"guide_disabled", "0"},
                                      {"disabled", "0"}}));
         }
-        const Governor &gov = comp_->governor();
-        const std::string budget = std::to_string(gov.cap()) + "\n" + gov.reason();
-        if (budget != c.budget_sent) {
-            c.budget_sent = budget;
+        if (!c.budget_sent_valid || c.budget_cap_sent != gov.cap() || c.budget_reason_sent != gov.reason()) {
+            c.budget_sent_valid = true;
+            c.budget_cap_sent = gov.cap();
+            c.budget_reason_sent = gov.reason();
             send(c, cr::json_object({{"ev", cr::json_quote("budget")},
                                      {"cap_kb_per_s", std::to_string(gov.cap() / 1024)},
                                      {"max_kb_per_s", std::to_string(gov.max() / 1024)},
@@ -1966,15 +1979,15 @@ void Server::report(int64_t now_ms)
             if (SceneEdits *e = comp_->edits(c.id, kv.second))
                 for (const EditProblem &p : e->take_problems())
                     error(c, "edit", kv.first, p.reason, p.line);
-            std::string reason;
             const LayerState s = comp_->state(kv.second, &reason);
             if (reason == "scene")
                 reason = scene_reason(c, kv.second);
-            const std::string line = state_line(s, reason);
-            std::string &sent = c.layer_sent[kv.first];
-            if (line == sent)
+            Client::LayerSent &sent = c.layer_sent[kv.first];
+            if (sent.valid && sent.state == s && sent.reason == reason)
                 continue;
-            sent = line;
+            sent.valid = true;
+            sent.state = s;
+            sent.reason = reason;
             send(c, cr::json_object({{"ev", cr::json_quote("layer")},
                                      {"ref", std::to_string(kv.first)},
                                      {"state", cr::json_quote(layer_state_name(s))},
@@ -1996,6 +2009,16 @@ std::string Server::app_of(uint64_t id) const
 
 std::string Server::status_text(int64_t now_ms) const
 {
+    return format_status(now_ms, true);
+}
+
+std::string Server::status_key(int64_t now_ms) const
+{
+    return format_status(now_ms, false);
+}
+
+std::string Server::format_status(int64_t now_ms, bool live) const
+{
     std::string s;
     char line[320];
     const Governor &gov = comp_->governor();
@@ -2013,7 +2036,7 @@ std::string Server::status_text(int64_t now_ms) const
     for (size_t t = 0; t < slots_->targets().size(); t++) {
         const TargetSpec &spec = slots_->targets()[t];
         const TargetStatus &st = slots_->status((int)t);
-        const std::string rendering = slots_->rendering_text((int)t, now_ms);
+        const std::string rendering = live ? slots_->rendering_text((int)t, now_ms) : slots_->rendering_state((int)t);
         std::snprintf(line, sizeof line, "target %s: slot 0x%llx scene 0x%llx %ux%u: %s%s%s%s%s%s%s\n",
                       spec.name.c_str(), (unsigned long long)spec.slot, (unsigned long long)spec.scene_id, spec.width,
                       spec.height, target_state_name(st.state), st.holder != Holder::None ? " (" : "",
@@ -2031,12 +2054,14 @@ std::string Server::status_text(int64_t now_ms) const
         s += app_of(kv.second.owner) + " " + layer_host_text(kv.first.first, kv.first.second) + "\n";
     for (const std::string &d : drop_ins_)
         s += "drop-in " + d + "\n";
-    s += slots_->renderer_text(now_ms);
-    s += slots_->port().status_text(now_ms);
+    s += live ? slots_->renderer_text(now_ms) : slots_->renderer_state(now_ms);
+    s += live ? slots_->port().status_text(now_ms) : slots_->port().status_state();
     s += slots_->table_text();
+    const std::vector<const Asset *> assets = comp_->assets();
+    const std::vector<const Layer *> layers = comp_->layers();
     for (const Client &c : clients_)
         for (const auto &kv : c.assets)
-            for (const Asset *a : comp_->assets())
+            for (const Asset *a : assets)
                 if (a->id() == kv.second) {
                     const std::string levels = a->params().cube              ? " (cube map)"
                                                : a->params().levels() > 1 ? " (" + std::to_string(a->params().levels()) +
@@ -2069,7 +2094,7 @@ std::string Server::status_text(int64_t now_ms) const
                 continue;
             }
             const Layer *l = nullptr;
-            for (const Layer *x : comp_->layers())
+            for (const Layer *x : layers)
                 if (x->id() == kv.second)
                     l = x;
             if (!l)

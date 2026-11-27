@@ -126,7 +126,7 @@ struct Rtp {
     }
     ~Rtp() { close(fd); }
 
-    void send(const char *sps, bool idr, uint8_t content)
+    void send(const char *sps, bool idr, uint8_t content, bool mark_slice = true)
     {
         const std::string au = access_unit(sps, idr, content);
         ts += 3000;
@@ -139,7 +139,7 @@ struct Rtp {
             const bool slice = (au[start] & 0x1f) == 1 || (au[start] & 0x1f) == 5;
             std::string pkt(12, '\0');
             pkt[0] = (char)0x80;
-            pkt[1] = (char)(96 | (slice ? 0x80 : 0));
+            pkt[1] = (char)(96 | (mark_slice && slice ? 0x80 : 0));
             pkt[2] = (char)(seq >> 8);
             pkt[3] = (char)seq;
             seq++;
@@ -311,6 +311,26 @@ static void unseen()
     ok("seen again: every frame counted once", decoded(p) == 3);
 }
 
+/* Unmarked RTP slices flush on packet idle without waiting for the next frame's timestamp. */
+static void rtp_idle_flush()
+{
+    VideoConfig c = config(0);
+    c.udp_port = free_udp_port();
+    VideoProducer p(c);
+    Rtp rtp(c.udp_port);
+
+    const int64_t t0 = now_ms();
+    rtp.send("1088x480", true, 40, false);
+    const Picture p1 = next_picture(p, 500);
+    ok("rtp idle flush: unmarked IDR delivered without next frame", p1.got && p1.content == 40 && p1.at - t0 < 200);
+
+    const int64_t t1 = now_ms();
+    rtp.send(nullptr, false, 41, false);
+    const Picture p2 = next_picture(p, 500);
+    ok("rtp idle flush: unmarked P-slice delivered without next frame", p2.got && p2.content == 41 && p2.at - t1 < 200);
+    ok("rtp idle flush: each frame counted once", decoded(p) == 2);
+}
+
 int main()
 {
     off();
@@ -318,5 +338,6 @@ int main()
     over_udp();
     over_fifo();
     unseen();
+    rtp_idle_flush();
     return failures ? 1 : 0;
 }

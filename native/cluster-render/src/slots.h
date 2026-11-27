@@ -404,6 +404,9 @@ public:
     virtual bool slot_table() const { return false; }
     /* Lines for the service's status text; empty: none. */
     virtual std::string status_text(int64_t) const { return std::string(); }
+    /* Stable state signature for status_text() excluding ticking ages and
+     * routine slot polls. */
+    virtual std::string status_state() const { return std::string(); }
 };
 
 /* Builds, publishes and takes down each target's scene (the compositor). A
@@ -590,9 +593,13 @@ public:
     bool published(int target) const { return t_[target].scene; }
     /* The rendering state and its evidence; empty: none. */
     std::string rendering_text(int target, int64_t now_ms) const;
+    /* Stable rendering state for status-file change detection (no ticking ages). */
+    std::string rendering_state(int target) const;
     /* Whether subscriptions are observable, and what the console reader
      * has read (console_text), for the status text. */
     std::string renderer_text(int64_t now_ms) const;
+    /* Stable renderer state for status-file change detection. */
+    std::string renderer_state(int64_t now_ms) const;
     /* Milliseconds until the next timer of any target; -1: none. */
     int64_t wake_in_ms(int64_t now_ms) const;
     /* Every target idle with nothing of it wanted, loaded, kept or waiting

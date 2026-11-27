@@ -18,6 +18,7 @@
   },
   "files": [
     "config",
+    "locales",
     "rhmiData",
     "package.json",
     "npm-shrinkwrap.json",

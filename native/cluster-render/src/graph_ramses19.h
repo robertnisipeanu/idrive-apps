@@ -20,6 +20,7 @@
 #define CRS_GRAPH_RAMSES19_H
 
 #include <map>
+#include <set>
 
 #include "graph.h"
 
@@ -42,6 +43,8 @@ struct Ramses19Types {
     /* AnimationSystem, AnimationSystemRealTime, AnimationSequence; 0: not learned */
     uint32_t system = 0, realtime = 0, sequence = 0;
 };
+
+class Ramses19Graph;
 
 class Ramses19Gpu : public Gpu {
 public:
@@ -69,6 +72,8 @@ public:
     const Ramses19Types &types() const { return types_; }
     /* For tests: scenes made from now on as if learn() had failed. */
     void untyped(bool u) { untyped_ = u; }
+    void attach(Ramses19Graph *g) { graphs_.insert(g); }
+    void detach(Ramses19Graph *g) { graphs_.erase(g); }
 
 private:
     ramses::RamsesClient &client_;
@@ -76,6 +81,7 @@ private:
     const ramses::UInt16Array *idx_ = nullptr;
     std::map<int, ramses::Effect *> effects_;
     std::map<int, std::vector<EffectInput>> inputs_;   /* by effect, read when compiled */
+    std::set<Ramses19Graph *> graphs_;
     int next_ = 1;
     Ramses19Types types_;
     bool typed_ = false;

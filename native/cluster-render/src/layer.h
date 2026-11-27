@@ -77,6 +77,8 @@ struct LayerParams {
 
 enum class Stage { Idle, Wrote, Failed };
 
+enum class LayerKind { Video, Image, Effect, Mesh, Text };
+
 /* What a layer's stage() wrote since the layer was made: frames (a video's)
  * or images written, their bytes, writes or flushes that failed, and stages
  * held back by the byte budget. */
@@ -135,6 +137,7 @@ public:
     uint32_t id() const { return id_; }
     int target() const { return target_; }
     uint64_t seq() const { return seq_; }
+    virtual LayerKind layer_kind() const = 0;
     virtual const char *kind() const = 0;
 
     LayerParams params;
@@ -296,6 +299,7 @@ public:
 
     ImageLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect, uint32_t w, uint32_t h,
                uint32_t fps, Sampling sampling, int64_t now_ms);
+    LayerKind layer_kind() const override { return LayerKind::Image; }
     const char *kind() const override { return "image"; }
     static const char *size_error(uint32_t w, uint32_t h);
 
@@ -377,6 +381,7 @@ class EffectLayer : public Layer {
 public:
     EffectLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int effect, uint32_t time_fps,
                 int64_t now_ms);
+    LayerKind layer_kind() const override { return LayerKind::Effect; }
     const char *kind() const override { return "effect"; }
 
     static const size_t kMaxUniforms = Uniforms::kMaxNames;

@@ -430,10 +430,62 @@ static void gaps_settled(const char *path)
     CHECK((c.after == std::vector<bool>{false, true}));
 }
 
+static void idle_au_flush()
+{
+    RtpH264 r;
+    Out o;
+    /* SPS/PPS alone do not form a flushable VCL access unit. */
+    CHECK(push(r, o, rtp(1, 1000, false, kSps)));
+    CHECK(push(r, o, rtp(2, 1000, false, kPps)));
+    CHECK(!r.has_open_vcl_au());
+    r.flush_au(o.sink());
+    CHECK(r.stats().aus == 0);
+
+    /* An incomplete FU-A is not flushed mid-slice. */
+    CHECK(push(r, o, rtp(3, 1000, false, {0x7c, 0x85, 0xa1})));
+    CHECK(!r.has_open_vcl_au());
+    r.flush_au(o.sink());
+    CHECK(r.stats().aus == 0);
+
+    /* Once the slice completes, flush_au closes the AU immediately; the next
+     * timestamp does not emit a duplicate AU end. */
+    CHECK(push(r, o, rtp(4, 1000, false, {0x7c, 0x45, 0xa2})));
+    CHECK(r.has_open_vcl_au());
+    r.flush_au(o.sink());
+    CHECK(!r.has_open_vcl_au());
+    CHECK(r.stats().aus == 1 && !r.ended_by_marker());
+    CHECK(push(r, o, rtp(5, 2500, false, kP)));
+    CHECK(r.stats().aus == 1 && r.has_open_vcl_au());
+    r.flush_au(o.sink());
+    CHECK(r.stats().aus == 2 && !r.has_open_vcl_au());
+
+    /* A late slice with the same timestamp arriving after an idle flush does
+     * not emit a duplicate AU end, and closes cleanly on the next timestamp. */
+    const Bytes s2 = {0x41, 0x9a, 0x38, 0x16};
+    const size_t before = o.ev.size();
+    CHECK(push(r, o, rtp(6, 2500, false, s2)));
+    CHECK(o.ev.size() == before + 1 && o.ev.back() == annexb(s2));
+    CHECK(r.stats().aus == 2 && r.has_open_vcl_au());
+    CHECK(push(r, o, rtp(7, 4000, false, kP)));
+    CHECK(o.ev.size() == before + 3 && o.ev[before + 1] == kAuEnd && o.ev[before + 2] == annexb(kP));
+    CHECK(r.stats().aus == 3 && r.has_open_vcl_au());
+    /* Same-timestamp FU-A arriving after an idle flush reassembles cleanly. */
+    r.flush_au(o.sink());
+    CHECK(r.stats().aus == 4 && !r.has_open_vcl_au());
+    CHECK(push(r, o, rtp(8, 4000, false, {0x5c, 0x81, 0xaa})));
+    CHECK(!r.has_open_vcl_au());
+    CHECK(push(r, o, rtp(9, 4000, false, {0x5c, 0x41, 0xbb})));
+    CHECK(r.has_open_vcl_au() && o.ev.back() == annexb({0x41, 0xaa, 0xbb}));
+    r.flush_au(o.sink());
+    CHECK(r.stats().aus == 5 && !r.has_open_vcl_au());
+    CHECK(r.stats().gaps == 0 && r.stats().dropped == 0 && r.stats().bad == 0);
+}
+
 int main(int argc, char **argv)
 {
     single_nal_units();
     marker_ends_au_on_slice();
+    idle_au_flush();
     fu_a_three_parts();
     stap_a_pair();
     gap_mid_fu_decodes_through();

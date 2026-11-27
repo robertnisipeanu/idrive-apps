@@ -99,7 +99,7 @@ private:
     std::unique_ptr<Compositor> comp_;
     std::unique_ptr<Server> server_;
     int64_t status_ms_ = 0;
-    std::string status_written_;   /* the status file's text, as last written */
+    std::string status_key_;   /* stable state key of the status file as last written */
     void write_status(int64_t now_ms);
     static const int64_t kMinuteMs = 60000;
     int64_t minute_ms_ = 0;

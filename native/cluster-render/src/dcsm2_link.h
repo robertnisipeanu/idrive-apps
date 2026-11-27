@@ -50,9 +50,10 @@ public:
 
 private:
     struct Event {
-        enum Kind { Availability, Reply, Fetch, Map, Slots, Heartbeat, Undecoded, Subscription } kind;
+        enum Kind { Availability, Reply, Fetch, Map, Slots, Heartbeat, Undecoded, Subscription, Log } kind;
         explicit Event(Kind k) : kind(k) {}
         bool up = false, ok = false;
+        char level = 'I';                   /* Log */
         uint16_t method = 0;                /* Undecoded, Subscription: the event id */
         uint32_t status = 0, initial = 0;   /* Undecoded: the length; Subscription: the code */
         std::string text;
@@ -60,6 +61,7 @@ private:
         std::vector<SlotInfo> slots;
     };
     void push(Event e);
+    void push_log(char level, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
     std::shared_ptr<vsomeip_v3::application> app_;
     std::unique_ptr<dcsm::Client> client_;

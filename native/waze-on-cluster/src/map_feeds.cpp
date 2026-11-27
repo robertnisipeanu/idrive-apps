@@ -126,9 +126,22 @@ size_t MapFeeds::poll_fds(std::vector<pollfd> *fds) const
 {
     const size_t first = fds->size();
     for (const MapFeed *f : {cluster_.get(), hud_.get()})
-        if (f)
+        if (f) {
             fds->push_back(pollfd{f->fd(), (short)(f->fd() >= 0 ? (POLLIN | (f->wants_write() ? POLLOUT : 0)) : 0), 0});
+            if (f->scale_fd() >= 0)
+                fds->push_back(pollfd{f->scale_fd(), POLLIN, 0});
+        }
     return first;
+}
+
+bool MapFeeds::connected() const
+{
+    return (!cluster_ || cluster_->connected()) && (!hud_ || hud_->connected());
+}
+
+bool MapFeeds::scaling_busy() const
+{
+    return (cluster_ && cluster_->scaling_busy()) || (hud_ && hud_->scaling_busy());
 }
 
 void MapFeeds::poll(int64_t now_ms)

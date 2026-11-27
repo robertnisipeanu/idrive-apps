@@ -308,19 +308,23 @@ int serve(Config cfg)
     const AltScreen alt((uint16_t)cfg.num("alt_screen_port"), (uint32_t)cfg.num("alt_screen_uid"));
     StreamLiveness liveness(vc.stall_ms);
     std::string last_detail;
+    std::string last_status_json;
+    std::string last_probe_txt;
+    bool active = true;
+    bool last_active = true;
     AltScreen::State alt_state = AltScreen::Unknown;
     int64_t alt_read_ms = 0;
     for (;;) {
         std::vector<pollfd> p = {{sig_fd, POLLIN, 0}, {control.listen_fd(), POLLIN, 0}, {control.owner_fd(), POLLIN, 0},
                                  {producer.ready_fd(), POLLIN, 0}};
-        feed.poll_fds(&p);   /* one per target's renderer connection */
-        /* A decoded frame wakes it (the producer's ready fd), and so does the
-         * renderer's socket, and a scaled frame to take or the next one due
-         * (the HUD's, or a hosted map's); four times a second otherwise, so
-         * the client retries its connection, a source that is down is
-         * retried and the status files stay current. */
+        feed.poll_fds(&p);   /* each target's renderer socket and scale-worker wakeup fd */
+        /* A decoded frame wakes it (the producer's ready fd), and so do the
+         * renderer's socket and each scale worker's eventfd; otherwise poll
+         * every 250 ms while active or disconnected, and every 1000 ms while
+         * idle and connected. */
         const int64_t wake = feed.wake_in_ms(now_ms());
-        int n = poll(p.data(), p.size(), wake >= 0 && wake < 250 ? (int)wake : 250);
+        const int base_poll = (!active && feed.connected()) ? 1000 : 250;
+        int n = poll(p.data(), p.size(), wake >= 0 && wake < base_poll ? (int)wake : base_poll);
         if (n < 0 && errno != EINTR)
             break;
         if (p[0].revents & POLLIN)
@@ -374,6 +378,8 @@ int serve(Config cfg)
             producer.set_part(feed.part());
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
+        active = live || control.owner_fd() >= 0 || fs.state != "idle" ||
+                 (fs.hud_state != "off" && fs.hud_state != "idle");
         const std::string status = status_line(fs);
         /* The frame rate changes the status every second; the log keeps
          * to its state, reason and target, so the app's last lines are not
@@ -405,6 +411,7 @@ int serve(Config cfg)
             const std::string detail = producer.stream_detail();
             if (producer.stream_lost() && detail != last_detail)
                 log_warn("waze: stream lost: %s", detail.c_str());
+            const bool detail_changed = detail != last_detail;
             last_detail = detail;
             /* New decode errors, at most once a minute. */
             std::string last_err;
@@ -414,13 +421,26 @@ int serve(Config cfg)
                 errs_logged = errs;
                 errs_logged_ms = now;
             }
-            write_sibling_file(cfg.str("fifo_path"), "status.json", status);
+            const bool status_changed = status != last_status_json;
+            if (status_changed) {
+                write_sibling_file(cfg.str("fifo_path"), "status.json", status);
+                last_status_json = status;
+            }
             /* The framing probe and the renderer's own status (targets, the
-             * map layer's writes, the upload cap), for the diagnostics. */
-            write_sibling_file(cfg.str("fifo_path"), "probe.txt",
-                               producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" +
-                                   feed.report());
-            feed.request_report();
+             * map layer's writes, the upload cap), for the diagnostics. When
+             * completely idle, skip the 1 s probe rebuild/rewrite and report
+             * request once the idle snapshot is written. */
+            if (active || last_active || status_changed || detail_changed || last_probe_txt.empty()) {
+                const std::string probe_txt =
+                    producer.probe_report() + "stream: " + (detail.empty() ? "whole" : detail) + "\n" + feed.report();
+                if (probe_txt != last_probe_txt) {
+                    write_sibling_file(cfg.str("fifo_path"), "probe.txt", probe_txt);
+                    last_probe_txt = probe_txt;
+                }
+                if (active || last_probe_txt.empty())
+                    feed.request_report();
+            }
+            last_active = active;
             last_status_write = now;
         }
     }

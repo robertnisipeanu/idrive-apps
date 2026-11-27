@@ -260,7 +260,8 @@ PRELOAD_LINK = -shared -Wl,-z,now -Wl,-z,relro -Wl,--no-undefined
 
 $(T)/libwocpatch.so: preload/wocpatch.c
 	@mkdir -p $(@D)
-	gcc $(PRELOAD_FLAGS) $(PRELOAD_LINK) -o $@ $<
+	gcc $(PRELOAD_FLAGS) -g0 $(PRELOAD_LINK) -o $@ $<
+	strip --strip-unneeded $@
 
 # The library against a test program, in the unit's toolchain image.
 test-preload:
@@ -308,7 +309,7 @@ STUBS = $(T)/stub/libmfxhw64.so $(T)/stub/libva.so.1 $(T)/stub/libva-drm.so.1 \
         $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1
 
 # Each source compiles once, in parallel, with its header dependencies.
-WOC_FLAGS = $(CXXFLAGS) $(CPPFLAGS) -DWOC_VERSION='"$(VERSION)"' -pthread
+WOC_FLAGS = $(CXXFLAGS) -g0 $(CPPFLAGS) -DWOC_VERSION='"$(VERSION)"' -pthread
 
 $(T)/obj/cr/%.o: $(CR)/%.cpp component.json
 	@mkdir -p $(@D)
@@ -322,6 +323,7 @@ $(T)/obj/%.o: %.cpp component.json
 
 $(T)/waze-on-cluster: $(call objs,$(SRC),$(T)/obj) $(STUBS)
 	g++ $(WOC_FLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -o $@ $^
+	strip $@
 	$(PYTHON) $(CR)/dcsm/tools/abi.py check $@ $(CR)/dcsm/abi/libvsomeip3.so.3.symbols   # loader, glibc/libstdc++ limits
 	$(PYTHON) tools/woc_abi.py check-imports $@ --prefix MFX va ias_ -- \
 		abi/libmfx.symbols abi/libva.symbols abi/libva-drm.symbols abi/libias_avb.symbols

@@ -44,8 +44,10 @@ VideoProducer::VideoProducer(const VideoConfig &cfg)
     rtp_.on_gap = [this](const RtpH264::Gap &g) { gaps_.gap(g, packet_->source, packet_->dropped); };
     decoder_.on_sps([this](const uint8_t *nal, size_t len) {
         const std::string line = sps_log_.sps(nal, len, feed_source_, cld::now_ms());
-        if (!line.empty())
-            log_info("%s", line.c_str());
+        if (!line.empty()) {
+            sps_dirty_ = true;
+            queue_log(false, line);
+        }
     });
     if (pipe2(ready_, O_NONBLOCK | O_CLOEXEC) < 0)
         ready_[0] = ready_[1] = -1;
@@ -146,12 +148,13 @@ std::string VideoProducer::probe_report() const
     if (const int64_t w = keyframe_wait_ms(cld::now_ms()))
         std::snprintf(wait, sizeof wait, "; the stream arrives with no keyframe and nothing decoded for %lld s",
                       (long long)(w / 1000));
-    crk::Spread pack, vpp;
+    ProbeSnapshot snap;
     {
-        std::lock_guard<std::mutex> lock(decode_mutex_);
-        pack = decoder_.pack_us();
-        vpp = decoder_.vpp_us();
-        const RtpH264::Stats &st = rtp_.stats();
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        snap = probe_snap_;
+    }
+    const RtpH264::Stats &st = snap.rtp;
+    {
         char line[512];
         std::snprintf(line, sizeof line,
                       "rtp: packets=%llu nals=%llu aus=%llu aus_by_marker=%llu seq_gaps=%llu lost=%llu dropped=%llu "
@@ -163,12 +166,14 @@ std::string VideoProducer::probe_report() const
                       (unsigned long long)st.dropped, (unsigned long long)st.bad,
                       (unsigned long long)queue_.overflows(), queue_.high_water(), kQueuePackets,
                       queue_.held_bytes() / 1024,
-                      !decoder_up_ ? "waiting for the stream's first SPS" : decoding_ ? "up" : "waiting for a keyframe",
-                      (unsigned long long)decoded_total_.load(), decoder_.display_order() ? "display" : "decoding",
+                      !snap.decoder_up ? "waiting for the stream's first SPS"
+                      : snap.decoding  ? "up"
+                                       : "waiting for a keyframe",
+                      (unsigned long long)decoded_total_.load(), snap.display_order ? "display" : "decoding",
                       wait);
         r += line;
-        if (!sps_log_.last().empty())
-            r += "sps: " + sps_log_.last() + "\n";
+        if (!snap.last_sps.empty())
+            r += "sps: " + snap.last_sps + "\n";
     }
     {
         std::lock_guard<std::mutex> lock(frame_mutex_);
@@ -180,8 +185,8 @@ std::string VideoProducer::probe_report() const
                       "%llu pictures the same as the last, not packed\n"
                       "backlog: the oldest packet waiting %lld ms, the longest wait %lld ms; %llu frames decoded "
                       "without a picture to catch up%s\n",
-                      (long long)vpp.mean(), (long long)vpp.max, cfg_.tex_level_bits, (long long)pack.mean(),
-                      (long long)pack.max,
+                      (long long)snap.vpp_us.mean(), (long long)snap.vpp_us.max, cfg_.tex_level_bits,
+                      (long long)snap.pack_us.mean(), (long long)snap.pack_us.max,
                       (unsigned long long)same_total_,
                       (long long)(queue_.oldest_wait_us() / 1000), (long long)(backlog_.max_wait_us() / 1000),
                       (unsigned long long)backlog_.skipped_total(),
@@ -190,6 +195,52 @@ std::string VideoProducer::probe_report() const
         r += FrameTiming::describe(timing_.total()) + "\n";
     }
     return r + probe_.report();
+}
+
+void VideoProducer::queue_log(bool warn, std::string msg)
+{
+    if (!msg.empty())
+        pending_logs_.push_back(PendingLog{warn, std::move(msg)});
+}
+
+void VideoProducer::emit_logs(const std::vector<PendingLog> &logs)
+{
+    for (const PendingLog &l : logs) {
+        if (l.warn)
+            log_warn("%s", l.msg.c_str());
+        else
+            log_info("%s", l.msg.c_str());
+    }
+}
+
+void VideoProducer::publish_probe(bool force)
+{
+    const int64_t now = cld::now_ms();
+    const bool disp = decoder_.display_order();
+    const bool state_changed = sps_dirty_ || decoder_up_ != probe_decoder_up_ ||
+                               decoding_ != probe_decoding_ || disp != probe_display_order_;
+    const int64_t last = probe_published_ms_.load();
+    if (!force && !state_changed && last >= 0 && now - last < kProbePublishMs) {
+        if (!probe_dirty_.exchange(true))
+            queue_.wake();
+        return;
+    }
+    probe_dirty_.store(false);
+    probe_published_ms_.store(now);
+    probe_decoder_up_ = decoder_up_;
+    probe_decoding_ = decoding_;
+    probe_display_order_ = disp;
+    const bool copy_sps = sps_dirty_;
+    sps_dirty_ = false;
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    probe_snap_.rtp = rtp_.stats();
+    probe_snap_.pack_us = decoder_.pack_us();
+    probe_snap_.vpp_us = decoder_.vpp_us();
+    probe_snap_.decoder_up = decoder_up_;
+    probe_snap_.decoding = decoding_;
+    probe_snap_.display_order = disp;
+    if (copy_sps)
+        probe_snap_.last_sps = sps_log_.last();
 }
 
 void VideoProducer::receive(const uint8_t *data, size_t len, int source)
@@ -208,13 +259,38 @@ void VideoProducer::decode_loop()
 {
     PacketQueue::Packet p;
     while (!queue_.closed()) {
-        /* A frame the pace left without a picture gets it when nothing
-         * waits to be decoded at its slot (picture_pace.h). */
-        if (queue_.pop(&p, late_wait_ms()))
+        if (queue_.pop(&p, decode_wait_ms())) {
             feed_datagram(p);
-        else
+        } else {
+            if (rtp_au_open_ && PacketQueue::now_us() - au_last_us_ >= (int64_t)kAuIdleFlushMs * 1000)
+                flush_rtp_au();
             picture_paced();
+            if (probe_dirty_.load()) {
+                const int64_t last = probe_published_ms_.load();
+                if (last < 0 || cld::now_ms() - last >= kProbePublishMs) {
+                    std::lock_guard<std::mutex> lock(decode_mutex_);
+                    publish_probe(true);
+                }
+            }
+        }
     }
+}
+
+int VideoProducer::decode_wait_ms() const
+{
+    int wait_ms = late_wait_ms();
+    if (rtp_au_open_) {
+        const int64_t rem_us = au_last_us_ + (int64_t)kAuIdleFlushMs * 1000 - PacketQueue::now_us();
+        const int au_wait = rem_us <= 0 ? 0 : (int)((rem_us + 999) / 1000);
+        wait_ms = wait_ms < 0 ? au_wait : std::min(wait_ms, au_wait);
+    }
+    if (probe_dirty_.load()) {
+        const int64_t last = probe_published_ms_.load();
+        const int64_t rem = last < 0 ? 0 : last + kProbePublishMs - cld::now_ms();
+        const int probe_wait = rem <= 0 ? 0 : (int)rem;
+        wait_ms = wait_ms < 0 ? probe_wait : std::min(wait_ms, probe_wait);
+    }
+    return wait_ms;
 }
 
 int VideoProducer::late_wait_ms() const
@@ -227,57 +303,84 @@ int VideoProducer::late_wait_ms() const
     return paced_ ? (int)std::min<int64_t>(pace_.late_in_ms(cld::now_ms()), 500) : -1;
 }
 
+void VideoProducer::flush_rtp_au()
+{
+    std::vector<PendingLog> logs;
+    {
+        std::lock_guard<std::mutex> lock(decode_mutex_);
+        rtp_.flush_au(rtp_sink_);
+        rtp_au_open_ = rtp_.has_open_vcl_au();
+        publish_probe();
+        logs.swap(pending_logs_);
+    }
+    emit_logs(logs);
+}
+
 void VideoProducer::picture_paced()
 {
     if (!picture_fps_.load() && !paced_.load())
         return;
-    std::lock_guard<std::mutex> lock(decode_mutex_);
-    if (!paced_ || pace_.late_in_ms(cld::now_ms()) > 0)
-        return;
-    pass_part();
-    paced_ = false;
-    bool given = false;
-    if (pictures_.load()) {
-        if (resumed_.load()) {
-            decoder_.forget_last();   /* the feeds made since have not had it */
-            pace_.reset();
+    std::vector<PendingLog> logs;
+    {
+        std::lock_guard<std::mutex> lock(decode_mutex_);
+        if (!paced_ || pace_.late_in_ms(cld::now_ms()) > 0)
+            return;
+        pass_part();
+        paced_ = false;
+        bool given = false;
+        if (pictures_.load()) {
+            if (resumed_.load()) {
+                decoder_.forget_last();   /* the feeds made since have not had it */
+                pace_.reset();
+            }
+            std::string derr;
+            decoder_.picture_skipped(
+                [this, &given](const VideoFrame &f) {
+                    given = true;
+                    pace_.took(cld::now_ms());
+                    on_frame(f, true);
+                },
+                &derr);
+            if (!derr.empty()) {
+                std::lock_guard<std::mutex> flock(frame_mutex_);
+                last_err_ = derr;
+                decode_errs_++;
+            }
         }
-        std::string derr;
-        decoder_.picture_skipped(
-            [this, &given](const VideoFrame &f) {
-                given = true;
-                pace_.took(cld::now_ms());
-                on_frame(f, true);
-            },
-            &derr);
-        if (!derr.empty()) {
-            std::lock_guard<std::mutex> flock(frame_mutex_);
-            last_err_ = derr;
-            decode_errs_++;
-        }
+        if (!given)
+            paced_total_++;
+        publish_probe();
+        logs.swap(pending_logs_);
     }
-    if (!given)
-        paced_total_++;
+    emit_logs(logs);
 }
 
 void VideoProducer::feed_datagram(const PacketQueue::Packet &p)
 {
+    std::string backlog_line;
     {
         std::lock_guard<std::mutex> lock(frame_mutex_);
-        const std::string line = backlog_.packet(cld::now_ms(), p.waited_us);
-        if (!line.empty())
-            log_warn("%s", line.c_str());
+        backlog_line = backlog_.packet(cld::now_ms(), p.waited_us);
     }
+    if (!backlog_line.empty())
+        log_warn("%s", backlog_line.c_str());
     const uint8_t *data = p.data.data();
     const size_t len = p.data.size();
     /* RTP v2 starts 10xxxxxx; Annex-B starts with a zero byte. */
     if (len >= 12 && (data[0] & 0xc0) == 0x80) {
         probe_.record_rtp(data, len);
-        std::lock_guard<std::mutex> lock(decode_mutex_);
-        feed_source_ = source_name(p.source);
-        packet_ = &p;
-        rtp_.push(data, len, rtp_sink_);
-        packet_ = nullptr;
+        std::vector<PendingLog> logs;
+        {
+            std::lock_guard<std::mutex> lock(decode_mutex_);
+            feed_source_ = source_name(p.source);
+            packet_ = &p;
+            rtp_.push(data, len, rtp_sink_);
+            packet_ = nullptr;
+            rtp_au_open_ = rtp_.has_open_vcl_au();
+            publish_probe();
+            logs.swap(pending_logs_);
+        }
+        emit_logs(logs);
         return;
     }
     feed_fifo(data, len, source_name(p.source));
@@ -286,24 +389,33 @@ void VideoProducer::feed_datagram(const PacketQueue::Packet &p)
 void VideoProducer::feed_fifo(const uint8_t *data, size_t len, const char *source)
 {
     probe_.record(data, len);
-    std::lock_guard<std::mutex> lock(decode_mutex_);
-    feed_source_ = source;
-    if (!decoder_up_) {
-        /* Raw Annex-B arrives in arbitrary chunks, so the decoder comes up at
-         * the first bytes and drops what precedes the SPS itself. A failed
-         * start is retried with later bytes, at most once a second. */
-        const int64_t now = cld::now_ms();
-        if (now < raw_retry_ms_)
-            return;
-        std::string err;
-        if (!start_decoder(&err)) {
-            raw_retry_ms_ = now + 1000;
-            log_warn("waze: decoder start failed: %s", err.c_str());
-            return;
+    std::vector<PendingLog> logs;
+    {
+        std::lock_guard<std::mutex> lock(decode_mutex_);
+        feed_source_ = source;
+        if (!decoder_up_) {
+            /* Raw Annex-B arrives in arbitrary chunks, so the decoder comes up at
+             * the first bytes and drops what precedes the SPS itself. A failed
+             * start is retried with later bytes, at most once a second. */
+            const int64_t now = cld::now_ms();
+            if (now < raw_retry_ms_)
+                return;
+            std::string err;
+            if (!start_decoder(&err)) {
+                raw_retry_ms_ = now + 1000;
+                queue_log(true, "waze: decoder start failed: " + err);
+                publish_probe();
+                logs.swap(pending_logs_);
+                goto out;
+            }
+            queue_log(false, "waze: stream started, decoder up");
         }
-        log_info("waze: stream started, decoder up");
+        decode(data, len, false, false);
+        publish_probe();
+        logs.swap(pending_logs_);
     }
-    decode(data, len, false);
+out:
+    emit_logs(logs);
 }
 
 void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
@@ -315,13 +427,14 @@ void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
         if (o != GapSettler::None) {
             const RtpH264::Gap &g = gaps_.settled();
             const char *src = source_name(gaps_.source());
-            std::lock_guard<std::mutex> lock(frame_mutex_);
-            const std::string line = o == GapSettler::NewStream
-                                         ? health_.new_stream(cld::now_ms(), src, g.expected, g.got)
-                                         : health_.loss(cld::now_ms(), wall_ms(), src, g.expected, g.got, g.lost,
-                                                        gaps_.dropped());
-            if (!line.empty())
-                log_warn("%s", line.c_str());
+            std::string line;
+            {
+                std::lock_guard<std::mutex> lock(frame_mutex_);
+                line = o == GapSettler::NewStream
+                           ? health_.new_stream(cld::now_ms(), src, g.expected, g.got)
+                           : health_.loss(cld::now_ms(), wall_ms(), src, g.expected, g.got, g.lost, gaps_.dropped());
+            }
+            queue_log(true, std::move(line));
         }
     } else {
         gaps_.au_end();   /* decode() below delivers its frame */
@@ -333,16 +446,16 @@ void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
             return;
         std::string err;
         if (!start_decoder(&err)) {
-            log_warn("waze: decoder start failed: %s", err.c_str());
+            queue_log(true, "waze: decoder start failed: " + err);
             return;
         }
-        log_info("waze: stream started, decoder up");
+        queue_log(false, "waze: stream started, decoder up");
     }
     if (len == 0) {
         std::lock_guard<std::mutex> lock(frame_mutex_);
         timing_.access_unit(rtp_.ended_by_marker(), au_last_us_, PacketQueue::now_us());
     }
-    decode(data, len, end_of_au);
+    decode(len > 4 ? data + 4 : nullptr, len > 4 ? len - 4 : 0, end_of_au, true);
 }
 
 bool VideoProducer::start_decoder(std::string *err)
@@ -358,7 +471,7 @@ bool VideoProducer::start_decoder(std::string *err)
     return true;
 }
 
-void VideoProducer::decode(const uint8_t *data, size_t len, bool end_of_au)
+void VideoProducer::decode(const uint8_t *data, size_t len, bool end_of_au, bool raw_nal)
 {
     std::string derr;
     pass_part();
@@ -373,21 +486,28 @@ void VideoProducer::decode(const uint8_t *data, size_t len, bool end_of_au)
     pace_skip_ = picture && !pace_.due(cld::now_ms());
     if (pace_skip_)
         picture = false;
-    const bool ok = decoder_.feed(data, len, [this](const VideoFrame &f) { on_decoded(f); }, &derr, end_of_au, picture);
+    auto sink = [this](const VideoFrame &f) { on_decoded(f); };
+    const bool ok = raw_nal ? decoder_.feed_nal(data, len, sink, &derr, end_of_au, picture)
+                            : decoder_.feed(data, len, sink, &derr, end_of_au, picture);
     const bool decoding = decoder_.decoding();
     if (ok && decoding == decoding_)
         return;
-    std::lock_guard<std::mutex> flock(frame_mutex_);
-    if (!ok) {
-        last_err_ = derr;
-        decode_errs_++;
+    std::string wait_line;
+    const bool changed = decoding != decoding_;
+    {
+        std::lock_guard<std::mutex> flock(frame_mutex_);
+        if (!ok) {
+            last_err_ = derr;
+            decode_errs_++;
+        }
+        if (changed)
+            wait_line = health_.waiting(cld::now_ms(), wall_ms(), !decoding);
     }
-    if (decoding != decoding_) {
-        const std::string line = health_.waiting(cld::now_ms(), wall_ms(), !decoding);
+    if (changed) {
         if (!decoding)
-            log_warn("waze: the decoder gave up its sequence (%s)", derr.c_str());
-        else if (!line.empty())
-            log_info("%s", line.c_str());
+            queue_log(true, "waze: the decoder gave up its sequence (" + derr + ")");
+        else if (!wait_line.empty())
+            queue_log(false, std::move(wait_line));
     }
     decoding_ = decoding;
 }
@@ -434,16 +554,18 @@ void VideoProducer::on_frame(const VideoFrame &f, bool late)
     /* a part (hosted_vpp_scale) is the frame's picture as much as the whole */
     const bool sized = f.part.set() || (f.w == cfg_.tex_width && f.h == cfg_.tex_height);
     if (!f.atlas && !f.same) {
-        std::lock_guard<std::mutex> lock(frame_mutex_);
-        timing_.frame(f.held);
-        const std::string line = health_.frame(cld::now_ms(), f.corrupted, gaps_.after_loss());
-        if (!line.empty())
-            log_info("%s", line.c_str());
-        if (catching_up_)
-            backlog_.skipped();
-        if (sized)
-            last_frame_ms_ = now_us() / 1000;
-        decoded_total_++;
+        std::string line;
+        {
+            std::lock_guard<std::mutex> lock(frame_mutex_);
+            timing_.frame(f.held);
+            line = health_.frame(cld::now_ms(), f.corrupted, gaps_.after_loss());
+            if (catching_up_)
+                backlog_.skipped();
+            if (sized)
+                last_frame_ms_ = now_us() / 1000;
+            decoded_total_++;
+        }
+        queue_log(false, std::move(line));
         return;
     }
     ChangeSampler *change = &change_;
@@ -459,39 +581,41 @@ void VideoProducer::on_frame(const VideoFrame &f, bool late)
      * changed and is as blank as it was */
     const bool sampled = sized && f.atlas && change->changed(f.atlas->data());
     const bool changed = sized && f.atlas && (resumed_.exchange(false) || sampled);
-    std::lock_guard<std::mutex> lock(frame_mutex_);
-    if (!late) {   /* a late picture's frame was counted when it was decoded */
-        timing_.frame(f.held);
-        const std::string line = health_.frame(cld::now_ms(), f.corrupted, gaps_.after_loss());
-        if (!line.empty())
-            log_info("%s", line.c_str());
+    std::string health_line;
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        if (!late) {   /* a late picture's frame was counted when it was decoded */
+            timing_.frame(f.held);
+            health_line = health_.frame(cld::now_ms(), f.corrupted, gaps_.after_loss());
+        }
+        if (sized) {
+            const int64_t now = now_us() / 1000;
+            freeze_.frame(now, changed, change->blank());
+            tally_.frame(now, changed, change->blank());
+            if (!late)
+                last_frame_ms_ = now;
+        }
+        if (!back_dirty_ && !repeat_ && ready_[1] >= 0) {
+            const char b = 1;
+            ssize_t w = write(ready_[1], &b, 1);
+            (void)w;
+        }
+        if (f.atlas) {
+            /* The decoder's buffer becomes the newest frame and the replaced one
+             * goes back to the decoder. */
+            back_.swap(*f.atlas);
+            back_w_ = f.w;
+            back_h_ = f.h;
+            back_part_ = f.part;
+            back_dirty_ = true;
+            repeat_ = false;
+        } else {
+            same_total_++;
+            repeat_ = !back_dirty_;   /* a frame still to be taken is this picture */
+        }
+        back_id_ = late ? decoded_total_.load() : decoded_total_.fetch_add(1) + 1;
     }
-    if (sized) {
-        const int64_t now = now_us() / 1000;
-        freeze_.frame(now, changed, change->blank());
-        tally_.frame(now, changed, change->blank());
-        if (!late)
-            last_frame_ms_ = now;
-    }
-    if (!back_dirty_ && !repeat_ && ready_[1] >= 0) {
-        const char b = 1;
-        ssize_t w = write(ready_[1], &b, 1);
-        (void)w;
-    }
-    if (f.atlas) {
-        /* The decoder's buffer becomes the newest frame and the replaced one
-         * goes back to the decoder. */
-        back_.swap(*f.atlas);
-        back_w_ = f.w;
-        back_h_ = f.h;
-        back_part_ = f.part;
-        back_dirty_ = true;
-        repeat_ = false;
-    } else {
-        same_total_++;
-        repeat_ = !back_dirty_;   /* a frame still to be taken is this picture */
-    }
-    back_id_ = late ? decoded_total_.load() : decoded_total_.fetch_add(1) + 1;
+    queue_log(false, std::move(health_line));
 }
 
 bool VideoProducer::take(std::vector<uint8_t> *frame, uint64_t *id, bool *same, OutputPart *part)

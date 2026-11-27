@@ -48,6 +48,13 @@ public:
      * sent on their own) is held and joins the next one. */
     void push(const uint8_t *data, size_t len, bool end_of_au, const Sink &sink);
 
+    /* Feeds one already-framed NAL unit (starting at its header byte, without
+     * an Annex-B start code), bypassing the Annex-B byte scan. */
+    void push_nal(const uint8_t *nal, size_t len, const Sink &sink);
+
+    /* Completes the current access unit if it holds at least one VCL slice. */
+    void end_au(const Sink &sink);
+
     /* End of stream: the buffered tail is the last NAL unit. Delivers the last
      * access unit and empties the reader. */
     void flush(const Sink &sink);

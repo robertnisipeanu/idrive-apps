@@ -587,7 +587,7 @@ void MapFeed::keep_layer(int64_t now_ms)
 int64_t MapFeed::wake_in_ms(int64_t now_ms) const
 {
     if (scaling_ && layer_ && !worker_.idle())
-        return kScaleWaitMs;
+        return worker_.done_fd() >= 0 ? -1 : kScaleWaitMs;
     if (unseen_ && layer_)
         return std::max<int64_t>(1, kept_ms_ + keep_every_ms() - now_ms);
     if (await_until_ms_ >= 0)

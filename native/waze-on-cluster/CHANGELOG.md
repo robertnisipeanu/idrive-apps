@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+The cluster and HUD map update with lower latency and less CPU and flash wear, and installing or updating patches runs faster and handles clock jumps more reliably.
+
 ## 0.14.19
 
 A car whose cluster coding cannot be read is patched as a car coded 7,

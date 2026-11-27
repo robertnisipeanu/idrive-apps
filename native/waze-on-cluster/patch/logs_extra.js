@@ -179,7 +179,7 @@ function str(v) { return typeof v === 'string' || typeof v === 'number' ? String
 /* ---- report ---------------------------------------------------------------- */
 
 function codingText() {
-    var cd = require('./aapd_patch.js').readCoding(r(CODING));
+    var cd = require('./coding.js').readCoding(r(CODING));
     return (cd.err ? 'unreadable (' + cd.err + ')' : 'KI_KOMBI_VARIANT ' + cd.variant) + '\n';
 }
 

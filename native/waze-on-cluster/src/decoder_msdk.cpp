@@ -260,7 +260,7 @@ struct Decoder::State {
     void access_unit(const AccessUnit &au, const FrameSink &cb);
     bool start(const AccessUnit &au);
     mfxStatus read_header(const AccessUnit &au, mfxVideoParam *par);
-    void stop();
+    void stop(bool keep_reorder = false);
     Result decode(mfxBitstream *bs, const FrameSink &cb);
     bool convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const FrameSink &cb);
     bool run_vpp(mfxFrameSurface1 *in, const FrameSink &cb);
@@ -411,7 +411,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
     reorder = reorder || au.b;
     if (running && au.sps && reorder && dec.mfx.DecodedOrder) {
         decode(nullptr, cb);
-        stop();
+        stop(true);
     }
     /* A compatible SPS keeps the sequence going at its own size. */
     if (running && au.sps && crop.enabled()) {
@@ -454,7 +454,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
          * access unit. */
         start_by_rect = rect_restart;
         decode(nullptr, cb);
-        stop();
+        stop(au.b);
     }
     fail("decoder rejected the new sequence after reinitialising");
 }
@@ -622,7 +622,7 @@ mfxStatus Decoder::State::read_header(const AccessUnit &au, mfxVideoParam *par)
     return MFXVideoDECODE_DecodeHeader(session, &bs, par);
 }
 
-void Decoder::State::stop()
+void Decoder::State::stop(bool keep_reorder)
 {
     if (running) {
         MFXVideoDECODE_Close(session);
@@ -633,6 +633,8 @@ void Decoder::State::stop()
         MFXClose(session);
         session = nullptr;
     }
+    if (!keep_reorder)
+        reorder = false;
     skipped_out = nullptr;
     pool.clear();
     pool_ptrs.clear();
@@ -976,6 +978,28 @@ bool Decoder::feed(const uint8_t *data, size_t len, const FrameSink &cb, std::st
     s.error.clear();
     s.picture = picture;
     s.nal.push(data, len, end_of_au, [&](const AccessUnit &au) { s.access_unit(au, cb); });
+    if (!s.error.empty()) {
+        *err = s.error;
+        return false;
+    }
+    return true;
+}
+
+bool Decoder::feed_nal(const uint8_t *nal, size_t len, const FrameSink &cb, std::string *err, bool end_of_au,
+                       bool picture)
+{
+    if (!s_) {
+        *err = "decoder not initialised";
+        return false;
+    }
+    State &s = *s_;
+    s.error.clear();
+    s.picture = picture;
+    auto sink = [&](const AccessUnit &au) { s.access_unit(au, cb); };
+    if (len > 0)
+        s.nal.push_nal(nal, len, sink);
+    if (end_of_au)
+        s.nal.end_au(sink);
     if (!s.error.empty()) {
         *err = s.error;
         return false;

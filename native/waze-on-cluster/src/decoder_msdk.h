@@ -174,6 +174,11 @@ public:
     bool feed(const uint8_t *data, size_t len, const FrameSink &cb, std::string *err, bool end_of_au = false,
               bool picture = true);
 
+    /* Feeds one already-framed NAL unit (without an Annex-B start code), or
+     * len 0 with end_of_au true to complete the open access unit. */
+    bool feed_nal(const uint8_t *nal, size_t len, const FrameSink &cb, std::string *err, bool end_of_au = false,
+                  bool picture = true);
+
     /* The next picture comes with its atlas even when it is the last one
      * again. */
     void forget_last();

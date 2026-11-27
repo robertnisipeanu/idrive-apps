@@ -210,6 +210,7 @@ int start(const cld::Config &cfg, char **)
     std::string err;
     if (!service_config(cfg, 8, &sc, &err)) {
         log_error("%s", err.c_str());
+        cld::log_flush_file();
         _exit(1);
     }
 
@@ -221,6 +222,7 @@ int start(const cld::Config &cfg, char **)
     const int sig_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
     if (sig_fd < 0) {
         log_error("signalfd: %s", strerror(errno));
+        cld::log_flush_file();
         _exit(1);
     }
 
@@ -231,6 +233,7 @@ int start(const cld::Config &cfg, char **)
     const uint32_t user = (uint32_t)cfg.num("ramses_user");
     if (enable_someip(&fwc, user) != ramses::StatusOK) {
         log_error("ramses: SOME/IP communication user %u refused", user);
+        cld::log_flush_file();
         _exit(1);
     }
     ramses::RamsesFramework framework(fwc);
@@ -238,6 +241,7 @@ int start(const cld::Config &cfg, char **)
     ramses::DcsmProvider *provider = framework.createDcsmProvider();
     if (!client || !provider) {
         log_error("ramses: no client or DCSM provider");
+        cld::log_flush_file();
         _exit(1);
     }
     /* A failed connect leaves the framework unconnected, to be tried again
@@ -247,14 +251,17 @@ int start(const cld::Config &cfg, char **)
             log_error("ramses: connect failed (communication user %u); trying again every %d s", user,
                       kConnectRetryMs / 1000);
         pollfd p{sig_fd, POLLIN, 0};
-        if (poll(&p, 1, kConnectRetryMs) > 0)
+        if (poll(&p, 1, kConnectRetryMs) > 0) {
+            cld::log_flush_file();
             _exit(0);
+        }
     }
     log_info("ramses: connected as communication user %u", user);
     Ramses27Gpu gpu(*client);
     if (!gpu.init(&err)) {
         log_error("ramses: %s", err.c_str());
         framework.disconnect();
+        cld::log_flush_file();
         _exit(1);
     }
 
@@ -268,6 +275,7 @@ int start(const cld::Config &cfg, char **)
     if (!service.start(&err)) {
         log_error("%s", err.c_str());
         framework.disconnect();
+        cld::log_flush_file();
         _exit(1);
     }
     port.on_availability(true, cld::now_ms());
@@ -305,6 +313,7 @@ int start(const cld::Config &cfg, char **)
     }
     framework.disconnect();
     log_info("stopped");
+    cld::log_flush_file();
     _exit(0);
 }
 

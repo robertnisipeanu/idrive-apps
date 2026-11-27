@@ -123,9 +123,10 @@ Image.prototype.rel = function (pos, next) {
 };
 /* The `call rel32` instructions in [start, end): [{ at, to }]. */
 Image.prototype.calls = function (start, end) {
-    var out = [];
-    for (var p = start; p + 5 <= end; p++) {
-        if (this.buf[p] === 0xe8) { var to = this.rel(p + 1, p + 5); if (to !== null) out.push({ at: p, to: to }); }
+    var out = [], buf = this.buf;
+    for (var p = buf.indexOf(0xe8, start); p >= 0 && p + 5 <= end; p = buf.indexOf(0xe8, p + 1)) {
+        var to = this.rel(p + 1, p + 5);
+        if (to !== null) out.push({ at: p, to: to });
     }
     return out;
 };
@@ -170,11 +171,30 @@ function funcStarts(buf, eh) {
 
 /* Offsets matching `pat` (bytes, null = any) in [start, end). */
 function scan(buf, start, end, pat) {
-    var out = [];
-    for (var i = start; i + pat.length <= end; i++) {
-        if (buf[i] !== pat[0]) continue;
-        for (var j = 1; j < pat.length && (pat[j] === null || buf[i + j] === pat[j]); j++);
-        if (j === pat.length) out.push(i);
+    var out = [], plen = pat.length;
+    if (end - start >= 256) {
+        var bestOff = -1, bestLen = 0, runOff = -1, runLen = 0;
+        for (var k = 0; k < plen; k++) {
+            if (pat[k] !== null) {
+                if (runLen === 0) runOff = k;
+                if (++runLen > bestLen) { bestLen = runLen; bestOff = runOff; }
+            } else runLen = 0;
+        }
+        if (bestLen >= 2) {
+            var needle = Buffer.from(pat.slice(bestOff, bestOff + bestLen));
+            var last = end - plen + bestOff;
+            for (var idx = buf.indexOf(needle, start + bestOff); idx >= 0 && idx <= last; idx = buf.indexOf(needle, idx + 1)) {
+                var i = idx - bestOff, j = 0;
+                for (; j < plen; j++) if (pat[j] !== null && buf[i + j] !== pat[j]) break;
+                if (j === plen) out.push(i);
+            }
+            return out;
+        }
+    }
+    for (var i = start; i + plen <= end; i++) {
+        if (pat[0] !== null && buf[i] !== pat[0]) continue;
+        for (var j = 1; j < plen && (pat[j] === null || buf[i + j] === pat[j]); j++);
+        if (j === plen) out.push(i);
     }
     return out;
 }
@@ -199,13 +219,13 @@ function namedString(buf, key, re, label) {
 /* The rip-relative lea instructions (REX.W 8d, mod 00 rm 101) whose target is
  * one of `offs`: { off: [lea offsets] }. */
 function leaRefs(im, offs) {
-    var want = {}, out = {}, buf = im.buf;
+    var want = {}, out = {}, buf = im.buf, end = im.exec.end;
+    var base = im.va(im.exec.off) - im.exec.off;
     offs.forEach(function (o) { var va = im.va(o); if (va !== null) { want[va] = o; out[o] = []; } });
-    for (var p = im.exec.off + 1; p + 6 <= im.exec.end; p++) {
-        if (buf[p] !== 0x8d || (buf[p - 1] & 0xfb) !== 0x48 || (buf[p + 1] & 0xc7) !== 0x05) continue;
-        var va = im.va(p + 6);
-        var t = va === null ? null : want[(va + buf.readInt32LE(p + 2)) >>> 0];
-        if (t !== undefined && t !== null) out[t].push(p - 1);
+    for (var p = buf.indexOf(0x8d, im.exec.off + 1); p >= 0 && p + 6 <= end; p = buf.indexOf(0x8d, p + 1)) {
+        if ((buf[p - 1] & 0xfb) !== 0x48 || (buf[p + 1] & 0xc7) !== 0x05) continue;
+        var t = want[(base + p + 6 + buf.readInt32LE(p + 2)) >>> 0];
+        if (t !== undefined) out[t].push(p - 1);
     }
     return out;
 }
@@ -907,6 +927,32 @@ function locateShowUi(im, str, refs, inits, rela) {
 
 /* ---- relocations and version -------------------------------------------- */
 
+function parseRelocs(im) {
+    if (im._relocs) return im._relocs;
+    var parsed = { all: null, rel: [], addends: [] };
+    if (im.dynBad) { parsed.all = 'relocations not readable'; return (im._relocs = parsed); }
+    if (!im.dyn) return (im._relocs = parsed);
+    var buf = im.buf, d = {};
+    for (var o = im.dyn.off; o + 16 <= im.dyn.off + im.dyn.size; o += 16) {
+        var tag = u64(buf, o);
+        if (tag === 0) break;
+        if (tag !== null) d[tag] = u64(buf, o + 8);
+    }
+    if (d[22] !== undefined || (d[30] & 4)) { parsed.all = 'text relocations'; return (im._relocs = parsed); }      /* DT_TEXTREL, DF_TEXTREL */
+    if (d[17] !== undefined || d[36] !== undefined) { parsed.all = 'relocations not readable'; return (im._relocs = parsed); }   /* DT_REL, DT_RELR */
+    [[7, 8], [23, 2]].forEach(function (t) {                                  /* DT_RELA/RELASZ, DT_JMPREL/PLTRELSZ */
+        if (d[t[0]] === undefined) return;
+        var at = d[t[0]] === null ? null : im.off(d[t[0]]), n = d[t[1]] || 0;
+        if (at === null || at + n > buf.length) { parsed.all = 'relocations not readable'; return; }
+        for (var r = at; r + 24 <= at + n; r += 24) {
+            var v = u64(buf, r), a = u64(buf, r + 16);
+            if (v !== null) parsed.rel.push(v);
+            if (a !== null) parsed.addends.push(a);
+        }
+    });
+    return (im._relocs = parsed);
+}
+
 /* The edits the loader would rewrite: all of them with text relocations or
  * relocations this cannot read (REL, RELR, or a dynamic segment or table
  * outside the file), else
@@ -914,31 +960,12 @@ function locateShowUi(im, str, refs, inits, rela) {
  * PLT) overlap; and the addends of those relocations, the addresses they
  * store. { all: why or null, edits, addends } */
 function relocated(im, regions) {
-    var out = { all: null, edits: [], addends: [] };
-    if (im.dynBad) { out.all = 'relocations not readable'; return out; }
-    if (!im.dyn) return out;
-    var buf = im.buf, d = {}, rel = [];
-    for (var o = im.dyn.off; o + 16 <= im.dyn.off + im.dyn.size; o += 16) {
-        var tag = u64(buf, o);
-        if (tag === 0) break;
-        if (tag !== null) d[tag] = u64(buf, o + 8);
-    }
-    if (d[22] !== undefined || (d[30] & 4)) { out.all = 'text relocations'; return out; }      /* DT_TEXTREL, DF_TEXTREL */
-    if (d[17] !== undefined || d[36] !== undefined) { out.all = 'relocations not readable'; return out; }   /* DT_REL, DT_RELR */
-    [[7, 8], [23, 2]].forEach(function (t) {                                  /* DT_RELA/RELASZ, DT_JMPREL/PLTRELSZ */
-        if (d[t[0]] === undefined) return;
-        var at = d[t[0]] === null ? null : im.off(d[t[0]]), n = d[t[1]] || 0;
-        if (at === null || at + n > buf.length) { out.all = 'relocations not readable'; return; }
-        for (var r = at; r + 24 <= at + n; r += 24) {
-            var v = u64(buf, r), a = u64(buf, r + 16);
-            if (v !== null) rel.push(v);
-            if (a !== null) out.addends.push(a);
-        }
-    });
+    var parsed = parseRelocs(im);
+    var out = { all: parsed.all, edits: [], addends: parsed.addends };
     if (out.all) return out;
     regions.forEach(function (g) {
         var va = im.va(g[1]);
-        if (va !== null && rel.some(function (v) { return v + 8 > va && v < va + g[2]; }) && out.edits.indexOf(g[0]) < 0) out.edits.push(g[0]);
+        if (va !== null && parsed.rel.some(function (v) { return v + 8 > va && v < va + g[2]; }) && out.edits.indexOf(g[0]) < 0) out.edits.push(g[0]);
     });
     return out;
 }
@@ -946,8 +973,15 @@ function relocated(im, regions) {
 /* The version of package `pkg` (carplay by default) its debug source paths
  * name, or null. */
 function version(buf, pkg) {
-    var re = new RegExp('/usr/src/debug/' + (pkg || 'carplay') + '/([0-9][0-9.]*)\\+', 'g'), text = buf.toString('latin1'), m, seen = [];
-    while ((m = re.exec(text))) if (seen.indexOf(m[1]) < 0) seen.push(m[1]);
+    var needle = Buffer.from('/usr/src/debug/' + (pkg || 'carplay') + '/', 'latin1'), seen = [];
+    for (var i = buf.indexOf(needle); i >= 0; i = buf.indexOf(needle, i + 1)) {
+        var s = i + needle.length, e = s;
+        while (e < buf.length && ((buf[e] >= 0x30 && buf[e] <= 0x39) || buf[e] === 0x2e)) e++;
+        if (e > s && buf[s] >= 0x30 && buf[s] <= 0x39 && buf[e] === 0x2b) {
+            var v = buf.toString('latin1', s, e);
+            if (seen.indexOf(v) < 0) seen.push(v);
+        }
+    }
     return seen.length === 1 ? seen[0] : null;
 }
 

@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
+#include <unordered_map>
 
 #include "log.h"
 #include "ramses19/ramses.h"
@@ -259,20 +261,25 @@ unsigned effect_attributes(const ramses::Effect &fx)
     return bits;
 }
 
+}  // namespace
+
 class Ramses19Graph : public Graph {
 public:
-    Ramses19Graph(ramses::RamsesClient &client, const std::map<int, ramses::Effect *> &effects,
+    Ramses19Graph(ramses::RamsesClient &client, Ramses19Gpu &gpu, const std::map<int, ramses::Effect *> &effects,
                   const ramses::Vector2fArray &pos, const ramses::UInt16Array &idx)
-        : client_(client), effects_(effects), pos_(pos), idx_(idx)
+        : client_(client), gpu_(gpu), effects_(effects), pos_(pos), idx_(idx)
     {
+        gpu_.attach(this);
     }
 
     /* The library's uniform types (learn()), for animate() and link(); null:
      * unknown. */
     void set_types(const Ramses19Types *t) { types_ = t; }
+    void forget(int effect) { effect_cache_.erase(effect); }
 
     ~Ramses19Graph() override
     {
+        gpu_.detach(this);
         if (!scene_)
             return;
         /* A borrowed scene went first, with every object in it (graph.h
@@ -524,6 +531,7 @@ public:
         q.app = app;
         q.geo = geo;
         q.effect = fx->second;
+        q.effect_id = effect;
         q.r = r;
         q.surface = canvas;
         quads_[next_] = q;
@@ -569,26 +577,27 @@ public:
     bool texture(int quad, const char *uniform, int buf) override
     {
         ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(quad, &app);
+        int fx_id = 0;
+        const ramses::Effect *fx = look(quad, &app, &fx_id);
         auto b = buffers_.find(buf);
-        ramses::UniformInput in;
-        return fx && b != buffers_.end() && ok(fx->findUniformInput(uniform, in)) &&
-               ok(app->setInputTexture(in, *b->second.sampler));
+        const ramses::UniformInput *in = fx && b != buffers_.end() ? find_uniform_cached(fx_id, fx, uniform) : nullptr;
+        return in && ok(app->setInputTexture(*in, *b->second.sampler));
     }
 
     bool uniform(int quad, const char *name, const float *v, int n) override
     {
         ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(quad, &app);
-        ramses::UniformInput in;
-        if (!fx || !ok(fx->findUniformInput(name, in)))
+        int fx_id = 0;
+        const ramses::Effect *fx = look(quad, &app, &fx_id);
+        const ramses::UniformInput *in = fx ? find_uniform_cached(fx_id, fx, name) : nullptr;
+        if (!in)
             return false;
         ramses::Appearance &a = *app;
         switch (n) {
-        case 1: return ok(a.setInputValueFloat(in, v[0]));
-        case 2: return ok(a.setInputValueVector2f(in, v[0], v[1]));
-        case 3: return ok(a.setInputValueVector3f(in, v[0], v[1], v[2]));
-        case 4: return ok(a.setInputValueVector4f(in, v[0], v[1], v[2], v[3]));
+        case 1: return ok(a.setInputValueFloat(*in, v[0]));
+        case 2: return ok(a.setInputValueVector2f(*in, v[0], v[1]));
+        case 3: return ok(a.setInputValueVector3f(*in, v[0], v[1], v[2]));
+        case 4: return ok(a.setInputValueVector4f(*in, v[0], v[1], v[2], v[3]));
         default: return false;
         }
     }
@@ -596,16 +605,17 @@ public:
     bool uniform_array(int quad, const char *name, UniformType t, const float *v, uint32_t elements) override
     {
         ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(quad, &app);
-        ramses::UniformInput in;
-        if (!fx || !ok(fx->findUniformInput(name, in)))
+        int fx_id = 0;
+        const ramses::Effect *fx = look(quad, &app, &fx_id);
+        const ramses::UniformInput *in = fx ? find_uniform_cached(fx_id, fx, name) : nullptr;
+        if (!in)
             return false;
         switch (t) {
-        case UniformType::Float: return ok(app->setInputValueFloat(in, elements, v));
-        case UniformType::Vec2: return ok(app->setInputValueVector2f(in, elements, v));
-        case UniformType::Vec3: return ok(app->setInputValueVector3f(in, elements, v));
-        case UniformType::Vec4: return ok(app->setInputValueVector4f(in, elements, v));
-        default: return ok(app->setInputValueMatrix44f(in, elements, v));
+        case UniformType::Float: return ok(app->setInputValueFloat(*in, elements, v));
+        case UniformType::Vec2: return ok(app->setInputValueVector2f(*in, elements, v));
+        case UniformType::Vec3: return ok(app->setInputValueVector3f(*in, elements, v));
+        case UniformType::Vec4: return ok(app->setInputValueVector4f(*in, elements, v));
+        default: return ok(app->setInputValueMatrix44f(*in, elements, v));
         }
     }
 
@@ -809,6 +819,7 @@ public:
         p.app = app;
         p.geo = geo;
         p.effect = fx->second;
+        p.effect_id = effect;
         p.depth = look.depth_test() != DepthFunc::Off || look.depth_writes();
         parts_[next_] = p;
         clear_depth(v->second, view);
@@ -867,7 +878,7 @@ public:
         if (it == parts_.end() || !it->second.mesh)
             return false;
         Part &p = it->second;
-        const unsigned reads = effect_attributes(*p.effect);
+        const unsigned reads = cached_attributes(p.effect_id, *p.effect);
         const unsigned has = kAttrPosition | (g.normal ? kAttrNormal : 0) | (g.texcoord ? kAttrTexcoord : 0) |
                              (g.color ? kAttrColor : 0);
         if (!(reads & kAttrPosition) || (reads & ~has))
@@ -965,7 +976,7 @@ public:
     {
         ramses::Node *target = nullptr;
         ramses::Appearance *app = nullptr;
-        ramses::UniformInput in;
+        const ramses::UniformInput *in = nullptr;
         if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a, &target, &app, &in))
             return 0;
         table().add(next_, node, a);
@@ -981,7 +992,7 @@ public:
             return animate(node, a);
         ramses::Node *target = nullptr;
         ramses::Appearance *app = nullptr;
-        ramses::UniformInput in;
+        const ramses::UniformInput *in = nullptr;
         if (a.t.empty() || a.v.size() != a.t.size() * a.width || !resolve(node, a, &target, &app, &in)) {
             stop(anim);
             return 0;
@@ -1216,21 +1227,22 @@ public:
     bool link(int drawable, const char *name, int value) override
     {
         ramses::Appearance *app = nullptr;
-        const ramses::Effect *fx = look(drawable, &app);
-        ramses::UniformInput in;
+        int fx_id = 0;
+        const ramses::Effect *fx = look(drawable, &app, &fx_id);
         auto it = values_.find(value);
-        if (!fx || !ok(fx->findUniformInput(name, in)) || (value && it == values_.end()))
+        const ramses::UniformInput *in = fx ? find_uniform_cached(fx_id, fx, name) : nullptr;
+        if (!in || (value && it == values_.end()))
             return false;
         /* the library refuses an array uniform (logging an error) */
-        if (value && in.getElementCount() != 1)
+        if (value && in->getElementCount() != 1)
             return false;
         /* the uniform a float, vec2, vec3 or vec4 as the value: the library
          * logs an error for another */
-        if (value && (!types_ || (uint32_t)in.getDataType() != types_->uniform[it->second.width - 1]))
+        if (value && (!types_ || (uint32_t)in->getDataType() != types_->uniform[it->second.width - 1]))
             return false;
-        if (app->isInputBound(in) && !ok(app->unbindInput(in)))
+        if (app->isInputBound(*in) && !ok(app->unbindInput(*in)))
             return false;
-        return !value || ok(app->bindInput(in, *it->second.data));
+        return !value || ok(app->bindInput(*in, *it->second.data));
     }
 
     /* Its animations retired (retire()); its data object kept while an
@@ -1310,6 +1322,7 @@ private:
         ramses::Appearance *app = nullptr;
         ramses::GeometryBinding *geo = nullptr;
         ramses::Effect *effect = nullptr;
+        int effect_id = 0;
         /* A glyph run's buffers (glyph_buffer()), its capacity in glyphs. */
         ramses::VertexDataBuffer *glyph_pos = nullptr, *glyph_uv = nullptr;
         ramses::IndexDataBuffer *glyph_idx = nullptr;
@@ -1441,6 +1454,7 @@ private:
         ramses::Appearance *app = nullptr;
         ramses::GeometryBinding *geo = nullptr;
         ramses::Effect *effect = nullptr;
+        int effect_id = 0;
         bool depth = false, grouped = false;
         std::vector<const ramses::Resource *> res;
         ramses::Node *pivot = nullptr;   /* a node(): draws nothing */
@@ -1462,11 +1476,12 @@ private:
      * and for a uniform its appearance and input, of a's width (where the
      * types are known). False when there is none. */
     bool resolve(int node, const Animation &a, ramses::Node **target, ramses::Appearance **app,
-                 ramses::UniformInput *in)
+                 const ramses::UniformInput **in)
     {
         if (a.property == Animated::Value) {
             *target = nullptr;
             *app = nullptr;
+            *in = nullptr;
             return values_.count(node) && values_.at(node).width == a.width;
         }
         auto q = quads_.find(node);
@@ -1477,12 +1492,18 @@ private:
                   : v != views_.end() ? (ramses::Node *)v->second.cam
                                       : nullptr;
         *app = nullptr;
-        const ramses::Effect *fx = look(node, app);
+        *in = nullptr;
+        int fx_id = 0;
+        const ramses::Effect *fx = look(node, app, &fx_id);
+        if (!*target)
+            return false;
+        if (a.property != Animated::Uniform)
+            return true;
+        *in = fx ? find_uniform_cached(fx_id, fx, a.uniform.c_str()) : nullptr;
         /* a uniform's only where its type is known (learn()), so a width
          * the library would refuse at the flush is refused here */
-        return *target && (a.property != Animated::Uniform ||
-                           (fx && types_ && ok(fx->findUniformInput(a.uniform.c_str(), *in)) && a.width >= 1 &&
-                            a.width <= 4 && (uint32_t)in->getDataType() == types_->uniform[a.width - 1]));
+        return *in && types_ && a.width >= 1 && a.width <= 4 &&
+               (uint32_t)(*in)->getDataType() == types_->uniform[a.width - 1];
     }
 
     bool read_animation(int anim, uint64_t *start) override
@@ -1628,7 +1649,7 @@ private:
         const Animation &a = an.a;
         ramses::Node *target = nullptr;
         ramses::Appearance *app = nullptr;
-        ramses::UniformInput in;
+        const ramses::UniformInput *in = nullptr;
         if (!resolve(node, a, &target, &app, &in))
             return false;
         auto dv = values_.find(node);
@@ -1654,7 +1675,7 @@ private:
             an.prop = anim_->createAnimatedProperty(*dv->second.data);
             dv->second.systems.insert(anim_);
         } else if (an.spline && a.property == Animated::Uniform) {
-            an.prop = anim_->createAnimatedProperty(in, *app);
+            an.prop = anim_->createAnimatedProperty(*in, *app);
         } else if (an.spline) {
             const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
                                                    : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
@@ -1677,19 +1698,64 @@ private:
     }
 
     /* The appearance and effect of a quad or a part. */
-    const ramses::Effect *look(int handle, ramses::Appearance **app)
+    const ramses::Effect *look(int handle, ramses::Appearance **app, int *fx_id = nullptr)
     {
         auto q = quads_.find(handle);
         if (q != quads_.end()) {
             *app = q->second.app;
+            if (fx_id)
+                *fx_id = q->second.effect_id;
             return q->second.effect;
         }
         auto p = parts_.find(handle);
         if (p != parts_.end()) {
             *app = p->second.app;
+            if (fx_id)
+                *fx_id = p->second.effect_id;
             return p->second.effect;
         }
         return nullptr;
+    }
+
+    struct CachedUniform {
+        std::string name;
+        bool found = false;
+        std::unique_ptr<ramses::UniformInput> input;
+    };
+    struct EffectCache {
+        std::vector<CachedUniform> uniforms;
+        size_t misses = 0;
+        bool has_attrs = false;
+        unsigned attrs = 0;
+    };
+
+    const ramses::UniformInput *find_uniform_cached(int fx_id, const ramses::Effect *fx, const char *name)
+    {
+        EffectCache &ec = effect_cache_[fx_id];
+        for (const CachedUniform &u : ec.uniforms)
+            if (u.name == name)
+                return u.found ? u.input.get() : nullptr;
+        std::unique_ptr<ramses::UniformInput> in(new ramses::UniformInput());
+        const bool found = ok(fx->findUniformInput(name, *in));
+        if (found) {
+            ec.uniforms.push_back(CachedUniform{name, true, std::move(in)});
+            return ec.uniforms.back().input.get();
+        }
+        if (ec.misses < 64) {
+            ec.misses++;
+            ec.uniforms.push_back(CachedUniform{name, false, nullptr});
+        }
+        return nullptr;
+    }
+
+    unsigned cached_attributes(int fx_id, const ramses::Effect &fx)
+    {
+        EffectCache &ec = effect_cache_[fx_id];
+        if (!ec.has_attrs) {
+            ec.attrs = effect_attributes(fx);
+            ec.has_attrs = true;
+        }
+        return ec.attrs;
     }
 
     bool lay_out(Quad &q)
@@ -1933,6 +1999,7 @@ private:
     ramses::Effect *copy_fx_ = nullptr;
 
     ramses::RamsesClient &client_;
+    Ramses19Gpu &gpu_;
     const std::map<int, ramses::Effect *> &effects_;
     const ramses::Vector2fArray &pos_;
     const ramses::UInt16Array &idx_;
@@ -1971,8 +2038,11 @@ private:
     std::map<int, View> views_;
     std::map<int, Part> parts_;
     std::map<int, Anim> anims_;
+    std::unordered_map<int, EffectCache> effect_cache_;
     int next_ = 1;
 };
+
+namespace {
 
 /* Scene files on RAMSES 19 (graph.h FileScene): the scene and its resources
  * loaded by the client library (loadSceneFromFile), with the scene id the
@@ -2126,10 +2196,10 @@ bool set_tree(ramses::Node &n, bool on)
 class Ramses19FileScene : public FileScene {
 public:
     /* effects, pos and idx: the participant's, for layers() */
-    Ramses19FileScene(ramses::RamsesClient &client, const Ramses19Types &types,
+    Ramses19FileScene(ramses::RamsesClient &client, Ramses19Gpu &gpu, const Ramses19Types &types,
                       const std::map<int, ramses::Effect *> &effects, const ramses::Vector2fArray &pos,
                       const ramses::UInt16Array &idx, int64_t realtime_offset_ms)
-        : client_(client), types_(types), effects_(effects), pos_(pos), idx_(idx),
+        : client_(client), gpu_(gpu), types_(types), effects_(effects), pos_(pos), idx_(idx),
           realtime_offset_ms_(realtime_offset_ms)
     {
     }
@@ -2346,7 +2416,7 @@ public:
         }
         /* ponytail: room for 1024 passes above it; a file at the top of the range draws nothing over itself */
         base = std::min<int64_t>(base, INT32_MAX - 1024);
-        std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, effects_, pos_, idx_));
+        std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, gpu_, effects_, pos_, idx_));
         g->set_types(&types_);
         if (!g->over(scene_, w_, h_, (int32_t)base, err))
             return nullptr;
@@ -2423,6 +2493,7 @@ private:
     }
 
     ramses::RamsesClient &client_;
+    Ramses19Gpu &gpu_;
     const Ramses19Types &types_;
     const std::map<int, ramses::Effect *> &effects_;
     const ramses::Vector2fArray &pos_;
@@ -2539,6 +2610,8 @@ void Ramses19Gpu::drop_effect(int effect)
     client_.destroy(*it->second);
     effects_.erase(it);
     inputs_.erase(effect);
+    for (Ramses19Graph *g : graphs_)
+        g->forget(effect);
 }
 
 bool Ramses19Gpu::inputs(int effect, std::vector<EffectInput> *out) const
@@ -2558,7 +2631,7 @@ unsigned Ramses19Gpu::attributes(int effect) const
 
 std::unique_ptr<Graph> Ramses19Gpu::scene(const TargetSpec &t, std::string *err)
 {
-    std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, effects_, *pos_, *idx_));
+    std::unique_ptr<Ramses19Graph> g(new Ramses19Graph(client_, *this, effects_, *pos_, *idx_));
     std::string why;
     if (!typed_)
         typed_ = learn(client_, &types_, &why);
@@ -2576,7 +2649,7 @@ std::unique_ptr<FileScene> Ramses19Gpu::load(const TargetSpec &t, const std::str
     if (!typed_)
         return nullptr;
     std::unique_ptr<Ramses19FileScene> s(
-        new Ramses19FileScene(client_, types_, effects_, *pos_, *idx_, realtime_offset_ms_));
+        new Ramses19FileScene(client_, *this, types_, effects_, *pos_, *idx_, realtime_offset_ms_));
     if (!s->load(t, file, res, err))
         return nullptr;
     return std::unique_ptr<FileScene>(s.release());

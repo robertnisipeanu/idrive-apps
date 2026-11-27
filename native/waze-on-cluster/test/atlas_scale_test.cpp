@@ -5,6 +5,7 @@
  * ratios keep a gradient's mean, rounding to level bits, refusals, a crop
  * (exact 1:1, scaled as the part cut out first), and the time a 1088x480
  * frame takes to scale to the HUD's sizes. */
+#include <poll.h>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -171,6 +172,34 @@ int main()
         kd.set_black_background(true);
         kd.scale(day.data(), &out);
         ok("black background: a day map left alone", out[20 * 452 + 20] == 200);
+
+        /* combined night keying + rounded corners + level rounding */
+        AtlasScaler kc;
+        kc.configure(1088, 480, 452, 200, 2);
+        kc.set_black_background(true);
+        kc.set_corner_radius(16);
+        kc.scale(park.data(), &out);
+        bool all_rounded = true;
+        for (uint8_t b : out) all_rounded = all_rounded && (b % 4 == 0 || b == 255);
+        ok("black background + corners + level_bits: every byte rounded and corners black",
+           all_rounded && out[0] == 16 && out[150 * 452 + 300] == 16 && out[91 * 452 + 100] == 120);
+    }
+
+    {
+        /* ScaleWorker: eventfd/pipe wakeup becomes readable on completion and drains on take(). */
+        ScaleWorker w;
+        ok("ScaleWorker: exposes wakeup fd", w.done_fd() >= 0);
+        ScaleShape sh;
+        sh.w = 1088; sh.h = 480; sh.dw = 452; sh.dh = 200; sh.level_bits = 2; sh.radius = 16; sh.black = true;
+        std::vector<uint8_t> in = ramp, scaled;
+        ok("ScaleWorker: submit accepted", w.submit(&in, 7, sh));
+        struct pollfd pfd = {w.done_fd(), POLLIN, 0};
+        const int pr = ::poll(&pfd, 1, 2000);
+        ok("ScaleWorker: done_fd readable when scaling completes", pr == 1 && (pfd.revents & POLLIN) != 0);
+        uint64_t sid = 0;
+        ok("ScaleWorker: take succeeds", w.take(&scaled, &sid, sh, &in) && sid == 7 && scaled.size() == 452u * 300);
+        pfd.revents = 0;
+        ok("ScaleWorker: done_fd drained after take", ::poll(&pfd, 1, 0) == 0 && w.idle());
     }
 
     {

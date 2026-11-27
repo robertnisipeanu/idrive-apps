@@ -3996,6 +3996,77 @@ static void fresh_frames()
     }
 }
 
+/* Static shown targets idle at 250 ms; active work (time_fps, fade, video
+ * frame clock) tightens timeout_ms; status.txt is written on state change and
+ * skipped while only ages or periodic counts tick. */
+static void idle_cadence_and_status_file()
+{
+    char tmpl[] = "/tmp/crs-status-XXXXXX";
+    const std::string dir = mkdtemp(tmpl) ? tmpl : "/tmp";
+    const std::string status_path = dir + "/status.txt";
+    Rig r;
+    r.sc.status_path = status_path;
+    r.sc.fade_ms = 200;
+    r.svc.reset();
+    r.start();
+    int periodic_lines = 0;
+    r.svc->slots().console_text = [&periodic_lines](int64_t now_ms) {
+        return std::to_string(periodic_lines) + " lines (ramses.Periodic " + std::to_string(periodic_lines) +
+               "), the last " + std::to_string((now_ms / 1000) % 2) + " s ago";
+    };
+    r.svc->slots().console_live_since = [](int64_t) { return 0; };
+
+    cr::Client c("static-app", r.path);
+    Events ev;
+    ev.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.w = 200;
+    lo.h = 100;
+    cr::EffectOptions eo;
+    eo.fs = "#version 100\nprecision mediump float;\nvoid main() { gl_FragColor = vec4(1.0); }\n";
+    const uint32_t fx = c.effect(lo, eo);
+    r.pump(500);   /* shown and faded in */
+    ok("static shown target: does not spin at 30 Hz",
+       ev.layer[fx] == "shown" && r.svc->timeout_ms(r.now) == 250);
+
+    /* Advance past 1 s so status.txt is written once, then record inode/mtime. */
+    r.pump(1100);
+    struct stat st0, st1;
+    const bool written0 = stat(status_path.c_str(), &st0) == 0;
+    for (int i = 0; i < 6; i++) {
+        periodic_lines++;
+        r.port.refresh_slots();
+        r.pump(1100);
+    }
+    const bool written1 = stat(status_path.c_str(), &st1) == 0;
+    ok("status.txt: not rewritten across seconds while only ages and periodic counts tick",
+       written0 && written1 && st0.st_ino == st1.st_ino && st0.st_size == st1.st_size);
+
+    /* Adding a timed effect tightens timeout_ms and changes status.txt. */
+    cr::EffectOptions timed = eo;
+    timed.time_fps = 30;
+    const uint32_t anim = c.effect(lo, timed);
+    r.pump(100);
+    const int fast_timeout = r.svc->timeout_ms(r.now);
+    r.pump(1100);
+    struct stat st2;
+    const bool written2 = stat(status_path.c_str(), &st2) == 0;
+    ok("active time_fps effect tightens timeout_ms and updates status.txt",
+       anim != 0 && fast_timeout > 0 && fast_timeout < 250 && written2 && st2.st_ino != st1.st_ino);
+
+    c.drop(anim);
+    r.pump(100);
+    ok("dropping timed effect returns shown static target to 250 ms cadence", r.svc->timeout_ms(r.now) == 250);
+
+    r.svc.reset();
+    unlink(status_path.c_str());
+    rmdir(dir.c_str());
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -4522,6 +4593,7 @@ int main()
     text_helper();
     text_held();
     over_band();
+    idle_cadence_and_status_file();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

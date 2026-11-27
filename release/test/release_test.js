@@ -38,7 +38,7 @@ const path = require('path');
 const zlib = require('zlib');
 const cp = require('child_process');
 const { buildArtifact } = require('../tool_artifact.js');
-const { components, catalogEntry, catalogTexts, retext, exportHead, bumpVersion, releaseChangelog, plan, writePlan,
+const { components, catalogEntry, catalogTexts, retext, unmetRequires, exportHead, bumpVersion, releaseChangelog, plan, writePlan,
     prLabels } = require('../release.js');
 const catalog = require('../catalog.js');
 
@@ -422,6 +422,50 @@ test('an app\'s staged tree has no version in its folder name', () => {
     fs.writeFileSync(path.join(dir, 'robertn_x@1.0.0', 'package.json'), '{ "name": "robertn_x", "version": "1.0.0", "mguLocalOnly": true }');
     fs.writeFileSync(path.join(dir, 'mgu-app.json'), '{ "schema": 1, "id": "robertn_x", "version": "1.0.0", "tree": "robertn_x@1.0.0" }');
     assert.throws(() => components(root), /without a version in its name/);
+});
+
+test('unmetRequires: same-repo requirements must be met; external catalog components like mgu-deploy are allowed', () => {
+    const known = ['robertn_waze_cluster', 'waze-on-cluster', 'cluster-render'];
+    const current = new Map([
+        ['cluster-render', { id: 'cluster-render', version: '0.2.0', requires: { 'mgu-deploy': '0.4.0' } }],
+        ['waze-on-cluster', { id: 'waze-on-cluster', version: '0.14.18', requires: { 'mgu-deploy': '0.7.17', 'cluster-render': '0.2.0' } }]
+    ]);
+    const app = (min) => ({ id: 'robertn_waze_cluster', version: '0.6.18', requires: { 'waze-on-cluster': min } });
+    assert.deepStrictEqual(unmetRequires([app('0.14.18')], current, known), [],
+        'met same-repo requirement and external mgu-deploy pass');
+    assert.match(unmetRequires([app('0.14.19')], current, known).join(),
+        /needs waze-on-cluster 0\.14\.19, but the catalog would have waze-on-cluster 0\.14\.18/);
+    assert.deepStrictEqual(
+        unmetRequires([app('0.14.19'), { id: 'waze-on-cluster', version: '0.14.19', requires: { 'mgu-deploy': '0.7.17', 'cluster-render': '0.2.0' } }],
+            current, known),
+        [], 'requirement satisfied by the same publish run passes');
+    assert.match(unmetRequires([app('0.14.19')], new Map(), known).join(),
+        /needs waze-on-cluster 0\.14\.19, which the catalog would not have/);
+    // a removed same-repo component passed in known is still caught
+    assert.match(unmetRequires([], new Map([['waze-on-cluster', { id: 'waze-on-cluster', version: '0.14.18', requires: { 'cluster-render': '0.2.0' } }]]), known).join(),
+        /needs cluster-render 0\.2\.0, which the catalog would not have/);
+    assert.match(unmetRequires([{ id: 'a', version: '1.0.0', requires: { a: '1.0.0' } }], new Map(), ['a']).join(),
+        /requires itself/);
+});
+
+test('writePlan: regex metacharacters in a required component id match literally', () => {
+    const r = versionRepo();
+    const dot = fixtureTool(r.root, Object.assign({}, FIXTURE, { id: 'a.x', version: '1.0.0', requires: undefined }));
+    fs.writeFileSync(path.join(dot, 'CHANGELOG.md'), '# Changelog\n\n## 1.0.0\n\nFirst.\n');
+    const g = (args) => cp.execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false']
+        .concat(args), { cwd: r.root, encoding: 'utf8' }).trim();
+    g(['add', '.']);
+    g(['commit', '-q', '-m', 'add a.x']);
+    g(['tag', 'a.x@1.0.0']);
+    r.change('native/a.x/hook.js', 'console.log(1);\n');
+    fs.writeFileSync(path.join(dot, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\nFix.\n\n## 1.0.0\n\nFirst.\n');
+    g(['add', '.']);
+    g(['commit', '-q', '-m', 'change a.x']);
+    r.change('native/b/component.json', JSON.stringify(Object.assign(r.json('b'),
+        { requires: { 'a.x': 'next' }, description: '"aZx": "next"' }), null, 2));
+    assert.deepStrictEqual(r.stamp(['b']), ['a.x@1.0.1', 'b@2.0.1']);
+    assert.strictEqual(r.json('b').requires['a.x'], '1.0.1');
+    assert.strictEqual(r.json('b').description, '"aZx": "next"', 'literal dot did not match aZx');
 });
 
 let failed = 0;

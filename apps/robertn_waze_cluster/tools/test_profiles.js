@@ -768,6 +768,46 @@ async function main() {
         await p2.close();
     });
 
+    await patch.listen();
+    await check('once currentUserOnChange subscribes, polling stops while events still switch profiles; fallback polls until subscribed', async () => {
+        const b = builders(() => 'driverSubA', { event: true, subscribeFails: 1 });
+        const reader = sessionReader(b, quiet(), { retryMs: 50, retryMaxMs: 200 });
+        const subSync = new ProfileSync({ readProfile: reader, patchPath: PSOCK, renderPath: RSOCK, pollMs: POLL, log: quiet() });
+        subSync.start();
+        await until('subscribed after fallback poll', () => reader.subscribed() && subSync.profile === 'driverSubA', 1500);
+        assert(b.reads >= 2, `fallback polled while subscription failed (${b.reads} reads)`);
+        const readsAfterSub = b.reads;
+        await sleep(POLL * 6);
+        assert.strictEqual(b.reads, readsAfterSub, 'no polling after subscription succeeded');
+        b.send('driverSubB');
+        await until('switched by event', () => subSync.profile === 'driverSubB');
+        assert.strictEqual(b.reads, readsAfterSub, 'event switch needed no poll');
+        subSync.stop();
+    });
+
+    await check('with the page open, profile load and setOwn reuse WazeClusterControl.patch without opening a second socket', async () => {
+        let connections = 0;
+        const onConn = () => { connections++; };
+        patch._server.on('connection', onConn);
+        const ctrl = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, retryMs: 50 });
+        const reuseSync = new ProfileSync({ control: ctrl, readProfile: () => Promise.resolve('driverReuse'),
+            patchPath: PSOCK, renderPath: RSOCK, pollMs: 600000, log: quiet() });
+        ctrl.open();
+        await until('control connected', () => ctrl.connectedPatch() && ctrl.connectedRender());
+        assert.strictEqual(connections, 1, 'one socket from control.open()');
+        reuseSync.start();
+        await until('initial profile synced', () => reuseSync.settled() && reuseSync.profile === 'driverReuse');
+        reuseSync.load();
+        await until('loaded', () => !reuseSync.loading() && reuseSync.settled());
+        await reuseSync.setOwn(true);
+        await reuseSync.setOwn(false);
+        assert.strictEqual(connections, 1, 'no extra patch.sock connections opened');
+        patch._server.removeListener('connection', onConn);
+        reuseSync.stop();
+        ctrl.close();
+    });
+    await patch.close();
+
     await render.close();
     [RSOCK, PSOCK].forEach((p) => { try { fs.unlinkSync(p); } catch (e) { /* gone */ } });
     console.log(`${passed}/${passed} passed`);

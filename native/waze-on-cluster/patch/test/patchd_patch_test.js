@@ -108,8 +108,10 @@ fs.writeFileSync(path.join(BIN, 'systemctl'), '#!' + process.execPath + '\n' + [
     "if (a[0] === 'start') line += ' killed-pid-alive=' + alive(st.pid);",
     "fs.appendFileSync(" + JSON.stringify(CALLS) + ", line + '\\n');",
     "if (a[0] === 'show' && a.indexOf('DropInPaths') >= 0) process.stdout.write('DropInPaths=/run/other.conf' + (st.dropin === false ? '' : ' ' + " + JSON.stringify(DROPIN) + ") + '\\n');",
-    "else if (a[0] === 'show' && a.indexOf('Environment') >= 0) process.stdout.write('Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1\\n');",
-    "else if (a[0] === 'show' && a.indexOf('User') >= 0) process.stdout.write('User=cia_13002\\n');",
+    "else if (a[0] === 'show' && (a.indexOf('Environment') >= 0 || a.indexOf('User') >= 0)) {",
+    "    if (a.indexOf('Environment') >= 0) process.stdout.write('Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1\\n');",
+    "    if (a.indexOf('User') >= 0) process.stdout.write('User=cia_13002\\n');",
+    "}",
     "else if (a[0] === 'show') { if (st.mode === 'nopid') proc.stop(P); var p = st.mode === 'nopid' ? 0 : st.pid; process.stdout.write('MainPID=' + p + '\\nInvocationID=inv-' + p + '\\nExecMainStartTimestampMonotonic=5\\n'); }",
     "else if (a[0] === 'start') {",
     "    if (st.mode === 'startfail') { proc.stop(P); process.stderr.write('Job for carplay.service failed.\\n'); process.exit(1); }",
@@ -171,7 +173,7 @@ function newCalls() {
  * reads of its main PID (for its memory) or its unit's environment and user
  * (for the arming). */
 function restartCalls(calls) {
-    return calls.filter(function (l) { return !/^show carplay\.service -p (MainPID|Environment|User)$/.test(l); });
+    return calls.filter(function (l) { return !/^show carplay\.service( -p (MainPID|Environment|User))+$/.test(l); });
 }
 function mountCalls() { return fs.readFileSync(MOUNT_CALLS, 'utf8').split('\n').filter(Boolean); }
 function onDisk() { return fs.readFileSync(TGT); }

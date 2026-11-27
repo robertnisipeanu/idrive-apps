@@ -216,12 +216,14 @@ function setNumbers(text, spans, w) {
 /* {dpi, card} of `cur` when it is the edit of `orig` at one of DENSITIES
  * and CARDS, else null. */
 function edited(orig, cur) {
-    for (var c = 0; c < CARDS.length; c++) {
-        for (var i = 0; i < DENSITIES.length; i++) {
-            try { if (transform(orig, DENSITIES[i], CARDS[c]) === cur) return { dpi: DENSITIES[i], card: CARDS[c] }; } catch (e) { return null; }
-        }
-    }
-    return null;
+    var lc = layout(cur);
+    if (lc.err) return null;
+    var dpi = lc.spans[lc.codec + 'REPORTED_SCREEN_DENSITY'][2];
+    var top = lc.spans[DIMS + 'SA_OFFSET_TOPPIXELS'][2];
+    if (DENSITIES.indexOf(dpi) < 0) return null;
+    var card = top === GEOMETRY.shown.safe.y ? 'shown' : top === GEOMETRY.hidden.safe.y ? 'hidden' : null;
+    if (!card) return null;
+    try { return transform(orig, dpi, card) === cur ? { dpi: dpi, card: card } : null; } catch (e) { return null; }
 }
 
 /* Why `cur` is not the file `orig` is the original of, or null: the same

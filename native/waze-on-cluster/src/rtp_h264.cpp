@@ -120,7 +120,16 @@ void RtpH264::deliver(const uint8_t *annexb, size_t len, const Sink &sink)
     sink(annexb, len, false);
     stats_.nals++;
     au_open_ = true;
-    vcl_done_ = vcl_done_ || is_vcl(annexb[4] & 0x1f);
+    const bool vcl = is_vcl(annexb[4] & 0x1f);
+    au_vcl_ = au_vcl_ || vcl;
+    vcl_done_ = vcl_done_ || vcl;
+}
+
+void RtpH264::flush_au(const Sink &sink)
+{
+    if (!has_open_vcl_au())
+        return;
+    end_au(sink, false);
 }
 
 void RtpH264::drop_fu()
@@ -136,6 +145,7 @@ void RtpH264::end_au(const Sink &sink, bool by_marker)
     if (!au_open_)
         return;
     au_open_ = false;
+    au_vcl_ = false;
     stats_.aus++;
     stats_.aus_marker += by_marker;
     ended_by_marker_ = by_marker;

@@ -113,8 +113,8 @@ Compositor::~Compositor()
     for (Target &t : targets_) {
         if (t.composite)
             t.composite->detach(false);
-        t.file.reset();    /* before a graph that borrows its scene */
-        t.graph.reset();
+        t.graph.reset();   /* borrows t.file's scene */
+        t.file.reset();
     }
     if (atlas_view_fx_) gpu_->drop_effect(atlas_view_fx_);
     if (block_view_fx_) gpu_->drop_effect(block_view_fx_);
@@ -241,7 +241,7 @@ void Compositor::drop_effects(Entry &e)
 {
     if (e.effect)
         drop_effect(e.effect);
-    if (std::string(e.layer->kind()) == "mesh")
+    if (e.layer->layer_kind() == LayerKind::Mesh)
         for (int fx : static_cast<MeshLayer *>(e.layer.get())->effects())
             drop_effect(fx);
 }
@@ -343,7 +343,7 @@ uint32_t Compositor::add_video(uint64_t owner, int target, const LayerParams &lp
     }
     uint32_t videos = 0;
     for (const auto &kv : layers_)
-        videos += std::string(kv.second.layer->kind()) == "video";
+        videos += kv.second.layer->layer_kind() == LayerKind::Video;
     if (videos >= limits_.client_videos) {
         *err = "too many video layers";
         return 0;
@@ -535,7 +535,7 @@ bool Compositor::add_part(uint64_t owner, uint32_t layer, uint32_t part, const s
         *err = "no such layer";
         return false;
     }
-    if (std::string(en->layer->kind()) != "mesh") {
+    if (en->layer->layer_kind() != LayerKind::Mesh) {
         *err = "parts are for mesh layers";
         return false;
     }
@@ -582,7 +582,7 @@ bool Compositor::geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshDat
         return false;
     }
     Entry &e = *en;
-    if (std::string(e.layer->kind()) != "mesh") {
+    if (e.layer->layer_kind() != LayerKind::Mesh) {
         *err = "geometry is for mesh layers";
         return false;
     }
@@ -592,7 +592,7 @@ bool Compositor::geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshDat
     auto count = [&](const std::map<uint32_t, Entry> &in) {
         for (const auto &kv : in)
             if (kv.second.layer.get() != m && kv.second.layer->target() == m->target() &&
-                !std::strcmp(kv.second.layer->kind(), "mesh"))
+                kv.second.layer->layer_kind() == LayerKind::Mesh)
                 others += static_cast<const MeshLayer *>(kv.second.layer.get())->drawn_indices();
     };
     count(layers_);
@@ -911,14 +911,14 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
         return false;
     }
     Entry &e = *en;
-    const std::string kind = e.layer->kind();
-    if (kind != "effect" && kind != "mesh") {
+    const LayerKind kind = e.layer->layer_kind();
+    if (kind != LayerKind::Effect && kind != LayerKind::Mesh) {
         *err = "links are for effect layers and mesh parts";
         return false;
     }
     Uniforms *u = e.layer->uniforms_of(part);
     if (!u) {
-        *err = kind == "effect" ? "effect layers have no parts" : "no such part";
+        *err = kind == LayerKind::Effect ? "effect layers have no parts" : "no such part";
         return false;
     }
     auto v = values_.find(value);
@@ -935,7 +935,7 @@ bool Compositor::link(uint64_t owner, uint32_t layer, uint32_t part, const std::
     static const char *const kTypes[] = {"float", "vec2", "vec3", "vec4"};
     static const EffectInput::Kind kKinds[] = {EffectInput::Float, EffectInput::Vec2, EffectInput::Vec3,
                                                EffectInput::Vec4};
-    const int fx = kind == "effect" ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
+    const int fx = kind == LayerKind::Effect ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
     if (value && !fx) {
         *err = "a pivot has no uniforms";
         return false;
@@ -1220,22 +1220,22 @@ bool Compositor::bind(uint64_t owner, uint32_t layer, uint32_t part, const std::
         return false;
     }
     Entry &e = *en;
-    const std::string kind = e.layer->kind();
-    if (kind == "effect" && part) {
+    const LayerKind kind = e.layer->layer_kind();
+    if (kind == LayerKind::Effect && part) {
         *err = "effect layers have no parts";
         return false;
     }
-    if (kind == "mesh" && !static_cast<MeshLayer *>(e.layer.get())->has_part(part)) {
+    if (kind == LayerKind::Mesh && !static_cast<MeshLayer *>(e.layer.get())->has_part(part)) {
         *err = "no such part";
         return false;
     }
-    if (kind != "effect" && kind != "mesh") {
+    if (kind != LayerKind::Effect && kind != LayerKind::Mesh) {
         *err = "binds are for effect layers and mesh parts";
         return false;
     }
     /* a cube map to a samplerCube, any other to a sampler2D, as the
      * library compiled the effect */
-    const int fx = kind == "effect" ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
+    const int fx = kind == LayerKind::Effect ? e.effect : static_cast<MeshLayer *>(e.layer.get())->part_effect(part);
     auto compiled = inputs_.find(fx);
     if (compiled != inputs_.end()) {
         auto type = compiled->second.find(sampler);
@@ -1452,8 +1452,8 @@ static bool overlaps(const Rect &a, const Rect &b)
  * or mesh draws what its shader does: taken as seen). */
 static bool seen(const Layer &l)
 {
-    const std::string kind = l.kind();
-    return (kind != "video" && kind != "image") || l.params.opacity > 0;
+    const LayerKind kind = l.layer_kind();
+    return (kind != LayerKind::Video && kind != LayerKind::Image) || l.params.opacity > 0;
 }
 
 static bool listed(const std::vector<uint32_t> &v, uint32_t id)
@@ -1629,7 +1629,7 @@ void Compositor::host_restack(int target, const LayerHost &lh)
     bool moved = false;
     for (StackItem &it : items) {
         const Entry &e = layers_.at(it.id);
-        if (e.owner == lh.owner || std::strcmp(e.layer->kind(), "video") ||
+        if (e.owner == lh.owner || e.layer->layer_kind() != LayerKind::Video ||
             e.layer->params.hosted != slots_->targets()[target].name)
             continue;
         it.klass = key.klass;
@@ -1670,7 +1670,7 @@ void Compositor::arrange_layer_hosts()
 
 const Compositor::LayerHost *Compositor::layer_host_of(int ti, const Entry &e) const
 {
-    if (std::strcmp(e.layer->kind(), "video") || e.layer->params.hosted.empty())
+    if (e.layer->layer_kind() != LayerKind::Video || e.layer->params.hosted.empty())
         return nullptr;
     const int hosted = slots_->index(e.layer->params.hosted);
     for (const auto &kv : layer_hosts_) {
@@ -1809,7 +1809,7 @@ void Compositor::changed(Layer *l)
     }
     if (it != layers_.end())
         mark(it->second, l->id(), t);
-    if (std::string(l->kind()) == "video")
+    if (l->layer_kind() == LayerKind::Video)
         reconcile();
 }
 
@@ -1844,7 +1844,7 @@ void Compositor::remove(uint64_t owner, uint32_t id)
         return;
     const int ti = it->second.layer->target();
     Target &t = targets_[ti];
-    const bool video = std::string(it->second.layer->kind()) == "video";
+    const bool video = it->second.layer->layer_kind() == LayerKind::Video;
     if (it->second.composited && t.composite)
         t.composite->remove(id);
     if (it->second.held)
@@ -1976,7 +1976,7 @@ void Compositor::arrange(int64_t now_ms)
                 assets_clean(e);
             const int32_t order = draw_order(t.over, *e.layer, pos);
             /* A composite not attached draws none of its sources. */
-            if (e.composited ? cv : !std::strcmp(e.layer->kind(), "video")) {
+            if (e.composited ? cv : e.layer->layer_kind() == LayerKind::Video) {
                 t.videos++;
                 t.lowest = std::min(t.lowest, order);
             }
@@ -2001,7 +2001,7 @@ void Compositor::arrange(int64_t now_ms)
                 t.dirty = true;
                 mark(e, t.arr.order[pos], t);
             }
-            if (!std::strcmp(e.layer->kind(), "video")) {
+            if (e.layer->layer_kind() == LayerKind::Video) {
                 VideoEdge ed = edge_for((int)ti, e);
                 if (ed.on() && !edge_effects())
                     ed = VideoEdge();
@@ -2052,7 +2052,7 @@ void Compositor::cap_videos(int64_t now_ms)
         bool sources = false, unheld = false;
         for (auto &kv : layers_) {
             Entry &e = kv.second;
-            if (e.layer->target() != (int)ti || std::strcmp(e.layer->kind(), "video"))
+            if (e.layer->target() != (int)ti || e.layer->layer_kind() != LayerKind::Video)
                 continue;
             const uint32_t cap = fps_cap(e.owner);
             /* a composite's source too, so it draws itself at its client's
@@ -2200,7 +2200,7 @@ void Compositor::render(int64_t now_ms)
             /* and a video's frame from before may wait for a newer one (fresh_ms) */
             for (auto &kv : layers_)
                 if (kv.second.layer->target() == (int)ti && !kv.second.composited &&
-                    !std::strcmp(kv.second.layer->kind(), "video"))
+                    kv.second.layer->layer_kind() == LayerKind::Video)
                     static_cast<VideoLayer *>(kv.second.layer.get())->on_screen_again(now_ms);
         }
         t.flushing = flushing;
@@ -2319,8 +2319,11 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         const Stage s = a.stage(now_ms);
         if (a.buffer() != had)   /* an immutable asset's texture, made now */
             rebind(a.id());
-        if (s == Stage::Idle)
+        if (s == Stage::Idle) {
+            if (a.pending())
+                t.held_back = true;
             continue;
+        }
         staged_assets.push_back(&a);
         wrote = wrote || s == Stage::Wrote;
         failed = failed || s == Stage::Failed;
@@ -2391,7 +2394,8 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
             continue;
         const uint64_t holds = l->write_stats().holds;
         const Stage s = l->stage(now_ms);
-        t.held_back = t.held_back || l->write_stats().holds != holds;
+        t.held_back = t.held_back || l->write_stats().holds != holds ||
+                      (l->layer_kind() == LayerKind::Mesh && static_cast<const MeshLayer *>(l)->pending_upload());
         if (l == t.composite.get() && t.composite->placed_now())
             t.dirty = true;   /* quads moved over a canvas the display holds */
         if (s == Stage::Idle)
@@ -2622,7 +2626,7 @@ void Compositor::occlude(int ti, Target &t)
             continue;
         const int32_t order = e.composited || !e.eval_held ? e.order : e.flushed.order;
         const bool drawn = e.composited || !e.eval_held ? e.drawn : e.flushed.drawn;
-        if (e.composited || !std::strcmp(e.layer->kind(), "video")) {
+        if (e.composited || e.layer->layer_kind() == LayerKind::Video) {
             videos = true;
             lowest = std::min(lowest, order);
         }
@@ -2638,7 +2642,7 @@ void Compositor::occlude(int ti, Target &t)
         for (uint32_t id : t.arr.order) {
             auto it = layers_.find(id);
             if (it == layers_.end() || it->second.composited || !it->second.layer->attached() ||
-                std::strcmp(it->second.layer->kind(), "video"))
+                it->second.layer->layer_kind() != LayerKind::Video)
                 continue;
             VideoLayer *v = static_cast<VideoLayer *>(it->second.layer.get());
             v->occluded(t.coverage, shown_of(it->second, t));
@@ -2953,7 +2957,7 @@ void Compositor::settle(int ti, Target &t, bool ok)
             if (e.layer->target() != ti || e.composited)
                 continue;
             e.eval_held = false;
-            if (!std::strcmp(e.layer->kind(), "video"))
+            if (e.layer->layer_kind() == LayerKind::Video)
                 static_cast<VideoLayer *>(e.layer.get())->force(false);
         }
         if (t.composite) {
@@ -2995,28 +2999,33 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             best = w;
     };
     for (const auto &kv : layers_)
-        if (slots_->requested(kv.second.layer->target()) || slots_->loaded(kv.second.layer->target()))
+        if (slots_->flushing(kv.second.layer->target()))
             at(kv.second.layer->wake_in_ms(now_ms));
     for (const auto &ck : canvases_)
         for (const auto &kv : ck.second.layers)
-            if (slots_->requested(kv.second.layer->target()) || slots_->loaded(kv.second.layer->target()))
+            if (slots_->flushing(kv.second.layer->target()))
                 at(kv.second.layer->wake_in_ms(now_ms));
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         const Target &t = targets_[ti];
-        if (t.composite && (slots_->requested((int)ti) || slots_->loaded((int)ti)))
+        if (t.composite && slots_->flushing((int)ti))
             at(t.composite->wake_in_ms(now_ms));
         if (t.remake_ms >= 0)
             at(std::max<int64_t>(1, t.remake_ms - now_ms));
         if (t.hold_ms >= 0)
             at(std::max<int64_t>(1, t.hold_ms - now_ms));
-        if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
+        const TargetState st = slots_->status((int)ti).state;
+        const bool on_screen = st == TargetState::Shown || st == TargetState::Lingering || slots_->kept((int)ti);
+        const bool fading_in = fade_ms_ > 0 && on_screen && t.arr.wanted && t.fade < 1.0f;
+        if (t.graph && (t.fading_out || fading_in || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
         /* due edits of a scene render() stages (flushing), and the
          * sequences it plays */
         auto s = t.file ? scenes_.find(t.file_of) : scenes_.end();
         if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->flushing((int)ti) &&
-            (s->second.edits.due() || t.file->ticking()))
-            at(std::max<int64_t>(1, t.file_flush_ms + file_tick_ms_ - now_ms));
+            (s->second.edits.due() || t.file->ticking())) {
+            const int64_t wait = t.file_flush_ms + file_tick_ms_ - now_ms;
+            at(wait > 0 ? wait : std::max<int64_t>(1, file_tick_ms_));
+        }
     }
     return best;
 }
@@ -3095,7 +3104,7 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
         return LayerState::Waiting;
     }
     const Target &t = targets_[l.target()];
-    if (t.graph && std::string(l.kind()) == "video" &&
+    if (t.graph && l.layer_kind() == LayerKind::Video &&
         (e.composited ? !(t.composite && t.composite->attached()) : !l.attached())) {
         *reason = "the display's video buffers: another target's are still going";
         return LayerState::Waiting;
@@ -3233,7 +3242,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         Entry &e = kv.second;
         if (e.layer->target() != ti || e.composited)
             continue;
-        if (std::string(e.layer->kind()) == "video" && !may_make_video(ti)) {
+        if (e.layer->layer_kind() == LayerKind::Video && !may_make_video(ti)) {
             e.placed = false;   /* reconcile_make attaches it */
             t.make_waiting = true;
             continue;
@@ -3304,8 +3313,8 @@ void Compositor::unpublish(const TargetSpec &spec)
         t.composite->detach(false);
     if (t.file)
         host_serial_++;   /* what it hosted is not drawable any more */
-    t.file.reset();    /* before a graph that borrows its scene */
-    t.graph.reset();
+    t.graph.reset();   /* borrows t.file's scene */
+    t.file.reset();
     t.file_of = 0;
     t.dirty = false;
     t.flushed_videos = 0;
@@ -3336,7 +3345,7 @@ std::vector<Compositor::VideoSpec> Compositor::video_specs(bool real) const
 {
     std::vector<VideoSpec> out;
     for (const auto &kv : layers_) {
-        if (std::string(kv.second.layer->kind()) != "video")
+        if (kv.second.layer->layer_kind() != LayerKind::Video)
             continue;
         VideoSpec s;
         s.id = kv.first;
@@ -3524,7 +3533,7 @@ bool Compositor::view_effects(std::string *err)
 
 bool Compositor::check(const Layer *l, const LayerParams &p, std::string *err)
 {
-    if (std::string(l->kind()) != "video")
+    if (l->layer_kind() != LayerKind::Video)
         return true;
     std::vector<VideoSpec> specs = video_specs(), real = video_specs(true);
     for (VideoSpec &s : specs)
@@ -3701,7 +3710,7 @@ void Compositor::reconcile_drop(int ti, VideoPlan &pl)
     }
     for (auto &kv : layers_) {
         Entry &e = kv.second;
-        if (e.layer->target() != ti || std::string(e.layer->kind()) != "video")
+        if (e.layer->target() != ti || e.layer->layer_kind() != LayerKind::Video)
             continue;
         VideoLayer *v = static_cast<VideoLayer *>(e.layer.get());
         if (planned(pl.composited, kv.first)) {
@@ -3743,7 +3752,7 @@ void Compositor::reconcile_make(int ti, const VideoPlan &pl)
     std::vector<uint32_t> waiting;
     for (auto &kv : layers_) {
         Entry &e = kv.second;
-        if (e.layer->target() != ti || std::string(e.layer->kind()) != "video" || planned(pl.composited, kv.first))
+        if (e.layer->target() != ti || e.layer->layer_kind() != LayerKind::Video || planned(pl.composited, kv.first))
             continue;
         VideoLayer *v = static_cast<VideoLayer *>(e.layer.get());
         const bool moved = v->source() || !e.placed;
@@ -3801,7 +3810,7 @@ uint32_t Compositor::video_buffers(int ti) const
     uint32_t n = t.composite && t.composite->attached() ? 1 : 0;
     for (const auto &kv : layers_)
         n += kv.second.layer->target() == ti && !kv.second.composited &&
-             std::string(kv.second.layer->kind()) == "video" && kv.second.layer->attached();
+             kv.second.layer->layer_kind() == LayerKind::Video && kv.second.layer->attached();
     return n;
 }
 

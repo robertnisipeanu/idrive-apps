@@ -47,6 +47,9 @@ public:
 
     size_t clients() const { return clients_.size(); }
     std::string status_text(int64_t now_ms) const;
+    /* Stable state signature of status_text() (no ticking ages or routine
+     * periodic counts), used to avoid rewriting status.txt when unchanged. */
+    std::string status_key(int64_t now_ms) const;
     /* Where the scene files clients name may come from (scene_file.h). */
     void set_scene_files(const SceneFiles &where) { scene_files_ = where; }
     /* The drop-ins' lines for the status (ServiceConfig::drop_ins). */
@@ -63,13 +66,28 @@ private:
         std::string out;
         std::map<uint32_t, uint32_t> refs;            /* the client's ref -> layer or scene content id */
         std::map<uint32_t, uint32_t> assets;          /* the client's ref -> asset id */
-        std::map<uint32_t, std::string> layer_sent;   /* by ref: the state line last sent */
-        std::map<std::string, std::string> target_sent;
+        struct LayerSent {
+            bool valid = false;
+            LayerState state = LayerState::Hidden;
+            std::string reason;
+        };
+        struct TargetSent {
+            bool valid = false;
+            TargetState state = TargetState::Idle;
+            Holder holder = Holder::None;
+            Rendering rendering = Rendering::None;
+            int64_t retry_ms = -1;
+            std::string reason;
+        };
+        std::map<uint32_t, LayerSent> layer_sent;       /* by ref: the state last sent */
+        std::vector<TargetSent> target_sent;            /* by target index: the status last sent */
         std::map<std::string, std::string> host_sent;   /* by hosted target: its host event last sent */
         uint64_t host_gen = 0;                          /* the Server's hosts_gen_ it was compared with */
         std::map<std::string, std::string> hosting_sent;   /* by target: its last hosting event (its host from layers) */
         std::map<uint32_t, std::string> frame_error;  /* by ref: the last frame error sent */
-        std::string budget_sent;
+        bool budget_sent_valid = false;
+        uint64_t budget_cap_sent = 0;
+        std::string budget_reason_sent;
         uint32_t fps_cap_sent = 0;   /* the fps of its last fps_cap event; 0: none or none sent */
         bool closing = false;
         /* Descriptors it passed, not taken by an op yet (oldest first). */
@@ -126,6 +144,7 @@ private:
     bool apply(Layer *l, const cr::Json &j, std::string *err);
     /* The app name of the client with this id; "?" for none. */
     std::string app_of(uint64_t id) const;
+    std::string format_status(int64_t now_ms, bool live) const;
 
     Compositor *comp_;
     SlotManager *slots_;
@@ -142,6 +161,7 @@ private:
     std::map<std::string, std::string> hosts_;
     uint64_t hosts_serial_ = 0, hosts_gen_ = 0;
     /* The others_fps requests as last logged (report()). */
+    std::vector<Compositor::FpsRequest> fps_requests_last_;
     std::string fps_requests_;
 };
 

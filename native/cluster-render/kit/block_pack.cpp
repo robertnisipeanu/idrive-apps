@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <system_error>
 #include <thread>
 
@@ -60,29 +62,29 @@ uint8_t clamp_int(int v)
     return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
 }
 
-/* Row y of the picture as RGB planes r, g, b (w bytes each), the atlas
- * shader's way: chroma bilinear at (x / 2, y / 2 - 1/4) in its plane, edges
- * clamped, which comes to fixed weights (an even x takes a sample, an odd
- * one the mean of two; a row takes 3/4 of its chroma row and 1/4 of the one
- * above or below), then full-range BT.601 in 16-bit fixed point on 8 x the
- * chroma (each coefficient x 65536 / 8, rounded half up). cu and cv are
- * scratch of w / 2 + 1. simd: the SSE2 path where there is one; both give
- * the same bytes. */
-void rgb_row(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t y, int16_t *cu, int16_t *cv, uint8_t *r,
-             uint8_t *g, uint8_t *b, bool simd)
+/* Columns [2 * cj0, 2 * cj1) of row y as RGB planes r, g, b (2 * (cj1 - cj0)
+ * bytes each), the atlas shader's way: chroma bilinear at (x / 2, y / 2 - 1/4)
+ * in its plane, edges clamped, which comes to fixed weights (an even x takes a
+ * sample, an odd one the mean of two; a row takes 3/4 of its chroma row and
+ * 1/4 of the one above or below), then full-range BT.601 in 16-bit fixed point
+ * on 8 x the chroma (each coefficient x 65536 / 8, rounded half up). cu and cv
+ * are scratch of (cj1 - cj0) + 1. simd: the SSE2 path where there is one; both
+ * give the same bytes. */
+void rgb_row_span(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t y, uint32_t cj0, uint32_t cj1, int16_t *cu,
+                  int16_t *cv, uint8_t *r, uint8_t *g, uint8_t *b, bool simd)
 {
-    const uint32_t cw = w / 2, ch = h / 2;
+    const uint32_t cw = w / 2, ch = h / 2, n = cj1 - cj0;
     const uint8_t *uplane = atlas + (size_t)w * h, *vplane = uplane + cw;   /* U | V side by side, w apart */
     const uint32_t k = y / 2;
     const uint32_t other = y % 2 ? std::min(k + 1, ch - 1) : (k ? k - 1 : 0);
-    const uint8_t *u3 = uplane + (size_t)k * w, *u1 = uplane + (size_t)other * w;
-    const uint8_t *v3 = vplane + (size_t)k * w, *v1 = vplane + (size_t)other * w;
-    const uint8_t *yrow = atlas + (size_t)y * w;
+    const uint8_t *u3 = uplane + (size_t)k * w + cj0, *u1 = uplane + (size_t)other * w + cj0;
+    const uint8_t *v3 = vplane + (size_t)k * w + cj0, *v1 = vplane + (size_t)other * w + cj0;
+    const uint8_t *yrow = atlas + (size_t)y * w + (size_t)cj0 * 2;
     uint32_t j = 0;
 #if defined(__SSE2__)
     if (simd) {
         const __m128i zero = _mm_setzero_si128();
-        for (; j + 8 <= cw; j += 8) {
+        for (; j + 8 <= n; j += 8) {
             const __m128i a = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i *>(u3 + j)), zero);
             const __m128i c = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i *>(u1 + j)), zero);
             const __m128i d = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i *>(v3 + j)), zero);
@@ -93,12 +95,17 @@ void rgb_row(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t y, int16_t *
     }
 #endif
     /* 4 x the chroma column by column: 3 x this row + the other row */
-    for (; j < cw; j++) {
+    for (; j < n; j++) {
         cu[j] = (int16_t)(3 * u3[j] + u1[j]);
         cv[j] = (int16_t)(3 * v3[j] + v1[j]);
     }
-    cu[cw] = cu[cw - 1];
-    cv[cw] = cv[cw - 1];
+    if (cj1 < cw) {
+        cu[n] = (int16_t)(3 * u3[n] + u1[n]);
+        cv[n] = (int16_t)(3 * v3[n] + v1[n]);
+    } else {
+        cu[n] = cu[n - 1];
+        cv[n] = cv[n - 1];
+    }
     j = 0;
 #if defined(__SSE2__)
     if (simd) {
@@ -115,7 +122,7 @@ void rgb_row(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t y, int16_t *
                                    _mm_srai_epi32(_mm_add_epi32(_mm_madd_epi16(hi, k), add), 16));
         };
         const __m128i zero32 = _mm_setzero_si128();
-        for (; j + 8 <= cw; j += 8) {
+        for (; j + 8 <= n; j += 8) {
             const __m128i c0 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(cu + j));
             const __m128i c1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(cu + j + 1));
             const __m128i d0 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(cv + j));
@@ -149,7 +156,7 @@ void rgb_row(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t y, int16_t *
 #endif
     /* 8 x the chroma, less 8 x 128: an even pixel twice its column, an odd
      * one its column and the next */
-    for (; j < cw; j++)
+    for (; j < n; j++)
         for (uint32_t odd = 0; odd < 2; odd++) {
             const int u = cu[j] + cu[j + odd] - 1024, v = cv[j] + cv[j + odd] - 1024, yy = yrow[2 * j + odd];
             r[2 * j + odd] = clamp_int(yy + ((11485 * v + 32768) >> 16));
@@ -164,7 +171,7 @@ void to_rgb(const uint8_t *atlas, uint32_t w, uint32_t h, uint8_t *out, bool sim
     std::vector<uint8_t> planes((size_t)w * 3);
     uint8_t *r = planes.data(), *g = r + w, *b = g + w;
     for (uint32_t y = 0; y < h; y++) {
-        rgb_row(atlas, w, h, y, cu.data(), cv.data(), r, g, b, simd);
+        rgb_row_span(atlas, w, h, y, 0, w / 2, cu.data(), cv.data(), r, g, b, simd);
         uint8_t *o = out + (size_t)y * w * 3;
         for (uint32_t x = 0; x < w; x++) {
             o[3 * x] = r[x];
@@ -318,34 +325,174 @@ void fit_block(const Block &p, uint8_t *out, bool simd)
                                kSelector[cnt[r * 4 + 3]] << 6);
 }
 
+struct PackScratch {
+    std::vector<uint8_t> planes;
+    std::vector<int16_t> cu, cv;
+
+    void ensure(uint32_t span_w)
+    {
+        const size_t need_planes = (size_t)span_w * 4 * 3;
+        if (planes.size() < need_planes)
+            planes.resize(need_planes);
+        const size_t need_chroma = (size_t)span_w / 2 + 1;
+        if (cu.size() < need_chroma) {
+            cu.resize(need_chroma);
+            cv.resize(need_chroma);
+        }
+    }
+};
+
 /* Blocks bx0 .. bx1 - 1 of block rows by0 .. by1 - 1, block (bx, by) at
- * out + ((by - by0) * stride + bx - bx0) * 8. */
+ * out + ((by - by0) * stride + bx - bx0) * 8. Converts only the horizontal
+ * column span [bx0 * 4, bx1 * 4) using reusable scratch. */
 void pack_part(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t bx0, uint32_t bx1, uint32_t by0, uint32_t by1,
-               uint8_t *out, size_t stride, bool simd)
+               uint8_t *out, size_t stride, bool simd, PackScratch *scratch)
 {
-    std::vector<uint8_t> planes((size_t)w * 4 * 3);   /* 4 rows of R, then of G, then of B */
-    std::vector<int16_t> cu(w / 2 + 1), cv(w / 2 + 1);
-    const size_t plane = (size_t)w * 4;
+    if (bx0 >= bx1 || by0 >= by1)
+        return;
+    const uint32_t span_w = (bx1 - bx0) * 4;
+    scratch->ensure(span_w);
+    const size_t plane = (size_t)span_w * 4;
+    uint8_t *planes = scratch->planes.data();
+    int16_t *cu = scratch->cu.data(), *cv = scratch->cv.data();
     for (uint32_t by = by0; by < by1; by++) {
         for (uint32_t j = 0; j < 4; j++) {
-            uint8_t *r = planes.data() + (size_t)j * w;
-            rgb_row(atlas, w, h, by * 4 + j, cu.data(), cv.data(), r, r + plane, r + 2 * plane, simd);
+            uint8_t *r = planes + (size_t)j * span_w;
+            rgb_row_span(atlas, w, h, by * 4 + j, bx0 * 2, bx1 * 2, cu, cv, r, r + plane, r + 2 * plane, simd);
         }
         for (uint32_t bx = bx0; bx < bx1; bx++) {
             Block p;
+            const size_t xoff = (size_t)(bx - bx0) * 4;
             for (int c = 0; c < 3; c++)
                 for (int j = 0; j < 4; j++)
-                    std::memcpy(p.c[c] + 4 * j, planes.data() + c * plane + (size_t)j * w + bx * 4, 4);
+                    std::memcpy(p.c[c] + 4 * j, planes + c * plane + (size_t)j * span_w + xoff, 4);
             fit_block(p, out + ((size_t)(by - by0) * stride + (bx - bx0)) * 8, simd);
         }
     }
 }
 
 /* Block rows by0 .. by1 - 1. */
-void pack_rows(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t by0, uint32_t by1, uint8_t *out, bool simd)
+void pack_rows(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t by0, uint32_t by1, uint8_t *out, bool simd,
+               PackScratch *scratch)
 {
     const uint32_t bw = w / 4;
-    pack_part(atlas, w, h, 0, bw, by0, by1, out + (size_t)by0 * bw * 8, bw, simd);
+    pack_part(atlas, w, h, 0, bw, by0, by1, out + (size_t)by0 * bw * 8, bw, simd, scratch);
+}
+
+/* Persistent worker pool for multi-threaded pack_blocks(): lazily grows up to
+ * the requested helper count and joins cleanly at process exit. */
+class PackPool {
+public:
+    ~PackPool()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            stop_ = true;
+        }
+        cv_work_.notify_all();
+        for (std::thread &t : workers_)
+            if (t.joinable())
+                t.join();
+    }
+
+    void run(const uint8_t *atlas, uint32_t w, uint32_t h, uint8_t *out, uint32_t n)
+    {
+        std::lock_guard<std::mutex> call_lock(call_mu_);
+        const uint32_t want = n - 1;
+        if (workers_.size() < want) {
+            try {
+                while (workers_.size() < want) {
+                    const uint32_t idx = (uint32_t)workers_.size();
+                    workers_.emplace_back([this, idx] { worker(idx); });
+                }
+            } catch (const std::system_error &) {
+                /* No thread to spare: pack with the workers already running. */
+            }
+        }
+        const uint32_t active_workers = std::min<uint32_t>(want, (uint32_t)workers_.size());
+        const uint32_t parts = active_workers + 1;
+        const uint32_t rows = h / 4;
+        if (active_workers == 0) {
+            pack_rows(atlas, w, h, 0, rows, out, true, &caller_scratch_);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            atlas_ = atlas;
+            w_ = w;
+            h_ = h;
+            out_ = out;
+            rows_ = rows;
+            parts_ = parts;
+            active_workers_ = active_workers;
+            remaining_ = active_workers;
+            gen_++;
+        }
+        cv_work_.notify_all();
+        pack_rows(atlas, w, h, 0, rows / parts, out, true, &caller_scratch_);
+        std::unique_lock<std::mutex> lock(mu_);
+        cv_done_.wait(lock, [this] { return remaining_ == 0; });
+    }
+
+private:
+    void worker(uint32_t idx)
+    {
+        PackScratch scratch;
+        uint64_t seen = 0;
+        for (;;) {
+            const uint8_t *atlas = nullptr;
+            uint8_t *out = nullptr;
+            uint32_t w = 0, h = 0, by0 = 0, by1 = 0;
+            bool run_slice = false;
+            {
+                std::unique_lock<std::mutex> lock(mu_);
+                cv_work_.wait(lock, [this, seen] { return stop_ || gen_ != seen; });
+                if (stop_)
+                    return;
+                seen = gen_;
+                if (idx < active_workers_) {
+                    run_slice = true;
+                    atlas = atlas_;
+                    w = w_;
+                    h = h_;
+                    out = out_;
+                    const uint32_t t = idx + 1;
+                    by0 = rows_ * t / parts_;
+                    by1 = rows_ * (t + 1) / parts_;
+                }
+            }
+            if (run_slice) {
+                pack_rows(atlas, w, h, by0, by1, out, true, &scratch);
+                std::lock_guard<std::mutex> lock(mu_);
+                if (--remaining_ == 0)
+                    cv_done_.notify_one();
+            }
+        }
+    }
+
+    std::mutex call_mu_;
+    std::mutex mu_;
+    std::condition_variable cv_work_;
+    std::condition_variable cv_done_;
+    std::vector<std::thread> workers_;
+    PackScratch caller_scratch_;
+    const uint8_t *atlas_ = nullptr;
+    uint8_t *out_ = nullptr;
+    uint32_t w_ = 0, h_ = 0, rows_ = 0, parts_ = 1, active_workers_ = 0, remaining_ = 0;
+    uint64_t gen_ = 0;
+    bool stop_ = false;
+};
+
+PackPool &pack_pool()
+{
+    static PackPool p;
+    return p;
+}
+
+PackScratch &local_scratch()
+{
+    static thread_local PackScratch s;
+    return s;
 }
 
 }  // namespace
@@ -362,32 +509,24 @@ void atlas_to_rgb_scalar(const uint8_t *atlas, uint32_t w, uint32_t h, uint8_t *
 
 void pack_blocks_scalar(const uint8_t *atlas, uint32_t w, uint32_t h, uint8_t *out)
 {
-    pack_rows(atlas, w, h, 0, h / 4, out, false);
+    pack_rows(atlas, w, h, 0, h / 4, out, false, &local_scratch());
 }
 
 void pack_blocks(const uint8_t *atlas, uint32_t w, uint32_t h, uint8_t *out, unsigned threads)
 {
     const uint32_t rows = h / 4;
     const uint32_t n = std::max(1u, std::min(threads, rows));
-    std::vector<std::thread> helpers;
-    uint32_t t = 1;
-    try {
-        for (; t < n; t++)
-            helpers.emplace_back(pack_rows, atlas, w, h, rows * t / n, rows * (t + 1) / n, out, true);
-    } catch (const std::system_error &) {
-        /* No thread to spare: this one packs the rows left. */
+    if (n <= 1) {
+        pack_rows(atlas, w, h, 0, rows, out, true, &local_scratch());
+        return;
     }
-    pack_rows(atlas, w, h, 0, rows / n, out, true);
-    if (t < n)
-        pack_rows(atlas, w, h, rows * t / n, rows, out, true);
-    for (std::thread &helper : helpers)
-        helper.join();
+    pack_pool().run(atlas, w, h, out, n);
 }
 
 void pack_block_rect(const uint8_t *atlas, uint32_t w, uint32_t h, uint32_t bx0, uint32_t by0, uint32_t bx1,
                      uint32_t by1, uint8_t *out)
 {
-    pack_part(atlas, w, h, bx0, bx1, by0, by1, out, bx1 - bx0, true);
+    pack_part(atlas, w, h, bx0, bx1, by0, by1, out, bx1 - bx0, true, &local_scratch());
 }
 
 bool block_differs(const uint8_t *a, const uint8_t *b, uint32_t w, uint32_t h, uint32_t bx, uint32_t by)

@@ -40,6 +40,9 @@ void log_lines_since(uint64_t *seq, std::vector<std::string> *out);
  * changes. An empty path, or a second call, ends the previous file. */
 bool log_to_file(const std::string &path, size_t max_bytes, const char *name, const char *version);
 
+/* Waits until every line queued for the log file has been written. */
+void log_flush_file();
+
 /* The calls the log file goes through; host tests swap them to fail as a
  * read-only or full file system does. */
 struct LogFileCalls {

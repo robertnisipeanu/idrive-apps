@@ -44,6 +44,7 @@ public:
     static const int64_t kGeometryMs = 1000;
 
     MeshLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, const MeshParams &mp);
+    LayerKind layer_kind() const override { return LayerKind::Mesh; }
     const char *kind() const override { return "mesh"; }
 
     /* The camera, applied by place() with params. */
@@ -91,6 +92,13 @@ public:
     void place() override;
     Stage stage(int64_t now_ms) override;
     void committed(bool ok, int64_t now_ms) override;
+    bool pending_upload() const
+    {
+        for (const auto &kv : parts_)
+            if (kv.second.upload)
+                return true;
+        return false;
+    }
     size_t staged_bytes() const override { return staged_; }
     std::string stats() const override;
     int drawable(uint32_t part) const override;

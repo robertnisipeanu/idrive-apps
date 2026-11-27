@@ -73,9 +73,11 @@ public:
     /* The cluster map layer's guide_hold. */
     void set_guide_hold(bool hold);
 
-    /* For poll(): one entry per feed, appended. */
+    /* For poll(): each feed's renderer socket and scale-worker wakeup fd, appended. */
     size_t poll_fds(std::vector<pollfd> *fds) const;
     void poll(int64_t now_ms);
+    bool connected() const;
+    bool scaling_busy() const;
     /* Until poll() has work for a feed that scales (the HUD's, or the
      * cluster's while hosted): a scaled frame to take, or the next one due
      * (-1: none). */

@@ -71,19 +71,19 @@ private:
     /* The corner mask on one plane (pw x ph, pitch dp) of radius r with
      * coverage table cov (r x r, 0-256, the top-left corner). */
     static void corners(uint8_t *p, uint32_t dp, uint32_t pw, uint32_t ph, uint32_t r, const std::vector<uint16_t> &cov,
-                        uint8_t black);
+                        uint8_t black, const uint8_t *rlut);
     static void coverage(uint32_t r, std::vector<uint16_t> *cov);
 
     uint32_t w_ = 0, h_ = 0, dw_ = 0, dh_ = 0;
     uint32_t crop_x_ = 0, crop_y_ = 0, crop_w_ = 0, crop_h_ = 0;   /* the part scaled; all of it without a crop */
     unsigned bits_ = 0;
     Axis yx_, yy_, cx_, cy_;
-    std::vector<uint16_t> rows_;   /* the horizontal pass, scaled 256 */
+    std::vector<uint16_t> rows_;   /* ring buffer of horizontal-pass rows, scaled 256 */
     std::vector<uint32_t> acc_;    /* one output row's vertical sums */
     uint32_t radius_ = 0;
     bool black_bg_ = false;
     int bg_ = -1;   /* the background's Y, x 16 (smoothed) */
-    void key_background(uint8_t *d);
+    bool key_background(uint8_t *d, const uint8_t *rlut);
     std::vector<uint16_t> ycov_, ccov_;   /* corner coverage: Y at radius_, U and V at radius_ / 2 */
 };
 
@@ -108,18 +108,20 @@ struct ScaleShape {
 /* Scales one frame at a time on a thread of its own, at a low priority, so
  * the thread offering frames does a swap and nothing more: the cluster's
  * map, offered on the same thread, never waits for the HUD's. The thread
- * starts with the first frame and is left to finish its frame when the
- * worker goes. The lock is held only to hand a frame over, never while
- * scaling, and the offering thread never waits for the worker. */
+ * starts with the first frame and is joined when the worker goes. The lock
+ * is held only to hand a frame over, never while scaling; done_fd() becomes
+ * readable when a frame finishes. */
 class ScaleWorker {
 public:
-    ScaleWorker() : s_(std::make_shared<State>()) {}
+    ScaleWorker();
     ~ScaleWorker();
     ScaleWorker(const ScaleWorker &) = delete;
     ScaleWorker &operator=(const ScaleWorker &) = delete;
 
+    /* Readable when a scaled frame waits to be taken (-1 if unavailable). */
+    int done_fd() const { return done_fd_; }
     /* No frame is being scaled or waits to be taken. */
-    bool idle() const { return s_->stage.load(std::memory_order_acquire) == kIdle; }
+    bool idle() const { return stage_.load(std::memory_order_acquire) == kIdle; }
     /* While idle(): the atlas, taken by a swap (*atlas comes back with the
      * worker's last input), to be scaled to shape; false, *atlas untouched,
      * if not idle or the atlas is not shape's source size. */
@@ -130,27 +132,27 @@ public:
      * worker is idle again. False while none is done. */
     bool take(std::vector<uint8_t> *out, uint64_t *id, const ScaleShape &shape, std::vector<uint8_t> *in = nullptr);
     /* Frames scaled since start. */
-    uint64_t frames() const { return s_->frames.load(); }
+    uint64_t frames() const { return frames_.load(); }
 
 private:
     enum Stage { kIdle, kQueued, kDone };
-    /* Shared with the thread, which may outlive the worker by one frame. */
-    struct State {
-        std::atomic<int> stage{kIdle};
-        std::atomic<bool> stop{false};
-        std::atomic<uint64_t> frames{0};
-        std::mutex mu;
-        std::condition_variable cv;
-        /* The offering thread's while idle; the worker's while queued. */
-        std::vector<uint8_t> in, out;
-        uint64_t id = 0;
-        ScaleShape shape, made;
-        AtlasScaler scaler;   /* the worker's */
-    };
-    static void run(std::shared_ptr<State> s);
+    void run();
+    void signal_done();
+    void drain_done();
 
-    std::shared_ptr<State> s_;
-    bool started_ = false;
+    int done_fd_ = -1;
+    int done_wr_ = -1;   /* write end of pipe on non-Linux; -1 with eventfd */
+    std::atomic<int> stage_{kIdle};
+    std::atomic<bool> stop_{false};
+    std::atomic<uint64_t> frames_{0};
+    std::mutex mu_;
+    std::condition_variable cv_;
+    /* The offering thread's while idle; the worker's while queued. */
+    std::vector<uint8_t> in_, out_;
+    uint64_t id_ = 0;
+    ScaleShape shape_, made_;
+    AtlasScaler scaler_;
+    std::thread thread_;
 };
 
 }  // namespace woc

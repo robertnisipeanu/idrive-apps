@@ -22,6 +22,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../src/log.h"
@@ -164,6 +165,7 @@ int main()
     log_info("hello %d", 1);
     log_warn("careful");
     log_error("broken");
+    cld::log_flush_file();
     l = read_lines(path);
     ok("each line with its time and level", l.size() == 4 && stamped(l[1], 'I') && l[1].substr(26) == "hello 1" &&
                                                  stamped(l[2], 'W') && l[2].substr(26) == "careful" &&
@@ -177,6 +179,7 @@ int main()
     int n = 0;
     while (file_size(old) < 0 && n < 100) {
         log_info("%s", pad.c_str());
+        cld::log_flush_file();
         n++;
     }
     ok("rotated once past the cap", file_size(old) == before + 67 * (n - 1) && file_size(old) <= 1000 &&
@@ -187,6 +190,7 @@ int main()
 
     for (int i = 0; i < 20; i++)
         log_info("%s %02d", pad.substr(3).c_str(), i);   /* 67 bytes too */
+    cld::log_flush_file();
     l = read_lines(old);
     ok("a second rotation replaces .1", !l.empty() && l[0].find("start:") == std::string::npos);
     ok("the two together within twice the cap", file_size(path) <= 1000 && file_size(old) <= 1000);
@@ -206,22 +210,28 @@ int main()
     long size = file_size(path);
     fail_open = EROFS;
     log_info("read-only");
+    cld::log_flush_file();
     ok("read-only: the line is dropped", file_size(path) == size);
     fail_open = 0;
     log_info("writable again");
+    cld::log_flush_file();
     l = read_lines(path);
     ok("the next line writes again", l.back().substr(26) == "writable again");
     size = file_size(path);
     fail_write = ENOSPC;
     log_info("full");
+    cld::log_flush_file();
     fail_write = EDQUOT;
     log_info("over quota");
+    cld::log_flush_file();
     ok("full, over quota: dropped", file_size(path) == size);
     fail_write = 0;
     short_write = true;
     log_info("half");
+    cld::log_flush_file();
     short_write = false;
     log_info("room again");
+    cld::log_flush_file();
     l = read_lines(path);
     ok("a short write is taken back, the next line written whole",
        file_size(path) == size + 26 + 11 && l.back().substr(26) == "room again");
@@ -231,10 +241,12 @@ int main()
     const long at_cap = file_size(path), old_size = file_size(old);
     for (int i = 0; i < 20; i++)
         log_info("%s", pad.c_str());
+    cld::log_flush_file();
     ok("a rename refused read-only drops the line, nothing rotated",
        file_size(old) == old_size && file_size(path) <= 1000 && file_size(path) >= at_cap);
     fail_rename = 0;
     log_info("%s", pad.c_str());
+    cld::log_flush_file();
     l = read_lines(old);
     bool moved = false;
     for (const std::string &x : l)
@@ -244,6 +256,7 @@ int main()
     ok("a start on a read-only file system", !cld::log_to_file(path, 1000, "log_test", ""));
     fail_open = 0;
     log_info("after a read-only start");
+    cld::log_flush_file();
     l = read_lines(path);
     ok("writes once it is writable", l.back().substr(26) == "after a read-only start");
     stderr_back();
@@ -257,11 +270,28 @@ int main()
     ok("a path that cannot be opened", !cld::log_to_file(std::string(dir) + "/no/such/dir/x.log", 1000, "t", ""));
     const long kept = file_size(path);
     log_info("journal only");
+    cld::log_flush_file();
     ok("logging goes on without the file", file_size(path) == kept);
     uint64_t seq = 0;
     std::vector<std::string> backlog;
     cld::log_lines_since(&seq, &backlog);
     ok("and the backlog keeps it", !backlog.empty() && backlog.back() == "journal only");
+
+    /* Async burst from another thread flushes cleanly with no open descriptor left. */
+    const std::string burst_path = std::string(dir) + "/burst.log";
+    ok("burst log opens", cld::log_to_file(burst_path, 65536, "log_test", "1.0"));
+    std::thread producer([&] {
+        for (int i = 0; i < 40; i++)
+            log_info("burst %d", i);
+    });
+    producer.join();
+    cld::log_flush_file();
+    l = read_lines(burst_path);
+    ok("async burst writes every line in order and leaves no fd open",
+       l.size() == 41 && l[1].substr(26) == "burst 0" && l[40].substr(26) == "burst 39" &&
+           open_fds() == fds && !fd_on(burst_path));
+    cld::log_to_file("", 0, "", "");
+    unlink(burst_path.c_str());
 
     unlink(path.c_str());
     unlink(old.c_str());

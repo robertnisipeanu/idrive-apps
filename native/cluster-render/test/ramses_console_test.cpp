@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "../src/ramses_console.h"
@@ -218,6 +219,29 @@ int main()
     l.feed(periodic.data(), periodic.size(), 41000 + RamsesConsole::kQuietMs + 3500);
     ok("back to INFO with no ramses.Client line, after every context was quiet: live from the first line",
        l.live_since(41000 + RamsesConsole::kQuietMs + 4000) == 41000 + RamsesConsole::kQuietMs + 3000);
+
+    /* Lifecycle: start redirects stdout, captures RAMSES lines, and stop
+     * restores stdout and joins the reader thread cleanly (including twice). */
+    {
+        RamsesConsole live(kScenes);
+        std::string err;
+        ok("start redirects stdout", live.start(&err));
+        std::fwrite(sub.data(), 1, sub.size(), stdout);
+        std::fflush(stdout);
+        std::vector<ConsoleEvent> evs;
+        std::vector<std::string> rw;
+        uint64_t dr = 0;
+        for (int tries = 0; tries < 100 && evs.empty(); tries++) {
+            live.take(&evs, &rw, &dr);
+            if (evs.empty())
+                usleep(5000);
+        }
+        live.stop();
+        live.stop();
+        ok("start/stop captures RAMSES line on stdout and joins cleanly",
+           evs.size() == 1 && evs[0].kind == ConsoleEvent::Subscribed && evs[0].scene == 0x010004f0 &&
+               live.fd() < 0);
+    }
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

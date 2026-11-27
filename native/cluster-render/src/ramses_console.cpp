@@ -3,6 +3,7 @@
 #include "ramses_console.h"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <strings.h>
 #include <unistd.h>
 
@@ -11,7 +12,6 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cstring>
-#include <thread>
 
 #include "log.h"
 
@@ -216,6 +216,11 @@ bool console_interesting(const std::string &line, const std::vector<uint64_t> &s
     return false;
 }
 
+RamsesConsole::~RamsesConsole()
+{
+    stop();
+}
+
 bool RamsesConsole::start(std::string *err)
 {
     int p[2];
@@ -229,9 +234,18 @@ bool RamsesConsole::start(std::string *err)
         close(p[1]);
         return false;
     }
-    for (int fd : {p[0], p[1], wake_[0], wake_[1]})
+    if (pipe(stop_pipe_) != 0) {
+        *err = std::string("pipe: ") + std::strerror(errno);
+        close(p[0]);
+        close(p[1]);
+        close(wake_[0]);
+        close(wake_[1]);
+        wake_[0] = wake_[1] = -1;
+        return false;
+    }
+    for (int fd : {p[0], p[1], wake_[0], wake_[1], stop_pipe_[0], stop_pipe_[1]})
         fcntl(fd, F_SETFD, FD_CLOEXEC);
-    for (int fd : {wake_[0], wake_[1]})
+    for (int fd : {p[0], wake_[0], wake_[1], stop_pipe_[0], stop_pipe_[1]})
         fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     std::fflush(stdout);
     out_ = fcntl(1, F_DUPFD_CLOEXEC, 3);
@@ -239,18 +253,41 @@ bool RamsesConsole::start(std::string *err)
         *err = std::string("stdout: ") + std::strerror(errno);
         if (out_ >= 0)
             close(out_);
-        for (int fd : {p[0], p[1], wake_[0], wake_[1]})
+        for (int fd : {p[0], p[1], wake_[0], wake_[1], stop_pipe_[0], stop_pipe_[1]})
             close(fd);
-        out_ = wake_[0] = wake_[1] = -1;
+        out_ = wake_[0] = wake_[1] = stop_pipe_[0] = stop_pipe_[1] = -1;
         return false;
     }
     close(p[1]);
     in_ = p[0];
+    stopping_.store(false);
     /* A pipe makes stdout fully buffered; a log line must reach the pipe
      * when it is written. */
     setvbuf(stdout, nullptr, _IOLBF, 0);
-    std::thread([this] { run(); }).detach();
+    thread_ = std::thread([this] { run(); });
     return true;
+}
+
+void RamsesConsole::stop()
+{
+    stopping_.store(true);
+    if (out_ >= 0) {
+        std::fflush(stdout);
+        dup2(out_, 1);
+    }
+    if (stop_pipe_[1] >= 0) {
+        const char c = 0;
+        const ssize_t w = write(stop_pipe_[1], &c, 1);
+        (void)w;
+    }
+    if (thread_.joinable())
+        thread_.join();
+    for (int *fd : {&in_, &out_, &wake_[0], &wake_[1], &stop_pipe_[0], &stop_pipe_[1]}) {
+        if (*fd >= 0) {
+            close(*fd);
+            *fd = -1;
+        }
+    }
 }
 
 void RamsesConsole::run()
@@ -258,18 +295,39 @@ void RamsesConsole::run()
     char buf[8192];
     size_t have = 0;
     for (;;) {
+        if (stopping_.load())
+            break;
+        pollfd fds[2] = {{in_, POLLIN, 0}, {stop_pipe_[0], POLLIN, 0}};
+        const int r = poll(fds, 2, -1);
+        if (r < 0 && errno == EINTR)
+            continue;
+        if (stopping_.load() || (fds[1].revents & POLLIN))
+            break;
+        if (r < 0) {
+            const int err = errno;
+            if (!stopping_.load()) {
+                std::fflush(stdout);
+                dup2(out_, 1);
+                log_warn("ramses: console not readable (%s); stdout back on its own, renderer subscriptions no "
+                         "longer observed",
+                         std::strerror(err));
+            }
+            break;
+        }
         const ssize_t n = read(in_, buf + have, sizeof buf - have);
-        if (n < 0 && errno == EINTR)
+        if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
             continue;
         if (n <= 0) {
             /* Nobody would drain the pipe: RAMSES's writes would block once
              * it fills. */
             const int err = n < 0 ? errno : 0;
-            std::fflush(stdout);
-            dup2(out_, 1);
-            log_warn("ramses: console not readable (%s); stdout back on its own, renderer subscriptions no "
-                     "longer observed",
-                     err ? std::strerror(err) : "end of file");
+            if (!stopping_.load()) {
+                std::fflush(stdout);
+                dup2(out_, 1);
+                log_warn("ramses: console not readable (%s); stdout back on its own, renderer subscriptions no "
+                         "longer observed",
+                         err ? std::strerror(err) : "end of file");
+            }
             break;
         }
         have += (size_t)n;

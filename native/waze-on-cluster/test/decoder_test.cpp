@@ -572,6 +572,23 @@ int main()
                "a VPP run failing with a part: VPP reset whole, the part not asked again");
         expect(count("vpp-out shifted") == 0, "a VPP run failing with a part: GPU copy kept");
     });
+    {
+        /* A B slice switches the running sequence to display order at the next
+         * SPS; flush()/stop() clears reorder so a fresh stream without B slices
+         * starts in decoding order again. */
+        Run r("");
+        r.feed(kCarPlay, true, 1);
+        expect(!r.dec.display_order(), "reorder: initial sequence starts in decoding order");
+        /* Real B-slice NAL (type 1, first_mb=0, slice_type=6) appended to a fake frame. */
+        const uint8_t b_nal[] = {0x00, 0x00, 0x00, 0x01, 0x01, 0x9e, 0x45, 0xe4, 0x27, 0xff, 0x63, 0x41};
+        std::string err;
+        r.dec.feed(b_nal, sizeof b_nal, r.sink(), &err, true, true);
+        r.feed(kCarPlay, true, 2);
+        expect(r.dec.display_order(), "reorder: B slice switches the next SPS to display order");
+        r.dec.flush(r.sink());
+        r.feed(kCarPlay, true, 3);
+        expect(!r.dec.display_order(), "reorder: reset on stop/flush so a new stream returns to decoding order");
+    }
     if (failures) {
         fprintf(stderr, "decoder_test: %d failures\n", failures);
         return 1;

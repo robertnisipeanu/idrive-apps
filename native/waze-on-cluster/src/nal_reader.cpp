@@ -67,6 +67,29 @@ void NalReader::push(const uint8_t *data, size_t len, bool end_of_au, const Sink
     scan_ = i - keep;
 }
 
+void NalReader::push_nal(const uint8_t *nal, size_t len, const Sink &sink)
+{
+    if (in_nal_) {
+        end_nal(buf_.data(), buf_.size(), sink);
+        buf_.clear();
+        scan_ = 0;
+        in_nal_ = false;
+    }
+    end_nal(nal, len, sink);
+}
+
+void NalReader::end_au(const Sink &sink)
+{
+    if (in_nal_) {
+        end_nal(buf_.data(), buf_.size(), sink);
+        buf_.clear();
+        scan_ = 0;
+        in_nal_ = false;
+    }
+    if (au_vcl_)
+        emit(sink);
+}
+
 void NalReader::flush(const Sink &sink)
 {
     if (in_nal_)

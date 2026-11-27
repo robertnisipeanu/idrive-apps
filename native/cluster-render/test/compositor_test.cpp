@@ -506,6 +506,8 @@ static void always_packed()
        g && g->flushes == 1 && g->flushed_bytes == crk::block_bytes(W, H) && v.block_quad &&
            g->shown.quads[v.block_quad].visible && !g->shown.quads[v.atlas_quad].visible &&
            g->shown.buffers[g->shown.quads[v.block_quad].textures["u_image"]].px == expect);
+    ok("always_packed: allocates only one packed GPU buffer (no unused atlas or second bank)",
+       g && g->shown.buffers.size() == 1 && !v.atlas_quad && vl->buffer_bytes() == crk::block_bytes(W, H));
     if (!g)
         return;
     const uint64_t b0 = g->flushed_bytes;

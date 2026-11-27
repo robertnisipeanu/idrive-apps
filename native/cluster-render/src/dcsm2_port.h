@@ -122,6 +122,7 @@ public:
     }
     bool slot_table() const override { return true; }
     std::string status_text(int64_t now_ms) const override;
+    std::string status_state() const override;
 
     /* What the KOMBI says, in the order it said it (render thread). */
     void on_availability(bool up, int64_t now_ms);

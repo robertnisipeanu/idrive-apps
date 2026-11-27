@@ -118,12 +118,10 @@ var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 16 + 16);
  * revision 2. */
 var PATCH_REV = 3;
 
-/* /dev/shm/rawcodingdata, the coding image CodingShmApp publishes: a 0x2c
- * byte header (flags at 0x28, 0x09 = valid coding) and the blocks. aapd's
- * and carplay's CodingKOMBI_HUD is the 150 bytes at block offset 0x75a;
- * KI_KOMBI_VARIANT is getBits(0, 0x7e, 1) of it. carplay_patch.js reads
- * it through readCoding too. */
-var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1, want: 7 };
+var coding = require('./coding.js');
+var CODING = coding.CODING;
+var readCoding = coding.readCoding;
+var codingRefusal = coding.codingRefusal;
 
 var hashes = new WeakMap();
 function sha256(buf) {
@@ -134,30 +132,6 @@ function die(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1
 function backupPath(t) { return t + '.woc-orig'; }
 function metaPath(t) { return t + '.woc-orig.json'; }
 function readOr(p) { try { return fs.readFileSync(p); } catch (e) { return null; } }
-
-/* {variant} or {err}. */
-function readCoding(p) {
-    var b = readOr(p);
-    if (!b) return { err: p + ' unreadable' };
-    if (b.length !== CODING.size) return { err: p + ' is ' + b.length + ' bytes, not ' + CODING.size };
-    if ((b[CODING.flags] & 0x0f) !== CODING.valid) return { err: 'coding not valid (flags 0x' + b[CODING.flags].toString(16) + ')' };
-    return { variant: (b[CODING.at] & CODING.mask) >> CODING.shift };
-}
-
-/* Why the patch is not for a coding readCoding read ({variant} or {err}),
- * or null. The map's slot, safe area and crop are those of the
- * KI_KOMBI_VARIANT 7 cluster (high_4_1). 9 and 10 (ic_box_high, ic_box_mid)
- * are clusters CarPlay and Android Auto stream the map to themselves; 0
- * codes no cluster display, and every other value another cluster. A
- * coding that cannot be read is planned as 7, on trial; boot recovery
- * plans it again once it reads otherwise (recovery.js codingMoved). */
-var BUILT_IN = [9, 10];
-function codingRefusal(cd) {
-    if (cd.err || cd.variant === CODING.want) return null;
-    return cd.variant === 0 ? 'not supported on this car (KI_KOMBI_VARIANT 0: no cluster display is coded)'
-        : BUILT_IN.indexOf(cd.variant) >= 0 ? 'built in on this cluster (KI_KOMBI_VARIANT ' + cd.variant + ': CarPlay and Android Auto stream the cluster map themselves)'
-        : 'not supported on this cluster (KI_KOMBI_VARIANT ' + cd.variant + '; the map is made for KI_KOMBI_VARIANT ' + CODING.want + ')';
-}
 
 /* The located binary: { loc, size, sha256, bad: [why an edit is not
  * found] }, once per content. A locator failure is a reason like any
@@ -369,7 +343,7 @@ function cmdStatus(t) {
         line(siteName(e), s && s.ok ? s.state.toUpperCase() : 'UNKNOWN (' + (s ? s.reason : 'not located') + ')');
     });
     line('geometry', geometryText(us[1].cur, us[1].b));
-    var fo = foreignIn(t);
+    var fo = foreignIn(t, us);
     line('foreign', fo === null ? 'unknown' : fo ? 'yes' : 'no');
     line('planable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     line('backup', (bak ? backupPath(t.target) + (bak.err ? ' (' + bak.err + ')' : '') : 'none') +
@@ -552,9 +526,9 @@ function cmdOverlay(t, planFile, confCopy) {
  * true, false, or null when that cannot be told (status prints it as
  * `foreign:`). A file with nothing of ours in it is not ours to compare:
  * false. */
-function foreignIn(t) {
+function foreignIn(t, preUs) {
     var us;
-    try { us = undos(t); } catch (e) { return null; }
+    try { us = preUs || undos(t); } catch (e) { return null; }
     var bin = us[0], cf = us[1], out = [];
     /* aapd: the original of its build, and our edit regions in it */
     (function () {
@@ -564,12 +538,14 @@ function foreignIn(t) {
         if (binOther(bin.cur, orig)) { out.push(null); return; }
         var oc = classify(orig);
         if (oc.bad.length) { out.push(null); return; }
-        var rs = regions(oc.loc);
-        for (var i = 0; i < orig.length; i++) {
-            if (bin.cur[i] === orig[i]) continue;
-            if (!rs.some(function (r) { return i >= r[0] && i < r[0] + r[1]; })) { out.push(true); return; }
+        var rs = regions(oc.loc).slice().sort(function (a, b) { return a[0] - b[0]; }), pos = 0, diff = false;
+        for (var i = 0; i < rs.length; i++) {
+            var s = Math.min(rs[i][0], orig.length), e = Math.min(rs[i][0] + rs[i][1], orig.length);
+            if (s > pos && !bin.cur.slice(pos, s).equals(orig.slice(pos, s))) { diff = true; break; }
+            if (e > pos) pos = e;
         }
-        out.push(false);
+        if (!diff && pos < orig.length && !bin.cur.slice(pos).equals(orig.slice(pos))) diff = true;
+        out.push(diff);
     })();
     /* aapd.conf: its original, or exactly one of our geometries of it */
     (function () {

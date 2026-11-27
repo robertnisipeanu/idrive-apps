@@ -95,6 +95,13 @@ public:
     int buffer() const { return buf_; }
     /* The buffer holds the asset whole. */
     bool clean() const { return g_ && clean_; }
+    /* Has pixels waiting to be written into its attached scene. */
+    bool pending() const
+    {
+        if (!g_ || !have_)
+            return false;
+        return immutable() ? (!clean_ && refused_.empty()) : (whole_ || !dirty_.empty());
+    }
 
     /* Writes what changed, when the budget allows; the caller flushes. */
     Stage stage(int64_t now_ms);

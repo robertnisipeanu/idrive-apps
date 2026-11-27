@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+The cluster renderer uses less CPU and memory while drawing and idling, writes logs without stalling frames, and installs a smaller package.
+
 ## 0.8.14
 
 A host from layers sent with `hide` and `shown` 0 hides the hosted picture

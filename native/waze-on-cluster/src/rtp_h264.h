@@ -66,6 +66,13 @@ public:
      * packet with a parseable H.264 payload. */
     bool push(const uint8_t *pkt, size_t len, const Sink &sink);
 
+    /* True while an access unit with at least one complete VCL slice is open
+     * and no FU-A fragment is in progress. */
+    bool has_open_vcl_au() const { return au_open_ && au_vcl_ && !in_fu_; }
+
+    /* Closes an open VCL access unit after a packet-idle gap. */
+    void flush_au(const Sink &sink);
+
     const Stats &stats() const { return stats_; }
 
     /* Whether the last access unit end delivered came from the marker bit
@@ -87,6 +94,7 @@ private:
     uint16_t seq_ = 0;
     uint32_t ts_ = 0;
     bool au_open_ = false;       /* NAL units delivered since the last access unit end */
+    bool au_vcl_ = false;        /* at least one complete VCL slice in the open access unit */
     bool vcl_done_ = false;      /* this packet completed a slice */
     bool ended_by_marker_ = false;
     Stats stats_;

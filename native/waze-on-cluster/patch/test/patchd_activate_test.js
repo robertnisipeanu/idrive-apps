@@ -121,9 +121,9 @@ fs.writeFileSync(path.join(BIN, 'systemctl'), '#!' + process.execPath + '\n' + [
     "fs.appendFileSync(" + JSON.stringify(CALLS) + ", 'systemctl ' + a.join(' ') + '\\n');",
     "if (a[0] !== 'show') process.exit(0);",
     "if (a.indexOf('Environment') >= 0) process.stdout.write('Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1\\n');",
-    "else if (a.indexOf('User') >= 0) process.stdout.write('User=cia_13002\\n');",
-    "else if (a.indexOf('DropInPaths') >= 0) process.stdout.write('DropInPaths=\\n');",
-    "else if (a.indexOf('MainPID') >= 0) { var p = fs.existsSync(path.join(" + JSON.stringify(PROC) + ", '4242')) ? 4242 : 0;",
+    "if (a.indexOf('User') >= 0) process.stdout.write('User=cia_13002\\n');",
+    "if (a.indexOf('DropInPaths') >= 0) process.stdout.write('DropInPaths=\\n');",
+    "if (a.indexOf('MainPID') >= 0) { var p = fs.existsSync(path.join(" + JSON.stringify(PROC) + ", '4242')) ? 4242 : 0;",
     "    process.stdout.write('MainPID=' + p + '\\nInvocationID=inv-' + p + '\\nExecMainStartTimestampMonotonic=5\\n'); }",
 ].join('\n') + '\n');
 fs.chmodSync(path.join(BIN, 'systemctl'), 0o755);

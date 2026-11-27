@@ -7,7 +7,9 @@
  * It reads the head unit's current user account
  * (de.bmw.infotainment.personalization.SessionManager, field
  * currentUserAccountReference, a getter), read-only, when the app starts,
- * every POLL_MS, and READ_RETRY_MS after a read that failed until
+ * every POLL_MS until SessionManager's currentUserOnChange subscription is
+ * active (or as a fallback when subscribing fails or is unavailable), and
+ * READ_RETRY_MS after a read that failed until
  * UNREADABLE_READS in a row have; and it takes the account
  * SessionManager's currentUserOnChange event sends. A
  * valid id (PROFILE_ID) counts at once; no profile counts only when the
@@ -15,8 +17,8 @@
  * fails, times out or gives no valid id changes nothing, and a proxy that
  * is slow to set up or fails to start is set up again later. When the
  * profile that counts differs from the one patchd has in effect, it tells
- * patchd {"cmd":"profile","id"} over a short
- * connection of its own. patchd puts that profile's own map settings, or
+ * patchd {"cmd":"profile","id"} over the page's open patchd connection when
+ * connected, else over a short connection of its own. patchd puts that profile's own map settings, or
  * the shared ones, in effect and saves them for the render's next start;
  * when the render is to follow, this moves it to them: through the page's
  * own render connection while the page is open (it owns the render's
@@ -107,6 +109,7 @@ function sessionReader(someipBuilders, log, options) {
     let retryAt = 0;
     const warned = {};
     const watchers = [];
+    const subWatchers = [];
     const warn = (why, text) => {
         if (!warned[why]) {
             warned[why] = true;
@@ -185,6 +188,7 @@ function sessionReader(someipBuilders, log, options) {
                 subId = sid === undefined ? null : sid;
                 sub = 'on';
                 subRetryMs = o.retryMs || SETUP_RETRY_MS;
+                subWatchers.forEach((cb) => cb());
             }, (e) => {
                 sub = 'none';
                 subAt = Date.now() + subRetryMs;
@@ -218,6 +222,8 @@ function sessionReader(someipBuilders, log, options) {
             });
     });
     read.watch = (cb) => watchers.push(cb);
+    read.subscribed = () => sub === 'on';
+    read.onSubscribed = (cb) => subWatchers.push(cb);
     return read;
 }
 
@@ -310,6 +316,44 @@ class ProfileSync extends EventEmitter {
                     this._take(id, false);
                 }
             });
+        }
+        if (this._read && typeof this._read.onSubscribed === 'function') {
+            this._read.onSubscribed(() => {
+                if (!this._stopped && !this._polling && !this._loading && this._failed === 0) {
+                    this._schedule(false);
+                }
+            });
+        }
+    }
+
+    _subscribed() {
+        return !!(this._read && typeof this._read.subscribed === 'function' && this._read.subscribed());
+    }
+
+    _schedule(retry) {
+        clearTimeout(this._timer);
+        this._timer = null;
+        if (this._stopped || this._polling) {
+            return;
+        }
+        if (retry) {
+            this._timer = setTimeout(() => this._poll(this._loading), this._readRetryMs);
+            return;
+        }
+        if (!this._subscribed() || this._failed > 0) {
+            this._timer = setTimeout(() => this._poll(false), this._pollMs);
+            return;
+        }
+        if (this._confirmed !== undefined && this.profile !== this._confirmed) {
+            const delay = this._retryAt > Date.now() ? this._retryAt - Date.now() : this._pollMs;
+            this._timer = setTimeout(() => {
+                this._timer = null;
+                if (!this._stopped && this._confirmed !== undefined && this.profile !== this._confirmed && Date.now() >= this._retryAt) {
+                    this._ask({ cmd: 'profile', id: this._confirmed });
+                } else {
+                    this._schedule(false);
+                }
+            }, delay);
         }
     }
 
@@ -438,7 +482,7 @@ class ProfileSync extends EventEmitter {
             if (again !== null) {
                 this._poll(again);
             } else {
-                this._timer = setTimeout(() => this._poll(retry && this._loading), retry ? this._readRetryMs : this._pollMs);
+                this._schedule(retry);
             }
         });
     }
@@ -449,6 +493,9 @@ class ProfileSync extends EventEmitter {
         this._failed++;
         if (this.unreadable() !== was) {
             this.emit('change');
+        }
+        if (!this._polling && !this._timer && !this._stopped) {
+            this._schedule(!this.unreadable());
         }
     }
 
@@ -483,7 +530,11 @@ class ProfileSync extends EventEmitter {
             /* an answer older than a page write since does not show what is stored */
             const writes = this._control ? this._control.writes : 0;
             let shown;
-            return askOnce(this._patchPath, msg, (m) => m.ev === ev || (m.ev === 'refused' && m.cmd === msg.cmd), this._replyMs)
+            const done = (m) => m.ev === ev || (m.ev === 'refused' && m.cmd === msg.cmd);
+            const useControl = this._control && this._control.connectedPatch() && this._control.patch.path === this._patchPath;
+            const req = useControl ? this._control.patch.request(msg, done, this._replyMs)
+                : askOnce(this._patchPath, msg, done, this._replyMs);
+            return req
                 .then((r) => {
                     if (msg.cmd === 'profile-own') {
                         this._askedOwn = null;
@@ -523,6 +574,9 @@ class ProfileSync extends EventEmitter {
                         }
                     }
                     this.emit('change');
+                    if (!this._polling && !this._loading && this._failed === 0) {
+                        this._schedule(false);
+                    }
                     return shown;
                 });
         };

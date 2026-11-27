@@ -535,4 +535,16 @@ std::string Dcsm2Port::status_text(int64_t now_ms) const
     return s;
 }
 
+std::string Dcsm2Port::status_state() const
+{
+    std::string s = changed_ms_ < 0 ? "none" : up_ ? "up" : "down";
+    for (const auto &kv : subscribed_)
+        s += "|" + std::to_string(kv.first) + ":" + std::to_string(kv.second);
+    char b[96];
+    std::snprintf(b, sizeof b, "|%llu,%llu,%llu,%llu|%d\n", (unsigned long long)total_.fetch,
+                  (unsigned long long)total_.map, (unsigned long long)total_.undecoded,
+                  (unsigned long long)total_.replies, table_ms_ >= 0 ? 1 : 0);
+    return s + b;
+}
+
 }  // namespace crs

@@ -43,17 +43,15 @@ vec3 rgb_at(float px) {
 void main() {
     float d = mix(u_edge.y, u_edge.z, v_uv.y);
     float x = v_uv.x * u_size.x;
-    vec3 c = vec3(0.0);
-    float n = 0.0;
-    for (int k = -4; k <= 4; k++) {
-        float o = float(k) * 0.5;
-        float w = exp(-0.5 * o * o);
-        c += w * rgb_at(x + o * u_look.y);
-        n += w;
-    }
+    float s = u_look.y;
+    vec3 c = 0.20416369 * rgb_at(x)
+           + 0.18017382 * (rgb_at(x - 0.5 * s) + rgb_at(x + 0.5 * s))
+           + 0.12383154 * (rgb_at(x - 1.0 * s) + rgb_at(x + 1.0 * s))
+           + 0.06628225 * (rgb_at(x - 1.5 * s) + rgb_at(x + 1.5 * s))
+           + 0.02763055 * (rgb_at(x - 2.0 * s) + rgb_at(x + 2.0 * s));
     float dim = u_look.x > 0.0 ? max(0.25, 1.0 - max(d, 0.0) / u_look.x) : 1.0;
     float a = d >= 0.0 ? 1.0 : clamp(1.0 + d / max(u_edge.w, 1.0), 0.0, 1.0);
-    gl_FragColor = vec4(c / n * dim, a * u_opacity);
+    gl_FragColor = vec4(c * dim, a * u_opacity);
 })";
 
 /* block_pack.cpp's colour at a point of the row */
@@ -90,17 +88,15 @@ vec3 rgb_at(float px) {
 void main() {
     float d = mix(u_edge.y, u_edge.z, v_uv.y);
     float x = v_uv.x * u_size.x;
-    vec3 c = vec3(0.0);
-    float n = 0.0;
-    for (int k = -4; k <= 4; k++) {
-        float o = float(k) * 0.5;
-        float w = exp(-0.5 * o * o);
-        c += w * rgb_at(x + o * u_look.y);
-        n += w;
-    }
+    float s = u_look.y;
+    vec3 c = 0.20416369 * rgb_at(x)
+           + 0.18017382 * (rgb_at(x - 0.5 * s) + rgb_at(x + 0.5 * s))
+           + 0.12383154 * (rgb_at(x - 1.0 * s) + rgb_at(x + 1.0 * s))
+           + 0.06628225 * (rgb_at(x - 1.5 * s) + rgb_at(x + 1.5 * s))
+           + 0.02763055 * (rgb_at(x - 2.0 * s) + rgb_at(x + 2.0 * s));
     float dim = u_look.x > 0.0 ? max(0.25, 1.0 - max(d, 0.0) / u_look.x) : 1.0;
     float a = d >= 0.0 ? 1.0 : clamp(1.0 + d / max(u_edge.w, 1.0), 0.0, 1.0);
-    gl_FragColor = vec4(c / n * dim, a * u_opacity);
+    gl_FragColor = vec4(c * dim, a * u_opacity);
 })";
 
 VideoLayer::VideoLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int atlas_effect,
@@ -339,11 +335,15 @@ bool VideoLayer::attach(Graph *g, int64_t now_ms, std::string *err)
     refine_due_ms_ = -1;
     drawn_ = false;
 
-    atlas_buf_ = g->buffer(TexFormat::R8, p_.w, atlas_h_, Sampling::Bilinear);
-    bool good = atlas_buf_ && make_atlas_quads(g);
+    bool good = true;
+    if (!p_.always_packed) {
+        atlas_buf_ = g->buffer(TexFormat::R8, p_.w, atlas_h_, Sampling::Bilinear);
+        good = atlas_buf_ && make_atlas_quads(g);
+    }
     if (good && p_.pan_blocks) {
         const uint32_t bw = crk::block_texels_w(p_.w), bh = crk::block_texels_h(p_.h);
-        for (int k = 0; k < 2 && good; k++)
+        const int banks = p_.always_packed ? 1 : 2;
+        for (int k = 0; k < banks && good; k++)
             good = (block_buf_[k] = g->buffer(TexFormat::RGBA8, bw, bh, Sampling::Nearest)) != 0;
         good = good && make_block_quads(g);
         block_bank_ = 0;
@@ -408,7 +408,7 @@ void VideoLayer::make_edge_quads()
     const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;
     const float look[2] = {(float)edge_.dim, r.w ? (float)edge_.blur * p_.w / r.w : 0.0f};
     const uint32_t in = std::min(kEdgeInset, p_.h - 1);
-    for (int k = 0; k < (p_.pan_blocks ? 2 : 1); k++)
+    for (int k = p_.always_packed ? 1 : 0; k < (p_.pan_blocks ? 2 : 1); k++)
         for (int side = 0; side < 2; side++) {
             const uint32_t past = side ? edge_.bottom : edge_.top;
             if (!past || !edge_fx_[k])
@@ -481,7 +481,8 @@ void VideoLayer::show_blocks(bool on)
 
 void VideoLayer::show_quads(bool blocks)
 {
-    g_->show(atlas_quad_, drawn_ && !blocks);
+    if (atlas_quad_)
+        g_->show(atlas_quad_, drawn_ && !blocks);
     if (block_quad_)
         g_->show(block_quad_, drawn_ && blocks);
     for (int side = 0; side < 2; side++)
@@ -502,7 +503,8 @@ bool VideoLayer::bank_quads(int buf)
 void VideoLayer::set_opacity()
 {
     const float a = opaque_ ? drawn_params().opacity * fade_ : 0.0f;
-    g_->uniform(atlas_quad_, "u_opacity", &a, 1);
+    if (atlas_quad_)
+        g_->uniform(atlas_quad_, "u_opacity", &a, 1);
     if (block_quad_)
         g_->uniform(block_quad_, "u_opacity", &a, 1);
     for (auto &kind : edge_quad_)
@@ -518,7 +520,8 @@ void VideoLayer::arrange(bool drawn, int32_t order)
         return;
     drawn_ = drawn;
     show_blocks(blocks_shown_);
-    g_->order(atlas_quad_, order);
+    if (atlas_quad_)
+        g_->order(atlas_quad_, order);
     if (block_quad_)
         g_->order(block_quad_, order + 1);
     for (auto &kind : edge_quad_)
@@ -531,8 +534,10 @@ void VideoLayer::place()
 {
     if (!g_)
         return;
-    g_->place(atlas_quad_, drawn_params().rect);
-    g_->turn(atlas_quad_, drawn_params().turn());
+    if (atlas_quad_) {
+        g_->place(atlas_quad_, drawn_params().rect);
+        g_->turn(atlas_quad_, drawn_params().turn());
+    }
     if (block_quad_) {
         g_->place(block_quad_, drawn_params().rect);
         g_->turn(block_quad_, drawn_params().turn());
@@ -937,10 +942,26 @@ void VideoLayer::committed(bool ok, int64_t now_ms)
 
 int64_t VideoLayer::wake_in_ms(int64_t now_ms) const
 {
-    if (!g_ || !drawn_ || !front_pending_)
+    if (!g_ || !drawn_)
         return -1;
-    const int64_t w = clock_.ms_until_due(now_ms);
-    return w > 0 ? w : -1;
+    int64_t best = -1;
+    auto at = [&](int64_t w) {
+        if (w > 0 && (best < 0 || w < best))
+            best = w;
+    };
+    const int64_t cw = clock_.ms_until_due(now_ms);
+    if (hold_until_ms_ >= 0 && front_pending_ && picture_ms_ == hold_from_ms_ && now_ms < hold_until_ms_ &&
+        !uncovering() && !holds_flush()) {
+        at(hold_until_ms_ - now_ms);
+    } else if (front_pending_) {
+        at(cw);
+    }
+    const int64_t settle_ms = planner_.settle_due_ms();
+    if (!front_pending_ && settle_ms >= 0)
+        at(std::max(settle_ms - now_ms, cw));
+    if (!p_.always_packed && blocks_shown_ && !front_pending_ && refine_due_ms_ >= 0)
+        at(std::max(refine_due_ms_ - now_ms, cw));
+    return best;
 }
 
 WriteStats VideoLayer::write_stats() const

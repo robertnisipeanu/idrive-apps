@@ -111,6 +111,7 @@ public:
 
     VideoLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int atlas_effect, int block_effect,
                const VideoParams &p, int64_t now_ms);
+    LayerKind layer_kind() const override { return LayerKind::Video; }
     const char *kind() const override { return "video"; }
     static const char *size_error(uint32_t w, uint32_t h);
     size_t frame_bytes() const { return atlas_bytes_; }
@@ -141,7 +142,7 @@ public:
     WriteStats write_stats() const override;
     size_t buffer_bytes() const override
     {
-        return g_ ? atlas_bytes_ + (p_.pan_blocks ? 2 * packed_.size() : 0) : 0;
+        return g_ ? (p_.always_packed ? packed_.size() : atlas_bytes_ + (p_.pan_blocks ? 2 * packed_.size() : 0)) : 0;
     }
     bool fades() const override { return true; }
 

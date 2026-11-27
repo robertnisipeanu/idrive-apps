@@ -56,17 +56,19 @@
  * fd() is readable while something waits to be taken. If the pipe cannot be
  * set up, stdout is left as it was and nothing is ever read; if reading it
  * fails, the original stdout goes back onto fd 1 (so RAMSES never blocks on
- * a full pipe) and nothing more is read. It lives for the process: made
- * once, never destroyed. */
+ * a full pipe) and nothing more is read. stop() (and the destructor) restores
+ * fd 1 and joins the reader thread. */
 #ifndef CRS_RAMSES_CONSOLE_H
 #define CRS_RAMSES_CONSOLE_H
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace crs {
@@ -104,8 +106,14 @@ public:
     static const int64_t kQuietMs = 5000;
 
     explicit RamsesConsole(const std::vector<uint64_t> &scenes) : scenes_(scenes) {}
+    ~RamsesConsole();
+    RamsesConsole(const RamsesConsole &) = delete;
+    RamsesConsole &operator=(const RamsesConsole &) = delete;
     /* Call once, before any RAMSES object exists. */
     bool start(std::string *err);
+    /* Restores stdout onto fd 1, stops and joins the reader thread, and closes
+     * the pipes. Safe to call more than once or without start(). */
+    void stop();
     int fd() const { return wake_[0]; }
     /* What was read since the last call, oldest first, and how many raw
      * lines went over kRawPerMinute since. Any thread. */
@@ -127,6 +135,9 @@ private:
     int in_ = -1;    /* the pipe's read end */
     int out_ = -1;   /* the original stdout; -1 in tests: other lines are dropped */
     int wake_[2] = {-1, -1};
+    int stop_pipe_[2] = {-1, -1};
+    std::atomic<bool> stopping_{false};
+    std::thread thread_;
     mutable std::mutex mutex_;
     std::vector<ConsoleEvent> events_;
     std::vector<std::string> raw_;

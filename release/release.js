@@ -529,16 +529,23 @@ function cmdBuild(ids) {
 
 function cmdCheck(ids) {
     warnDirty();
-    const a = build(ids, fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-check-a-')));
-    const b = build(ids, fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-check-b-')));
-    let ok = true;
-    a.forEach((e, i) => {
-        const same = e.artifact.sha256 === b[i].artifact.sha256;
-        ok = ok && same;
-        console.log(`${same ? 'reproducible' : 'DIFFERS'}  ${e.id}@${e.version}`);
-    });
-    if (!ok) {
-        process.exitCode = 1;
+    const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-check-a-'));
+    const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-check-b-'));
+    try {
+        const a = build(ids, dirA);
+        const b = build(ids, dirB);
+        let ok = true;
+        a.forEach((e, i) => {
+            const same = e.artifact.sha256 === b[i].artifact.sha256;
+            ok = ok && same;
+            console.log(`${same ? 'reproducible' : 'DIFFERS'}  ${e.id}@${e.version}`);
+        });
+        if (!ok) {
+            process.exitCode = 1;
+        }
+    } finally {
+        fs.rmSync(dirA, { recursive: true, force: true });
+        fs.rmSync(dirB, { recursive: true, force: true });
     }
 }
 
@@ -595,7 +602,7 @@ function writeRequires(root, c, resolved) {
     const file = path.join(root, c.dir, c.kind === 'app' ? 'release.json' : 'component.json');
     let text = fs.readFileSync(file, 'utf8');
     Object.keys(resolved).forEach((id) => {
-        const from = new RegExp(`("${id}"\\s*:\\s*)"${NEXT}"`);
+        const from = new RegExp(`("${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*)"${NEXT}"`);
         if (!from.test(text)) {
             throw new Error(`${path.relative(root, file)}: no "${id}": "${NEXT}"`);
         }
@@ -837,6 +844,34 @@ function cmdVersions(base) {
     }
 }
 
+/* What the catalog this run publishes would require from this repository
+ * (known: the repository's component ids and any removed in this run) but not
+ * hold, at that version or newer: the car installs requirements first, so each
+ * same-repo requirement must be there. External requirements (from another
+ * catalog, such as mgu-deploy) are not checked here. */
+function unmetRequires(uploads, current, known) {
+    const final = new Map([...current.values()].map((e) => [e.id, e]));
+    uploads.forEach((e) => final.set(e.id, e));
+    const local = known ? new Set(known) : null;
+    const unmet = [];
+    final.forEach((e) => {
+        Object.keys(e.requires || {}).forEach((dep) => {
+            const d = final.get(dep);
+            if (dep === e.id) {
+                unmet.push(`${e.id}@${e.version} requires itself`);
+            } else if (d) {
+                if (compareVersions(d.version, e.requires[dep]) < 0) {
+                    unmet.push(`${e.id}@${e.version} needs ${dep} ${e.requires[dep]}, ` +
+                        `but the catalog would have ${dep} ${d.version}`);
+                }
+            } else if (!local || local.has(dep)) {
+                unmet.push(`${e.id}@${e.version} needs ${dep} ${e.requires[dep]}, which the catalog would not have`);
+            }
+        });
+    });
+    return unmet;
+}
+
 function cmdPublish(ids, dryRun, stamped) {
     if (git(['status', '--porcelain', '--untracked-files=no'])) {
         throw new Error('commit first: publish builds HEAD and records its commit in the catalog');
@@ -866,65 +901,77 @@ function cmdPublish(ids, dryRun, stamped) {
         ids = [...new Set(fs.readFileSync(STAMPED, 'utf8').split(/\s+/).filter(Boolean).concat(lagging.map((c) => c.id)))];
     }
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-'));
-    const skipped = [];
-    // built twice: a version publishes only when both builds give the same
-    // bytes; with --stamped and nothing to publish, nothing is built
-    const none = stamped && !ids.length;
-    const built = none ? [] : build(ids, staging, skipped);
-    const again = built.length ? build(built.map((e) => e.id), fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-b-')), skipped) : [];
-    const uploads = [];
-    const all = components();
-    built.forEach((e) => {
-        const p = current.get(e.id);
-        const b = again.find((x) => x.id === e.id);
-        const next = Object.keys(e.requires || {}).filter((id) => e.requires[id] === NEXT);
-        if (!b || b.artifact.sha256 !== e.artifact.sha256) {
-            skipped.push(`${e.id}@${e.version} builds differently each time`);
-        } else if (next.length) {
-            skipped.push(`${e.id}@${e.version} requires ${next.join(', ')} "${NEXT}": stamp first`);
-        } else if (p && p.version === e.version && p.artifact.sha256 !== e.artifact.sha256) {
-            skipped.push(`${e.id}@${e.version} is published with other content: stamp gives it its next version`);
-        } else if (p && compareVersions(e.version, p.version) < 0) {
-            skipped.push(`${e.id}@${e.version} is older than the published ${p.version}`);
-        } else if (!p || p.version !== e.version) {
-            uploads.push(e);
+    let stagingB = null;
+    try {
+        const skipped = [];
+        // built twice: a version publishes only when both builds give the same
+        // bytes; with --stamped and nothing to publish, nothing is built
+        const none = stamped && !ids.length;
+        const built = none ? [] : build(ids, staging, skipped);
+        const again = built.length ? build(built.map((e) => e.id), (stagingB = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-b-'))), skipped) : [];
+        const uploads = [];
+        const all = components();
+        built.forEach((e) => {
+            const p = current.get(e.id);
+            const b = again.find((x) => x.id === e.id);
+            const next = Object.keys(e.requires || {}).filter((id) => e.requires[id] === NEXT);
+            if (!b || b.artifact.sha256 !== e.artifact.sha256) {
+                skipped.push(`${e.id}@${e.version} builds differently each time`);
+            } else if (next.length) {
+                skipped.push(`${e.id}@${e.version} requires ${next.join(', ')} "${NEXT}": stamp first`);
+            } else if (p && p.version === e.version && p.artifact.sha256 !== e.artifact.sha256) {
+                skipped.push(`${e.id}@${e.version} is published with other content: stamp gives it its next version`);
+            } else if (p && compareVersions(e.version, p.version) < 0) {
+                skipped.push(`${e.id}@${e.version} is older than the published ${p.version}`);
+            } else if (!p || p.version !== e.version) {
+                uploads.push(e);
+            }
+        });
+        skipped.forEach((m) => console.log(`skipped: ${m}`));
+        if (skipped.length) {
+            process.exitCode = 1;
         }
-    });
-    skipped.forEach((m) => console.log(`skipped: ${m}`));
-    if (skipped.length) {
-        process.exitCode = 1;
-    }
-    // the entries carried over list their artifact as the target does (publish.js listedUrl)
-    const relisted = [...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)).filter((e) => {
-        const url = publishTarget.listedUrl(e);
-        if (url === e.artifact.url) {
-            return false;
+        const unmet = unmetRequires(uploads, current, [...inRepo, ...removed]);
+        if (unmet.length) {
+            throw new Error(`nothing published: ${unmet.join('; ')}`);
         }
-        e.artifact.url = url;
-        return true;
-    });
-    // the entries carried over list their titles and descriptions in other languages as release/texts has them
-    const retexted = retext([...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)), all);
-    if (!uploads.length && !removed.length && !relisted.length && !retexted.length) {
-        console.log('nothing new to publish');
-        return;
+        // the entries carried over list their artifact as the target does (publish.js listedUrl)
+        const relisted = [...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)).filter((e) => {
+            const url = publishTarget.listedUrl(e);
+            if (url === e.artifact.url) {
+                return false;
+            }
+            e.artifact.url = url;
+            return true;
+        });
+        // the entries carried over list their titles and descriptions in other languages as release/texts has them
+        const retexted = retext([...current.values()].filter((e) => !uploads.some((x) => x.id === e.id)), all);
+        if (!uploads.length && !removed.length && !relisted.length && !retexted.length) {
+            console.log('nothing new to publish');
+            return;
+        }
+        removed.forEach((id) => console.log(`${dryRun ? 'would remove' : 'removing'} ${id}: not in the repository`));
+        relisted.forEach((e) => console.log(`${dryRun ? 'would list' : 'listing'} ${e.id}@${e.version} at ${e.artifact.url}`));
+        retexted.forEach((e) => console.log(`${dryRun ? 'would list' : 'listing'} ${e.id}@${e.version} with its texts`));
+        uploads.forEach((e) => console.log(`${dryRun ? 'would publish' : 'publishing'} ${e.id}@${e.version}`));
+        if (dryRun) {
+            return;
+        }
+        uploads.forEach((e) => {
+            e.artifact.url = publishTarget.uploadArtifact(e, path.join(staging, e.artifact.name));
+            current.set(e.id, e);
+        });
+        // the icons before the catalog that names them
+        uploads.filter((e) => e.icon).forEach((e) => publishTarget.uploadCatalogAsset(path.join(staging, e.icon)));
+        const catalogFile = writeCatalog([...current.values()], staging);
+        publishTarget.uploadCatalog(catalogFile);
+        console.log(`catalog published to ${publishTarget.describe()}`);
+    } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+        if (stagingB) {
+            fs.rmSync(stagingB, { recursive: true, force: true });
+        }
     }
-    removed.forEach((id) => console.log(`${dryRun ? 'would remove' : 'removing'} ${id}: not in the repository`));
-    relisted.forEach((e) => console.log(`${dryRun ? 'would list' : 'listing'} ${e.id}@${e.version} at ${e.artifact.url}`));
-    retexted.forEach((e) => console.log(`${dryRun ? 'would list' : 'listing'} ${e.id}@${e.version} with its texts`));
-    uploads.forEach((e) => console.log(`${dryRun ? 'would publish' : 'publishing'} ${e.id}@${e.version}`));
-    if (dryRun) {
-        return;
-    }
-    uploads.forEach((e) => {
-        e.artifact.url = publishTarget.uploadArtifact(e, path.join(staging, e.artifact.name));
-        current.set(e.id, e);
-    });
-    // the icons before the catalog that names them
-    uploads.filter((e) => e.icon).forEach((e) => publishTarget.uploadCatalogAsset(path.join(staging, e.icon)));
-    const catalogFile = writeCatalog([...current.values()], staging);
-    publishTarget.uploadCatalog(catalogFile);
-    console.log(`catalog published to ${publishTarget.describe()}`);
 }
 
 function main(argv) {
@@ -955,5 +1002,5 @@ if (require.main === module) {
     }
 }
 
-module.exports = { components, catalogTexts, retext, compareVersions, catalogEntry, exportHead, bumpVersion, releaseChangelog,
+module.exports = { components, catalogTexts, retext, compareVersions, unmetRequires, catalogEntry, exportHead, bumpVersion, releaseChangelog,
     unreleasedOf, plan, writePlan, prLabels };

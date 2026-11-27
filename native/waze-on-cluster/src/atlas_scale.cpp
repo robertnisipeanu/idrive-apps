@@ -2,10 +2,12 @@
 // Copyright (C) 2026 Robert Nisipeanu
 #include "atlas_scale.h"
 
+#include <fcntl.h>
+#include <unistd.h>
 #ifdef __linux__
+#include <sys/eventfd.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
-#include <unistd.h>
 #endif
 
 #include "yuv_atlas.h"
@@ -80,34 +82,47 @@ bool AtlasScaler::configure(uint32_t w, uint32_t h, uint32_t dw, uint32_t dh, un
     return true;
 }
 
-/* Horizontal into 16-bit rows (scaled 256: the kOne-weighted sum over 16),
- * then vertical row by row into 32-bit sums (scaled 2^20), so both passes
- * run along memory and the compiler can vectorise the vertical one. */
+/* Horizontal into a power-of-two ring buffer of 16-bit rows (scaled 256: the
+ * kOne-weighted sum over 16), then vertical row by row into 32-bit sums
+ * (scaled 2^20), keeping the horizontal strip resident in L1 cache. */
 void AtlasScaler::plane(const uint8_t *src, uint32_t sp, uint32_t sh, uint8_t *dst, uint32_t dp, const Axis &x,
                         const Axis &y)
 {
     const uint32_t dw = (uint32_t)x.first.size(), dh = (uint32_t)y.first.size();
-    rows_.resize((size_t)sh * dw);
+    uint32_t max_k = 1;
+    for (uint32_t j = 0; j < dh; j++)
+        if (y.count[j] > max_k)
+            max_k = y.count[j];
+    uint32_t ring_h = 1;
+    while (ring_h < max_k)
+        ring_h <<= 1;
+    const uint32_t mask = ring_h - 1;
+    rows_.resize((size_t)ring_h * dw);
     acc_.resize(dw);
-    for (uint32_t r = 0; r < sh; r++) {
-        const uint8_t *s = src + (size_t)r * sp;
-        uint16_t *o = &rows_[(size_t)r * dw];
-        for (uint32_t i = 0; i < dw; i++) {
-            const uint8_t *p = s + x.first[i];
-            const uint16_t *wt = &x.weight[x.offset[i]];
-            uint32_t a = 0;
-            for (uint32_t k = 0; k < x.count[i]; k++)
-                a += (uint32_t)p[k] * wt[k];
-            o[i] = (uint16_t)((a + 8) >> 4);
-        }
-    }
+
+    uint32_t built = 0;
     for (uint32_t j = 0; j < dh; j++) {
+        const uint32_t need = y.first[j] + y.count[j];
+        const uint32_t limit = need < sh ? need : sh;
+        while (built < limit) {
+            const uint8_t *s = src + (size_t)built * sp;
+            uint16_t *o = &rows_[(size_t)(built & mask) * dw];
+            for (uint32_t i = 0; i < dw; i++) {
+                const uint8_t *p = s + x.first[i];
+                const uint16_t *wt = &x.weight[x.offset[i]];
+                uint32_t a = 0;
+                for (uint32_t k = 0; k < x.count[i]; k++)
+                    a += (uint32_t)p[k] * wt[k];
+                o[i] = (uint16_t)((a + 8) >> 4);
+            }
+            built++;
+        }
         uint32_t *a = acc_.data();
         for (uint32_t i = 0; i < dw; i++)
             a[i] = 1u << 19;   /* rounds the shift below */
         const uint16_t *wt = &y.weight[y.offset[j]];
         for (uint32_t k = 0; k < y.count[j]; k++) {
-            const uint16_t *row = &rows_[(size_t)(y.first[j] + k) * dw];
+            const uint16_t *row = &rows_[(size_t)((y.first[j] + k) & mask) * dw];
             const uint32_t w = wt[k];
             for (uint32_t i = 0; i < dw; i++)
                 a[i] += (uint32_t)row[i] * w;
@@ -131,17 +146,25 @@ void AtlasScaler::scale(const uint8_t *src, std::vector<uint8_t> *dst)
     uint8_t *du = d + (size_t)dw_ * dh_, *dv = du + dw_ / 2;
     plane(su, w_, crop_h_ / 2, du, dw_, cx_, cy_);
     plane(sv, w_, crop_h_ / 2, dv, dw_, cx_, cy_);
-    if (black_bg_)
-        key_background(d);
+    uint8_t rlut[256];
+    const uint8_t *round_lut = nullptr;
+    if (bits_ && black_bg_) {
+        for (int v = 0; v < 256; v++)
+            rlut[v] = (uint8_t)v;
+        crk::round_levels(rlut, rlut, 256, bits_);
+        round_lut = rlut;
+    }
+    const bool rounded = black_bg_ && key_background(d, round_lut);
     if (radius_) {
         const uint32_t cr = radius_ / 2;
-        corners(d, dw_, dw_, dh_, radius_, ycov_, 16);
+        const uint8_t *clut = rounded ? round_lut : nullptr;
+        corners(d, dw_, dw_, dh_, radius_, ycov_, 16, clut);
         if (cr) {
-            corners(du, dw_, dw_ / 2, dh_ / 2, cr, ccov_, 128);
-            corners(dv, dw_, dw_ / 2, dh_ / 2, cr, ccov_, 128);
+            corners(du, dw_, dw_ / 2, dh_ / 2, cr, ccov_, 128, clut);
+            corners(dv, dw_, dw_ / 2, dh_ / 2, cr, ccov_, 128, clut);
         }
     }
-    if (bits_)
+    if (bits_ && !rounded)
         crk::round_levels(d, d, dst->size(), bits_);
 }
 
@@ -161,16 +184,22 @@ static inline bool is_green(int u, int v)
 {
     return v - 128 <= -6 && u - 128 <= 2;
 }
-void AtlasScaler::key_background(uint8_t *d)
+bool AtlasScaler::key_background(uint8_t *d, const uint8_t *rlut)
 {
     static const int kKeyLo = 8, kKeyRamp = 28, kKeyMaxBg = 150;   /* Waze's night field is grey-blue, a day map's near white */
     const size_t n = (size_t)dw_ * dh_;
+    const uint32_t half_w = dw_ >> 1;
     const uint8_t *cu = d + n;
     uint32_t hist[256] = {0};
-    for (size_t i = 0; i < n; i += 3) {
-        const size_t c = (i / dw_ / 2) * dw_ + (i % dw_) / 2;
-        if (!is_green(cu[c], cu[c + dw_ / 2]))
-            hist[d[i]]++;
+    for (uint32_t y = 0; y < dh_; y++) {
+        const uint8_t *yp = d + (size_t)y * dw_;
+        const uint8_t *up = cu + (size_t)(y >> 1) * dw_;
+        const uint8_t *vp = up + half_w;
+        for (uint32_t x = 0; x < dw_; x += 3) {
+            const uint32_t cx = x >> 1;
+            if (!is_green(up[cx], vp[cx]))
+                hist[yp[x]]++;
+        }
     }
     int mode = 0;
     for (int v = 1; v < 256; v++)
@@ -179,32 +208,58 @@ void AtlasScaler::key_background(uint8_t *d)
     bg_ = bg_ < 0 ? mode * 16 : bg_ + (mode * 16 - bg_) / 4;
     const int bg = bg_ / 16;
     if (bg > kKeyMaxBg)
-        return;
+        return false;
     uint16_t k[256];
+    uint8_t y_lut[256];
     for (int v = 0; v < 256; v++) {
         const int over = v - bg - kKeyLo;
-        k[v] = (uint16_t)(over <= 0 ? 0 : over >= kKeyRamp ? 256 : over * 256 / kKeyRamp);
+        const uint16_t kv = (uint16_t)(over <= 0 ? 0 : over >= kKeyRamp ? 256 : over * 256 / kKeyRamp);
+        k[v] = kv;
+        const uint8_t yv = (uint8_t)(16 + ((v - 16) * (int)kv) / 256);
+        y_lut[v] = rlut ? rlut[yv] : yv;
     }
-    uint8_t *u = d + n, *v = u + dw_ / 2;
-    for (uint32_t y = 0; y < dh_; y += 2)
-        for (uint32_t x = 0; x < dw_; x += 2) {
-            uint8_t *p = d + (size_t)y * dw_ + x;
-            const size_t c = (size_t)(y / 2) * dw_ + x / 2;
-            if (is_green(u[c], v[c]))
+    uint8_t *u = d + n, *v = u + half_w;
+    for (uint32_t y = 0; y < dh_; y += 2) {
+        uint8_t *p0 = d + (size_t)y * dw_;
+        uint8_t *p1 = p0 + dw_;
+        uint8_t *ur = u + (size_t)(y >> 1) * dw_;
+        uint8_t *vr = v + (size_t)(y >> 1) * dw_;
+        for (uint32_t x = 0, cx = 0; x < dw_; x += 2, cx++) {
+            const uint8_t uc = ur[cx], vc = vr[cx];
+            if (is_green(uc, vc)) {
+                if (rlut) {
+                    p0[x] = rlut[p0[x]];
+                    p0[x + 1] = rlut[p0[x + 1]];
+                    p1[x] = rlut[p1[x]];
+                    p1[x + 1] = rlut[p1[x + 1]];
+                    ur[cx] = rlut[uc];
+                    vr[cx] = rlut[vc];
+                }
                 continue;
-            const uint32_t k0 = k[p[0]], k1 = k[p[1]], k2 = k[p[dw_]], k3 = k[p[dw_ + 1]];
-            p[0] = (uint8_t)(16 + ((int)p[0] - 16) * (int)k0 / 256);
-            p[1] = (uint8_t)(16 + ((int)p[1] - 16) * (int)k1 / 256);
-            p[dw_] = (uint8_t)(16 + ((int)p[dw_] - 16) * (int)k2 / 256);
-            p[dw_ + 1] = (uint8_t)(16 + ((int)p[dw_ + 1] - 16) * (int)k3 / 256);
+            }
+            const uint8_t y0 = p0[x], y1 = p0[x + 1], y2 = p1[x], y3 = p1[x + 1];
+            const uint32_t k0 = k[y0], k1 = k[y1], k2 = k[y2], k3 = k[y3];
+            p0[x] = y_lut[y0];
+            p0[x + 1] = y_lut[y1];
+            p1[x] = y_lut[y2];
+            p1[x + 1] = y_lut[y3];
             uint32_t kc = k0 > k1 ? k0 : k1;
             kc = kc > k2 ? kc : k2;
             kc = kc > k3 ? kc : k3;
-            if (kc >= 256)
+            if (kc >= 256) {
+                if (rlut) {
+                    ur[cx] = rlut[uc];
+                    vr[cx] = rlut[vc];
+                }
                 continue;
-            u[c] = (uint8_t)(128 + ((int)u[c] - 128) * (int)kc / 256);
-            v[c] = (uint8_t)(128 + ((int)v[c] - 128) * (int)kc / 256);
+            }
+            const uint8_t nu = (uint8_t)(128 + ((int)uc - 128) * (int)kc / 256);
+            const uint8_t nv = (uint8_t)(128 + ((int)vc - 128) * (int)kc / 256);
+            ur[cx] = rlut ? rlut[nu] : nu;
+            vr[cx] = rlut ? rlut[nv] : nv;
         }
+    }
+    return rlut != nullptr;
 }
 
 /* Each pixel of the r x r top-left corner square: how much of it (0-256) lies
@@ -242,7 +297,7 @@ void AtlasScaler::set_corner_radius(uint32_t r)
 }
 
 void AtlasScaler::corners(uint8_t *p, uint32_t dp, uint32_t pw, uint32_t ph, uint32_t r, const std::vector<uint16_t> &cov,
-                          uint8_t black)
+                          uint8_t black, const uint8_t *rlut)
 {
     if (r * 2 > pw || r * 2 > ph)
         return;
@@ -256,20 +311,75 @@ void AtlasScaler::corners(uint8_t *p, uint32_t dp, uint32_t pw, uint32_t ph, uin
             for (uint32_t yi = 0; yi < 2; yi++)
                 for (uint32_t xi = 0; xi < 2; xi++) {
                     uint8_t &v = p[(size_t)ys[yi] * dp + xs[xi]];
-                    v = (uint8_t)(black + (((int)v - black) * (int)c) / 256);
+                    const uint8_t nv = (uint8_t)(black + (((int)v - black) * (int)c) / 256);
+                    v = rlut ? rlut[nv] : nv;
                 }
         }
 }
 
+ScaleWorker::ScaleWorker()
+{
+#ifdef __linux__
+    done_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+#else
+    int p[2];
+    if (pipe(p) == 0) {
+        fcntl(p[0], F_SETFL, O_NONBLOCK);
+        fcntl(p[1], F_SETFL, O_NONBLOCK);
+        fcntl(p[0], F_SETFD, FD_CLOEXEC);
+        fcntl(p[1], F_SETFD, FD_CLOEXEC);
+        done_fd_ = p[0];
+        done_wr_ = p[1];
+    }
+#endif
+}
+
 ScaleWorker::~ScaleWorker()
 {
-    if (!started_)
-        return;
-    {
-        std::lock_guard<std::mutex> l(s_->mu);
-        s_->stop = true;
+    if (thread_.joinable()) {
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            stop_ = true;
+        }
+        cv_.notify_one();
+        thread_.join();
     }
-    s_->cv.notify_one();
+    if (done_fd_ >= 0)
+        close(done_fd_);
+    if (done_wr_ >= 0)
+        close(done_wr_);
+}
+
+void ScaleWorker::signal_done()
+{
+#ifdef __linux__
+    if (done_fd_ >= 0) {
+        const uint64_t one = 1;
+        const ssize_t w = write(done_fd_, &one, sizeof one);
+        (void)w;
+    }
+#else
+    if (done_wr_ >= 0) {
+        const char b = 1;
+        const ssize_t w = write(done_wr_, &b, 1);
+        (void)w;
+    }
+#endif
+}
+
+void ScaleWorker::drain_done()
+{
+    if (done_fd_ < 0)
+        return;
+#ifdef __linux__
+    uint64_t v = 0;
+    const ssize_t r = read(done_fd_, &v, sizeof v);
+    (void)r;
+#else
+    char buf[16];
+    while (read(done_fd_, buf, sizeof buf) > 0) {
+    }
+#endif
 }
 
 bool ScaleWorker::submit(std::vector<uint8_t> *atlas, uint64_t id, const ScaleShape &shape)
@@ -277,38 +387,37 @@ bool ScaleWorker::submit(std::vector<uint8_t> *atlas, uint64_t id, const ScaleSh
     if (!idle() || shape.dw > (shape.crop_w ? shape.crop_w : shape.w) || shape.dh > (shape.crop_w ? shape.crop_h : shape.h) ||
         atlas->size() != (size_t)shape.w * (shape.h + shape.h / 2))
         return false;
-    s_->in.swap(*atlas);
-    s_->id = id;
-    s_->shape = shape;
-    if (!started_) {
-        std::thread(run, s_).detach();
-        started_ = true;
-    }
+    in_.swap(*atlas);
+    id_ = id;
+    shape_ = shape;
+    if (!thread_.joinable())
+        thread_ = std::thread(&ScaleWorker::run, this);
     {
-        std::lock_guard<std::mutex> l(s_->mu);
-        s_->stage.store(kQueued, std::memory_order_release);
+        std::lock_guard<std::mutex> l(mu_);
+        stage_.store(kQueued, std::memory_order_release);
     }
-    s_->cv.notify_one();
+    cv_.notify_one();
     return true;
 }
 
 bool ScaleWorker::take(std::vector<uint8_t> *out, uint64_t *id, const ScaleShape &shape, std::vector<uint8_t> *in)
 {
-    if (s_->stage.load(std::memory_order_acquire) != kDone)
+    if (stage_.load(std::memory_order_acquire) != kDone)
         return false;
-    if (s_->made == shape && !s_->out.empty()) {
-        out->swap(s_->out);
-        *id = s_->id;
+    drain_done();
+    if (made_ == shape && !out_.empty()) {
+        out->swap(out_);
+        *id = id_;
     } else {
         out->clear();
     }
     if (in)
-        in->swap(s_->in);
-    s_->stage.store(kIdle, std::memory_order_release);
+        in->swap(in_);
+    stage_.store(kIdle, std::memory_order_release);
     return true;
 }
 
-void ScaleWorker::run(std::shared_ptr<State> s)
+void ScaleWorker::run()
 {
 #ifdef __linux__
     /* below the map's threads: the HUD takes only spare CPU */
@@ -316,26 +425,27 @@ void ScaleWorker::run(std::shared_ptr<State> s)
 #endif
     for (;;) {
         {
-            std::unique_lock<std::mutex> l(s->mu);
-            s->cv.wait(l, [&s] { return s->stop || s->stage.load(std::memory_order_acquire) == kQueued; });
-            if (s->stop)
+            std::unique_lock<std::mutex> l(mu_);
+            cv_.wait(l, [this] { return stop_ || stage_.load(std::memory_order_acquire) == kQueued; });
+            if (stop_)
                 return;
         }
-        if (s->made != s->shape || !s->scaler.configured()) {
-            s->made = ScaleShape();
-            if (s->scaler.configure(s->shape.w, s->shape.h, s->shape.dw, s->shape.dh, s->shape.level_bits,
-                                    s->shape.crop_x, s->shape.crop_y, s->shape.crop_w, s->shape.crop_h)) {
-                s->scaler.set_corner_radius(s->shape.radius);
-                s->scaler.set_black_background(s->shape.black);
-                s->made = s->shape;
+        if (made_ != shape_ || !scaler_.configured()) {
+            made_ = ScaleShape();
+            if (scaler_.configure(shape_.w, shape_.h, shape_.dw, shape_.dh, shape_.level_bits,
+                                  shape_.crop_x, shape_.crop_y, shape_.crop_w, shape_.crop_h)) {
+                scaler_.set_corner_radius(shape_.radius);
+                scaler_.set_black_background(shape_.black);
+                made_ = shape_;
             }
         }
-        if (s->made == s->shape)
-            s->scaler.scale(s->in.data(), &s->out);
+        if (made_ == shape_)
+            scaler_.scale(in_.data(), &out_);
         else
-            s->out.clear();
-        s->frames++;
-        s->stage.store(kDone, std::memory_order_release);
+            out_.clear();
+        frames_++;
+        stage_.store(kDone, std::memory_order_release);
+        signal_done();
     }
 }
 

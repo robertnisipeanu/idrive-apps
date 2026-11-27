@@ -115,6 +115,12 @@ class VideoProducer {
 public:
     static const size_t kQueuePackets = 4096;
     static const size_t kQueueBytes = 6 << 20;
+    /* Flush an open unmarked RTP VCL access unit after this many ms of packet
+     * idle instead of waiting for the next frame's timestamp. */
+    static const int kAuIdleFlushMs = 8;
+    /* Publish decode-thread stats to the probe snapshot at most this often
+     * unless SPS or decoder state changes. */
+    static const int kProbePublishMs = 250;
 
     explicit VideoProducer(const VideoConfig &cfg);
     ~VideoProducer();
@@ -216,14 +222,16 @@ private:
     void on_nal(const uint8_t *data, size_t len, bool end_of_au);
     /* Under decode_mutex_. */
     bool start_decoder(std::string *err);
-    void decode(const uint8_t *data, size_t len, bool end_of_au);
+    void decode(const uint8_t *data, size_t len, bool end_of_au, bool raw_nal);
     /* Decoder callback, each decoded frame: the pace's record of it, then
      * on_frame. Under decode_mutex_. */
     void on_decoded(const VideoFrame &f);
-    /* How long the decode thread waits for a packet: until the late picture
-     * of a frame the pace left without one is due (its slot and the lead),
-     * at most 500 ms. */
+    /* How long the decode thread waits for a packet: the earlier of late
+     * picture pacing and RTP AU idle flush (-1: none). */
+    int decode_wait_ms() const;
     int late_wait_ms() const;
+    /* Flushes an open RTP VCL access unit after kAuIdleFlushMs of packet idle. */
+    void flush_rtp_au();
     /* That frame's late picture, once its slot has come (decode thread,
      * nothing waiting to be decoded). */
     void picture_paced();
@@ -234,6 +242,24 @@ private:
     void on_frame(const VideoFrame &f, bool late);
     /* The part set_part asked for, to the decoder. Under decode_mutex_. */
     void pass_part();
+
+    struct PendingLog {
+        bool warn;
+        std::string msg;
+    };
+    struct ProbeSnapshot {
+        RtpH264::Stats rtp;
+        crk::Spread pack_us, vpp_us;
+        bool decoder_up = false;
+        bool decoding = false;
+        bool display_order = false;
+        std::string last_sps;
+    };
+    void queue_log(bool warn, std::string msg);
+    static void emit_logs(const std::vector<PendingLog> &logs);
+    /* Copies decode-thread stats into probe_snap_ under stats_mutex_. Under
+     * decode_mutex_. */
+    void publish_probe(bool force = false);
 
     VideoConfig cfg_;
     size_t atlas_bytes_;
@@ -251,11 +277,18 @@ private:
     mutable std::mutex decode_mutex_;
     bool decoder_up_ = false, fifo_up_ = false, udp_up_ = false, avb_up_ = false;
     bool decoding_ = false;          /* the decoder held a sequence after the last feed */
+    bool rtp_au_open_ = false;       /* decode thread: rtp_.has_open_vcl_au() */
     const PacketQueue::Packet *packet_ = nullptr;   /* the datagram being depacketised */
     const char *feed_source_ = "fifo";   /* the source of the bytes being fed */
     int64_t au_last_us_ = -1;        /* the open RTP access unit's last packet's arrival */
     SpsLog sps_log_;
     GapSettler gaps_;
+    std::vector<PendingLog> pending_logs_;
+    mutable std::mutex stats_mutex_; /* leaf lock for probe_report() snapshot */
+    ProbeSnapshot probe_snap_;
+    std::atomic<int64_t> probe_published_ms_{-1};
+    std::atomic<bool> probe_dirty_{false};
+    bool sps_dirty_ = false, probe_decoder_up_ = false, probe_decoding_ = false, probe_display_order_ = false;
     int64_t raw_retry_ms_ = 0;       /* a raw feed's next decoder start attempt */
     int64_t source_retry_ms_ = 0;    /* retry_sources' next attempt */
 

@@ -142,4 +142,11 @@ var rec = unit('waze-on-cluster-recovery.service');
 assert.deepStrictEqual(rec.ExecStart, ['/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js']);
 assert(c.enable.some(function (e) { return e.unit === 'waze-on-cluster-recovery.service'; }) && c.restart.indexOf('waze-on-cluster-recovery.service') >= 0);
 assert.deepStrictEqual(unit('waze-on-cluster-journal.service').ExecStart, ['/usr/bin/node /var/opt/waze-on-cluster/current/journal_keep.js']);
+['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-on-cluster-recovery.service'].forEach(function (name) {
+    var u = unit(name);
+    assert.deepStrictEqual(u.LimitCORE, ['1'], name + ' LimitCORE=1');
+    if (name === 'waze-on-cluster.service') assert.deepStrictEqual(u.MemoryLimit, ['256M'], name + ' MemoryLimit=256M');
+    else assert(!u.MemoryLimit, name + ' has no MemoryLimit');
+});
+assert(c.files.some(function (f) { return f.path === 'coding.js' && f.from === 'patch/coding.js'; }), 'coding.js installed');
 console.log('ok   the DLT capture in patchd (root, after dlt.service, restored at its stop), its recmgr name kept; recovery and the journal keeper on their own');

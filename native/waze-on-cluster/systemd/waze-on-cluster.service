@@ -46,6 +46,8 @@ ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-c
 # The head unit's slice for its standard services, where carplay and the
 # AVB stream handler run: level with the HMI, not ahead of it.
 Slice=standard.slice
+MemoryLimit=256M
+LimitCORE=1
 Restart=on-failure
 # At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of
 # systemd's start limit (5 starts in 10 s), which would also stop the socket.

@@ -210,7 +210,10 @@ public:
     /* A layer to take frames: made, and not reported disabled by
      * cluster-render. */
     bool takes_frames() const { return layer_ && !disabled(); }
+    bool connected() const { return client_.connected(); }
     int fd() const { return client_.fd(); }
+    int scale_fd() const { return worker_.done_fd(); }
+    bool scaling_busy() const { return scaling_ && layer_ && !worker_.idle(); }
     bool wants_write() const { return client_.wants_write(); }
     void poll(int64_t now_ms);
     /* Until poll() has work: a scaled frame to take, or the next one due

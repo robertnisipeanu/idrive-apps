@@ -71,12 +71,13 @@ int start(const cld::Config &cfg, char **)
     }
 
     /* The renderer's subscriptions, from RAMSES's console at info
-     * (ramses_console.h): stdout goes to the reader before RAMSES starts. */
+     * (ramses_console.h): stdout goes to the reader before RAMSES starts, and
+     * stops after RAMSES and the service tear down. */
     std::vector<uint64_t> scenes;
     for (const TargetSpec &t : sc.targets)
         scenes.push_back(t.scene_id);
-    RamsesConsole *console = new RamsesConsole(scenes);   /* for the process: its thread reads until exit */
-    if (!console->start(&err))
+    RamsesConsole console(scenes);
+    if (!console.start(&err))
         log_warn("ramses: console not read (%s): renderer subscription not observable", err.c_str());
     const char *args[] = {"cluster-render", "--log-level-console", "info"};
     ramses::RamsesFrameworkConfig fwc(3, args);
@@ -107,10 +108,10 @@ int start(const cld::Config &cfg, char **)
     Service service(&gpu, &port, sc);
     port.set_manager(&service.slots());
     port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
-    service.slots().console_text = [console](int64_t now_ms) {
-        return console->counts_text(now_ms) + "; " + ramses_dlt_text();
+    service.slots().console_text = [&console](int64_t now_ms) {
+        return console.counts_text(now_ms) + "; " + ramses_dlt_text();
     };
-    service.slots().console_live_since = [console](int64_t now_ms) { return console->live_since(now_ms); };
+    service.slots().console_live_since = [&console](int64_t now_ms) { return console.live_since(now_ms); };
     service.slots().on_renderer_stuck = [&framework, user](int64_t) {
         log_warn("ramses: reconnecting as participant %u", user);
         framework.disconnect();
@@ -149,7 +150,7 @@ int start(const cld::Config &cfg, char **)
         fds.clear();
         fds.push_back(pollfd{sig_fd, POLLIN, 0});
         fds.push_back(pollfd{link.fd(), POLLIN, 0});
-        fds.push_back(pollfd{console->fd(), POLLIN, 0});
+        fds.push_back(pollfd{console.fd(), POLLIN, 0});
         const size_t first = service.poll_fds(&fds);
         const int n = poll(fds.data(), fds.size(), service.timeout_ms(cld::now_ms()));
         if (n < 0 && errno != EINTR)
@@ -160,7 +161,7 @@ int start(const cld::Config &cfg, char **)
         if (fds[1].revents & POLLIN)
             link.drain(&port, now);
         if (fds[2].revents & POLLIN)
-            renderer_events(console, &service.slots());
+            renderer_events(&console, &service.slots());
         service.after_poll(fds, first, now);
     }
     service.shutdown(cld::now_ms());

@@ -490,6 +490,26 @@ static void test_reset(const Stream &s)
     CHECK(datas(got) == expected(s));
 }
 
+/* Direct NAL feeding (RTP path) matches Annex-B push bit-for-bit, flags included. */
+static void test_push_nal(const Stream &s, const char *name)
+{
+    std::vector<Got> ref = feed_chunks(s.bytes, {s.bytes.size()});
+    NalReader r;
+    std::vector<Got> got;
+    auto sink = collect(got);
+    for (const auto &au : s.aus) {
+        for (int idx : au)
+            r.push_nal(s.nals[idx].data(), s.nals[idx].size(), sink);
+        r.end_au(sink);
+    }
+    bool same = got.size() == ref.size();
+    for (size_t i = 0; same && i < ref.size(); i++)
+        same = got[i].data == ref[i].data && got[i].sps == ref[i].sps && got[i].idr == ref[i].idr && got[i].b == ref[i].b;
+    if (!same)
+        std::printf("FAIL %s: push_nal mismatch\n", name);
+    CHECK(same);
+}
+
 int main()
 {
     Stream x264 = stream(x264_stream, sizeof x264_stream, x264_stream_nals,
@@ -514,6 +534,7 @@ int main()
         test_end_of_au(*t.s, t.spans, t.name);
         test_start_code_forms(*t.s, t.name);
         test_leading_garbage(*t.s);
+        test_push_nal(*t.s, t.name);
     }
     test_x264_flags(x264);
     test_delivery_point(x264, vt);

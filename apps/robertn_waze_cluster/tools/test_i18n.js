@@ -76,6 +76,12 @@ const all = locales.read();
 eq(all.map((l) => l.code).sort(), CODES.slice().sort(), 'the Store\'s languages');
 eq(fs.readFileSync(locales.OUT, 'utf8'), locales.source(), 'src/locales.js as tools/gen_locales.js writes it');
 eq(i18n.codes(), all.map((l) => l.code), 'every locale in the app');
+const pkgFiles = JSON.parse(fs.readFileSync(path.join(TREE, 'package.json'), 'utf8')).files || [];
+ok(pkgFiles.indexOf('locales') >= 0, 'package.json ships locales/');
+const runtime = locales.runtimeFiles();
+eq(fs.readdirSync(locales.LOCALES_DIR).sort(), Object.keys(runtime).sort(), 'one runtime locale file per language, no other');
+Object.keys(runtime).forEach((n) => eq(fs.readFileSync(path.join(locales.LOCALES_DIR, n), 'utf8'), runtime[n],
+    `package/locales/${n}: as tools/gen_locales.js writes it`));
 const TEXTS = path.join(TREE, 'rhmiData', 'variantGroups', 'Common', 'texts');
 const readText = (name) => JSON.parse(fs.readFileSync(path.join(TEXTS, `${name}.json`), 'utf8'));
 const generated = locales.texts();
@@ -109,6 +115,11 @@ eq(fs.readdirSync(TEXTS).sort(), Object.keys(SDK_TEXTS).map((h) => `${SDK_TEXTS[
 
 /* ---- the display language ---- */
 const LIVE = require(path.join(SRC, 'locales.js'));
+ok(LIVE.every((l) => Object.keys(l).sort().join(',') === 'code,hmiLanguages'), 'src/locales.js keeps only the mapping table');
+const deDisk = all.find((l) => l.code === 'de').words;
+ok(i18n.setHmiLanguage('DEUTSCH'), 'German loaded from package/locales/de.json');
+eq(i18n.t('Patched'), deDisk.Patched, 'runtime translation read from disk');
+ok(i18n.setHmiLanguage('ENGLISCH__UK'), 'back to English');
 const de = LIVE.find((l) => l.code === 'de');
 const deWords = de.words;
 de.words = { 'Status: {0}': 'Zustand: {0}', Patched: 'Gepatcht', 'Possible in {0} min': 'Möglich in {0} Min.' };

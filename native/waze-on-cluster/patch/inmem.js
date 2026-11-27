@@ -321,20 +321,15 @@ function remove(name) {
     try { fs.rmdirSync(RUN_DIR); } catch (e) {}
 }
 
-/* The LD_PRELOAD the unit sets itself (carplay.service's and aapd.service's
- * Environment=, BMW's libschedconfig), kept in front of ours. */
-function unitPreload(unit) {
+/* The LD_PRELOAD and User the unit sets itself (carplay.service's and
+ * aapd.service's Environment=, BMW's libschedconfig, and User=), read in one
+ * systemctl invocation. */
+function unitProps(unit) {
     var out = '';
-    try { out = cp.execFileSync(SYSTEMCTL, ['show', unit, '-p', 'Environment'], { timeout: 10000, encoding: 'utf8' }); } catch (e) { return null; }
-    var m = /(?:^Environment=|\s)LD_PRELOAD=(\S+)/m.exec(out);
-    return m ? m[1] : '';
-}
-
-function unitUser(unit) {
-    var out = '';
-    try { out = cp.execFileSync(SYSTEMCTL, ['show', unit, '-p', 'User'], { timeout: 10000, encoding: 'utf8' }); } catch (e) { return null; }
-    var m = /^User=(\S+)/m.exec(out);
-    return m ? m[1] : null;
+    try { out = cp.execFileSync(SYSTEMCTL, ['show', unit, '-p', 'Environment', '-p', 'User'], { timeout: 10000, encoding: 'utf8' }); } catch (e) { return null; }
+    var pre = /(?:^Environment=|\s)LD_PRELOAD=(\S+)/m.exec(out);
+    var usr = /^User=(\S+)/m.exec(out);
+    return { preload: pre ? pre[1] : '', user: usr ? usr[1] : null };
 }
 
 function uidOf(user) {
@@ -372,11 +367,12 @@ function arm(name, opts) {
     var plan0 = readOr(p.runPlan), keepResult = !!plan0 && sha256(plan0) === rec.planSha256 && !!readOr(p.result);
     try {
         if (!fs.existsSync(LIB)) throw new Error(LIB + ' missing');
-        var pre = opts.preload !== undefined ? opts.preload : unitPreload(t.unit);
+        var props = (opts.preload === undefined || opts.user === undefined) ? unitProps(t.unit) : null;
+        var pre = opts.preload !== undefined ? opts.preload : props ? props.preload : null;
         if (pre === null) throw new Error('cannot read ' + t.unit + '\'s environment');
         if (/\s/.test(LIB)) throw new Error('unusable preload path ' + LIB);
         pre = pre.split(/[\s:]+/).filter(function (x) { return x && x !== LIB; }).join(' ');
-        var user = opts.user !== undefined ? opts.user : unitUser(t.unit), ids = user ? uidOf(user) : null;
+        var user = opts.user !== undefined ? opts.user : props ? props.user : null, ids = user ? uidOf(user) : null;
         if (!ids) throw new Error('no user for ' + t.unit);
         try { fs.mkdirSync(RUN_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
         var rd = fs.lstatSync(RUN_DIR);

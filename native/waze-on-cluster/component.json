@@ -69,6 +69,11 @@
       "mode": "0644"
     },
     {
+      "path": "coding.js",
+      "from": "patch/coding.js",
+      "mode": "0644"
+    },
+    {
       "path": "patchd.js",
       "from": "patch/patchd.js",
       "mode": "0644"

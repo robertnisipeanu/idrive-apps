@@ -2155,7 +2155,7 @@ for (const already of [false, true]) test('the real boot step over ' + (already 
     if (already) { fs.writeFileSync(CARPLAY + '.new', b.original, { mode: 0o755 }); fs.renameSync(CARPLAY + '.new', CARPLAY); }
     inmem.disarm('carplay');
     const sc = path.join(w.dir, 'systemctl');
-    fs.writeFileSync(sc, '#!/bin/sh\ncase "$*" in *User*) echo User=cia_13002;; *) echo Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1;; esac\n', { mode: 0o755 });
+    fs.writeFileSync(sc, '#!/bin/sh\ncase "$*" in *Environment*) echo Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1;; esac\ncase "$*" in *User*) echo User=cia_13002;; esac\n', { mode: 0o755 });
     const r = runBootStep(w, 'carplay', 'A', { WOC_SYSTEMCTL: sc });
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
     assert(/carplay boot check: armed/.test(r.stdout), r.stdout);
@@ -2548,30 +2548,59 @@ test('the boot step turns carplay\'s patch off on a unit whose variant it cannot
 
 /* ---- the remount lock and the watcher service ---- */
 
-test('remount lock: mutual exclusion and stale break', () => {
+test('remount lock: mutual exclusion, live PID protection, PID reuse detection, and dead PID stale break', () => {
     const lockPath = path.join(ROOT, 'stale.lock');
-    const env = { WOC_REMOUNT_LOCK: process.env.WOC_REMOUNT_LOCK, WOC_REMOUNT_LOCK_STALE_MS: process.env.WOC_REMOUNT_LOCK_STALE_MS };
+    const env = {
+        WOC_REMOUNT_LOCK: process.env.WOC_REMOUNT_LOCK,
+        WOC_REMOUNT_LOCK_STALE_MS: process.env.WOC_REMOUNT_LOCK_STALE_MS,
+        WOC_PROC: process.env.WOC_PROC,
+    };
     process.env.WOC_REMOUNT_LOCK = lockPath;
     process.env.WOC_REMOUNT_LOCK_STALE_MS = '50';
+    process.env.WOC_PROC = '/proc';
     const key = require.resolve('../remount_lock.js'), cached = require.cache[key];
     delete require.cache[key];
     try {
         const lock = require('../remount_lock.js');
         assert.strictEqual(lock.tryAcquire(), true, 'first acquire');
         assert.strictEqual(lock.tryAcquire(), false, 'held: second acquire fails');
+        /* A live holder PID is never broken on a wall-clock jump (old mtime). */
+        const old = Date.now() / 1000 - 3600;
+        fs.utimesSync(lockPath, old, old);
+        assert.strictEqual(lock.tryAcquire(), false, 'live PID lock not broken on clock jump');
         lock.release();
         assert.strictEqual(lock.tryAcquire(), true, 'reacquire after release');
+        /* A reused live PID with a mismatched start time is immediately stale. */
+        if (fs.existsSync('/proc/' + process.pid + '/stat')) {
+            fs.writeFileSync(lockPath, process.pid + ' 1 2026-01-01T00:00:00.000Z\n');
+            assert.strictEqual(lock.tryAcquire(), true, 'reused PID lock broken immediately');
+            lock.release();
+        }
         fs.writeFileSync(lockPath, '999999 someone\n');
         lock.release();
         assert(fs.existsSync(lockPath), 'another holder\'s lock is not released');
-        const old = Date.now() / 1000 - 10;
-        fs.utimesSync(lockPath, old, old);
-        assert.strictEqual(lock.tryAcquire(), true, 'stale lock broken');
+        /* A dead PID is immediately stale regardless of mtime. */
+        assert.strictEqual(lock.tryAcquire(), true, 'dead PID lock broken immediately');
         lock.release();
     } finally {
         require.cache[key] = cached;
         Object.keys(env).forEach((k) => { if (env[k] === undefined) delete process.env[k]; else process.env[k] = env[k]; });
     }
+});
+
+test('boot step unlocks state lock cleanly before exiting and does not load aapd_patch.js', () => {
+    const w = makeWorld();
+    w.install('carplay', 'unproven');
+    const r = runBootStep(w, 'carplay', 'A');
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert(!fs.existsSync(w.T.carplay.state + '.lock'), 'no leaked state.lock after boot step');
+    /* Verify requiring recovery.js + coding path does not eagerly load aapd_patch.js. */
+    const check = cp.spawnSync(process.execPath, ['-e',
+        'var r = require(' + JSON.stringify(RECOVERY_PATH) + '); ' +
+        'var loaded = Object.keys(require.cache).some(function (k) { return /aapd_patch\\.js$/.test(k); }); ' +
+        'if (loaded) process.exit(1);'
+    ], { encoding: 'utf8' });
+    assert.strictEqual(check.status, 0, 'recovery.js did not eagerly load aapd_patch.js: ' + check.stderr);
 });
 
 test('the watcher service stays up without a patch to watch, and stops on SIGTERM', async () => {

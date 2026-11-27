@@ -5,6 +5,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <cstdarg>
+#include <cstdio>
+
 #include "dcsm/dcsm_client.h"
 #include "log.h"
 
@@ -32,6 +35,19 @@ void Dcsm2Link::push(Event e)
     char c = 0;
     ssize_t n = write(wake_[1], &c, 1);
     (void)n;
+}
+
+void Dcsm2Link::push_log(char level, const char *fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    Event e(Event::Log);
+    e.level = level;
+    e.text = buf;
+    push(std::move(e));
 }
 
 bool Dcsm2Link::start(const Options &o, std::string *err)
@@ -84,8 +100,8 @@ bool Dcsm2Link::start(const Options &o, std::string *err)
     client_->onFetchStatus = [this](const dcsm::ContentId2 &c, uint32_t status) {
         if (status == dcsm::E_FETCH_STATUS_REMOVED && heartbeat_replies_) {
             dcsm::HeartbeatStats s = client_->heartbeatStats();
-            log_info("dcsm: heartbeats at removal of 0x%llx: %u sent, %u replies (%u with a body), last reply %lld "
-                     "ms ago",
+            push_log('I', "dcsm: heartbeats at removal of 0x%llx: %u sent, %u replies (%u with a body), last reply %lld "
+                          "ms ago",
                      (unsigned long long)c.sceneId, s.sent, s.replies, s.badReplies, (long long)s.sinceReplyMs);
         }
         Event e(Event::Fetch);
@@ -129,29 +145,29 @@ bool Dcsm2Link::start(const Options &o, std::string *err)
         }
         switch (r.event) {
         case dcsm::HeartbeatReport::kFirstReply:
-            log_info("dcsm: heartbeat reply: the KOMBI answers our heartbeats (%u sent, %u replies)", s.sent,
+            push_log('I', "dcsm: heartbeat reply: the KOMBI answers our heartbeats (%u sent, %u replies)", s.sent,
                      s.replies);
             break;
         case dcsm::HeartbeatReport::kResumed:
-            log_info("dcsm: heartbeat replies resumed after %lld ms without (%u sent, %u replies)",
+            push_log('I', "dcsm: heartbeat replies resumed after %lld ms without (%u sent, %u replies)",
                      (long long)s.sinceReplyMs, s.sent, s.replies);
             break;
         case dcsm::HeartbeatReport::kBadReply:
-            log_error("dcsm: heartbeat reply is an E_OK response with %u bytes, not empty (%u sent, %u replies); "
-                      "further ones are counted, not logged",
-                      r.length, s.sent, s.replies);
+            push_log('E', "dcsm: heartbeat reply is an E_OK response with %u bytes, not empty (%u sent, %u replies); "
+                          "further ones are counted, not logged",
+                     r.length, s.sent, s.replies);
             break;
         case dcsm::HeartbeatReport::kRefused:
-            log_error("dcsm: the KOMBI refused a heartbeat request: type 0x%02x, return code 0x%02x (%u sent, "
-                      "%u replies); heartbeats go fire and forget until Dcsm2 is next available",
-                      r.messageType, r.returnCode, s.sent, s.replies);
+            push_log('E', "dcsm: the KOMBI refused a heartbeat request: type 0x%02x, return code 0x%02x (%u sent, "
+                          "%u replies); heartbeats go fire and forget until Dcsm2 is next available",
+                     r.messageType, r.returnCode, s.sent, s.replies);
             break;
         case dcsm::HeartbeatReport::kSilent:
             if (s.replies == 0)
-                log_error("dcsm: no heartbeat reply yet (%u sent)", s.sent);
+                push_log('E', "dcsm: no heartbeat reply yet (%u sent)", s.sent);
             else
-                log_error("dcsm: no heartbeat reply for %lld ms (%u sent, %u replies)", (long long)s.sinceReplyMs,
-                          s.sent, s.replies);
+                push_log('E', "dcsm: no heartbeat reply for %lld ms (%u sent, %u replies)", (long long)s.sinceReplyMs,
+                         s.sent, s.replies);
             break;
         }
     };
@@ -194,6 +210,7 @@ void Dcsm2Link::drain(Dcsm2Port *port, int64_t now_ms)
         case Event::Heartbeat: port->on_heartbeat(e.up, now_ms); break;
         case Event::Undecoded: port->on_undecoded(e.method, e.status, e.text, now_ms); break;
         case Event::Subscription: port->on_subscription(e.method, (uint16_t)e.status, now_ms); break;
+        case Event::Log: cld::log(e.level, "%s", e.text.c_str()); break;
         }
     }
 }

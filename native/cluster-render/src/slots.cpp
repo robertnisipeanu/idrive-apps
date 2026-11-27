@@ -2090,6 +2090,22 @@ std::string SlotManager::rendering_text(int i, int64_t now_ms) const
     }
 }
 
+std::string SlotManager::rendering_state(int i) const
+{
+    const Target &t = t_[i];
+    switch (t.status.rendering) {
+    case Rendering::Verified: {
+        auto s = subs_.find(specs_[i].scene_id);
+        return (s == subs_.end() || s->second.empty()) ? "rendered"
+                                                       : "rendered:" + s->second.begin()->first;
+    }
+    case Rendering::Checking: return "checking";
+    case Rendering::Unobservable: return "unobservable";
+    default:
+        return t.kept ? "kept" : t.loaded ? "loaded" : t.scene && !t.requested ? "published" : "";
+    }
+}
+
 std::string SlotManager::renderer_text(int64_t now_ms) const
 {
     std::string console = console_text ? "renderer console: " + console_text(now_ms) + "\n" : std::string();
@@ -2101,6 +2117,14 @@ std::string SlotManager::renderer_text(int64_t now_ms) const
     if (!sub_lines_)
         return "renderer: subscription not observable: no RAMSES subscription line read since start\n" + console;
     return "renderer: " + std::to_string(sub_lines_) + " subscription lines read since start\n" + console;
+}
+
+std::string SlotManager::renderer_state(int64_t now_ms) const
+{
+    std::string s = std::to_string(sub_lines_);
+    if (console_live_since)
+        s += console_live_since(now_ms) < 0 ? "|quiet" : "|live";
+    return s + "\n";
 }
 
 }  // namespace crs

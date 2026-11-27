@@ -226,6 +226,28 @@ static void test_rect_and_differs()
                                   part.begin() + (size_t)(by - by0 + 1) * (bx1 - bx0) * 8,
                                   whole.begin() + ((size_t)by * bw + bx0) * 8);
     ok("pack_block_rect packs a rect of blocks as pack_blocks does", same);
+    /* Edge, narrow, and unaligned column spans must match full-frame scalar bit for bit. */
+    std::vector<uint8_t> scalar(block_bytes(W, H));
+    pack_blocks_scalar(a.data(), W, H, scalar.data());
+    struct Span { uint32_t bx0, by0, bx1, by1; };
+    const Span spans[] = {{0, 0, 1, 1}, {bw - 1, 0, bw, 4}, {bw - 5, H / 4 - 3, bw, H / 4}, {1, 5, 6, 8}, {0, 0, bw, 1}};
+    bool edges_same = true;
+    for (const Span &s : spans) {
+        std::vector<uint8_t> p((size_t)(s.bx1 - s.bx0) * (s.by1 - s.by0) * 8);
+        pack_block_rect(a.data(), W, H, s.bx0, s.by0, s.bx1, s.by1, p.data());
+        for (uint32_t by = s.by0; by < s.by1; by++)
+            edges_same = edges_same && std::equal(p.begin() + (size_t)(by - s.by0) * (s.bx1 - s.bx0) * 8,
+                                                  p.begin() + (size_t)(by - s.by0 + 1) * (s.bx1 - s.bx0) * 8,
+                                                  scalar.begin() + ((size_t)by * bw + s.bx0) * 8);
+    }
+    ok("pack_block_rect matches scalar on narrow, edge and right-boundary spans", edges_same);
+    bool pool_same = true;
+    for (unsigned t : {1u, 2u, 3u, 4u, 2u, 3u}) {
+        std::vector<uint8_t> out(block_bytes(W, H));
+        pack_blocks(a.data(), W, H, out.data(), t);
+        pool_same = pool_same && out == scalar;
+    }
+    ok("persistent worker pool matches scalar across varying thread counts", pool_same);
     std::vector<uint8_t> b = a;
     b[(size_t)41 * W + 101] ^= 1;   /* a luma pixel of block (25, 10) */
     ok("block_differs: the block of a changed luma pixel, not its neighbour",

@@ -47,14 +47,17 @@
  * is a separate implementation.
  *
  *   const link = require('<repo>/tools/oap_link.js');
- *   link.build(srcDir, outFile, { donors: [path...], epoch })  -> { file, donor, moduleCount, bytes, certification }
+ *   link.build(srcDir, outFile, { donors: [path...], epoch, interfaces })
+ *                                                              -> { file, donor, moduleCount, bytes, certification, unknown }
  *   link.packSource(appDir, outFile)                           -> the packed paths
- *   link.preparePackage(pkgDir, outFile, { donors })           -> { file, sdk: null | { donor, api }, shrinkwrap,
- *                                                                 permissions, certification }
+ *   link.preparePackage(pkgDir, outFile, { donors, interfaces }) -> { file, sdk: null | { donor, api }, shrinkwrap,
+ *                                                                 permissions, certification, unknown }
  *   link.needsSdk(pkgDir)                                      -> whether preparePackage generates oap-sdk
  *   link.needsCertification(pkgDir)                            -> whether its SOME/IP manifest lacks the certification service
  *   link.completePermissions(pkgDir)                           -> the ACL tables added to permissions.json
  *   link.completeCertification(pkgDir)                         -> the SOME/IP manifest the certification service was added to, or null
+ *   link.unknownInterfaces(pkgDir, known)                      -> the interfaces its SOME/IP manifest names that known lacks
+ *   link.dropUnknownInterfaces(pkgDir, known)                  -> null | { manifest, dropped }: those taken out of it
  *   link.sdkModule(donors)                                     -> module mode's donor and the oap-sdk module made from it
  *   link.unitDonors(mainappDir, oapDir, opts)                   -> the head unit's donors, in search order
  */
@@ -64,11 +67,15 @@ const vm = require('vm');
 const path = require('path');
 const zlib = require('zlib');
 const cp = require('child_process');
-const builtinModules = require('module').builtinModules;
+/* Node before 8.10 (the 2019 MGU's 8.9.4) has no module.builtinModules; the
+ * natives binding minus internal/ is the list Node 8.10 makes it from. */
+const builtinModules = require('module').builtinModules ||
+    Object.keys(process.binding('natives')).filter((name) => !/^internal\//.test(name));
 const { pack, tgz, stampPackage, MTIME } = require('./oap_pack.js');
 
 const ENTRY_ID = 10000;
 const PRELUDE_END = 'return r})()';
+const PRELUDE_END_MIN = 'return o}}()';
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const APP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /* written by the build, never part of a source package */
@@ -171,11 +178,28 @@ function untar(buf) {
     return out;
 }
 
+/* Regular files of a (gzipped) ustar archive, as { name, data }. Cached per
+ * path by stat metadata so unitDonors, findDonor and supplyEntry gunzip each
+ * donor archive at most once. */
+const tgzCache = new Map();
+function untarFile(file) {
+    const st = fs.statSync(file);
+    const mtime = st.mtimeMs !== undefined ? st.mtimeMs : st.mtime.getTime();
+    const ctime = st.ctimeMs !== undefined ? st.ctimeMs : st.ctime.getTime();
+    const hit = tgzCache.get(file);
+    if (hit && hit.size === st.size && hit.mtime === mtime && hit.ctime === ctime && hit.ino === st.ino) {
+        return hit.members;
+    }
+    const members = untar(fs.readFileSync(file));
+    tgzCache.set(file, { size: st.size, mtime, ctime, ino: st.ino, members });
+    return members;
+}
+
 /* The bundles a donor file offers, as { label, text, sdkVersion }: the
  * oap-sdk version is the one a donor package's package.json depends on. */
 function donorSources(file) {
     if (/\.tgz$/.test(file)) {
-        const members = untar(fs.readFileSync(file));
+        const members = untarFile(file);
         let sdkVersion = null;
         members.filter((m) => /^(?:package\/)?package\.json$/.test(m.name)).forEach((m) => {
             try {
@@ -183,8 +207,14 @@ function donorSources(file) {
                     .replace(/^[^\d]*/, '') || null;
             } catch (e) { /* no version */ }
         });
-        return members
-            .filter((m) => /^(?:package\/)?javascript\/[^/]+\.js$/.test(m.name))
+        let js = members.filter((m) => /^(?:package\/)?javascript\/[^/]+\.js$/.test(m.name));
+        if (!js.length) {
+            /* MainApp 6.5.5 preinstalled apps (e.g. x_call@3.7.2.tgz) keep
+             * bundle.js and <id>.js at the package root rather than under
+             * javascript/. */
+            js = members.filter((m) => /^(?:package\/)?[^/]+\.js$/.test(m.name));
+        }
+        return js
             .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
             .map((m) => ({ label: `${path.basename(file)}:${m.name}`, text: m.data.toString('utf8'), sdkVersion }));
     }
@@ -206,7 +236,7 @@ function splitIdentity(name) {
     return Number(value);
 }
 
-function splitBundle(text) {
+function splitBundle(text, spec) {
     if (process.getuid && process.getuid() === 0) {
         const uid = splitIdentity('MGU_DEPLOY_SPLIT_UID');
         const gid = splitIdentity('MGU_DEPLOY_SPLIT_GID');
@@ -220,7 +250,11 @@ function splitBundle(text) {
                 fs.chmodSync(file, 0o644);
             });
             fs.chmodSync(work, 0o755);
-            const r = cp.spawnSync(process.execPath, [path.join(work, 'oap_link.js'), 'split'], {
+            const args = [path.join(work, 'oap_link.js'), 'split'];
+            if (spec) {
+                args.push(JSON.stringify(spec));
+            }
+            const r = cp.spawnSync(process.execPath, args, {
                 input: text, encoding: 'utf8', uid, gid, timeout: SPLIT_TIMEOUT,
                 killSignal: 'SIGKILL', maxBuffer: SPLIT_MAX, cwd: '/', env: {}
             });
@@ -232,35 +266,76 @@ function splitBundle(text) {
             rmrf(work);
         }
     }
-    return splitInProcess(text);
+    return splitInProcess(text, spec);
+}
+
+/* The browserify prelude at the start of text ({ end, prelude }), or null:
+ * unminified bundles end with 'return r})()'; 6.5.5 UglifyJS-minified
+ * bundles (!function(){return function r(e,n,t){...return o}}()) end with
+ * 'return o}}()', parenthesized so var x = <prelude>(...) returns o. */
+function findPrelude(text) {
+    const idx = text.indexOf(PRELUDE_END);
+    if (idx >= 0) {
+        const end = idx + PRELUDE_END.length;
+        return { end, prelude: text.slice(0, end) };
+    }
+    const min = text.indexOf(PRELUDE_END_MIN);
+    if (min >= 0 && /^\s*(?:\/\*[\s\S]*?\*\/\s*)?!function\(\)\{return function r\(e,n,t\)\{/.test(text)) {
+        const end = min + PRELUDE_END_MIN.length;
+        const raw = text.slice(0, end);
+        return { end, prelude: raw.replace(/^(\s*(?:\/\*[\s\S]*?\*\/\s*)?)!(function\([\s\S]*\})\(\)$/, '$1($2)()') };
+    }
+    return null;
 }
 
 /* The context owns capture. No host function is exposed to donor code.
  * Anonymous function spacing is normalized for identical Node 8/host
- * bundles. Only string/number dependency ids survive serialization. */
-function splitInProcess(text) {
-    const idx = text.indexOf(PRELUDE_END);
-    if (idx < 0) {
+ * bundles. Only string/number dependency ids survive serialization. When
+ * spec ({ names } or { api: true }) is given, only the resolved closure's
+ * modules are converted and returned, along with ids and closure. */
+function splitInProcess(text, spec) {
+    const found = findPrelude(text);
+    if (!found) {
         throw new Error('no browserify prelude');
     }
     const sandbox = Object.create(null);
-    vm.runInNewContext(`var mods; function capture(m) { mods = m; }\ncapture${text.slice(idx + PRELUDE_END.length).replace(/;\s*$/, '')}`,
+    vm.runInNewContext(`var mods; function capture(m) { mods = m; }\ncapture${text.slice(found.end).replace(/;\s*$/, '')}`,
         sandbox, { timeout: SPLIT_TIMEOUT });
     if (!sandbox.mods || typeof sandbox.mods !== 'object') {
         throw new Error('no module map');
     }
-    const tight = /^\(\{\s*"?\d+"?:\[function\(/.test(text.slice(idx + PRELUDE_END.length, idx + PRELUDE_END.length + 64));
-    const mods = Object.create(null);
-    Object.keys(sandbox.mods).forEach((id) => {
+    const tight = /^\(\{\s*"?\d+"?:\[function\(/.test(text.slice(found.end, found.end + 64));
+    const depMods = Object.create(null);
+    const fns = Object.create(null);
+    const rawIds = Object.keys(sandbox.mods);
+    rawIds.forEach((id) => {
         const m = sandbox.mods[id];
         if (!/^\d+$/.test(id) || !Array.isArray(m) || typeof m[0] !== 'function') {
             throw new Error('invalid module ' + id);
         }
-        const source = Function.prototype.toString.call(m[0]);
-        mods[id] = [tight ? source.replace(/^function \(/, 'function(') : source,
-            JSON.parse(serializeDeps(m[1]))];
+        fns[id] = m[0];
+        depMods[id] = [null, cleanDeps(m[1])];
     });
-    return { prelude: text.slice(0, idx + PRELUDE_END.length), mods, tight };
+    let ids;
+    let closure;
+    let keep = rawIds;
+    if (spec) {
+        if (Array.isArray(spec.names)) {
+            ids = namesPick(spec.names)(depMods);
+        } else if (spec.api === true) {
+            ids = apiPick(depMods);
+        } else {
+            throw new Error('invalid split spec');
+        }
+        closure = closureOf(depMods, Object.keys(ids).map((k) => ids[k]));
+        keep = closure;
+    }
+    const mods = Object.create(null);
+    keep.forEach((id) => {
+        const source = Function.prototype.toString.call(fns[id]);
+        mods[id] = [tight ? source.replace(/^function \(/, 'function(') : source, depMods[id][1]];
+    });
+    return spec ? { prelude: found.prelude, mods, tight, ids, closure } : { prelude: found.prelude, mods, tight };
 }
 
 /* The one module id a require name has in the donor's dependency tables. */
@@ -360,10 +435,9 @@ function apiPick(mods) {
     return ids;
 }
 
-/* The first donor bundle that names every string in `mustName` and that
- * pick(mods) accepts (returning { key: module id }), with the closure of
- * those ids. */
-function findDonor(files, mustName, pick, what) {
+/* The first donor bundle that names every string in `mustName` and satisfies
+ * spec ({ names } or { api: true }), with the closure of its resolved ids. */
+function findDonor(files, mustName, spec, what) {
     const tried = [];
     for (let i = 0; i < files.length; i += 1) {
         let sources;
@@ -384,11 +458,9 @@ function findDonor(files, mustName, pick, what) {
                 continue;
             }
             try {
-                const split = splitBundle(s.text);
-                const ids = pick(split.mods);
-                const closure = closureOf(split.mods, Object.keys(ids).map((k) => ids[k]));
+                const split = splitBundle(s.text, spec);
                 return { file: files[i], label: s.label, text: s.text, sdkVersion: s.sdkVersion, prelude: split.prelude,
-                    mods: split.mods, ids, closure };
+                    mods: split.mods, ids: split.ids, closure: split.closure };
             } catch (e) {
                 tried.push(`${s.label}: ${e.message}`);
             }
@@ -430,7 +502,7 @@ function unitDonors(mainappDir, oapDir, opts) {
     };
     const out = list(path.join(mainappDir, 'preinstalled_apps'), /\.tgz$/).filter((file) => {
         try {
-            const pkg = untar(fs.readFileSync(file)).filter((m) => /^(?:package\/)?package\.json$/.test(m.name));
+            const pkg = untarFile(file).filter((m) => /^(?:package\/)?package\.json$/.test(m.name));
             return pkg.length === 1 && stock(JSON.parse(pkg[0].data.toString('utf8')));
         } catch (e) { return false; }
     });
@@ -439,7 +511,8 @@ function unitDonors(mainappDir, oapDir, opts) {
         try { pkg = read(path.join(home, 'source', 'package.json'), null); }
         catch (e) { return; }
         if (stock(pkg)) {
-            list(path.join(home, 'source', 'javascript'), /\.js$/).forEach((f) => out.push(f));
+            const js = list(path.join(home, 'source', 'javascript'), /\.js$/);
+            (js.length ? js : list(path.join(home, 'source'), /\.js$/)).forEach((f) => out.push(f));
         }
     });
     return out;
@@ -461,19 +534,20 @@ function packageEntry(file) {
         let pkg;
         let read;
         if (/\.tgz$/.test(file)) {
-            const members = untar(fs.readFileSync(file));
+            const members = untarFile(file);
             const meta = members.filter((m) => /^(?:package\/)?package\.json$/.test(m.name))[0];
             const root = meta.name.slice(0, -'package.json'.length);
             pkg = JSON.parse(meta.data.toString('utf8'));
             read = (rel) => members.filter((m) => m.name === root + rel).map((m) => m.data.toString('utf8'))[0];
         } else {
-            const root = path.join(path.dirname(file), '..');
+            const dir = path.dirname(file);
+            const root = fs.existsSync(path.join(dir, 'package.json')) ? dir : path.join(dir, '..');
             pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
             read = (rel) => (fs.lstatSync(path.join(root, rel)).isFile() ? fs.readFileSync(path.join(root, rel), 'utf8') : null);
         }
         const main = typeof pkg.main === 'string' ? path.posix.normalize(pkg.main) : '';
         const text = safeRel(main) && /\.js$/.test(main) ? read(main) : null;
-        return text && text.indexOf(PRELUDE_END) < 0 && text.indexOf('runnerConfig.json') >= 0 ?
+        return text && !findPrelude(text) && text.indexOf('runnerConfig.json') >= 0 ?
             { label: `${pkg.name}@${pkg.version}:${main}`, text } : null;
     } catch (e) {
         return null;
@@ -487,7 +561,10 @@ function supplyEntry(work, main, files) {
     if (!/^javascript\/[^/]+\.js$/.test(main)) {
         throw new Error(`package.json main ${main || '(none)'} is not javascript/<file>.js`);
     }
-    const entry = files.map(packageEntry).filter(Boolean)[0];
+    let entry = null;
+    for (let i = 0; i < files.length && !entry; i += 1) {
+        entry = packageEntry(files[i]);
+    }
     fs.writeFileSync(path.join(work, main), entry ? entry.text : LOADER);
     const config = path.join(work, 'javascript', 'runnerConfig.json');
     if (entry && !fs.existsSync(config)) {
@@ -508,18 +585,20 @@ function requiresOf(source) {
     return [...names];
 }
 
-function moduleEntry(donor, id) {
-    return `${id}:[${donor.mods[id][0]},${serializeDeps(donor.mods[id][1])}]`;
+function cleanDeps(deps) {
+    const out = {};
+    if (deps && typeof deps === 'object') {
+        Object.keys(deps).forEach((name) => {
+            if (typeof deps[name] === 'number' || typeof deps[name] === 'string') {
+                out[name] = deps[name];
+            }
+        });
+    }
+    return out;
 }
 
-function serializeDeps(deps) {
-    const out = {};
-    Object.keys(deps || {}).forEach((name) => {
-        if (typeof deps[name] === 'number' || typeof deps[name] === 'string') {
-            out[name] = deps[name];
-        }
-    });
-    return JSON.stringify(out);
+function moduleEntry(donor, id) {
+    return `${id}:[${donor.mods[id][0]},${JSON.stringify(cleanDeps(donor.mods[id][1]))}]`;
 }
 
 /* The bundle text: the donor's closure with its ids, then the app modules
@@ -611,10 +690,23 @@ function copyTree(from, to) {
     });
 }
 
+/* Whether file compiles as a CommonJS module, judged as `node --check file`
+ * judges it (shebang line, then BOM, stripped; the module wrapper around
+ * it; compiled, never run), in this process: a Node per file costs a third
+ * of a second each on the unit. */
 function nodeCheck(file) {
-    const r = cp.spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
-    if (r.status !== 0) {
-        throw new Error(`node --check ${path.basename(file)}: ${(r.stderr || r.error || '').toString().trim()}`);
+    let text = fs.readFileSync(file, 'utf8');
+    if (text.charAt(0) === '#' && text.charAt(1) === '!') {
+        const nl = text.slice(2).search(/[\r\n]/);
+        text = nl < 0 ? '' : text.slice(nl + 2);
+    }
+    if (text.charCodeAt(0) === 0xFEFF) {
+        text = text.slice(1);
+    }
+    try {
+        new vm.Script(require('module').wrap(text), { filename: file, displayErrors: true });
+    } catch (e) {
+        throw new Error(`node --check ${path.basename(file)}: ${String(e.stack || e).split('\n    at ')[0].trim()}`);
     }
 }
 
@@ -623,14 +715,16 @@ function nodeCheck(file) {
  * lists donor files in search order; opts.epoch (seconds) is build.json's
  * buildTimestamp, the time of the build without it. The certification
  * proxy the tree's SOME/IP manifest lacks is added; `certification` names
- * that manifest when the package carries it. */
+ * that manifest when the package carries it. With opts.interfaces (the
+ * unit's interface ids), the interfaces the manifest names and the unit
+ * lacks are taken out; `unknown` is dropUnknownInterfaces' answer. */
 function build(srcDir, outFile, opts) {
     opts = opts || {};
     const m = readManifest(srcDir);
     const modules = m.modules.map((f) => ({ name: `./${path.basename(f)}`, file: f,
         source: fs.readFileSync(path.join(srcDir, f), 'utf8') }));
     m.modules.forEach((f) => nodeCheck(path.join(srcDir, f)));
-    const donor = findDonor(opts.donors || [], m.sdk, namesPick(m.sdk), m.sdk.join(', '));
+    const donor = findDonor(opts.donors || [], m.sdk, { names: m.sdk }, m.sdk.join(', '));
     const bundle = link(donor, modules, m.sdk);
     const work = fs.mkdtempSync(path.join(opts.workDir || os.tmpdir(), 'oap-link-'));
     try {
@@ -655,6 +749,7 @@ function build(srcDir, outFile, opts) {
             fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + (/\n$/.test(raw) ? '\n' : ''));
         }
         const completed = completeCertification(work);
+        const unknown = dropUnknownInterfaces(work, opts.interfaces || null);
         const moduleCount = donor.closure.length + modules.length;
         fs.writeFileSync(path.join(work, 'javascript', 'build.json'), JSON.stringify({
             name: m.id,
@@ -663,10 +758,10 @@ function build(srcDir, outFile, opts) {
             bundle: { entryModule: ENTRY_ID, moduleCount, appModules: modules.length, sdkModulesFrom: donor.label },
             main: entry ? { path: main, from: entry } : undefined
         }, null, 2) + '\n');
-        const packed = pack(work, outFile);
+        const packed = pack(work, outFile, opts);
         const certification = completed && packed.indexOf(completed.split(path.sep).join('/')) >= 0 ? completed : null;
         return { file: outFile, id: m.id, version: m.version, donor: donor.label, entry, moduleCount,
-            bytes: Buffer.byteLength(bundle), certification };
+            bytes: Buffer.byteLength(bundle), certification, unknown };
     } finally {
         rmrf(work);
     }
@@ -675,7 +770,7 @@ function build(srcDir, outFile, opts) {
 /* ---- module mode: OAP packages built elsewhere ------------------------------------ */
 
 const REQUIRES_SDK = /require\(\s*(['"])oap-sdk\1\s*\)/;
-const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?\(function\(\)\{function r\(e,n,t\)\{/;
+const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:\(function\(\)\{function r\(e,n,t\)\{|!function\(\)\{return function r\(e,n,t\)\{)/;
 
 /* Whether the package's own javascript calls require('oap-sdk') with no
  * node_modules/oap-sdk to answer it. Browserify bundles resolve their
@@ -712,7 +807,7 @@ Object.keys(ids).forEach(function (name) {
  * the oap-sdk core: { donor (its label), text (its bundle), sdkVersion,
  * api, index (index.js text), pkg (package.json text) }. */
 function sdkModule(donors) {
-    const donor = findDonor(donors || [], SDK_CORE, apiPick, `the oap-sdk core (${SDK_CORE.join(', ')})`);
+    const donor = findDonor(donors || [], SDK_CORE, { api: true }, `the oap-sdk core (${SDK_CORE.join(', ')})`);
     return {
         donor: donor.label, text: donor.text, sdkVersion: donor.sdkVersion || null, api: Object.keys(donor.ids), index: sdkModuleText(donor),
         pkg: JSON.stringify({ name: 'oap-sdk', version: donor.sdkVersion || '0.0.0', main: 'index.js',
@@ -773,9 +868,10 @@ function someipManifestFile(pkgDir) {
     const file = path.resolve(pkgDir, name);
     return file.indexOf(path.resolve(pkgDir) + path.sep) === 0 ? file : null;
 }
-/* The manifest object when it lacks the certification proxy, else null (no
- * manifest, one that does not parse, or one that names it). */
-function certificationMissing(pkgDir) {
+const isMap = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/* The SOME/IP manifest as { file, manifest }, or null: no manifest, one
+ * that does not parse, or one whose proxies are not an object. */
+function readSomeipManifest(pkgDir) {
     const file = someipManifestFile(pkgDir);
     let m;
     try {
@@ -783,11 +879,16 @@ function certificationMissing(pkgDir) {
     } catch (e) {
         return null;
     }
-    if (!m || typeof m !== 'object' || Array.isArray(m) || (m.proxies !== undefined &&
-            (!m.proxies || typeof m.proxies !== 'object' || Array.isArray(m.proxies)))) {
+    if (!m || typeof m !== 'object' || Array.isArray(m) || !(m.proxies === undefined || isMap(m.proxies))) {
         return null;
     }
-    return m.proxies && CERTIFICATION in m.proxies ? null : { file, manifest: m };
+    return { file, manifest: m };
+}
+/* The manifest object when it lacks the certification proxy, else null (no
+ * manifest, one that does not parse, or one that names it). */
+function certificationMissing(pkgDir) {
+    const r = readSomeipManifest(pkgDir);
+    return !r || (r.manifest.proxies && CERTIFICATION in r.manifest.proxies) ? null : r;
 }
 function needsCertification(pkgDir) {
     return certificationMissing(pkgDir) !== null;
@@ -804,13 +905,47 @@ function completeCertification(pkgDir) {
     return path.relative(pkgDir, miss.file);
 }
 
+/* MainApp installs an app only when its interface database (the firmware's
+ * /etc/oap/someip/someip-interfaces.json on iDrive 7) holds every interface
+ * the app's SOME/IP manifest names, as a proxy or a service; older firmware
+ * holds fewer. known lists the database's interface ids. The interfaces the
+ * manifest names that known lacks, the certification service aside (the
+ * install needs it); none when known is null or there is no manifest. */
+function unknownInterfaces(pkgDir, known) {
+    const r = known ? readSomeipManifest(pkgDir) : null;
+    if (!r) {
+        return [];
+    }
+    const has = new Set(known);
+    const ids = ['proxies', 'services'].reduce((all, k) => all.concat(isMap(r.manifest[k]) ? Object.keys(r.manifest[k]) : []), []);
+    return ids.filter((id, i) => id !== CERTIFICATION && !has.has(id) && ids.indexOf(id) === i);
+}
+/* Takes the interfaces unknownInterfaces names out of the manifest's proxies
+ * and services; returns { manifest: its name, dropped: [id...] }, or null
+ * when there is none to take out. */
+function dropUnknownInterfaces(pkgDir, known) {
+    const dropped = unknownInterfaces(pkgDir, known);
+    if (!dropped.length) {
+        return null;
+    }
+    const r = readSomeipManifest(pkgDir);
+    ['proxies', 'services'].forEach((k) => {
+        if (isMap(r.manifest[k])) {
+            dropped.forEach((id) => delete r.manifest[k][id]);
+        }
+    });
+    fs.writeFileSync(r.file, JSON.stringify(r.manifest, null, 2) + '\n');
+    return { manifest: path.relative(pkgDir, r.file), dropped };
+}
+
 /* An OAP package folder (pkgDir is changed) as the flat tgz the head unit
  * installs: "mguLocalOnly": true in its package.json, node_modules/oap-sdk
  * generated when needsSdk(), an npm-shrinkwrap.json without dependencies
  * when needsShrinkwrap() (the package carries what it runs on; nothing is
  * fetched from npm), the ACL tables permissions.json lacks added empty, the
- * certification proxy its SOME/IP manifest lacks added, and every file
- * packed (tools/oap_pack.js format). An oap-sdk the package ships stays as
+ * certification proxy its SOME/IP manifest lacks added, the interfaces it
+ * names that opts.interfaces (the unit's interface ids) lacks taken out,
+ * and every file packed (tools/oap_pack.js format). An oap-sdk the package ships stays as
  * it is. */
 function preparePackage(pkgDir, outFile, opts) {
     opts = opts || {};
@@ -836,10 +971,11 @@ function preparePackage(pkgDir, outFile, opts) {
     }
     const permissions = completePermissions(pkgDir);
     const certification = completeCertification(pkgDir);
+    const unknown = dropUnknownInterfaces(pkgDir, opts.interfaces || null);
     stampPackage(pkgDir);
     fs.writeFileSync(outFile, tgz(filesBelow(pkgDir).map((name) =>
-        ({ name, data: fs.readFileSync(path.join(pkgDir, name)), mode: 0o644 })), MTIME));
-    return { file: outFile, sdk, shrinkwrap, permissions, certification };
+        ({ name, data: fs.readFileSync(path.join(pkgDir, name)), mode: 0o644 })), MTIME, opts));
+    return { file: outFile, sdk, shrinkwrap, permissions, certification, unknown };
 }
 
 function rmrf(p) {
@@ -858,6 +994,7 @@ function rmrf(p) {
 }
 
 module.exports = { build, packSource, readManifest, preparePackage, completePermissions, completeCertification,
+    unknownInterfaces, dropUnknownInterfaces, readSomeipManifest,
     needsCertification, needsSdk, needsShrinkwrap, sdkModule, unitDonors, untar, SDK_API, ENTRY_ID,
     LOADER };
 
@@ -867,7 +1004,8 @@ if (require.main === module) {
         if (process.argv[2] !== 'split' || (process.getuid && process.getuid() === 0)) {
             throw new Error('split worker requires an unprivileged uid');
         }
-        process.stdout.write(JSON.stringify(splitInProcess(fs.readFileSync(0, 'utf8'))));
+        const spec = process.argv[3] ? JSON.parse(process.argv[3]) : null;
+        process.stdout.write(JSON.stringify(splitInProcess(fs.readFileSync(0, 'utf8'), spec)));
     } catch (e) {
         process.stderr.write(e.message + '\n');
         process.exitCode = 1;

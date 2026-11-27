@@ -596,12 +596,8 @@ function ripLoad(buf, o) {
     return buf[o - 1] === 0x0f && [0x10, 0x11, 0x28, 0x29, 0x6f, 0x7f].indexOf(buf[o]) >= 0;
 }
 
-function confPathSite(im, addends) {
-    var buf = im.buf, len = CONF_STOCK.length + 1, forms = [CONF_STOCK, CONF_RUN].map(function (s) { return Buffer.from(s + '\0', 'latin1'); });
-    var found = [];
-    forms.forEach(function (k, i) {
-        for (var p = buf.indexOf(k); p >= 0; p = buf.indexOf(k, p + 1)) found.push({ off: p, state: i ? 'patched' : 'original', k: k });
-    });
+function confPathSite(im, addends, allRefs, forms, found) {
+    var buf = im.buf, len = CONF_STOCK.length + 1;
     var s = one(found, 'conf-once');
     if (!s) return fail(count(found, 'config path: the path string'));
     if (on('conf-once') && !(s.off > 0 && buf[s.off - 1] === 0)) return fail('config path: the path is the tail of another string');
@@ -614,14 +610,14 @@ function confPathSite(im, addends) {
     im.load.forEach(function (g) { if (s.off >= g.off && s.off + len <= g.off + g.size) seg = g; });
     if (on('conf-ro') && (!seg || (seg.flags & 2) || (im.relro && va < im.relro.va + im.relro.size && im.relro.va < end)))
         return fail('config path: the path is not in read-only data');
-    var refs = E.leaRefs(im, [s.off])[s.off] || [];
+    var refs = allRefs[s.off] || [];
     if (on('conf-read') && !refs.length) return fail('config path: the path is not referenced');
     if (on('conf-whole')) {
-        var inner = null, ex = im.exec;
+        var inner = null, ex = im.exec, base = im.va(ex.off) - ex.off;
         for (var p = ex.off + 3; !inner && p + 4 <= ex.end; p++) {
             if ((buf[p - 1] & 0xc7) !== 0x05 || !ripLoad(buf, p - 2)) continue;
-            var nv = im.va(p + 4), t = nv === null ? null : (nv + buf.readInt32LE(p)) >>> 0;
-            if (t !== null && t > va && t < end) inner = p - 1;
+            var t = (base + p + 4 + buf.readInt32LE(p)) >>> 0;
+            if (t > va && t < end) inner = p - 1;
         }
         for (var a = 0; !inner && a < addends.length; a++) if (addends[a] > va && addends[a] < end) inner = 'a relocation';
         /* pointers: in the writable segments' data (a PIE's are relocation
@@ -662,6 +658,14 @@ function locate(buf, opts) {
         str[k] = namedString(buf, k);
         if (!str[k].err) offs.push(str[k].off);
     });
+    var confForms = [CONF_STOCK, CONF_RUN].map(function (s) { return Buffer.from(s + '\0', 'latin1'); });
+    var confFound = [];
+    confForms.forEach(function (k, i) {
+        for (var p = buf.indexOf(k); p >= 0; p = buf.indexOf(k, p + 1)) {
+            confFound.push({ off: p, state: i ? 'patched' : 'original', k: k });
+            offs.push(p);
+        }
+    });
     var refs = E.leaRefs(im, offs);
     if (!im.starts.length) {
         EDITS.concat(['readystart']).forEach(function (e) { out[e] = fail(LABEL[e] + ': no function table'); });
@@ -678,7 +682,7 @@ function locate(buf, opts) {
         if (gg) out.gate = out.call = out.guard = out.readystart = fail(gg);
     }
     var all = E.relocated(im, []);
-    out.confpath = confPathSite(im, all.addends);
+    out.confpath = confPathSite(im, all.addends, refs, confForms, confFound);
     var hit = on('reloc') ? E.relocated(im, SITES.filter(function (e) { return out[e].ok; }).map(function (e) { return [e, out[e].offset, out[e].len]; }))
         : { all: null, edits: [] };
     SITES.forEach(function (e) {
