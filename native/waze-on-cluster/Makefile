@@ -4,7 +4,8 @@
 #
 #   make test                 host build + NAL, RTP, the SPS fields, the decoder
 #                             against a fake MSDK, receive queue and catch-up, stream health,
-#                             keyframe wait, the turn-box setting, the map's saved settings,
+#                             keyframe wait, the turn-box setting, the turn card and the
+#                             navigation's route box it shows, the map's saved settings,
 #                             the opt-in settings, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             the aapd locator on every build in AAPD_BIN and
@@ -22,8 +23,8 @@
 #                             built in Docker (Ubuntu 18.04 amd64: gcc 7.5,
 #                             glibc 2.27, the unit's libstdc++ ABI), linked
 #                             against stubs of the unit's libmfxhw64, libva,
-#                             libva-drm and the IAS AVB bridge, every import
-#                             checked
+#                             libva-drm, the IAS AVB bridge and libvsomeip3,
+#                             every import checked
 #
 # The map is drawn by the shared cluster renderer (CR, ../cluster-render),
 # whose client and kit are compiled in, and whose tree holds the log, the
@@ -52,7 +53,9 @@ VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
 # The capture, decode and map feed (own files), the kit's atlas, packing and
 # geometry, and the shared renderer's client.
 WOC_SRC = src/main.cpp src/refused.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/map_feeds.cpp src/atlas_scale.cpp src/control.cpp src/h264_source.cpp \
-          src/guide_setting.cpp src/map_state.cpp src/opt_in.cpp \
+          src/guide_setting.cpp src/turn_card.cpp src/card_font.cpp src/card_font_data.cpp src/turn_card_setting.cpp \
+          src/route_box.cpp src/guidance_link.cpp \
+          src/keys.cpp src/map_state.cpp src/opt_in.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp src/sps_info.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
@@ -65,9 +68,10 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
-		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
+		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/turn_card_test $(BUILD)/host/route_box_test \
+		$(BUILD)/host/decoder_test \
 		$(BUILD)/host/map_state_test $(BUILD)/host/opt_in_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
-		$(BUILD)/host/picture_pace_test
+		$(BUILD)/host/picture_pace_test $(BUILD)/host/keys_test
 # The control socket (accept4) and the producer (pipe2) are Linux's: built and run on Linux only
 # (make test-x86).
 LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test $(BUILD)/host/video_producer_test)
@@ -91,7 +95,7 @@ test-bin: $(CPP_TESTS)
 
 # The patchers, patchd and boot recovery under the umask an installer may
 # set (077): every file they replace keeps the mode its service needs.
-NODE_TESTS = locate permissions file_mode mutation undo rollback_conf patch patchd_patch patchd_activate \
+NODE_TESTS = locate permissions file_mode mutation undo rollback_conf patch patchd_patch patchd_activate patchd_card \
 	patchd_hud patchd_profile patchd_profile_write patchd_dlt patchd_reboot patchd_wifi wifi_band dlt_capture capture_host recovery \
 	recovery_lock inmem journal_keep logs collect_logs logs_fw units x86_flow aapd_locate aapd head_unit
 NODE_RUNS = $(addprefix node-,$(NODE_TESTS)) $(addprefix node-rollback.,$(ROLLBACK_PART_IDS))
@@ -180,7 +184,7 @@ CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp settings.cpp graph_ramses
 # Each of its sources compiles once, with its header dependencies.
 MF       = $(BUILD)/host/map_feed
 MF_FLAGS = $(CXXFLAGS) -Isrc -I$(KIT) -I$(CR)/include -I$(CR) -I$(CR)/src -isystem $(CR)/dcsm/third_party/vsomeip/interface
-MF_SRC   = test/map_feed_test.cpp src/map_feed.cpp src/map_feeds.cpp src/atlas_scale.cpp src/freeze_watch.cpp $(filter-out $(CR)/client/protocol.cpp,$(CR_CORE)) $(CR_SRC) \
+MF_SRC   = test/map_feed_test.cpp src/map_feed.cpp src/map_feeds.cpp src/turn_card.cpp src/card_font.cpp src/card_font_data.cpp src/atlas_scale.cpp src/freeze_watch.cpp $(filter-out $(CR)/client/protocol.cpp,$(CR_CORE)) $(CR_SRC) \
            $(CR)/src/log.cpp
 
 # objects of sources in this tree under <dir>/, of the shared renderer's under <dir>/cr/
@@ -237,6 +241,21 @@ $(BUILD)/host/guide_setting_test: test/guide_setting_test.cpp src/guide_setting.
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/guide_setting_test.cpp src/guide_setting.cpp $(CR)/src/log.cpp -lpthread
 
+CARD_SRC = src/turn_card.cpp src/card_font.cpp src/card_font_data.cpp
+
+$(BUILD)/host/turn_card_test: test/turn_card_test.cpp $(CARD_SRC) src/turn_card.h src/card_font.h src/card_choice.h src/turn_card_setting.cpp src/turn_card_setting.h $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/turn_card_test.cpp $(CARD_SRC) src/turn_card_setting.cpp $(CR)/src/log.cpp -lpthread
+
+# every kind of card as one picture (PAM) to look at: not a test
+$(BUILD)/host/turn_card_preview: tools/turn_card_preview.cpp $(CARD_SRC) src/turn_card.h src/card_font.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ tools/turn_card_preview.cpp $(CARD_SRC)
+
+$(BUILD)/host/route_box_test: test/route_box_test.cpp src/route_box.cpp src/route_box.h src/guided_card.h src/turn_card.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/route_box_test.cpp src/route_box.cpp
+
 $(BUILD)/host/map_state_test: test/map_state_test.cpp src/map_state.cpp src/map_state.h $(CR)/src/config.cpp $(CR)/src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/map_state_test.cpp src/map_state.cpp $(CR)/src/config.cpp $(CR)/src/log.cpp -lpthread
@@ -244,6 +263,12 @@ $(BUILD)/host/map_state_test: test/map_state_test.cpp src/map_state.cpp src/map_
 $(BUILD)/host/opt_in_test: test/opt_in_test.cpp src/opt_in.cpp src/opt_in.h $(CR)/src/config.cpp $(CR)/src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/opt_in_test.cpp src/opt_in.cpp $(CR)/src/config.cpp $(CR)/src/log.cpp -lpthread
+
+# the shipped waze-on-cluster.conf against the keys the program knows; run from
+# this directory (it reads the conf and src/)
+$(BUILD)/host/keys_test: test/keys_test.cpp src/keys.cpp src/keys.h $(CR)/src/config.cpp $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/keys_test.cpp src/keys.cpp $(CR)/src/config.cpp $(CR)/src/log.cpp -lpthread
 
 # ---- target binary (in Docker) --------------------------------------------
 target:
@@ -309,11 +334,19 @@ $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1: abi/libias_avb.symbols
 	$(PYTHON) $(CR)/tools/ramses_abi.py stub-source $< > $(@D)/ias_avb_stub.c
 	gcc -shared -Wl,-soname,libias-media_transport-avb_ufipc_bridge.so.1 -o $@ $(@D)/ias_avb_stub.c
 
+# The unit's vsomeip, for the navigation's route box (src/guidance_link.h),
+# from the shared renderer's DCSM client: its ABI list and stub tool.
+$(T)/stub/libvsomeip3.so.3: $(CR)/dcsm/abi/libvsomeip3.so.3.symbols
+	mkdir -p $(@D)
+	$(PYTHON) $(CR)/dcsm/tools/abi.py stub $< $(@D)/vsomeip_stub.S
+	g++ -shared -nostdlib -Wl,-soname,libvsomeip3.so.3 -o $@ $(@D)/vsomeip_stub.S
+
 STUBS = $(T)/stub/libmfxhw64.so $(T)/stub/libva.so.1 $(T)/stub/libva-drm.so.1 \
-        $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1
+        $(T)/stub/libias-media_transport-avb_ufipc_bridge.so.1 $(T)/stub/libvsomeip3.so.3
 
 # Each source compiles once, in parallel, with its header dependencies.
-WOC_FLAGS = $(CXXFLAGS) -g0 $(CPPFLAGS) -DWOC_VERSION='"$(VERSION)"' -pthread
+WOC_FLAGS = $(CXXFLAGS) -g0 $(CPPFLAGS) -isystem $(CR)/dcsm/third_party/vsomeip/interface -DWOC_VERSION='"$(VERSION)"' \
+            -pthread
 
 $(T)/obj/cr/%.o: $(CR)/%.cpp component.json
 	@mkdir -p $(@D)
@@ -328,7 +361,7 @@ $(T)/obj/%.o: %.cpp component.json
 $(T)/waze-on-cluster: $(call objs,$(SRC),$(T)/obj) $(STUBS)
 	g++ $(WOC_FLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -o $@ $^
 	strip $@
-	$(PYTHON) $(CR)/dcsm/tools/abi.py check $@ $(CR)/dcsm/abi/libvsomeip3.so.3.symbols   # loader, glibc/libstdc++ limits
+	$(PYTHON) $(CR)/dcsm/tools/abi.py check $@ $(CR)/dcsm/abi/libvsomeip3.so.3.symbols   # loader, glibc/libstdc++ limits, vsomeip imports
 	$(PYTHON) tools/woc_abi.py check-imports $@ --prefix MFX va ias_ -- \
 		abi/libmfx.symbols abi/libva.symbols abi/libva-drm.symbols abi/libias_avb.symbols
 

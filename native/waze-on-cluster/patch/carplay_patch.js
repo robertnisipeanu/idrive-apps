@@ -59,7 +59,10 @@
  *            URL for ShowUI, rewritten to load the URL. Applied in every
  *            mode on a build where it is found; a build where it is not, or
  *            one that adds carplay.conf's SHOW_UI_OPTIONS to the URL itself,
- *            gets the other edits without it.
+ *            gets the other edits without it. `--showui map` writes
+ *            `maps:/car/instrumentcluster/map` there instead, the map alone:
+ *            the URL patchd plans while the turn card is on, so the phone
+ *            draws no turn card of its own beside it.
  *
  *            The two sites of the map URL or the ShowUI URL edit holding
  *            different forms, or one written and not the other, read as
@@ -82,7 +85,7 @@
  *
  *   carplay_patch.js status  [--target <file>] [--coding <shm>]
  *   carplay_patch.js probe   [<file>]
- *   carplay_patch.js plan    --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] --out <file> [--target <file>] [--coding <shm>] [--unproven]
+ *   carplay_patch.js plan    --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--showui eta|map] --out <file> [--target <file>] [--coding <shm>] [--unproven]
  *   carplay_patch.js overlay --plan <file> [--target <file>]
  *   carplay_patch.js revert  [--target <file>] [--yes] [--drop-backup]
  *   carplay_patch.js verify  [--target <file>]
@@ -106,6 +109,7 @@ function latin1(s) { return Buffer.from(s, 'latin1').toString('hex'); }
 var MAP_URL = locator.MAP_URL;
 var ETA_URL = locator.MAP_URL_FORMS.filter(function (f) { return f.name === 'eta'; })[0].url;
 var SHOWUI_URL = locator.SHOWUI_URL;
+var SHOWUI_MAP_URL = locator.SHOWUI_MAP_URL;
 
 /* The shipped bytes of builds an earlier release of this tool patched in
  * the file, by GNU build-id, kept only to put such a patch back when its
@@ -223,21 +227,23 @@ function mapUrlState(m) {
 }
 function mapUrlOurs(s) { return s.state === 'patched' || s.state === 'eta'; }
 
-/* 'original' or 'patched' (SHOWUI_URL) when both sites read stock or both
- * patched; 'unknown' when they differ or one holds a mix of the two (a write
- * of ours cut short), which only the whole backup restores; 'absent' with
- * why when the locator does not find it (na: the build adds carplay.conf's
- * options itself): the edit is then left alone. sites: [offset, hex the
- * edit writes] of each. */
+/* 'original', 'patched' (SHOWUI_URL) or 'map' (SHOWUI_MAP_URL) when both
+ * sites read stock or both hold that form; 'unknown' when they differ or one
+ * holds a mix of stock and patched bytes (a write of ours cut short), which
+ * only the whole backup restores; 'absent' with why when the locator does
+ * not find it (na: the build adds carplay.conf's options itself): the edit
+ * is then left alone. sites: [offset, hex the edit writes] of each, and
+ * mapSites those of the map form. */
 function showUiState(m) {
     if (!m.ok) return { state: 'absent', reason: m.reason, na: !!m.na };
-    var sites = [[m.str, m.strBytes], [m.call, m.callBytes]];
-    if (m.strIs !== m.callIs || m.strIs === 'mixed') return { state: 'unknown', reason: 'ShowUI URL: partly patched', sites: sites };
-    return { state: m.strIs === 'stock' ? 'original' : 'patched', sites: sites };
+    var sites = [[m.str, m.strBytes], [m.call, m.callBytes]], mapSites = [[m.str, m.strMapBytes], [m.call, m.callBytes]];
+    if ((m.strIs === 'map' ? 'patched' : m.strIs) !== m.callIs || m.strIs === 'mixed') return { state: 'unknown', reason: 'ShowUI URL: partly patched', sites: sites, mapSites: mapSites };
+    return { state: m.strIs === 'stock' ? 'original' : m.strIs, sites: sites, mapSites: mapSites };
 }
+function showUiOurs(s) { return s.state === 'patched' || s.state === 'map'; }
 
 /* The URL edits' states (`c` classified): ours when any holds our bytes. */
-function urlsOurs(c) { return mapUrlOurs(c.mapurl) || c.showui.state === 'patched'; }
+function urlsOurs(c) { return mapUrlOurs(c.mapurl) || showUiOurs(c.showui); }
 
 function selfstartState(buf, s) {
     if (!s.ok) return { state: 'unknown', reason: s.reason };
@@ -302,7 +308,7 @@ function notPristine(c) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
-        c.showui.state === 'patched' ? ['showui'] : []);
+        showUiOurs(c.showui) ? ['showui'] : []);
     return edited.length ? edited.join(', ') + ' edited' : null;
 }
 
@@ -355,6 +361,7 @@ function describe(name, s) {
         : 'PATCHED (the phone streams the cluster map from connect: ' + MAP_URL + ')';
     if (name === 'showui') return s.state === 'absent' ? 'NOT APPLIED (' + s.reason + ')'
         : s.state === 'original' ? 'ORIGINAL (ShowUI asks the phone for ' + locator.ALT_URL + ')'
+        : s.state === 'map' ? 'PATCHED, MAP ONLY (ShowUI asks the phone for ' + SHOWUI_MAP_URL + ', the map without the phone\'s own cards)'
         : 'PATCHED (ShowUI asks the phone for ' + SHOWUI_URL + ', with the arrival-time card)';
     if (name === 'selfstart') return s.state === 'original' ? 'ORIGINAL (waits for NavController; stream never starts)' : 'SELF-START (CarPlay starts the cluster stream itself)';
     return s.state === 'original' ? 'ORIGINAL (IC_HIGH advertises ' + s.res.w + 'x' + s.res.h + ')' : 'PATCHED (IC_HIGH advertises ' + geomText(s.res) + ')';
@@ -533,9 +540,9 @@ function urlsLeft(cur, bc) {
     if (m && m.ok) out = [[m.slot, 'slotBytes'], [m.lea, 'leaBytes']].filter(function (s) {
         return m.forms.some(function (f) { return cur.toString('hex', s[0], s[0] + f[s[1]].length / 2) === f[s[1]]; });
     }).map(function (s) { return [s[0], m[s[1]].length / 2]; });
-    if (u && u.ok) out = out.concat([[u.str, u.strBytes], [u.call, u.callBytes]].filter(function (s) {
-        return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1];
-    }).map(function (s) { return [s[0], s[1].length / 2]; }));
+    if (u && u.ok) out = out.concat([[u.str, [u.strBytes, u.strMapBytes]], [u.call, [u.callBytes]]].filter(function (s) {
+        return s[1].some(function (b) { return cur.toString('hex', s[0], s[0] + b.length / 2) === b; });
+    }).map(function (s) { return [s[0], s[1][0].length / 2]; }));
     return out;
 }
 
@@ -567,12 +574,14 @@ function restorePlan(target, cur, c) {
 
 /* The edited image of `buf` (classified as `c`; `orig`, the pristine
  * original of its build, whose stock geometry `--res stock` and the mid
- * panel write back): { out, changed (what each changed region is for),
- * writes ({ mapurl, showui, res }: what the edit leaves written), wrong (why
+ * panel write back; showui, the ShowUI URL's form: 'eta', the default, or
+ * 'map'): { out, changed (what each changed region is for),
+ * writes ({ mapurl, showui, res }: what the edit leaves written, showui the
+ * form or false), wrong (why
  * the edited image does not read as exactly the requested state, at the
  * same sites, changed only in the edit regions; null when it does) }. The
  * in-memory plan (plan) comes from here. */
-function edited(buf, c, orig, panel, sinkUrl, wantRes) {
+function edited(buf, c, orig, panel, sinkUrl, wantRes, showui) {
     var slotLen = locator.SINK_STOCK.length;
     var loc = c.loc, out = Buffer.from(buf), changed = [];
     function put(what, off, bytes) {
@@ -608,10 +617,12 @@ function edited(buf, c, orig, panel, sinkUrl, wantRes) {
     });
 
     /* The URL edits, in every mode, where the build has them. */
-    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent', res: wantRes };
+    var map = showui === 'map';
+    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent' && (map ? 'map' : 'eta'), res: wantRes };
     if (writes.mapurl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
-    if (writes.showui) c.showui.sites.forEach(function (s) { put('ShowUI URL -> ' + SHOWUI_URL, s[0], Buffer.from(s[1], 'hex')); });
-
+    if (writes.showui) (map ? c.showui.mapSites : c.showui.sites).forEach(function (s) {
+        put('ShowUI URL -> ' + (map ? SHOWUI_MAP_URL : SHOWUI_URL), s[0], Buffer.from(s[1], 'hex'));
+    });
 
     /* The edited image must read as exactly the requested state, at the same
      * sites, changed only in the edit regions, before it is written. */
@@ -621,7 +632,7 @@ function edited(buf, c, orig, panel, sinkUrl, wantRes) {
         : cc.selfstart.state !== 'patched' ? 'self-start'
         : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
         : cc.mapurl.state !== (writes.mapurl ? 'patched' : 'absent') ? 'map URL'
-        : cc.showui.state !== (writes.showui ? 'patched' : 'absent') ? 'ShowUI URL'
+        : cc.showui.state !== (writes.showui ? (map ? 'map' : 'patched') : 'absent') ? 'ShowUI URL'
         : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
     return { out: out, changed: changed, writes: writes, wrong: wrong };
 }
@@ -699,7 +710,7 @@ function cmdVerify(target) {
         ', self-start ' + (c.selfstart.state === 'patched' ? 'on' : 'off') +
         ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') +
         ', map URL ' + (c.mapurl.state === 'patched' ? 'on' : c.mapurl.state === 'eta' ? 'on with ETA' : c.mapurl.state === 'original' ? 'off' : 'n/a') +
-        ', ShowUI URL ' + (c.showui.state === 'patched' ? 'with ETA' : c.showui.state === 'original' ? 'stock' : 'n/a') + '\n');
+        ', ShowUI URL ' + (c.showui.state === 'patched' ? 'with ETA' : c.showui.state === 'map' ? 'map only' : c.showui.state === 'original' ? 'stock' : 'n/a') + '\n');
 }
 
 function fsyncFile(path) {
@@ -838,15 +849,18 @@ function overlay(buf, text) {
  * (aapd_patch.js codingRefusal: KI_KOMBI_VARIANT 7, or one that cannot be
  * read, planned as 7), the locator: every edit site found and
  * verified, on any build. --unproven, which earlier releases' records
- * pass, changes nothing. Writes the plan to `outFile` by rename and prints
+ * pass, changes nothing. --showui map plans the ShowUI URL's map form (the
+ * map alone, without the phone's own cards); eta, the default, the URL with
+ * the arrival-time card. Writes the plan to `outFile` by rename and prints
  * one JSON line: build, version, sha256, size, edits, coding ('ok',
  * 'unreadable'), variant (the coding read, null when unreadable), writes,
  * planSha256. */
-function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
+function cmdPlan(target, panel, capture, sink, res, safe, showui, codingFile, outFile) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
     if (!outFile) die('plan needs --out <file>');
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
+    if (showui !== undefined && showui !== 'eta' && showui !== 'map') die('--showui must be eta or map');
     var coding = readCoding(codingFile), codingBad = codingRefusal(coding);
     if (codingBad) die('refusing: ' + codingBad);
     var wantRes = resFor(panel, res, safe);
@@ -856,7 +870,7 @@ function cmdPlan(target, panel, capture, sink, res, safe, codingFile, outFile) {
     if (bad.length) die('refusing: ' + bad.join('; '));
     var why = notPristine(c);
     if (why) die('in memory needs the pristine build on disk: ' + why);
-    var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
+    var e = edited(buf, c, buf, panel, sinkUrl, wantRes, showui);
     if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');
     var p = planText(buf, e.out, c);
     if (p.err) die('refusing: ' + p.err);
@@ -927,6 +941,8 @@ function parseArgs(argv) {
             a.res = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
         } else if (t === '--safe') {
             a.safe = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
+        } else if (t === '--showui') {
+            a.showui = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
         } else a._.push(t);
     }
     return a;
@@ -941,9 +957,68 @@ function main() {
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
-    else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, coding, a.out);
+    else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, a.showui, coding, a.out);
     else if (cmd === 'overlay') { cmdOverlay(target, a.plan); line('end', 'complete'); }
-    else { process.stderr.write('usage: carplay_patch.js status|probe|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: carplay_patch.js status|probe|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--showui eta|map] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+}
+
+/* ---- the ShowUI URL and the turn card ---- */
+
+/* Where the render keeps the app's turn card choice (waze-on-cluster.conf's
+ * turn_card_state_file): a line `turn_card = off|bottom|top`. */
+var TURN_CARD_STATE = process.env.WOC_TURN_CARD_STATE || '/var/opt/waze-on-cluster/state/turn-card.state.conf';
+
+/* The ShowUI URL's form the turn card asks for: 'map' while the card shows
+ * (bottom or top), so the phone draws the map without a turn card of its
+ * own beside ours, else 'eta'. No choice saved, or a file that does not
+ * read, is off, the shipped turn_card; any other value is off too, as the
+ * render reads it (src/turn_card_setting.cpp). */
+function turnCardShowUi(file) {
+    var text, value = null;
+    try { text = fs.readFileSync(file || TURN_CARD_STATE, 'utf8'); } catch (e) { return 'eta'; }
+    text.split('\n').forEach(function (l) { if (l.indexOf('turn_card = ') === 0) value = l.slice('turn_card = '.length); });
+    return value === 'bottom' || value === 'top' ? 'map' : 'eta';
+}
+
+/* The ShowUI URL's form a plan's arguments ask for: 'map' or 'eta'. */
+function showUiArg(args) {
+    var i = (args || []).indexOf('--showui');
+    return i >= 0 && args[i + 1] === 'map' ? 'map' : 'eta';
+}
+
+/* The plan's arguments for the form `form`: --showui map, or none for
+ * 'eta', the default, so the arguments without the turn card are the ones
+ * earlier versions planned with. */
+function withShowUi(args, form) {
+    var out = [];
+    for (var i = 0; i < args.length; i++) {
+        if (args[i] === '--showui') i++;
+        else out.push(args[i]);
+    }
+    return form === 'map' ? out.concat(['--showui', 'map']) : out;
+}
+
+/* The plan text with the ShowUI URL's log text (its region showui-1) in the
+ * other form, or null when it holds neither: what carplay runs when it
+ * started before a turn card change planned the patch again. */
+function otherShowUiPlan(text) {
+    var f = locator.SHOWUI_FORMS, lines = (text || '').split('\n'), swapped = false;
+    for (var i = 0; i < lines.length; i++) {
+        var w = lines[i].split(' ');
+        if (w[0] !== 'edit' || w[1] !== 'showui-1' || w.length !== 5) continue;
+        if (w[4] === f.eta) w[4] = f.map;
+        else if (w[4] === f.map) w[4] = f.eta;
+        else return null;
+        lines[i] = w.join(' ');
+        swapped = true;
+    }
+    return swapped ? lines.join('\n') : null;
+}
+
+/* Whether two plans are the same patch but for the ShowUI URL's form. */
+function onlyShowUiDiffers(a, b) {
+    var x = otherShowUiPlan(a);
+    return x !== null && x === b;
 }
 
 /* Whether target holds a change besides our edits, against its original
@@ -962,6 +1037,7 @@ function foreignIn(target, pre) {
 /* edited, classify, resFor and sinkUrlFor: the image an earlier release's
  * apply wrote, for the tests' fixtures. */
 module.exports = { trustedBackup: trustedBackup, SHIPPED: SHIPPED, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan, planOf: planOf,
-    foreignIn: foreignIn, edited: edited, classify: classify, resFor: resFor, sinkUrlFor: sinkUrlFor };
+    foreignIn: foreignIn, edited: edited, classify: classify, resFor: resFor, sinkUrlFor: sinkUrlFor,
+    turnCardShowUi: turnCardShowUi, showUiArg: showUiArg, withShowUi: withShowUi, otherShowUiPlan: otherShowUiPlan, onlyShowUiDiffers: onlyShowUiDiffers };
 
 if (require.main === module) main();

@@ -139,6 +139,43 @@ take `fresh_ms`, only a map its host hides counts as not seen.
 the cluster is hidden (cluster-render README, "Guide hold"). The app's
 **Hide BMW's turn box** checkbox turns that off and on at once.
 
+**Turn card.** The next manoeuvre (an arrow, the distance and the road) as
+an image layer over the cluster map (`src/turn_card.h`): below the phone's
+position arrow and the street name it writes there, compact (all on one
+line); at the top of the map, on two lines; or none (the default). It
+shows and hides with the map, on the map slot only (not while
+hosted, not on the HUD). The app's **Turn card** sets where, kept in
+`turn_card_state_file`. While it shows, CarPlay's patch asks the phone for
+the map alone, so a phone that draws a turn card of its own (Apple Maps)
+does not draw a second one; its arrival-time card goes too. A change of
+the setting restarts CarPlay where the tool may, so the phone follows it at
+once, else from CarPlay's next start (PATCH.md, Edit 6). The arrows follow BMW's own: a heavy white way to
+go, the roads not taken (a fork's other branch, the motorway left, a
+roundabout's ring) grey. The text is antialiased Roboto drawn ahead of time
+(`src/card_font.h`, `tools/card_font.py`; Apache License 2.0,
+`LICENSES/Apache-2.0.txt`), with Latin, Greek and Cyrillic letters; a line
+that does not fit ends in an ellipsis. `make build/host/turn_card_preview`
+writes every kind of card as one picture.
+
+What it shows is the BMW navigation's next manoeuvre as the cluster's route
+box has it, CarPlay's guidance included (`guidance = 1`): the tool reads
+GuidanceEventList (SOME/IP 0xFB1B, event 0x8002) as uid 5000, the way the
+HMI does, and only reads (`src/guidance_link.h`, `src/route_box.h`). Each
+of its events is a kind (a turn, a fork, a roundabout, the destination, an
+empty slot) and a direction: a turn's straight on, left, slight, sharp,
+right or U-turn, a fork's keep left or right, a roundabout's exit (its angle
+and number), the destination's side. Distances come in metres or
+kilometres. A kind not seen on a drive yet (a ferry, a motorway entry) gets
+a plain mark, with the distance and road still shown, and the log names its
+number once, never the road. The box empties now and then while the
+navigation guides (a route's start, a recalculation); the tool also reads
+whether it guides (Guidance 0xFB1A, event 0x8015), and while it does the
+card keeps an instruction with no distance (the way out) through those
+spells and one with a distance for 2.5 s (`src/guided_card.h`). While the app sends a
+manoeuvre (its **Show an example**), the card shows the app's until the
+app sends `none`, or for 12 s at most (`src/card_choice.h`): the app's own
+end does not come while its page is in the background.
+
 **Where the map shows.** The app's **Show on** sets the cluster, the HUD,
 both or neither (**Off**), at once. On the HUD the frames are scaled on the
 head unit to the size shown (**Size**, 30 % to 85 % of the HUD's width, or

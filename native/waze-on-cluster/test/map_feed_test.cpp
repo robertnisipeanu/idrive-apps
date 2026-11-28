@@ -1473,6 +1473,82 @@ static void unseen_map()
     ok("MapFeeds: neither: not unseen (no pictures at all)", !feeds.unseen() && !feeds.wants_frames());
 }
 
+/* The image layer of the turn card, if the renderer has one. */
+static const crs::Layer *card_layer(Rig *r)
+{
+    for (const crs::Layer *l : r->svc->compositor().layers())
+        if (std::string(l->kind()) == "image")
+            return l;
+    return nullptr;
+}
+
+/* The turn card (MapFeed::set_card): an image layer over the map at its
+ * place in the picture, shown and hidden with the map, gone when cleared;
+ * the map's own state as it was throughout. */
+static void turn_card()
+{
+    const std::vector<uint8_t> f = atlas(21);
+    Rig r;
+    r.pump(1500, &f);
+    Maneuver m;
+    m.kind = Maneuver::Left;
+    m.distance = "200 m";
+    m.road = "Av. Brasil";
+    std::vector<uint8_t> card;
+    render_turn_card(m, &card);
+    r.feed->set_card(&card, kTurnCardW, kTurnCardH, kTurnCardX, kTurnCardBottomY);
+    r.pump(500, &f);
+    const crs::Layer *c = card_layer(&r);
+    ok("turn card: an image layer over the map, 360x56 where it was put, shown, the map still showing",
+       c && c->params.visible && c->params.rect.x == kTurnCardX && c->params.rect.y == kTurnCardBottomY &&
+           c->params.rect.w == 360 && c->params.rect.h == 56 && c->params.z == 1 && r.st().state == "showing" &&
+           r.feed->card_drawn());
+    crs::FakeGraph *g = r.gpu.graph("map");
+    bool pixels = false;
+    if (g)
+        for (const auto &kv : g->shown.buffers)
+            pixels = pixels || kv.second.px == card;
+    ok("turn card: its pixels in the map's scene", pixels);
+    m.distance = "150 m";
+    std::vector<uint8_t> next;
+    render_turn_card(m, &next);
+    r.feed->set_card(&next, kTurnCardW, kTurnCardH, kTurnCardX, kTurnCardBottomY);
+    r.pump(1000, &f);
+    pixels = false;
+    for (const auto &kv : g->shown.buffers)
+        pixels = pixels || kv.second.px == next;
+    ok("turn card: another distance replaces the pixels, the same layer", pixels && card_layer(&r) == c);
+    r.feed->set_card(&next, kTurnCardW, kTurnCardH, kTurnCardX, kTurnCardTopY);
+    r.pump(300, &f);
+    c = card_layer(&r);
+    ok("turn card: moved to the top", c && c->params.rect.y == kTurnCardTopY && c->params.visible);
+    /* below the arrow the compact one: another shape, a new layer */
+    std::vector<uint8_t> low;
+    render_turn_card(m, &low, true);
+    r.feed->set_card(&low, kTurnCardW, kTurnCardCompactH, kTurnCardX, kTurnCardBottomY);
+    r.pump(300, &f);
+    c = card_layer(&r);
+    ok("turn card: the compact one below the arrow, its own height, shown",
+       c && c->params.rect.y == kTurnCardBottomY && c->params.rect.h == (int)kTurnCardCompactH && c->params.visible);
+    r.feed->set_card(&next, kTurnCardW, kTurnCardH, kTurnCardX, kTurnCardTopY);
+    r.pump(300, &f);
+    c = card_layer(&r);
+    ok("turn card: and back at the top, two lines again",
+       c && c->params.rect.y == kTurnCardTopY && c->params.rect.h == 56 && c->params.visible);
+    r.feed->set_stream(true, false, Picture::Blank);
+    r.pump(300, &f);
+    c = card_layer(&r);
+    ok("turn card: hidden with the map", c && !c->params.visible && r.st().state == "idle");
+    r.feed->set_stream(true, false, Picture::Shown);
+    r.pump(1500, &f);
+    c = card_layer(&r);
+    ok("turn card: shown again with the map", c && c->params.visible && r.st().state == "showing");
+    r.feed->set_card(nullptr, 0, 0, 0, 0);
+    r.pump(300, &f);
+    ok("turn card: cleared, no layer, the map still showing",
+       !card_layer(&r) && !r.feed->card_drawn() && r.st().state == "showing");
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -1486,6 +1562,7 @@ int main()
     renderer_changed();
     renderer_fresh_changed();
     unseen_map();
+    turn_card();
     Rig r;
     r.pump(100);
     const crs::Layer *l = r.map_layer();

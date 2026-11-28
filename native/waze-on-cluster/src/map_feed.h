@@ -193,6 +193,14 @@ public:
 
     /* The layer's guide_hold from now on. */
     void set_guide_hold(bool hold);
+    /* The turn card (turn_card.h) drawn over the map from now on: w x h of
+     * RGBA at x, y of the map's picture; rgba null: none. Drawn only while
+     * the map is, on a cluster target of the feed's own where the picture
+     * is shown at its size (not hosted, not scaled, not the HUD). Pixels
+     * that differ from the last card's go as one rectangle. */
+    void set_card(const std::vector<uint8_t> *rgba, unsigned w, unsigned h, int x, int y);
+    /* The card has a layer (for the tests and the status). */
+    bool card_drawn() const { return card_layer_ != 0; }
     const std::string &target() const { return cfg_.target; }
     /* The HUD map's size (FeedConfig::hud_width_pct), applied at once to a
      * map on the HUD. */
@@ -313,6 +321,9 @@ private:
     /* Unseen: a repeat when one is due, so the layer never stalls. */
     void keep_layer(int64_t now_ms);
     int64_t keep_every_ms() const;
+    /* The card's layer made, moved, shown, hidden or dropped to match the
+     * card set and the map's layer. */
+    void sync_card();
 
     FeedConfig cfg_;
     cr::Client client_;
@@ -327,6 +338,13 @@ private:
     void remake_layer();
     uint32_t layer_ = 0;
     cr::LayerOptions lo_;   /* the layer's options as last sent */
+    /* the turn card as set, its layer (0: none) and its options as last sent */
+    std::vector<uint8_t> card_px_;
+    unsigned card_w_ = 0, card_h_ = 0;
+    int card_x_ = 0, card_y_ = 0;
+    bool card_refused_ = false;   /* the renderer refused its layer: none until the card is set again */
+    uint32_t card_layer_ = 0;
+    cr::LayerOptions card_lo_;
     bool show_due_ = false;   /* visible once the frame waiting has gone */
     /* The newest frame, while held_new_; on a layer that scales, once there
      * is one, unless another feed or the worker has it. */

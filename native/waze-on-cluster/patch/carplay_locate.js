@@ -743,12 +743,19 @@ function locateMapUrl(im, res, sp, r, rela, inits) {
  * bytes of the log text of that same call's result check: patched, the text
  * up to `ShowUI(`, its NUL, then the URL (SHOWUI_FORM). The call site
  * `call getter ; mov rdi,rN ; mov rsi,[rax]` (either order of the two movs)
- * becomes `mov rdi,rN ; lea rsi,[rip+URL] ; nop`, the same 11 bytes. */
+ * becomes `mov rdi,rN ; lea rsi,[rip+URL] ; nop`, the same 11 bytes.
+ *   The map form (SHOWUI_MAP_FORM) holds SHOWUI_MAP_URL at the same place,
+ * NULs after it to the form's end: the map alone, which the patch asks for
+ * while the turn card is on, so the phone draws no turn card of its own. The
+ * call site is the same in both. */
 var ALT_URL = 'maps:/car/instrumentcluster';
 var SHOWUI_URL = ALT_URL + '?showETA=yes';
+var SHOWUI_MAP_URL = MAP_URL;
 var SHOWUI_TEXT = 'mCinemoCarPlay->ShowUI(';
 var SHOWUI_FORM = Buffer.from(SHOWUI_TEXT + '\0' + SHOWUI_URL + '\0', 'latin1');
 var SHOWUI_LEN = SHOWUI_FORM.length, SHOWUI_AT = SHOWUI_TEXT.length + 1, SHOWUI_CALL = 11;
+var SHOWUI_MAP_FORM = Buffer.alloc(SHOWUI_LEN);
+SHOWUI_MAP_FORM.write(SHOWUI_TEXT + '\0' + SHOWUI_MAP_URL + '\0', 'latin1');
 /* The check's log text as built: the expression the call was written as. */
 var SHOWUI_EXPR = /^mCinemoCarPlay->ShowUI\( ::(?:\w+::)*CarPlayConstantsRepository::alternateDisplayUrl\(\)\.c_str\(\), /;
 var MOV_RSI_RAX = [0x48, 0x8b, 0x30], LEA_RSI = Buffer.from([0x48, 0x8d, 0x35]);
@@ -853,9 +860,9 @@ function branchIntoWhyNot(im, rs, a, b) {
  * URL with carplay.conf's SHOW_UI_OPTIONS itself.
  *   The log text: the one string starting `mCinemoCarPlay->ShowUI(`,
  * reading as the check of `ShowUI( …alternateDisplayUrl().c_str(), …`
- * (stock) or as SHOWUI_FORM (patched); without either, a NUL at either of
- * SHOWUI_FORM's NULs (the stock text has none in its first SHOWUI_LEN bytes)
- * is a write of ours cut short ('mixed'). It is loaded by one lea, in
+ * (stock), as SHOWUI_FORM (patched) or as SHOWUI_MAP_FORM ('map'); without
+ * any, a NUL at either of SHOWUI_FORM's NULs (the stock text has none in its
+ * first SHOWUI_LEN bytes) is a write of ours cut short ('mixed'). It is loaded by one lea, in
  * requestStream (the function loading its own name at its entry), nothing
  * else loads inside it but, at the URL, the call site's lea, and no RELA
  * addend points into it.
@@ -867,13 +874,15 @@ function branchIntoWhyNot(im, rs, a, b) {
  * patched form (or, cut short, a mix of the two), followed by the ShowUI
  * call and its result's check with the log text; no branch lands inside it.
  * strIs and callIs say which form each site holds: 'stock', 'patched' or
- * 'mixed'. */
+ * 'mixed', and strIs 'map' for the map form (its call site reads
+ * 'patched'). */
 function locateShowUi(im, str, refs, inits, rela) {
     if (!str.setShowUi.err) return { ok: false, na: true, reason: 'ShowUI URL: not applicable (the build adds carplay.conf\'s SHOW_UI_OPTIONS to it)' };
     if (!im.starts.length) return { ok: false, reason: 'ShowUI URL: no function table' };
     if (str.showUi.err) return { ok: false, reason: 'ShowUI URL: ' + str.showUi.err.replace(/^self-start: ShowUI string/, 'ShowUI log text') };
     var buf = im.buf, s = str.showUi.off;
     var strIs = buf.slice(s, s + SHOWUI_LEN).equals(SHOWUI_FORM) ? 'patched'
+        : buf.slice(s, s + SHOWUI_LEN).equals(SHOWUI_MAP_FORM) ? 'map'
         : buf[s + SHOWUI_AT - 1] === 0 || buf[s + SHOWUI_LEN - 1] === 0 ? 'mixed'
         : SHOWUI_EXPR.test(stringAt(buf, s)) ? 'stock' : null;
     if (!strIs) return { ok: false, reason: 'ShowUI URL: ShowUI not called with the alternate display URL' };
@@ -921,7 +930,8 @@ function locateShowUi(im, str, refs, inits, rela) {
     if (rela.some(function (a) { return a >= sVa && a < sVa + SHOWUI_LEN; })) return { ok: false, reason: 'ShowUI URL: a data pointer into the log text' };
     return {
         ok: true, str: s, len: SHOWUI_LEN, call: at, callLen: SHOWUI_CALL, url: url, getter: getter.off, requestStream: rs.off,
-        strIs: strIs, callIs: win.is, strBytes: SHOWUI_FORM.toString('hex'), callBytes: win.patched.toString('hex'), callStock: win.stock.toString('hex'),
+        strIs: strIs, callIs: win.is, strBytes: SHOWUI_FORM.toString('hex'), strMapBytes: SHOWUI_MAP_FORM.toString('hex'),
+        callBytes: win.patched.toString('hex'), callStock: win.stock.toString('hex'),
     };
 }
 
@@ -1091,6 +1101,7 @@ function sha256(b) { return require('crypto').createHash('sha256').update(b).dig
 
 module.exports = {
     locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, SHOWUI_URL: SHOWUI_URL, ALT_URL: ALT_URL,
+    SHOWUI_MAP_URL: SHOWUI_MAP_URL, SHOWUI_FORMS: { eta: SHOWUI_FORM.toString('hex'), map: SHOWUI_MAP_FORM.toString('hex') },
     stockOriginal: stockOriginal, partsDiffering: partsDiffering,
     /* both patchers' words for a file another build than its backup by its
      * build-id: a car software update replaced it */

@@ -285,7 +285,7 @@ async function main() {
     const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
-        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocProfileStatus ', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
+        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocProfileStatus ', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocTurnCard Turn card: \u2014', 'wocTurnCardShow Show an example', 'wocLogs Logs',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
@@ -359,7 +359,7 @@ async function main() {
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
         assert.deepStrictEqual(bound, ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
             'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudKeep', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile',
-            'wocRestart'],
+            'wocRestart', 'wocTurnCard', 'wocTurnCardShow'],
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
@@ -417,6 +417,24 @@ async function main() {
         console.log('ok   Android Auto: its own line, Patch, Remove patch, the zoom and the Hide phone\'s turn card checkbox with their values, marked while waiting; ' +
             'not supported on this cluster: every button greyed');
 
+        {
+            /* the turn card: off, below the arrow, at the top, in turn; the example only while it is on */
+            const card = byName.wocTurnCard, show = byName.wocTurnCardShow;
+            await until('the turn card off, its example greyed', () => card.text === 'Turn card: Off' && card.enabled === true && show.enabled === false);
+            card.press();
+            await until('below the arrow', () => render.turnCard === 'bottom' && card.text === 'Turn card: Below the arrow' && show.enabled === true);
+            show.press();
+            await until('the example sent', () => (render.maneuvers || []).length === 1);
+            assert.deepStrictEqual(render.maneuvers[0], { cmd: 'maneuver', kind: 'left', distance: '200 m', road: 'Example street' }, 'the example manoeuvre');
+            await sleep(450);   /* past the press debounce */
+            card.press();
+            await until('at the top', () => render.turnCard === 'top' && card.text === 'Turn card: At the top');
+            await sleep(450);
+            card.press();
+            await until('off again', () => render.turnCard === 'off' && card.text === 'Turn card: Off' && show.enabled === false);
+            render.received = render.received.filter((m) => m.cmd !== 'turn_card' && m.cmd !== 'maneuver');
+            console.log('ok   the turn card: Off, Below the arrow, At the top in turn as the render says; Show an example sends one, greyed while off');
+        }
         const guide = byName.wocGuide;
         await until('the switch enabled, ticked', () => guide.enabled === true && guide.selected === true);
         guide.press();

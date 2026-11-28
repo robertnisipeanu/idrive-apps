@@ -34,11 +34,15 @@
 #include <vector>
 
 #include "alt_screen.h"
+#include "card_choice.h"
 #include "config.h"
 #include "control.h"
 #include "opt_in.h"
 #include "guide_setting.h"
+#include "guidance_link.h"
+#include "turn_card_setting.h"
 #include "head_unit.h"
+#include "keys.h"
 #include "log.h"
 #include "block_pack.h"
 #include "map_feed.h"
@@ -67,7 +71,7 @@ namespace {
  * This version does not read it. */
 const char kUnreadLocalConf[] = "/var/opt/waze-on-cluster/waze-on-cluster.local.conf";
 
-std::string status_line(const FeedStatus &s)
+std::string status_line(const FeedStatus &s, const char *turn_card)
 {
     return "{\"ev\":\"status\",\"state\":" + json_escape(s.state) + ",\"target\":" + json_escape(s.target) +
            ",\"page\":" + json_escape(s.page) + ",\"reason\":" + json_escape(s.reason) +
@@ -80,13 +84,14 @@ std::string status_line(const FeedStatus &s)
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
            ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
+           ",\"turn_card\":" + json_escape(turn_card) +
            /* only while hosted: otherwise the line is as it always was */
            (s.hosted ? ",\"hosted\":1" : "") + "}";
 }
 
 class Server : public Control::Handler {
 public:
-    Server(MapFeeds *feeds, GuideSetting *guide) : feeds_(feeds), guide_(guide) {}
+    Server(MapFeeds *feeds, GuideSetting *guide, TurnCardSetting *card) : feeds_(feeds), guide_(guide), card_(card) {}
     void set_control(Control *c) { control_ = c; }
 
     /* cluster and hud turn the map on each off or on ("on"), hud also sizes
@@ -102,6 +107,27 @@ public:
         if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
             feeds_->set_guide_hold(guide_->hide());
+        } else if (cmd == "turn_card" && msg.count("mode") && card_->set(msg.at("mode"))) {
+            /* the turn card over the map off, or where it goes (turn_card_setting.h) */
+            log_info("turn card: %s", card_->name());
+            feeds_->set_turn_card(card_->mode() != TurnCardSetting::Off, card_->mode() == TurnCardSetting::Top);
+        } else if (cmd == "maneuver" && msg.count("kind")) {
+            /* a manoeuvre for the turn card, the app's example: shown over
+             * the navigation's until kind none comes, or for
+             * CardChoice::kExampleMs at most (card_choice.h) */
+            Maneuver m;
+            if (!maneuver_kind(msg.at("kind"), &m.kind)) {
+                log_warn("maneuver: unknown kind %s", msg.at("kind").c_str());
+            } else {
+                if (msg.count("distance"))
+                    m.distance = msg.at("distance");
+                if (msg.count("road"))
+                    m.road = msg.at("road");
+                if (msg.count("exit"))
+                    m.exit_deg = (int)std::strtol(msg.at("exit").c_str(), nullptr, 10) % 360;
+                choice_.set_example(m, now_ms());
+                show_maneuver();
+            }
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
             feeds_->set_cluster(on->second == "1");
         } else if (cmd == "hud" && (on != msg.end() || pct != msg.end() || hx != msg.end() || hy != msg.end() ||
@@ -152,6 +178,24 @@ public:
      * CID and the app's page is hidden. */
     void on_owner_gone() override {}
 
+    /* The navigation's next manoeuvre (guidance_link.h); none while it
+     * does not guide. */
+    void set_guided(const Maneuver &m)
+    {
+        choice_.set_guided(m);
+        show_maneuver();
+    }
+
+    /* Each pass of the main loop: the app's example ends once its time is
+     * up, whether or not the app's own end came. */
+    void tick(int64_t now)
+    {
+        if (choice_.expire(now)) {
+            log_info("turn card: the app's example ends");
+            show_maneuver();
+        }
+    }
+
     void report(const std::string &status)
     {
         if (control_->owner_fd() < 0)
@@ -167,8 +211,14 @@ public:
     }
 
 private:
+    /* The card shows the app's example while it lasts, the navigation's
+     * manoeuvre otherwise (card_choice.h). */
+    void show_maneuver() { feeds_->set_maneuver(choice_.shown()); }
+
     MapFeeds *feeds_;
     GuideSetting *guide_;
+    TurnCardSetting *card_;
+    CardChoice choice_;
     Control *control_ = nullptr;
     uint64_t log_seq_ = 0;
     std::string last_;
@@ -291,13 +341,26 @@ int serve(Config cfg)
     std::string err;
     VideoProducer producer(vc);
     MapFeeds feed(fc, cfg.num("cluster") == 1, cfg.num("hud") == 1, (unsigned)cfg.num("hud_fps"));
-    Server server(&feed, &guide);
+    TurnCardSetting card(cfg.str("turn_card"), cfg.str("turn_card_state_file"));
+    feed.set_turn_card(card.mode() != TurnCardSetting::Off, card.mode() == TurnCardSetting::Top);
+    Server server(&feed, &guide, &card);
     Control control(&server);
     server.set_control(&control);
     if (!control.listen(cfg.str("socket_path"), (unsigned)std::strtoul(cfg.str("socket_mode").c_str(), nullptr, 8),
                         cfg.str("socket_group"), &err)) {
         log_error("%s", err.c_str());
         return 1;
+    }
+    /* After the signal mask: vsomeip's threads leave SIGINT and SIGTERM to
+     * sig_fd. */
+    GuidanceLink guidance;
+    bool guided = false;
+    if (cfg.num("guidance") == 1) {
+        guided = guidance.start(&err);
+        if (!guided)
+            log_warn("guidance: %s; the turn card shows the app's example only", err.c_str());
+    } else {
+        log_info("guidance: off; the turn card shows the app's example only");
     }
 
     std::vector<uint8_t> frame;
@@ -318,10 +381,12 @@ int serve(Config cfg)
         std::vector<pollfd> p = {{sig_fd, POLLIN, 0}, {control.listen_fd(), POLLIN, 0}, {control.owner_fd(), POLLIN, 0},
                                  {producer.ready_fd(), POLLIN, 0}};
         feed.poll_fds(&p);   /* each target's renderer socket and scale-worker wakeup fd */
+        if (guided)
+            p.push_back(pollfd{guidance.fd(), POLLIN, 0});   /* a new manoeuvre */
         /* A decoded frame wakes it (the producer's ready fd), and so do the
-         * renderer's socket and each scale worker's eventfd; otherwise poll
-         * every 250 ms while active or disconnected, and every 1000 ms while
-         * idle and connected. */
+         * renderer's socket, each scale worker's eventfd and a new manoeuvre;
+         * otherwise poll every 250 ms while active or disconnected, and every
+         * 1000 ms while idle and connected. */
         const int64_t wake = feed.wake_in_ms(now_ms());
         const int base_poll = (!active && feed.connected()) ? 1000 : 250;
         int n = poll(p.data(), p.size(), wake >= 0 && wake < base_poll ? (int)wake : base_poll);
@@ -333,7 +398,11 @@ int serve(Config cfg)
             control.on_owner_readable();
         if (p[1].revents & POLLIN)
             control.on_listen_readable();
+        Maneuver next;
+        if (guided && guidance.take(&next))   /* each pass: it also subscribes once due */
+            server.set_guided(next);
         const int64_t now = now_ms();
+        server.tick(now);
         uint64_t id = 0;
         bool same = false;
         OutputPart part;
@@ -380,7 +449,7 @@ int serve(Config cfg)
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
         active = live || control.owner_fd() >= 0 || fs.state != "idle" ||
                  (fs.hud_state != "off" && fs.hud_state != "idle");
-        const std::string status = status_line(fs);
+        const std::string status = status_line(fs, card.name());
         /* The frame rate changes the status every second; the log keeps
          * to its state, reason and target, so the app's last lines are not
          * all status. */
@@ -502,53 +571,6 @@ int bench_pack(const Config &cfg, const char *path)
 }
 
 }  // namespace
-
-/* The keys beyond the shared Config's own that this tool reads. Registered
- * before any conf is loaded, so Config accepts them. */
-void define_keys(Config *cfg)
-{
-    cfg->define("fifo_path", "/run/waze-on-cluster/alt.h264");
-    cfg->define("carplay_group", "video");
-    cfg->define("udp_port", "20557");
-    cfg->define("avb_stream", "media_transport.avb_streaming.15");
-    cfg->define("drm_device", "/dev/dri/renderD128");
-    cfg->define("tex_size", "1088x480");
-    cfg->define("src_crop", "");
-    cfg->define("map_rect", "");
-    cfg->define("dirty_threshold", "8");
-    cfg->define("dirty_settle_ms", "1000");
-    cfg->define("stall_ms", "6000");
-    cfg->define("idle_ms", "60000");
-    cfg->define("freeze_ms", "10000");
-    cfg->define("freeze_min_fps", "3");
-    cfg->define("blank_ms", "10000");
-    cfg->define("alt_screen_port", "6031");
-    cfg->define("alt_screen_uid", "13002");
-    cfg->define("target_fps", "30");
-    cfg->define("picture_fps", "0");
-    cfg->define("pan_blocks", "1");
-    cfg->define("tex_level_bits", "2");
-    cfg->define("gpu_copy", "1");
-    cfg->define("hosted_vpp_scale", "0");
-    cfg->define("always_packed", "0");
-    cfg->define("hide_bmw_guidance", "1");
-    cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");
-    cfg->define("map_state_file", "/var/opt/waze-on-cluster/map.state.conf");
-    cfg->define("features_file", "/var/opt/waze-on-cluster/features.conf");
-    cfg->define("cluster", "1");
-    cfg->define("hud", "0");
-    cfg->define("hud_fps", "10");
-    cfg->define("hud_width_pct", "0");
-    cfg->define("hud_offset_x", "0");
-    cfg->define("hud_offset_y", "0");
-    cfg->define("hud_keep_shown", "0");
-    cfg->define("hud_scale_down", "1");
-    cfg->define("hud_round_corners", "1");
-    cfg->define("hud_black_background", "1");
-    cfg->define("render_socket", "/dev/shm/cluster-render/render.sock");
-    cfg->define("log_file", "/var/opt/waze-on-cluster/log/waze-on-cluster.log");
-    cfg->define("log_file_kb", "512");
-}
 
 int main(int argc, char **argv)
 {

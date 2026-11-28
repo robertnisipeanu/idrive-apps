@@ -477,6 +477,7 @@ loads the URL in place of calling the getter:
 | | offset | stock | patched |
 |---|---|---|---|
 | log text | `0x2908a0` (first 64 B) | `mCinemoCarPlay->ShowUI( ::carplay::CarPlayConstantsRepository::a` | `mCinemoCarPlay->ShowUI(\0maps:/car/instrumentcluster?showETA=yes\0` (URL at `0x2908b8`) |
+| log text, turn card on | `0x2908a0` (first 64 B) | as above | `mCinemoCarPlay->ShowUI(\0maps:/car/instrumentcluster/map\0` and 8 NULs (URL at `0x2908b8`) |
 | ShowUI's URL | `0x18188a` (11 B) | `e8 51 cd 07 00 4c 89 e7 48 8b 30` → `call 0x1fe5e0 ; mov rdi,r12 ; mov rsi,[rax]` | `4c 89 e7 48 8d 35 24 f0 10 00 90` → `mov rdi,r12 ; lea rsi,[0x2908b8] ; nop` |
 
 The rest of the log text (`lternateDisplayUrl().c_str(), …`) stays in place,
@@ -487,6 +488,26 @@ string and posts it to the phone as a command without waiting for the
 phone's reply, so its result, and the check that throws on an error (Edit 3,
 "Exception risk"), does not depend on the URL.
 
+**While the turn card is on.** The app's Turn card (Below the arrow or At
+the top) draws the next manoeuvre over the map, so the patch then asks for
+`maps:/car/instrumentcluster/map` instead: the map alone, the URL Edit 5
+gives the display, so a phone that draws a turn card of its own (Apple Maps)
+does not draw a second one; the arrival-time card goes with it. The log
+text holds that URL at the same place, NULs after it to its 64th byte, and
+the call site is the same. `carplay_patch.js plan --showui map` plans it.
+patchd plans it while the render's saved choice (`turn_card_state_file`) is
+`bottom` or `top`: at the Patch button, an install, boot recovery's plan,
+and when the app says the card changed (`{"cmd":"turn-card"}`), where an
+enabled patch whose URL is not the one the card asks for is planned again.
+Where patchd may restart carplay ("Activation") it does, as CarPlay's Patch
+button does, so the phone gets the new URL at once. Elsewhere, and at an install, carplay asks the phone for the new
+URL from its next start and runs the patch as it started until then, which
+patchd's status counts as patched, with nothing pending. A patch
+planned again for the other URL keeps its proven state, since only the URL
+the phone is asked for differs. `status` shows the form as `showui:
+PATCHED, MAP ONLY (…)`, `verify` as `ShowUI URL map only`, and patchd
+reports `mapurl: "map-only"`.
+
 **Found by** requestStream (Edit 3's "Found by"). Not applicable to a build
 whose name strings include `AlternateDisplays::setShowUiUrl()`: it adds
 carplay.conf's options to the ShowUI URL itself, and `status` shows
@@ -496,7 +517,7 @@ already asks for the card.
 
 - The log text: the one string starting `mCinemoCarPlay->ShowUI(`, reading
   as `mCinemoCarPlay->ShowUI( ::…CarPlayConstantsRepository::alternateDisplayUrl().c_str(), `
-  and more (stock) or as the patched 64 bytes. One `lea`, in requestStream,
+  and more (stock) or as either patched form's 64 bytes. One `lea`, in requestStream,
   loads it; nothing else loads any byte of its first 64 but, patched, the
   call site's `lea` at the URL; no RELA addend points into them.
 - The URL getter: `maps:/car/instrumentcluster` found once as its own
@@ -527,11 +548,12 @@ short; in the log text, a NUL at either of the patched form's NULs, where
 the stock text has none), reads as unrecognised (`ShowUI URL: partly
 patched`): `apply` refuses it and `revert` writes the whole backup. A
 region-wise `revert` also restores the backup's ShowUI URL sites wherever
-the target holds the patched bytes there. Every mode and both panels apply
+the target holds either form's bytes there. Every mode and both panels apply
 it. An apply over a patch without it adds its sites, and Edit 5's where
 they are stock or hold the URL with ETA. `status` shows `showui: ORIGINAL
-(…)` or `PATCHED (…)`, and `verify` `ShowUI URL stock` or `with ETA`.
-`patchd` reports `mapurl: "eta"` when it is in place; `"no-eta"`, for which
+(…)`, `PATCHED (…)` or `PATCHED, MAP ONLY (…)`, and `verify` `ShowUI URL
+stock`, `with ETA` or `map only`. `patchd` reports `mapurl: "eta"` when it
+is in place, `"map-only"` in its map form; `"no-eta"`, for which
 the app shows `Status: Update needed`, when Edit 5 holds the URL with ETA,
 or one of Edits 5 and 6 is in place and the other stock; `"off"` when both
 are stock, as in a patch of a release without Edit 5, which an update's `activate`

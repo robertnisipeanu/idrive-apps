@@ -28,7 +28,8 @@
  * state as it was. The cluster map follows either side's patch in effect,
  * kept through a running or failed change; the turn card checkbox shows
  * the asked card while its change runs and the one on disk once it fails
- * or is refused. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
+ * or is refused. The turn card over the map: patchd told once the render
+ * shows a new choice, or once it is back when it was away. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
  * render and the state as the render reports it, nothing known or sent
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown. Where the map shows (the cluster,
@@ -1306,6 +1307,30 @@ test('CarPlay Wi-Fi: the band patchd knows, the line to turn the iPhone\'s Wi-Fi
     await patch.close();
     await until('patchd gone', () => !c.connectedPatch());
     assert.deepStrictEqual([c.wifiBand(), c.wifiText(), c.wifiHint()], [null, '', ''], 'patchd gone: no band');
+    c.close();
+});
+
+test('the turn card: patchd told once the render shows the new choice, so CarPlay\'s patch follows it; once patchd is back when it was away', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch() && c.canSetTurnCard() && c.turnCard() === 'off');
+    c.nextTurnCard();
+    await until('below the arrow', () => c.turnCard() === 'bottom');
+    await until('patchd told', () => patch.count('turn-card') === 1);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'turn-card'), [{ cmd: 'turn-card' }]);
+    /* patchd away while the render shows the next one: told once it is back */
+    await patch.close();
+    await until('patchd gone', () => !c.connectedPatch());
+    c.nextTurnCard();
+    await until('at the top', () => c.turnCard() === 'top');
+    await sleep(50);
+    assert.strictEqual(patch.count('turn-card'), 1, 'nothing sent while patchd is away');
+    await patch.listen();
+    await until('patchd back and told', () => c.connectedPatch() && patch.count('turn-card') === 2);
+    /* a status of the render that is not an answer tells nothing */
+    render._broadcast(render._status());
+    await sleep(50);
+    assert.strictEqual(patch.count('turn-card'), 2);
     c.close();
 });
 

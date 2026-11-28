@@ -68,6 +68,12 @@ The app is in the head unit's display language.
   greyed and the page says `Driver profile can't be read`.
 - **Hide BMW's turn box:** ticked (the default), BMW's turn-by-turn box on
   the cluster is hidden while the map shows.
+- **Turn card:** the next manoeuvre (arrow, distance, road) drawn over the
+  cluster map: **Off** (the default), **Below the arrow** or **At the top**.
+  While it is on, your iPhone draws no turn card of its own on the cluster
+  map (Apple Maps does). Changing it reconnects CarPlay.
+- **Show an example:** an example turn card on the cluster for 10 seconds,
+  to see where it sits.
 - **Logs:** opens the Logs page (see below).
 
 **HUD**

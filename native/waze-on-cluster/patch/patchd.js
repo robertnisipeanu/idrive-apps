@@ -37,6 +37,11 @@
  *                  {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
  *                                   save the choice and, with the patch on,
  *                                   plan it again (one change per DENSITY_SPACING_MS)
+ *                  {"cmd":"turn-card"}  the app's turn card changed (the render
+ *                                   saves it): CarPlay's patch in memory, when
+ *                                   on, is planned again with the ShowUI URL the
+ *                                   card asks for, and carplay restarted where
+ *                                   patchd may (cardSync)
  *                  {"cmd":"reboot"} activate a deferred patch with a normal
  *                                   head-unit restart through NSM (so carplay
  *                                   and aapd next start from the patched
@@ -787,14 +792,15 @@ function editState(text, known) {
     var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
     var resOriginal = /res:\s+ORIGINAL/.test(text);
     /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
-     * the arrival-time card), 'map' (the map URL alone, on a build
-     * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
-     * Patch button replaces or completes), 'off', or null where the
-     * build lacks both or the status says neither. */
-    var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
-    var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
-    var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
-        : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
+     * the arrival-time card), 'map-only' (the ShowUI URL asking for the
+     * map alone, while the turn card is on), 'map' (the map URL alone, on
+     * a build without the ShowUI URL edit), 'no-eta' (either in a form
+     * CarPlay's Patch button replaces or completes), 'off', or null where
+     * the build lacks both or the status says neither. */
+    var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED, MAP ONLY|PATCHED) /m.exec(text);
+    var e5 = m5 ? m5[1] : null, e6 = m6 ? (m6[1] === 'PATCHED, MAP ONLY' ? 'MAP' : m6[1]) : null;
+    var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && (e6 === 'PATCHED' || e6 === 'MAP')) ? 'no-eta'
+        : e6 === 'PATCHED' ? 'eta' : e6 === 'MAP' ? 'map-only' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
     var state, mode = null, reason = null;
     var res = resMatch ? resMatch[1] : null;
     /* The advertised safe area as "WxH+X+Y". A patched binary with another
@@ -978,14 +984,14 @@ function inmemOverlay(t, st, cb) {
             Object.keys(es.show).forEach(function (k) { st[k] = es.show[k]; });
             st.removable = true;
             st.conflict = headUnit.refused() ? notSupported(headUnit.refused()) : codingConflict(st.coding === null || st.coding === undefined ? null : [null, String(st.coding)]) || foreignStart(t);
-            var res = inmem.result(t.name);
-            if (!runsPatch(t, pid, mem) && !inmem.armed(t.name)) {
+            var res = inmem.result(t.name), runs = runsPatch(t, pid, mem) || runsOtherUrl(t, pid, mem);
+            if (!runs && !inmem.armed(t.name)) {
                 /* Planned but not armed (the library or the unit's user
                  * missing, /run not writable): the next start runs stock,
                  * and the next head-unit start tries again. */
                 st.state = 'error'; st.mode = null; st[t.svc] = null; st.pending = null;
                 st.reason = 'the patch in memory is not armed for ' + t.name + '\'s next start (' + (((inmem.armError(t.name) || '') + '').trim() || 'see the journal') + ')';
-            } else if (runsPatch(t, pid, mem)) {
+            } else if (runs) {
                 st.state = es.state; st.mode = es.mode; st.reason = es.reason; st[t.svc] = null;
                 /* aapd runs the plan; a crop override the render reads at
                  * its start still waits for the head-unit start. */
@@ -1874,12 +1880,22 @@ function revert(noRestart, dropBackup, done) { revertFile(CP, noRestart, dropBac
 
 /* The plan's arguments for the patcher: the panel, the coding it checks
  * and the sink of the mode (avb: the stock sink; udp: the stream sink this
- * tool receives; fifo: the file:// FIFO). */
+ * tool receives; fifo: the file:// FIFO), with the ShowUI URL the turn card
+ * asks for (cpShowUi). */
 function planArgs(panel, mode) {
     var args = ['--panel', panel, '--coding', CODING];
     if (mode === 'udp') args.push('--sink', 'udp://127.0.0.1:' + UDP_PORT + '?mime_type=video/H264');
     else if (mode !== 'avb') args.push('--capture', FIFO);
-    return args;
+    return cpShowUi(args);
+}
+
+/* CarPlay's plan arguments with the ShowUI URL's form the turn card asks
+ * for: the map alone while the card shows (--showui map), so the phone draws
+ * no turn card of its own beside ours, else the URL with the arrival-time
+ * card (carplay_patch.js turnCardShowUi). */
+function cpShowUi(args) {
+    var p = require('./carplay_patch.js');
+    return p.withShowUi(args, p.turnCardShowUi());
 }
 
 /* Android Auto's: aapd.conf, the coding and the owner's density and
@@ -1903,6 +1919,17 @@ function memOf(t, cb, planText) {
  * plans a new copy). */
 function runsPatch(t, pid, mem) {
     return mem === 'patched' && (t !== AA || inmem.runsCurrent(t.name, pid) === true);
+}
+
+/* Whether carplay (pid, its memory mem) runs the plan but for the ShowUI
+ * URL, in its other form: it started before a turn card change planned the
+ * patch again (cardSync) and was not restarted for it (an install, or
+ * patchd may not restart it). It runs the patch, and asks the phone for the
+ * planned URL from its next start. */
+function runsOtherUrl(t, pid, mem) {
+    if (t !== CP || mem !== 'mixed' || !(pid > 0)) return false;
+    var other = require('./carplay_patch.js').otherShowUiPlan(readText(inmem.paths('carplay').plan));
+    return !!other && inmem.memState('carplay', pid, other) === 'patched';
 }
 
 /* Boot recovery's decision for this boot, run now (recovery.js _decide):
@@ -1975,7 +2002,7 @@ function inmemApply(t, args, noRestart, done, run, preSt) {
         });
     });
     function plan(before, drec) {
-        var prior = inmem.readRecord(t.name);
+        var prior = inmem.readRecord(t.name), priorPlan = t === CP && prior && prior.planSha256 ? readText(inmem.paths('carplay').plan) : null;
         inmem.makePlan(t.name, args, tmo(60000), function (pErr, rec) {
             if (pErr) {
                 if (pErr.refused) { inmem.disarm(t.name); try { inmem.remove(t.name); } catch (e) {} done(null, null, null, pErr.refused); return; }
@@ -1989,6 +2016,14 @@ function inmemApply(t, args, noRestart, done, run, preSt) {
                     var a = require('./carplay_patch.js').againstPlan(before, fs.readFileSync(TARGET), fs.readFileSync(inmem.paths('carplay').plan, 'utf8'));
                     ran = !a.err && a.onlyPlan && a.same;
                 } catch (e) {}
+            }
+            /* A patch that ran healthy here, planned again for the same file
+             * with the other ShowUI URL (a turn card change): the URL the
+             * phone is asked for, which nothing in carplay checks, is all
+             * that differs, so it stays proven. */
+            if (t === CP && !ran && rec.coding !== 'unreadable' && priorPlan && prior.enabled === true && prior.proven === true && prior.trial !== true &&
+                prior.sha256 === rec.sha256 && prior.ino === rec.ino && prior.mtime === rec.mtime) {
+                try { ran = require('./carplay_patch.js').onlyShowUiDiffers(priorPlan, fs.readFileSync(inmem.paths('carplay').plan, 'utf8')); } catch (e) {}
             }
             if (ran && !rec.proven && rec.trial) { try { rec = inmem.update(t.name, { proven: true, trial: false }); } catch (e) {} }
             log(t.name + ': in-memory patch planned (' + rec.edits.join(', ') + '), ' + (rec.proven ? 'proven' : rec.trial ? 'on trial' : 'unproven'));
@@ -2032,15 +2067,26 @@ function inmemRevert(t, noRestart, removal, done, run) {
 }
 
 /* What t runs against what is wanted (action): nothing to do, a restart
- * where allowed (restartBlocked), else pending until the next start. */
+ * where allowed (restartBlocked), else pending until the next start.
+ * carplay running the plan but for the ShowUI URL (runsOtherUrl) is
+ * restarted where allowed too, so the phone gets the new URL at once; else
+ * it keeps running the patch, the URL comes with its next start, and
+ * nothing is pending. */
 function activate(t, action, noRestart, done, planText, keepPending, run) {
     memOf(t, function (pid, mem) {
-        if (action === 'apply' ? runsPatch(t, pid, mem) : mem === 'stock' || !pid) {
+        var otherUrl = action === 'apply' && runsOtherUrl(t, pid, mem);
+        if (action === 'apply' ? runsPatch(t, pid, mem) || (otherUrl && noRestart) : mem === 'stock' || !pid) {
             if (!keepPending) unlinkQuiet(t.pending);
             done(null, null, null);
             return;
         }
         (noRestart ? function (cb) { cb('installing'); } : function (cb) { restartBlocked(t, cb); })(function (blocked) {
+            if (blocked && otherUrl) {
+                log(t.name + ' not restarted (' + blocked + '); it asks the phone for the new ShowUI URL from its next start');
+                if (!keepPending) unlinkQuiet(t.pending);
+                done(null, null, null);
+                return;
+            }
             if (blocked) {
                 log(t.name + ' not restarted (' + blocked + '); ' + t.reasons[action]);
                 writePending(t, action, run);
@@ -2136,10 +2182,11 @@ function inmemHook(which, cb) {
             return;
         }
         /* An install plans the user's own choices again (the arguments an
-         * enabled plan was made with), with this version's edits. Any build
-         * whose sites the patcher finds and verifies is planned, on trial
-         * until it ran healthy on this car. */
-        var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;
+         * enabled plan was made with, with the ShowUI URL the turn card asks
+         * for now), with this version's edits. Any build whose sites the
+         * patcher finds and verifies is planned, on trial until it ran
+         * healthy on this car. */
+        var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? cpShowUi(rec.args) : null;
         inmemApply(CP, keep || planArgs('high', 'avb'), true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
             if (conflict2) { out(0, 'carplay left as it is: ' + conflict2, conflict2); return; }
@@ -2423,6 +2470,7 @@ function operate(target, label, fn) {
             var why = 'another change to / is running; try again';
             log(label + ': ' + why);
             if (target === 'aa') { aaError = why; status(null, { state: 'error', reason: why }); } else status({ state: 'error', reason: why });
+            cardSync();
             quitWhenIdle();
             return;
         }
@@ -2444,8 +2492,33 @@ function operate(target, label, fn) {
                 if (target === 'aa') status(null, activation ? { aapd: activation } : null, { fresh: true });
                 else status(activation ? { carplay: activation } : {}, null, { fresh: true });
             }
+            cardSync();
             quitWhenIdle();
         });
+    });
+}
+
+/* {"cmd":"turn-card"}: the app's turn card changed (the render keeps it).
+ * CarPlay's patch in memory follows it: planned again when its ShowUI URL
+ * is not the form the card asks for (cpShowUi), and carplay restarted where
+ * patchd may (activate), as CarPlay's Patch button does, so the phone gets
+ * the new URL at once; elsewhere carplay runs the patch as before and asks
+ * for the new URL from its next start (runsOtherUrl). A patch that is off,
+ * waits for a plan or does not describe carplay as it is now is left
+ * alone: its next plan reads the card. Taken while an operation runs too:
+ * done once it ends. */
+var cardAsked = false;
+function cardSync() {
+    if (!cardAsked || busy || quitting || rebooting) return;
+    cardAsked = false;
+    var rec = inmem.current('carplay'), p = require('./carplay_patch.js');
+    if (!rec || !Array.isArray(rec.args)) return;
+    var want = p.turnCardShowUi();
+    if (p.showUiArg(rec.args) === want) return;
+    log('turn card ' + (want === 'map' ? 'on' : 'off') + ': CarPlay\'s patch is planned again, ShowUI asking the phone for ' +
+        (want === 'map' ? 'the map alone' : 'the arrival-time card'));
+    operate('carplay', 'applying', function (cb) {
+        inmemApply(CP, p.withShowUi(rec.args, want), false, function (e, r, a, conflict, why) { cb(e || (conflict || why ? new Error(conflict || why) : null), r, a); });
     });
 }
 
@@ -2555,6 +2628,9 @@ function handle(line, sock) {
     /* The driver profile and its own settings: not operations on carplay either. */
     if (msg.cmd === 'profile' || msg.cmd === 'profile-own') { profileCmd(msg, sock); return; }
     if (msg.cmd === 'reboot') { rebootCmd(sock); return; }
+    /* The turn card changed: CarPlay's patch follows it, now or once the
+     * operation running ends. */
+    if (msg.cmd === 'turn-card') { cardAsked = true; cardSync(); return; }
 
     /* A command not taken changes no state: only the asker hears why. */
     function refuse(why) { reply(sock, { ev: 'refused', cmd: msg.cmd, reason: why }); }
@@ -2593,13 +2669,14 @@ function handle(line, sock) {
          * next apply. */
         busy = 'aa';
         readAaState(function (aa) {
-            function idle() { busy = null; status(); quitWhenIdle(); }
+            function idle() { busy = null; status(); cardSync(); quitWhenIdle(); }
             if (aa.conflict && !aaRetryable(aa.conflict)) { refuse(aa.conflict); idle(); return; }
             lastDensityAt = now;
             try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) {
                 aaError = 'saving the choice failed: ' + e.message;
                 busy = null;
                 status(null, { state: 'error', reason: aaError });
+                cardSync();
                 quitWhenIdle();
                 return;
             }

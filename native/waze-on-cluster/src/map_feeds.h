@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "map_feed.h"
+#include "turn_card.h"
 
 namespace woc {
 
@@ -72,6 +73,13 @@ public:
     int hud_offset_y() const { return base_.hud_offset_y; }
     /* The cluster map layer's guide_hold. */
     void set_guide_hold(bool hold);
+    /* The turn card over the cluster's map (turn_card.h): the manoeuvre it
+     * shows (kind None: none) and where (top: over the phone's own turn
+     * card; else under the phone's UI), or no card at all while !on. Kept
+     * for a cluster feed made later. */
+    void set_turn_card(bool on, bool top);
+    void set_maneuver(const Maneuver &m);
+    const Maneuver &maneuver() const { return maneuver_; }
 
     /* For poll(): each feed's renderer socket and scale-worker wakeup fd, appended. */
     size_t poll_fds(std::vector<pollfd> *fds) const;
@@ -113,6 +121,8 @@ private:
     void follow();
     /* The HUD's copy of the newest picture, when it is due. */
     void feed_hud(int64_t now_ms);
+    /* The card the settings and the manoeuvre make, to the cluster's feed. */
+    void send_card();
 
     FeedConfig base_;
     unsigned hud_fps_;
@@ -122,6 +132,9 @@ private:
     uint64_t id_ = 0;   /* the newest frame's */
     bool live_ = false, frozen_ = false;
     Picture picture_ = Picture::None;
+    bool card_on_ = false, card_top_ = false;
+    Maneuver maneuver_;
+    std::vector<uint8_t> card_;
 };
 
 }  // namespace woc

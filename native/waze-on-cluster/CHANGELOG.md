@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+A turn card can show the next manoeuvre over the cluster map, below the
+position arrow or at the top, while the BMW navigation guides, CarPlay's
+guidance included: a turn, a fork, a roundabout's exit or the destination,
+with the distance and the road. It is off unless turned on in the app.
+
+While the turn card shows, CarPlay's patch asks the phone for the map
+alone, so Apple Maps does not draw its own turn card, nor its arrival-time
+card, below ours. A change of the app's Turn card reconnects CarPlay at once
+where the tool may restart it, else it takes effect at CarPlay's next start.
+
 ## 0.14.21
 
 The cluster and HUD map update with lower latency and less CPU and flash wear, and installing or updating patches runs faster and handles clock jumps more reliably.

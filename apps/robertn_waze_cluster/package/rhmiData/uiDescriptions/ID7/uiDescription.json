@@ -191,6 +191,50 @@
             }
           ]
         },
+        "40": {
+          "type": "button",
+          "name": "wocTurnCard",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Turn card: \u2014",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "41": {
+          "type": "button",
+          "name": "wocTurnCardShow",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Show an example",
+                "type": "Text"
+              }
+            }
+          ]
+        },
         "39": {
           "type": "button",
           "name": "wocLogs",

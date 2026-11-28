@@ -96,6 +96,10 @@ const BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id';
 const RETRY_MS = 1000;
 /* One Zoom in or Zoom out press, in dpi: the densities' own step. */
 const ZOOM_STEP = 10;
+/* The turn card over the map: where the render draws it, in the order the
+ * app's button steps through, and how long the example stays. */
+const TURN_CARD_MODES = ['off', 'bottom', 'top'];
+const TURN_CARD_EXAMPLE_MS = 10000;
 /* Why a restart failed, by patchd's code (English keys of src/i18n.js). */
 const RESTART_FAILED = { refused: 'not accepted', stayed: 'the head unit stayed on', error: 'command failed' };
 
@@ -397,6 +401,8 @@ class WazeClusterControl extends EventEmitter {
         this._storedWaits = [];     /* showStored's, until the render shows them */
         this._isOpen = false;
         this.writes = 0;            /* map settings written to patchd */
+        this._turnCardAsked = null;  /* the turn card asked of the render, until its status shows it */
+        this._turnCardSync = false;  /* patchd still to be told of a turn card change */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -415,12 +421,13 @@ class WazeClusterControl extends EventEmitter {
         const reset = () => {
             this.renderStatus = null;
             this._askedShownOn = null;
+            this._turnCardAsked = null;
             this._clearAskedHud();
             this.emit('change');
         };
         this.render.on('connect', reset);
         this.render.on('close', reset);
-        this.patch.on('connect', () => { this._forget(); this.emit('change'); });
+        this.patch.on('connect', () => { this._forget(); this._syncTurnCard(); this.emit('change'); });
         this.patch.on('close', () => { this._forget(); this._restartRequested = false; this.emit('change'); });
     }
 
@@ -908,6 +915,64 @@ class WazeClusterControl extends EventEmitter {
             (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE) || ps.mapurl === 'no-eta');
     }
 
+    /* ---- the turn card over the map ---- */
+    /* Where the render draws the turn card, as it last said: 'off',
+     * 'bottom' or 'top'; null while it has not (not connected, or a tool
+     * without the card). */
+    turnCard() {
+        const v = this.renderStatus && this.renderStatus.turn_card;
+        return TURN_CARD_MODES.indexOf(v) >= 0 ? v : null;
+    }
+
+    turnCardText() {
+        const names = { off: t('Off'), bottom: t('Below the arrow'), top: t('At the top') };
+        const mode = this.turnCard();
+        return t('Turn card: {0}', mode === null ? '\u2014' : names[mode]);
+    }
+
+    /* The card follows the map on the cluster. */
+    canSetTurnCard() {
+        return this.turnCard() !== null && this.clusterOn() !== false;
+    }
+
+    /* The next of off, below the arrow, at the top; the render's next
+     * status shows it. */
+    nextTurnCard() {
+        if (this.canSetTurnCard()) {
+            const next = TURN_CARD_MODES[(TURN_CARD_MODES.indexOf(this.turnCard()) + 1) % TURN_CARD_MODES.length];
+            this._turnCardAsked = next;
+            this.render.send({ cmd: 'turn_card', mode: next });
+        }
+    }
+
+    /* CarPlay's patch follows the turn card: patchd plans its ShowUI URL
+     * from the choice the render saved, so it is told once the render shows
+     * the new one, or once it is connected again. */
+    _syncTurnCard() {
+        if (this._turnCardSync && this.patch.connected()) {
+            this._turnCardSync = false;
+            this.patch.send({ cmd: 'turn-card' });
+        }
+    }
+
+    canShowTurnCardExample() {
+        return this.canSetTurnCard() && this.turnCard() !== 'off';
+    }
+
+    /* An example manoeuvre on the card for TURN_CARD_EXAMPLE_MS, to see
+     * where it lands on the cluster. */
+    showTurnCardExample() {
+        if (!this.canShowTurnCardExample()) {
+            return;
+        }
+        this.render.send({ cmd: 'maneuver', kind: 'left', distance: '200 m', road: t('Example street') });
+        clearTimeout(this._turnCardExample);
+        this._turnCardExample = setTimeout(() => {
+            this._turnCardExample = null;
+            this.render.send({ cmd: 'maneuver', kind: 'none' });
+        }, TURN_CARD_EXAMPLE_MS);
+    }
+
     /* ---- BMW's turn box ---- */
     /* Whether BMW's turn box is hidden while the map shows, as the render
      * last said; null while it has not (not connected, or a tool without
@@ -1288,6 +1353,11 @@ class WazeClusterControl extends EventEmitter {
             }
             this._applyStored();
             this._storedShown();
+            if (this._turnCardAsked && msg.turn_card === this._turnCardAsked) {
+                this._turnCardAsked = null;
+                this._turnCardSync = true;
+                this._syncTurnCard();
+            }
             this.emit('change');
         }
     }

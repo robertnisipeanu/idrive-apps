@@ -136,8 +136,10 @@ function targets(o) {
             /* our edits in the file beside another change (a conflict) */
             foreignIn: function () { return require('./carplay_patch.js').foreignIn(o.carplay); },
             /* the plan's arguments for a patch in the file put back (drec, its record) */
+            /* with the ShowUI URL the turn card asks for, as patchd plans it */
             planArgs: function (drec) {
-                return ['--panel', 'high', '--coding', CODING];
+                var cpp = require('./carplay_patch.js');
+                return cpp.withShowUi(['--panel', 'high', '--coding', CODING], cpp.turnCardShowUi());
             },
             check: function (i, cur) {
                 if (!exists(o.carplay + '.woc-orig')) return null;

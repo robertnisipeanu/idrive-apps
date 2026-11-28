@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 #include "log.h"
@@ -84,6 +85,14 @@ MapFeed::MapFeed(const FeedConfig &cfg)
         budget_reason_ = reason;
     };
     client_.on_error = [this](const std::string &op, uint32_t ref, const std::string &reason) {
+        if (card_layer_ && ref == card_layer_) {
+            /* the map stays as it is without its card */
+            log_warn("render: turn card: %s refused: %s", op.c_str(), reason.c_str());
+            client_.drop(card_layer_);
+            card_layer_ = 0;
+            card_refused_ = true;
+            return;
+        }
         log_error("render: %s refused: %s", op.c_str(), reason.c_str());
         if (op == "layer") {
             refused_ = reason;
@@ -227,6 +236,100 @@ void MapFeed::make_layer()
              : scaling_  ? ", the frame scaled to it on the head unit"
                          : "",
              vo.always_packed ? ", every update packed (always_packed)" : "");
+    sync_card();
+}
+
+void MapFeed::set_card(const std::vector<uint8_t> *rgba, unsigned w, unsigned h, int x, int y)
+{
+    card_refused_ = false;
+    if (!rgba || !w || !h || rgba->size() != (size_t)w * h * 4) {
+        card_px_.clear();
+        card_w_ = card_h_ = 0;
+        sync_card();
+        return;
+    }
+    const bool same_shape = w == card_w_ && h == card_h_ && card_px_.size() == rgba->size();
+    if (card_layer_ && same_shape) {
+        /* the rows and columns that differ, as one rectangle */
+        unsigned x0 = w, y0 = h, x1 = 0, y1 = 0;
+        for (unsigned yy = 0; yy < h; yy++) {
+            const uint8_t *a = &card_px_[(size_t)yy * w * 4], *b = &(*rgba)[(size_t)yy * w * 4];
+            if (!std::memcmp(a, b, (size_t)w * 4))
+                continue;
+            unsigned l = 0, r = w - 1;
+            while (!std::memcmp(a + l * 4, b + l * 4, 4))
+                l++;
+            while (std::memcmp(a + r * 4, b + r * 4, 4) == 0)
+                r--;
+            x0 = l < x0 ? l : x0;
+            x1 = r > x1 ? r : x1;
+            y0 = yy < y0 ? yy : y0;
+            y1 = yy;
+        }
+        if (x0 <= x1) {
+            const cr::FrameRect fr = {(uint16_t)x0, (uint16_t)y0, (uint16_t)(x1 - x0 + 1), (uint16_t)(y1 - y0 + 1)};
+            std::vector<uint8_t> part((size_t)fr.w * fr.h * 4);
+            for (unsigned yy = 0; yy < fr.h; yy++)
+                std::memcpy(&part[(size_t)yy * fr.w * 4], &(*rgba)[((size_t)(y0 + yy) * w + x0) * 4], (size_t)fr.w * 4);
+            client_.pixels(card_layer_, {fr}, part.data(), part.size());
+        }
+    } else if (card_layer_) {
+        client_.drop(card_layer_);
+        card_layer_ = 0;
+    }
+    card_px_ = *rgba;
+    card_w_ = w;
+    card_h_ = h;
+    card_x_ = x;
+    card_y_ = y;
+    sync_card();
+}
+
+void MapFeed::sync_card()
+{
+    /* only over a map shown at its picture's size on a cluster target of
+     * the feed's own: the card's place is in the picture's pixels */
+    const bool want = !card_px_.empty() && !card_refused_ && layer_ && !hosted() && !scaling_ &&
+                      cfg_.target != "hud" && lo_.w == cfg_.video.w && lo_.h == cfg_.video.h;
+    if (!want || (card_layer_ && card_lo_.target != lo_.target)) {
+        if (card_layer_)
+            client_.drop(card_layer_);
+        card_layer_ = 0;
+        if (!want)
+            return;
+    }
+    cr::LayerOptions lo;
+    lo.target = lo_.target;
+    lo.klass = lo_.klass;
+    lo.z = lo_.z + 1;
+    lo.contend = lo_.contend;
+    lo.guide_hold = lo_.guide_hold;
+    lo.yield = lo_.yield;
+    lo.x = lo_.x + card_x_;
+    lo.y = lo_.y + card_y_;
+    lo.w = card_w_;
+    lo.h = card_h_;
+    lo.visible = lo_.visible;
+    if (!card_layer_) {
+        cr::ImageOptions io;
+        io.w = card_w_;
+        io.h = card_h_;
+        io.fps = 5;
+        card_layer_ = client_.image(lo, io);
+        if (!card_layer_) {
+            card_refused_ = true;
+            return;
+        }
+        client_.pixels(card_layer_, {}, card_px_.data(), card_px_.size());
+        card_lo_ = lo;
+        log_info("render: turn card on %s, %ux%u at %d,%d", lo.target.c_str(), lo.w, lo.h, lo.x, lo.y);
+        return;
+    }
+    if (lo.x != card_lo_.x || lo.y != card_lo_.y || lo.visible != card_lo_.visible || lo.contend != card_lo_.contend ||
+        lo.guide_hold != card_lo_.guide_hold || lo.yield != card_lo_.yield) {
+        card_lo_ = lo;
+        client_.set(card_layer_, lo);
+    }
 }
 
 void MapFeed::fall_back(const std::string &why)
@@ -374,6 +477,7 @@ void MapFeed::poll(int64_t now_ms)
         down_long_ = false;
     }
     show_when_sent();
+    sync_card();
     count_second(now_ms);
 }
 
@@ -616,6 +720,7 @@ void MapFeed::show_when_sent()
     show_due_ = false;
     lo_.visible = true;
     client_.set(layer_, lo_);
+    sync_card();
 }
 
 void MapFeed::set_stream(bool live, bool frozen, Picture picture)
@@ -644,6 +749,7 @@ void MapFeed::set_stream(bool live, bool frozen, Picture picture)
     } else if (lo_.visible) {
         lo_.visible = false;
         client_.set(layer_, lo_);
+        sync_card();
     }
 }
 

@@ -14,7 +14,9 @@
  * reverted; the ShowUI URL sites found by structure, stock, patched, one
  * written, cut short inside either site, each of their checks broken with
  * the other edits patched, a build that adds carplay.conf's options itself
- * left alone; carplay 22.28.3's stock bytes of both edits
+ * left alone; the ShowUI URL's map form found, planned (--showui map: the
+ * same plan but its log text), read, verified and reverted; carplay
+ * 22.28.3's stock bytes of both edits
  * checked against the code they encode. With CARPLAY_BIN, the reference
  * build's sites are the documented offsets; with CARPLAY_BINS (paths
  * separated by `:`), every other build is located or refused as recorded
@@ -76,11 +78,11 @@ function showSites(loc) { var m = loc.showui; return m.ok ? { showStr: m.str, sh
 function showExpected(at) { return { showStr: at.showStr, showCall: at.showCall, altGetter: at.altGetter }; }
 function showIs(m) { return m.strIs + '/' + m.callIs; }
 /* The fixture's ShowUI URL edit written ('str', 'call' or both) with the
- * bytes the locator reports; cut: the call site with only its first `cut`
- * bytes written. */
-function writeShowUi(b, at, which, cut) {
+ * bytes the locator reports, the log text in the map form with form 'map';
+ * cut: the call site with only its first `cut` bytes written. */
+function writeShowUi(b, at, which, cut, form) {
     var m = locator.locate(b).showui, call = Buffer.from(m.callBytes, 'hex');
-    if (which !== 'call') Buffer.from(m.strBytes, 'hex').copy(b, at.showStr);
+    if (which !== 'call') Buffer.from(form === 'map' ? m.strMapBytes : m.strBytes, 'hex').copy(b, at.showStr);
     if (which !== 'str') call.slice(0, cut === undefined ? call.length : cut).copy(b, at.showCall);
 }
 function reasons(loc) { return ['variant', 'sink', 'selfstart', 'res'].filter(function (e) { return !loc[e].ok; }).map(function (e) { return loc[e].reason; }); }
@@ -136,6 +138,19 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
         ok('only the ShowUI ' + (w === 'str' ? 'log text' : 'call site') + ' patched: found, one site patched', m.ok &&
             showIs(m) === (w === 'str' ? 'patched/stock' : 'stock/patched'), json(m));
     });
+    /* The map form (the map alone, while the turn card is on): the log text
+     * holds the map URL where the other form holds its URL, NULs after it;
+     * the call site is the same. */
+    var mf = Buffer.from(s.buf);
+    writeShowUi(mf, s.at, null, undefined, 'map');
+    var mfl = locator.locate(mf);
+    ok('the ShowUI URL\'s map form: the same sites, the log text map, the call site patched, the lea at the URL',
+        json(showSites(mfl)) === json(showExpected(s.at)) && showIs(mfl.showui) === 'map/patched' && locator.SHOWUI_MAP_URL === 'maps:/car/instrumentcluster/map' &&
+        mf.toString('latin1', s.at.showStr, s.at.showStr + 64) === 'mCinemoCarPlay->ShowUI(\0' + locator.SHOWUI_MAP_URL + '\0\0\0\0\0\0\0\0\0' &&
+        mf.slice(s.at.showCall, s.at.showCall + 11).equals(b.slice(s.at.showCall, s.at.showCall + 11)), json(mfl.showui));
+    var ml = Buffer.from(s.buf);
+    writeShowUi(ml, s.at, 'str', undefined, 'map');
+    ok('only the ShowUI log text in the map form: found, map/stock', showIs(locator.locate(ml).showui) === 'map/stock', json(locator.locate(ml).showui));
     for (var k = 1; k < 11; k++) {
         var hc = Buffer.from(s.buf), hs = Buffer.from(s.buf);
         writeShowUi(hc, s.at, 'call', k);
@@ -300,6 +315,26 @@ try {
         r.out.indexOf('immediates ' + [at.mm, at.px, at.safe1, at.safe2].map(hx).join(' ')) >= 0 &&
         r.out.indexOf('build-id:  ' + at.buildId) >= 0, r.out);
 
+    /* The plan with the ShowUI URL's map form (--showui map, patchd's while
+     * the turn card is on): the same plan but the log text, which holds the
+     * map URL; its overlay reads so; another value refused. */
+    var cpp = require('../carplay_patch.js'), etaOut = path.join(dir, 'eta.plan'), mapOut = path.join(dir, 'map.plan');
+    r = run(['plan', '--target', tgt, '--panel', 'high', '--unproven', '--out', etaOut]);
+    var rm = run(['plan', '--target', tgt, '--panel', 'high', '--unproven', '--showui', 'map', '--out', mapOut]);
+    var pe = fs.readFileSync(etaOut, 'utf8'), pm = fs.readFileSync(mapOut, 'utf8');
+    function sumOf(x) { try { return JSON.parse(x.out.trim().split('\n').pop()); } catch (e) { return {}; } }
+    ok('plan --showui map: the same plan but the ShowUI URL\'s log text, in the map form', r.code === 0 && rm.code === 0 && pe !== pm &&
+        cpp.onlyShowUiDiffers(pe, pm) && cpp.onlyShowUiDiffers(pm, pe) && cpp.otherShowUiPlan(pm) === pe && !cpp.onlyShowUiDiffers(pe, pe) &&
+        pm.indexOf(' ' + locator.SHOWUI_FORMS.map + '\n') > 0 && sumOf(rm).writes.showui === 'map' && sumOf(r).writes.showui === 'eta' &&
+        fs.readFileSync(tgt).equals(orig), rm.out);
+    r = run(['overlay', '--target', tgt, '--plan', mapOut]);
+    ok('plan --showui map: its overlay reads PATCHED, MAP ONLY', /^overlay:\s+ok$/m.test(r.out) &&
+        /^showui:\s+PATCHED, MAP ONLY \(ShowUI asks the phone for maps:\/car\/instrumentcluster\/map, the map without the phone's own cards\)$/m.test(r.out), r.out);
+    r = run(['plan', '--target', tgt, '--panel', 'high', '--unproven', '--showui', 'none', '--out', mapOut + '.2']);
+    ok('plan --showui none: refused, no plan written', r.code !== 0 && /--showui must be eta or map/.test(r.out) && !fs.existsSync(mapOut + '.2'), r.out);
+    ok('a plan with neither form of the log text: no other form', cpp.otherShowUiPlan(pe.replace(locator.SHOWUI_FORMS.eta, '00')) === null &&
+        cpp.otherShowUiPlan('') === null);
+
     r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
     var b = fs.readFileSync(tgt), want = Buffer.from(orig);
     writeMapUrl(want, at); writeShowUi(want, at);
@@ -345,6 +380,26 @@ try {
         ok('ShowUI URL, ' + t[0] + ': revert writes the whole backup', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
         fs.writeFileSync(tgt, full);
     });
+    /* The log text in the map form over that patch (no release writes it to
+     * the file; a plan does in memory): read as the map form, verify says
+     * so, revert restores the original byte-exact. */
+    b = Buffer.from(full);
+    Buffer.from(locator.locate(orig).showui.strMapBytes, 'hex').copy(b, at.showStr);
+    fs.writeFileSync(tgt, b);
+    r = run(['status', '--target', tgt]);
+    ok('the ShowUI URL\'s map form in the file: PATCHED, MAP ONLY, known, restorable', /known:\s+yes, modified build/.test(r.out) && /^restorable:\s+yes$/m.test(r.out) &&
+        /^showui:\s+PATCHED, MAP ONLY \(/m.test(r.out), r.out);
+    r = run(['verify', '--target', tgt]);
+    ok('the ShowUI URL\'s map form in the file: verify says map only', r.code === 0 && /, ShowUI URL map only$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('the ShowUI URL\'s map form in the file: revert restores the original byte-exact', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+    /* The map form's log text with the call site stock: partly patched. */
+    b = Buffer.from(orig);
+    Buffer.from(locator.locate(orig).showui.strMapBytes, 'hex').copy(b, at.showStr);
+    fs.writeFileSync(tgt, b);
+    r = run(['status', '--target', tgt]);
+    ok('the map form\'s log text, the call site stock: partly patched', /^showui:\s+UNKNOWN \(ShowUI URL: partly patched\)$/m.test(r.out), r.out);
+    fs.writeFileSync(tgt, full);
     r = run(['revert', '--target', tgt, '--yes']);
 
     /* The patch 0.10.2-0.10.3 wrote (the initial URL with ETA, no ShowUI
