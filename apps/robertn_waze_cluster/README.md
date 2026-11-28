@@ -52,7 +52,9 @@ No. Leave them alone unless something is wrong.
 
 ## Settings
 
-The app is in the head unit's display language.
+The app is in the head unit's display language. The page is laid out like
+the car's own settings pages: as you turn the controller, the right side
+shows a picture and a few lines saying what the row does.
 
 **General**
 
@@ -179,6 +181,29 @@ the RHMI text files, which hold the tile's name and the Logs page's title.
 `node tools/test_i18n.js` checks that every language has every word with
 the same `{n}`, and every HMI language its text file.
 
+### The page's previews
+
+Each row the controller stops on, and each of Show on's choices, has a
+preview on the page's right (the Logs page's rows too: their picture is the
+QR code of the download address, drawn by `src/qr.js` on the same
+background): a picture and up to three lines of text
+(`src/previews.js`). A new row needs one there, or `tools/test_page.js`
+fails.
+
+- **The text** is a word of the app like any other, translated in every
+  language. The preview shows three lines and cuts the rest off mid-letter,
+  so `tools/test_i18n.js` checks every language's text against three lines:
+  exactly with the head unit's own font (`BMW_FONT=<path to BMWTALG.ttf>`,
+  from `/mnt/dataro/data/hmi/common/font` on the unit; BMW's, so not in the
+  repository), and estimated without it. `node tools/preview_fit.js "text"`
+  shows the lines.
+- **The picture** is `package/previews/<name>.png`, 957 × 639: the
+  preview's whole area in the HMI's 1920 × 720 units (smaller displays
+  scale the whole page down alike). The drawing sits in the upper part; the
+  bottom 220 are left for the text. `swift tools/previews.swift` (macOS)
+  draws them all as lit lines with a red glow and a grid of dots; a new one
+  is a few strokes in a 300 × 220 box. Any 957 × 639 PNG works too.
+
 ### Screenshots
 
 | | |
@@ -229,7 +254,8 @@ Enter starts or stops a fake CarPlay stream.
 | `src/logs_control.js` | the logs socket client |
 | `src/profile_sync.js` | the driver profile in use and its own map settings |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
-| `tools/` | build, fakes, tests, icon |
+| `src/previews.js`, `package/previews/` | each row's preview: its text and its picture (The page's previews) |
+| `tools/` | build, fakes, tests, icon, the previews' pictures and fit |
 | `package/` | the package tree (manifest, RHMI UI, config, CHANGELOG) |
 
 ### License

@@ -81,6 +81,11 @@ const exit = process.exit.bind(process);
 net.connect = (p, ...rest) => realConnect.call(net, SOCKETS[p] || p, ...rest);
 const realRead = fs.readFileSync;
 fs.readFileSync = (p, ...rest) => realRead.call(fs, p === PENDING_PATH ? PENDING : p, ...rest);
+/* the preview's pictures: next to the bundle on the unit (javascript/../previews), in the package tree here */
+const realCopy = fs.copyFileSync;
+const SRC_PREVIEWS = path.join(__dirname, '..', 'previews');
+fs.copyFileSync = (from, ...rest) => realCopy.call(fs, from.startsWith(SRC_PREVIEWS) ?
+    path.join(PKG, 'previews', path.relative(SRC_PREVIEWS, from)) : from, ...rest);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function until(what, check) {
@@ -112,12 +117,12 @@ class FakeComponent extends EventEmitter {
         if (type === 'label') {
             this.setEnabled = undefined;   /* the HMI greys no label */
         }
-        /* the oap-sdk's DropDown and Slider: no setEnabled or setVisible, only
+        /* the oap-sdk's ValueList and Slider: no setEnabled or setVisible, only
          * setProperty; the HMI moves their value itself, the SDK writing it */
-        if (type === 'dropDownMenu' || type === 'slider') {
+        if (type === 'valueList' || type === 'slider') {
             this.setEnabled = this.setVisible = undefined;
         }
-        if (type === 'dropDownMenu') {
+        if (type === 'valueList') {
             this.on('action', ({ row }) => { this.cells.SelectedItem = row; });
         }
         if (type === 'slider') {
@@ -132,7 +137,7 @@ class FakeComponent extends EventEmitter {
         if (cell === 'eParam_RowSelected') {
             this.selected = value;
             this.ticks.push(value);
-        } else if (this.desc.type !== 'dropDownMenu' && (this.desc.type !== 'slider' || cell === 'TextDescription')) {
+        } else if (this.desc.type !== 'valueList' && this.desc.type !== 'preview' && (this.desc.type !== 'slider' || cell === 'TextDescription')) {
             this.text = value;
         }
         return Promise.resolve();
@@ -153,7 +158,7 @@ class FakeComponent extends EventEmitter {
         this.enabledSeen.add(this.enabled);
         return Promise.resolve();
     }
-    /* A drop-down as it shows: its header and its chosen item. */
+    /* The value list as it shows closed: its name and, under it, its choice's selection text. */
     shown() {
         return `${this.cells.HeaderText}: ${this.cells[`${this.cells.SelectedItem}:ItemText`]}`;
     }
@@ -275,21 +280,31 @@ function runSource() {
 
 /* ---- scenario ----------------------------------------------------------------- */
 
+/* application.xml's property 3 of each main-page row: 0 the controller passes over it, 3 it stops on it */
+function focusable() {
+    const components = UI.containers['1'].components;
+    return Object.fromEntries([...XML.split('<container id="2"')[0]
+        .matchAll(/<component id="(\d+)"[^>]*>\s*<property id="2" value="\d"\/>\s*<property id="3" value="(\d)"\/>/g)]
+        .map((m) => [components[m[1]].name, m[2]]));
+}
+
 async function main() {
     const components = UI.containers['1'].components;
     const xmlIds = (cid) => [...XML.split('<container id="').find((c) => c.startsWith(`${cid}"`))
         .matchAll(/<component id="(\d+)" type="(\w+)"(?: widget="(\w+)")?/g)].map((m) => [m[1], m[2], m[3]]);
     /* application.xml orders the rows; uiDescription holds them by id */
-    const shipped = (d) => (d.type === 'dropDownMenu' ? `${d.cells.HeaderText.value}: ${d.rows[d.cells.SelectedItem.value].ItemText.value}`
-        : d.type === 'slider' ? d.rows[0].TextDescription.value : d.rows[0].Text.value);
-    const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
+    const shipped = (d) => (d.type === 'valueList' ? `${d.cells.HeaderText.value}: ${d.rows[d.cells.SelectedItem.value].ItemText.value}`
+        : d.type === 'slider' ? d.rows[0].TextDescription.value : d.type === 'separator' ? '' : d.rows[0].Text.value);
+    /* the list's rows; the preview, on its right, is no row */
+    const main = xmlIds('1').filter(([id]) => components[id].type !== 'preview')
+        .map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocProfileStatus ', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
-        'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
+        'wocSepHud ', 'wocHeadHud Head-up display', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
-        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
-        'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
+        'wocSepCarPlay ', 'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
+        'wocSepAa ', 'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
         'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card",
         'wocRestart Restart head unit', 'wocRestartStatus '],
         'the main page: four sections, in order');
@@ -307,35 +322,59 @@ async function main() {
         .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
     assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
-    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_1Row'),
+    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_2Row_1TextDyn'),
         'the on/off settings are checkboxes');
-    assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
-        'where the map shows: a drop-down of four; the HUD\'s size: a slider');
+    assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_ValueList_Regular', 'LT_Slider_LeftJustified_Fill_Steps'],
+        'where the map shows: a value list of four, opening in place; the HUD\'s size: a slider');
     assert.deepStrictEqual(components['62'].rows.map((r) => r.ItemText.value), ['Cluster', 'HUD (experimental)', 'Cluster and HUD (experimental)', 'Off']);
+    assert.deepStrictEqual(components['62'].rows.map((r) => r.ItemSelectionText.value), components['62'].rows.map((r) => r.ItemText.value),
+        'each choice shows under Show on\'s name, closed, as it reads in the list');
+    /* the page: the narrow list, the preview on its right, named by the page's Preview property */
+    assert(/<container id="1" type="state" widget="LT_State_Regular_ContentHidden">\s*<property id="4" value="94"\/>/.test(XML),
+        'application.xml: the main page is the narrow list, its preview component 94');
+    assert.deepStrictEqual(UI.containers['1'].properties.Preview, { value: 94, type: 'UInt' }, 'uiDescription: the page\'s Preview is component 94');
+    assert.deepStrictEqual(components['94'], { type: 'preview', name: 'wocPreview' });
+    assert(/<layoutGroup id="\d+" name="ContentPreview">\s*<component id="94" type="preview" widget="LT_PreviewTable_1Graphic_1TextBottom"\/>\s*<\/layoutGroup>/.test(XML),
+        'application.xml: the preview, a picture and up to three lines, in the ContentPreview group');
+    /* every row the controller stops on has a preview, and every picture is shipped */
+    const previews = require('../src/previews.js');
+    Object.entries(focusable()).filter(([, f]) => f === '3').forEach(([name]) =>
+        assert(previews.preview(name, null), `${name}: a preview`));
+    [0, 1, 2, 3].forEach((row) => assert(previews.preview('wocShowOn', row), `Show on's choice ${row}: a preview`));
+    previews.images().forEach((image) => assert(fs.existsSync(path.join(PKG, 'previews', `${image}.png`)), `previews/${image}.png`));
+    assert(JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).files.includes('previews'), 'package.json ships previews/');
     assert.deepStrictEqual(['MinValue', 'MaxValue', 'NumberOfSteps'].map((k) => components['52'].rows[0][k].value), [0, HUD_SIZE_STEPS, HUD_SIZE_STEPS],
         'the slider: one step for each 5 %');
     /* every info row reads "Name: Value" */
     assert(main.filter(([, type, name]) => type === 'label' && !/^wocHead|^(wocProfileStatus|wocRestartStatus|wocWifi|wocWifiHint)$/.test(name))
         .every(([, , , text]) => /^[A-Z][A-Za-z ]+: [A-Z\u2014]/.test(text)), 'info rows as Name: Value');
-    const hidden = Object.values(components).filter((d) => d.properties.Visible.value !== 1).map((d) => d.name);
+    const hidden = Object.values(components).filter((d) => d.type !== 'preview' && d.properties.Visible.value !== 1).map((d) => d.name);
     assert.deepStrictEqual(hidden, ['wocWifi', 'wocWifiHint', 'wocRestart', 'wocRestartStatus', 'wocProfileStatus'],
         'every row ships shown but CarPlay Wi-Fi, its line, the restart\'s two and the driver profile\'s line');
-    assert(/<component id="34" type="button" widget="LT_Button_1Row">\s*<property id="2" value="0"\/>/.test(XML), 'application.xml: the restart, hidden');
-    ['29', '30', '64'].forEach((id) => assert(new RegExp(`<component id="${id}" type="label" widget="LT_Label_1Row">\\s*<property id="2" value="0"\\/>\\s*` +
+    /* a row's name wraps to a second line in the narrow list rather than being cut off */
+    assert(Object.values(widgets).every((w) => !/_1Row$/.test(w) || w === 'LT_Label_Header_1Row'), 'every row but the headers takes two lines when it needs them');
+    assert.deepStrictEqual(['wocSepHud', 'wocSepCarPlay', 'wocSepAa'].map((n) => main.findIndex(([, , name]) => name === n) + 1),
+        ['wocHeadHud', 'wocHeadCarPlay', 'wocHeadAa'].map((n) => main.findIndex(([, , name]) => name === n)),
+        'a separator before each section header but General');
+    assert(/<component id="34" type="button" widget="LT_Button_2Row_1TextDyn">\s*<property id="2" value="0"\/>/.test(XML), 'application.xml: the restart, hidden');
+    ['29', '30', '64'].forEach((id) => assert(new RegExp(`<component id="${id}" type="label" widget="LT_Label_2Row_1TextDyn">\\s*<property id="2" value="0"\\/>\\s*` +
         '<property id="3" value="0"\\/>').test(XML), `application.xml: ${components[id].name}, hidden and unfocusable`));
     console.log('ok   the main page: General, HUD, CarPlay and Android Auto under unfocusable header rows, Show on the first stop; no log rows; ' +
         'the driver profile\'s line under Own, CarPlay Wi-Fi and its line CarPlay\'s last, the restart\'s rows the page\'s last, all five hidden');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
     assert.deepStrictEqual(logsPage.properties.ParentState, { value: 1, type: 'UInt' }, 'the Logs page is a child of the main page');
-    assert(/<container id="2" type="state" widget="LT_State_Wide">\s*<property id="9" value="1"\/>/.test(XML));
+    assert(/<container id="2" type="state" widget="LT_State_Regular_ContentHidden">\s*<property id="9" value="1"\/>\s*<property id="4" value="83"\/>/.test(XML),
+        'the Logs page: the narrow list, its preview component 83');
+    assert.deepStrictEqual(logsPage.properties.Preview, { value: 83, type: 'UInt' });
     assert.deepStrictEqual(xmlIds('2').map(([id, type]) => `${id} ${type}`).sort(),
         Object.entries(logsPage.components).map(([id, d]) => `${id} ${d.type}`).sort(), 'application.xml and uiDescription agree on the Logs page');
-    assert.deepStrictEqual(xmlIds('2').map(([id]) => logsPage.components[id].name), ['wocLogsTitle', 'wocCapture', 'wocCaptureStatus',
-        'wocLogsSave', 'wocLogsStatus', 'wocLogsQr', 'wocLogsUrl', 'wocLogsRow1', 'wocLogsRow2', 'wocLogsRow3', 'wocLogsRow4', 'wocLogsRow5']);
-    assert(/<component id="83" type="label" widget="LT_Label_1Graphic_Scalable">/.test(XML), 'the QR code is a graphic');
+    assert.deepStrictEqual(xmlIds('2').map(([id]) => logsPage.components[id].name), ['wocLogsTitle', 'wocLogsQr', 'wocCapture', 'wocCaptureStatus',
+        'wocLogsSave', 'wocLogsStatus', 'wocLogsUrl', 'wocLogsRow1', 'wocLogsRow2', 'wocLogsRow3', 'wocLogsRow4', 'wocLogsRow5']);
+    assert(/<layoutGroup id="\d+" name="ContentPreview">\s*<component id="83" type="preview" widget="LT_PreviewTable_1Graphic_1TextBottom"\/>/.test(XML),
+        'the QR code: the Logs page\'s preview picture');
     assert.strictEqual(APP_JSON.application.entryPoints.length, 1);
-    assert.deepStrictEqual(xmlIds('2').slice(1).map(([id]) => logsPage.components[id].rows[0].Text && logsPage.components[id].rows[0].Text.value)
+    assert.deepStrictEqual(xmlIds('2').slice(2).map(([id]) => logsPage.components[id].rows[0].Text && logsPage.components[id].rows[0].Text.value)
         .slice(0, 4), ['Start capture', 'Capture: Unavailable', 'Save logs', 'Saved logs: Connecting…']);
     console.log('ok   the Logs page: Start capture and its row, Save logs and its row, QR code, address, five archives; a child of the main page');
 
@@ -773,7 +812,7 @@ async function main() {
          * button was greyed and enabled in place. */
         assert.deepStrictEqual([...shownOrHidden].sort(), ['wocProfileStatus', 'wocRestart', 'wocRestartStatus', 'wocWifi', 'wocWifiHint'],
             'only the driver profile\'s line, CarPlay Wi-Fi, its line and the restart\'s rows are shown and hidden');
-        Object.values(components).filter((d) => !/^(wocRestart|wocWifi|wocProfileStatus)/.test(d.name) && d.type !== 'title')
+        Object.values(components).filter((d) => !/^(wocRestart|wocWifi|wocProfileStatus)/.test(d.name) && d.type !== 'title' && d.type !== 'preview')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
         ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocProfile', 'wocHudSize',
             'wocHudLeft', 'wocHudCentre', 'wocHudKeep']
@@ -783,6 +822,38 @@ async function main() {
             .forEach((n) => assert(valueRow.test(byName[n].text), `${n}: "${byName[n].text}" as Name: Value`));
         console.log('ok   no row came or went but CarPlay Wi-Fi, its line and the restart\'s; the buttons were greyed and enabled in place; ' +
             'info rows as Name: Value');
+
+        /* ---- the preview ---- */
+        const previews = require('../src/previews.js');
+        const pv = byName.wocPreview;
+        const shows = (name, row) => {
+            const p = previews.preview(name, row);
+            return pv.cells['0:Description'] === p.text && path.basename(pv.cells['0:Illustration'] || '') === `${p.image}.png`;
+        };
+        await until('the preview of Show on, the first stop', () => shows('wocShowOn', null));
+        assert(previews.images().every((image) => [...rhmi.handles].some((f) => path.basename(f) === `${image}.png`)),
+            'every picture registered with the HMI before it shows');
+        const focusOn = (name, params) => rhmi.emit('userEvent', { eventType: 'FOCUS', sourceId: byName[name].id, parameterMap: params });
+        focusOn('wocGuide', { 0: true });
+        await until('the turn box\'s preview', () => shows('wocGuide', null));
+        focusOn('wocHudSize', { 0: true });
+        await until('the size slider\'s preview', () => shows('wocHudSize', null));
+        focusOn('wocGuide', { 0: false });
+        await sleep(50);
+        assert(shows('wocHudSize', null), 'a row losing the focus leaves the preview');
+        /* the value list open: each choice its own; closed again: its name's */
+        for (const row of [0, 1, 2, 3]) {
+            focusOn('wocShowOn', { [2]: row });
+            await until(`Show on's choice ${row}`, () => shows('wocShowOn', row));
+        }
+        focusOn('wocShowOn', { [2]: 4294967295 });
+        await until('Show on, closed', () => shows('wocShowOn', null));
+        focusOn('wocHudCentre', { 0: true });
+        await until('Centre\'s preview', () => shows('wocHudCentre', null));
+        assert.deepStrictEqual([0, 1, 2, 3].map((r) => byName.wocShowOn.cells[`${r}:ItemSelectionText`]),
+            [0, 1, 2, 3].map((r) => byName.wocShowOn.cells[`${r}:ItemText`]), 'each choice\'s selection text written as the choice reads');
+        console.log('ok   the preview: a picture and its text for the row in focus, each of Show on\'s choices its own, the name\'s again closed; ' +
+            'every picture registered first');
 
         /* ---- the Logs page ---- */
         const lserver = new FakeLogs(LSOCK);
@@ -804,11 +875,17 @@ async function main() {
         assert.strictEqual(patch._clients.size, 1, 'and its sockets open');
         await until('logs state shown', () => byName.wocLogsStatus.text === 'Saved logs: None' &&
             byName.wocLogsUrl.text === `Address: ${lserver.url}` && byName.wocLogsSave.enabled === true);
-        const qr1 = byName.wocLogsQr.text;
+        const logsPicture = () => byName.wocLogsQr.cells['0:Illustration'];
+        const qr1 = logsPicture();
         assert(qr1 && rhmi.handles.has(qr1), 'the QR code shown through a resource handle');
         assert.deepStrictEqual(fs.readFileSync(qr1).slice(0, 8), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
         assert.strictEqual(fs.statSync(qr1).mode & 0o777, 0o644, 'the HMI reads it');
-        console.log('ok   Logs opens the Logs page; the app stays shown; the page shows the address and its QR code');
+        const logsText = (name) => require('../src/previews.js').preview(name, null).text;
+        await until('the first row\'s preview', () => byName.wocLogsQr.cells['0:Description'] === logsText('wocCapture'));
+        rhmi.emit('userEvent', { eventType: 'FOCUS', sourceId: byName.wocLogsSave.id, parameterMap: { 0: true } });
+        await until('Save logs\' preview', () => byName.wocLogsQr.cells['0:Description'] === logsText('wocLogsSave') && logsPicture() === qr1);
+        console.log('ok   Logs opens the Logs page; the app stays shown; the page shows the address, and its QR code as the preview\'s picture ' +
+            'under the row in focus\'s text');
 
         byName.wocLogsSave.emit('action');
         ['wocCaptureStatus', 'wocLogsStatus', 'wocLogsUrl'].forEach((n) => assert(/^[A-Z][a-z ]+: [A-Z0-9h]/.test(byName[n].text), byName[n].text));
@@ -820,14 +897,13 @@ async function main() {
 
         lserver.url = 'http://172.16.222.97:8475/fedcba9876543210fedcba9876543210/';
         lserver.announce();
-        await until('a new QR code', () => byName.wocLogsUrl.text === `Address: ${lserver.url}` && byName.wocLogsQr.text !== qr1);
+        await until('a new QR code', () => byName.wocLogsUrl.text === `Address: ${lserver.url}` && logsPicture() !== qr1);
         await until('the old one gone', () => !fs.existsSync(qr1) && !rhmi.handles.has(qr1));
         lserver.url = null;
         lserver.announce();
         await until('no address', () => byName.wocLogsUrl.text === 'Address: Wi-Fi hotspot off');
-        const blank = byName.wocLogsQr.text;
-        await until('blank code', () => rhmi.handles.has(blank) && fs.existsSync(blank));
-        console.log('ok   a new address gets a new QR code, the old one removed; no address: a blank one');
+        await until('the logs picture', () => path.basename(logsPicture() || '') === 'logs.png' && rhmi.handles.has(logsPicture()));
+        console.log('ok   a new address gets a new QR code, the old one removed; no address: the logs picture');
 
         /* an overlay takes the screen (ROOT_APP gone) and gives it back; the
          * Logs page says nothing of its own */
@@ -872,7 +948,8 @@ async function main() {
         const deWords = de.words;
         de.words = { Patch: 'Patchen', 'Remove patch': 'Patch entfernen', General: 'Allgemein', 'Save logs': 'Logs speichern',
             'Status: {0}': 'Zustand: {0}', 'Saved logs: {0}': 'Gespeicherte Logs: {0}', "Hide BMW's turn box": 'BMW-Abbiegebox ausblenden',
-            'HUD map: {0}': 'Karte im HUD: {0}', 'Show on': 'Anzeigen auf', 'HUD (experimental)': 'HUD (experimentell)', 'Move left': 'Nach links' };
+            'HUD map: {0}': 'Karte im HUD: {0}', 'Show on': 'Anzeigen auf', 'HUD (experimental)': 'HUD (experimentell)', 'Move left': 'Nach links',
+            'Puts the map back in the middle of the HUD.': 'Setzt die Karte wieder in die Mitte des HUD.' };
         const before = ['wocStatus', 'wocAaStatus', 'wocMap', 'wocLogsStatus', 'wocHud'].map((n) => byName[n].text);
         displayLanguage('DEUTSCH');
         await until('German', () => byName.wocEnable.text === 'Patchen' && byName.wocAaDisable.text === 'Patch entfernen' &&
@@ -881,15 +958,16 @@ async function main() {
             byName.wocAaStatus.text === before[1].replace(/^Status:/, 'Zustand:') && byName.wocLogsStatus.text.startsWith('Gespeicherte Logs: ') &&
             byName.wocHud.text === before[4].replace(/^HUD map:/, 'Karte im HUD:') && byName.wocShowOn.cells.HeaderText === 'Anzeigen auf' &&
             byName.wocShowOn.cells['1:ItemText'] === 'HUD (experimentell)' && byName.wocShowOn.cells['0:ItemText'] === 'Cluster' &&
-            byName.wocHudLeft.text === 'Nach links');
+            byName.wocHudLeft.text === 'Nach links' && byName.wocPreview.cells['0:Description'] === 'Setzt die Karte wieder in die Mitte des HUD.');
         assert.strictEqual(byName.wocMap.text, before[2], 'a word German lacks: its English');
         assert.strictEqual(byName.wocAaZoomIn.text, 'Zoom in', 'a word German lacks: its English');
         displayLanguage('ENGLISCH__US');
         await until('English again', () => byName.wocEnable.text === 'Patch' && byName.wocHeadGeneral.text === 'General' &&
             byName.wocLogsSave.text === 'Save logs' && byName.wocGuide.text === "Hide BMW's turn box" && byName.wocStatus.text === before[0] &&
-            byName.wocHud.text === before[4] && byName.wocHudLeft.text === 'Move left');
+            byName.wocHud.text === before[4] && byName.wocHudLeft.text === 'Move left' &&
+            byName.wocPreview.cells['0:Description'] === 'Puts the map back in the middle of the HUD.');
         de.words = deWords;
-        console.log('ok   a display language change writes every row again in its words, English for a word it lacks');
+        console.log('ok   a display language change writes every row and the preview again in its words, English for a word it lacks');
         await lserver.close();
     } finally {
         await render.close();

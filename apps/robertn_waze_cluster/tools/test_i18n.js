@@ -11,7 +11,9 @@
  * same {n} placeholders and no other; src/locales.js and the RHMI text
  * files are as the tool writes them, one for each HMI display language;
  * the HMI's display language picks the locale, English for any other; a
- * word a language lacks is its English; arguments are data.
+ * word a language lacks is its English; arguments are data; each preview
+ * text fits the preview's three lines in every language (tools/preview_fit.js:
+ * exact with BMW_FONT, estimated without).
  *
  *   node tools/test_i18n.js
  */
@@ -145,6 +147,21 @@ eq(i18n.t('Not a word the app has'), 'Not a word the app has', 'an unknown word:
 });
 de.words = deWords;
 
-console.log(`i18n: ${all.length} locales, ${used.size} words, ${checks} checks pass`);
+/* ---- the preview's texts: three lines at most (src/previews.js, tools/preview_fit.js) ---- */
+const fit = require('./preview_fit.js');
+const previews = require(path.join(SRC, 'previews.js'));
+const measure = fit.measure();
+const previewWords = [...new Set(Object.values(previews.ROWS).concat(previews.SHOW_ON_CHOICES, Object.values(previews.LOGS_ROWS))
+    .map((e) => e.text.toString().match(/t\('((?:\\.|[^'])*)'\)/)[1].replace(/\\'/g, '\'')))];
+ok(previewWords.length > 15 && previewWords.every((w) => used.has(w)), 'the preview\'s texts are words of the app');
+[{ code: 'en', words: Object.fromEntries(previewWords.map((w) => [w, w])) }].concat(all).forEach((l) => previewWords
+    .filter((w) => l.words[w]).forEach((w) => {
+        const n = fit.lines(l.words[w], measure).length;
+        ok(n <= fit.LINES, `${l.code}: "${l.words[w]}" takes ${n} lines of the preview's ${fit.LINES}` +
+            `${process.env.BMW_FONT ? '' : ' (estimated; BMW_FONT measures it)'}`);
+    }));
+
+console.log(`i18n: ${all.length} locales, ${used.size} words, ${checks} checks pass` +
+    `${process.env.BMW_FONT ? '' : ' (the preview\'s lines estimated: BMW_FONT measures them)'}`);
 assert(!untranslated.length, `every locale needs a translation of every word:\n  ${untranslated.join('\n  ')}`);
 console.log('i18n: every locale has every word');

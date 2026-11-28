@@ -4,6 +4,12 @@
     "1": {
       "type": "state",
       "name": "ST_OnlineApps_WazeCluster",
+      "properties": {
+        "Preview": {
+          "value": 94,
+          "type": "UInt"
+        }
+      },
       "components": {
         "10": {
           "type": "title",
@@ -22,6 +28,10 @@
               }
             }
           ]
+        },
+        "94": {
+          "type": "preview",
+          "name": "wocPreview"
         },
         "92": {
           "type": "label",
@@ -46,7 +56,7 @@
           ]
         },
         "62": {
-          "type": "dropDownMenu",
+          "type": "valueList",
           "name": "wocShowOn",
           "properties": {
             "Visible": {
@@ -73,10 +83,18 @@
               "ItemText": {
                 "value": "Cluster",
                 "type": "Text"
+              },
+              "ItemSelectionText": {
+                "value": "Cluster",
+                "type": "Text"
               }
             },
             {
               "ItemText": {
+                "value": "HUD (experimental)",
+                "type": "Text"
+              },
+              "ItemSelectionText": {
                 "value": "HUD (experimental)",
                 "type": "Text"
               }
@@ -85,10 +103,18 @@
               "ItemText": {
                 "value": "Cluster and HUD (experimental)",
                 "type": "Text"
+              },
+              "ItemSelectionText": {
+                "value": "Cluster and HUD (experimental)",
+                "type": "Text"
               }
             },
             {
               "ItemText": {
+                "value": "Off",
+                "type": "Text"
+              },
+              "ItemSelectionText": {
                 "value": "Off",
                 "type": "Text"
               }
@@ -213,6 +239,19 @@
             }
           ]
         },
+        "95": {
+          "type": "separator",
+          "name": "wocSepHud",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {}
+          ]
+        },
         "93": {
           "type": "label",
           "name": "wocHeadHud",
@@ -229,7 +268,7 @@
           "rows": [
             {
               "Text": {
-                "value": "HUD",
+                "value": "Head-up display",
                 "type": "Text"
               }
             }
@@ -457,6 +496,19 @@
             }
           ]
         },
+        "96": {
+          "type": "separator",
+          "name": "wocSepCarPlay",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {}
+          ]
+        },
         "90": {
           "type": "label",
           "name": "wocHeadCarPlay",
@@ -587,6 +639,19 @@
                 "type": "Text"
               }
             }
+          ]
+        },
+        "97": {
+          "type": "separator",
+          "name": "wocSepAa",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {}
           ]
         },
         "91": {
@@ -822,6 +887,10 @@
         "ParentState": {
           "value": 1,
           "type": "UInt"
+        },
+        "Preview": {
+          "value": 83,
+          "type": "UInt"
         }
       },
       "components": {
@@ -842,6 +911,10 @@
               }
             }
           ]
+        },
+        "83": {
+          "type": "preview",
+          "name": "wocLogsQr"
         },
         "37": {
           "type": "button",
@@ -929,23 +1002,6 @@
                 "type": "Text"
               }
             }
-          ]
-        },
-        "83": {
-          "type": "label",
-          "name": "wocLogsQr",
-          "properties": {
-            "Visible": {
-              "value": 1,
-              "type": "UInt"
-            },
-            "Focusable": {
-              "value": 0,
-              "type": "UInt"
-            }
-          },
-          "rows": [
-            {}
           ]
         },
         "84": {

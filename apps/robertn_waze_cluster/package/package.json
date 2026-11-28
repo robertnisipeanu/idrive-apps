@@ -20,6 +20,7 @@
     "config",
     "locales",
     "rhmiData",
+    "previews",
     "package.json",
     "npm-shrinkwrap.json",
     "permissions.json",
