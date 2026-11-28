@@ -590,10 +590,12 @@ class ProfileSync extends EventEmitter {
      * others (unless the page wrote one after asking), once it is up;
      * else, when they changed, through a short connection. Resolves once
      * the page's render shows them. */
-    _toRender(s, changed, writes) {
+    _toRender(stored, changed, writes) {
         const c = this._control;
+        /* as the route gate has the render show them now */
+        const s = c && typeof c.viewOf === 'function' ? c.viewOf(stored) : stored;
         if (c && c.isOpen()) {
-            return changed || c.writes === writes ? c.showStored(s, changed) : undefined;
+            return changed || c.writes === writes ? c.showStored(stored, changed) : undefined;
         }
         if (!changed) {
             return undefined;

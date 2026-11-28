@@ -59,6 +59,14 @@ The app is in the head unit's display language.
 - **Show on:** where the map shows: **Cluster** (the default), **HUD
   (experimental)**, **Cluster and HUD (experimental)** or **Off**. The
   change is immediate. **Off** shows BMW's own content on both.
+- **Only during a route:** ticked, the map shows only while your phone
+  guides a route, in any navigation app (Waze, Apple Maps, Google Maps), and
+  for 10 s after the route ends, so a re-route doesn't take it away. The rest
+  of the time the cluster and the HUD show BMW's own content, and the page
+  says `Cluster map: Waiting for a route`. Show on still says where the map
+  goes. Unticked (the default), the map shows whenever the phone sends it.
+  The change is immediate and the same for every driver. Greyed when the
+  head unit tells neither CarPlay's nor Android Auto's route.
 - **Own settings for this driver:** ticked, the current driver profile
   keeps its own Show on, HUD size and HUD position.
   Show on and the HUD settings are greyed for a moment while the page loads
@@ -116,6 +124,7 @@ want first, then restart once.
 | `Cluster map: Off` | Check **Show on**: **Off** and **HUD (experimental)** keep the map off the cluster. Check that CarPlay's or Android Auto's Status is `Patched`. |
 | `Cluster map: Waiting for the phone` | Connect your phone. |
 | `Cluster map: Waiting for the phone's map` | Start navigation on your phone. |
+| `Cluster map: Waiting for a route` | **Only during a route** is ticked: start a route on your phone, or untick it. |
 | `Cluster map: Frozen` or `Stream lost` | Reconnect your phone: unplug it, or turn its Wi-Fi off and on. This can happen after you change the cluster's Central display area. |
 | The map never shows on the cluster | Set **Instrument cluster > Central display area** to **Map view**. With Route preview or Assisted Driving View the cluster's own content takes the centre. |
 | `Cluster map: Error` or `Unavailable` | [Report it](#logs-and-reporting-a-problem). |
@@ -205,6 +214,7 @@ the same `{n}`, and every HMI language its text file.
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
 node tools/test_profiles.js          # the driver profiles against fake sockets and SessionManager
+node tools/test_route_gate.js        # Only during a route against fake proxies and a fake render
 node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
 node tools/build.js                  # robertn_waze_cluster@<version>.src.tgz
 node tools/build.js --sdk <donor>    # also robertn_waze_cluster@<version>.tgz

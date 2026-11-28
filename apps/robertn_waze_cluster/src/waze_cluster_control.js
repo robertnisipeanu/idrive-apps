@@ -397,6 +397,7 @@ class WazeClusterControl extends EventEmitter {
         this._storedWaits = [];     /* showStored's, until the render shows them */
         this._isOpen = false;
         this.writes = 0;            /* map settings written to patchd */
+        this._gate = null;          /* route_gate.js: the map held back while no route, or null */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -420,8 +421,29 @@ class WazeClusterControl extends EventEmitter {
         };
         this.render.on('connect', reset);
         this.render.on('close', reset);
+        /* the gate sends through the page's render connection while it is up */
+        this.render.on('connect', () => this._gate && this._gate.setPageRender(
+            (cmds) => cmds.forEach((m) => this.render.send(m)), () => this.renderStatus));
+        this.render.on('close', () => this._gate && this._gate.setPageRender(null));
         this.patch.on('connect', () => { this._forget(); this.emit('change'); });
         this.patch.on('close', () => { this._forget(); this._restartRequested = false; this.emit('change'); });
+    }
+
+    /* The route gate (route_gate.js): while it holds, the render's cluster
+     * and hud stay off whatever is written or stored, and the page shows
+     * Show on as chosen. */
+    setGate(gate) {
+        this._gate = gate || null;
+    }
+
+    /* Map settings as the render is to show them now (the gate's view). */
+    viewOf(s) {
+        return this._gate ? this._gate.view(s) : s;
+    }
+
+    /* True while the gate holds the map back until a route starts. */
+    heldForRoute() {
+        return !!(this._gate && this._gate.holds());
     }
 
     /* target() -> {profile, own} for the driver profile's settings a map
@@ -449,7 +471,7 @@ class WazeClusterControl extends EventEmitter {
                 return;
             }
             pairs.forEach(([r, msg]) => {
-                this.render.send(r);
+                this.render.send(this._gate ? this._gate.command(r) : r);
                 this.writes++;
                 this._inFlight++;
                 this.patch.send('profile' in w ? Object.assign({}, msg, { profile: w.profile, own: w.own }) : msg);
@@ -486,7 +508,7 @@ class WazeClusterControl extends EventEmitter {
     _storedShown(w, all) {
         const rs = this.renderStatus;
         this._storedWaits = this._storedWaits.filter((x) => {
-            if (x === w || all || (rs && renderShows(rs, x.settings))) {
+            if (x === w || all || (rs && renderShows(rs, this.viewOf(x.settings)))) {
                 clearTimeout(x.timer);
                 x.resolve();
                 return false;
@@ -505,7 +527,7 @@ class WazeClusterControl extends EventEmitter {
             return;
         }
         this._stored = null;
-        const s = st.settings;
+        const s = this.viewOf(st.settings);
         const asked = !!this._askedShownOn || this._askedHud != null || !!this._askedPos;
         if (asked && !st.moved) {
             this._storedShown(null, true);
@@ -581,7 +603,15 @@ class WazeClusterControl extends EventEmitter {
         if (this._loading()) {
             return null;
         }
-        return this._askedShownOn || (this.renderStatus && shownOnOf(this.renderStatus));
+        if (this._askedShownOn) {
+            return this._askedShownOn;
+        }
+        /* held back until a route starts: Show on as chosen, not the render's off */
+        const g = this._gate;
+        if (g && g.holds() && g.wanted && this.renderStatus && shownOnOf(this.renderStatus) !== null) {
+            return shownOnOf(g.wanted);
+        }
+        return this.renderStatus && shownOnOf(this.renderStatus);
     }
 
     /* Whether the map shows on the cluster / the HUD; null while the render has not said. */
@@ -882,6 +912,9 @@ class WazeClusterControl extends EventEmitter {
         }
         if (this.render.link !== 'up') {
             return t('Unavailable');
+        }
+        if (this.heldForRoute()) {
+            return t('Waiting for a route');
         }
         const rs = this.renderStatus;
         switch (rs && rs.state) {
@@ -1277,6 +1310,9 @@ class WazeClusterControl extends EventEmitter {
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
+            if (this._gate) {
+                this._gate.status(msg);
+            }
             if (this._askedShownOn && this._askedShownOn === shownOnOf(msg)) {
                 this._askedShownOn = null;
             }

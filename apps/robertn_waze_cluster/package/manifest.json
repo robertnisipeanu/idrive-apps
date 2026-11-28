@@ -70,6 +70,22 @@
       "broadcasts": [
         "currentUserOnChange"
       ]
+    },
+    "de.bmw.infotainment.a4a.carplay.CarPlayManager": {
+      "instances": [
+        "CarPlayManagerInst1"
+      ],
+      "attributes": {
+        "projectedGuidanceActive": "rs"
+      }
+    },
+    "de.bmw.infotainment.sdi.aap.androidautoprojectedmanager.AndroidAutoProjectedManager": {
+      "instances": [
+        "AndroidAutoProjectedManagerInst1"
+      ],
+      "attributes": {
+        "projectedGuidanceActive": "rs"
+      }
     }
   },
   "services": {

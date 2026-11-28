@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+New **Only during a route** checkbox under Show on. Ticked, the map shows
+only while your phone guides a route (CarPlay or Android Auto, in any
+navigation app) and for 10 s after it ends. Otherwise the cluster and the
+HUD show BMW's own content. The change is immediate; unticked (the default),
+the map shows as before.
+
 ## 0.6.19
 
 The app uses less background CPU and memory, loads translations only for the active language, and generates the Logs QR code faster.
